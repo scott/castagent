@@ -19,15 +19,24 @@ Cast is a CLI+TUI application that helps developers create, test, and deploy AI 
 
 ### Installation
 
+**Full installation** (recommended for first-time setup):
 ```bash
 # Clone the repository
 git clone <repo-url>
 cd agent-cast
 
-# Run the setup script (creates global 'cast' command)
+# Run the full installation script (installs deps, builds, creates config)
+./install.sh
+
+# Add to your PATH if needed (follow the instructions from install.sh)
+export PATH="$HOME/.local/bin:$PATH"
+```
+
+**Quick setup** (if dependencies are already installed):
+```bash
+# Just create the global 'cast' command
 ./setup.sh
 
-# Add to your PATH if needed (follow the instructions from setup.sh)
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
@@ -57,11 +66,20 @@ cast --help
 # List all agents
 cast list
 
+# Describe an agent's configuration
+cast describe demo-agent
+
 # Start an agent in development mode
 cast dev demo-agent
 
 # Start without TUI (headless)
 cast dev demo-agent --no-tui
+
+# View agent logs
+cast logs demo-agent
+
+# Stop a running agent
+cast stop demo-agent
 
 # Deploy an agent
 cast deploy demo-agent --provider docker
@@ -119,18 +137,18 @@ cast update my-agent --model openrouter/openai/gpt-4o --dry-run
 ```
 agent-cast/
 ├── typescript/
-│   ├── cast-cli/          # oclif CLI
-│   └── cast-tui/          # OpenTUI TUI
+│   ├── cast-cli/          # oclif CLI (commands, deploy, MCP, OAuth)
+│   └── cast-tui/          # OpenTUI terminal interface
 ├── python/
-│   └── cast/              # Python runtime
+│   └── cast/              # Python runtime (agents, providers, tools)
 ├── tests/
 │   ├── ts/                # TypeScript tests
 │   └── python/            # Python tests
 ├── docs/
 │   └── SPEC.md            # Full specification
-├── cast                   # Wrapper script
-├── setup.sh               # Quick setup script
-├── install.sh             # Full installation script
+├── cast                   # Bash wrapper script (entry point)
+├── setup.sh               # Quick setup (creates symlink only)
+├── install.sh             # Full install (deps, build, config)
 └── README.md              # This file
 ```
 
@@ -172,13 +190,24 @@ cast meta test --scenario create-simple
 - ✅ MCP Manager (Gmail, Slack, Filesystem)
 - ✅ OAuth flow (browser-based)
 - ✅ OpenRouter LLM integration
+- ✅ Anthropic LLM integration
+- ✅ OpenAI LLM integration
+- ✅ Ollama (local) LLM integration
 - ✅ Docker deployment
-- ✅ Railway/Fly.io/DigitalOcean deployment stubs
+- ✅ Railway deployment
+- ✅ Fly.io deployment
+- ✅ DigitalOcean App Platform deployment
 - ✅ Streaming responses
 - ✅ Production TUI mode (green theme)
-- ✅ Auth token storage (keychain)
 - ✅ Agent configuration management
+- ✅ SQLite database for agent metadata and deployments
+- ✅ Secure auth token storage (keychain / system credential store)
+- ✅ OAuth credential vault (~/.cast/vault/)
 - ✅ Meta-builder test framework
+
+### The `cast` Wrapper Script
+
+The `cast` command at the repository root is a bash wrapper that delegates to `typescript/cast-cli/bin/run`. When you run `./setup.sh` or `./install.sh`, it creates a symlink from `~/.local/bin/cast` to this wrapper, making the CLI available globally.
 
 ## Configuration
 
@@ -190,7 +219,7 @@ cast:
 
 defaults:
   agent_storage: ~/cast-agents
-  builder_model: openrouter/anthropic/claude-sonnet-4
+  builder_model: openrouter/anthropic/claude-4-sonnet
   deployment_provider: docker
 
 providers:
@@ -204,6 +233,7 @@ Set environment variables:
 export OPENROUTER_API_KEY="your-key"
 export RAILWAY_API_TOKEN="your-token"
 export FLY_API_TOKEN="your-token"
+export DO_API_TOKEN="your-token"  # DigitalOcean
 ```
 
 ## License
