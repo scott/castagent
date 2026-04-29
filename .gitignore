@@ -1,0 +1,37 @@
+# Dependencies
+node_modules/
+dist/
+*.log
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+.venv/
+venv/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+.env.local
+
+# Build artifacts
+build/
+coverage/
+
+# SQLite
+*.db
+*.db-journal
+
+# Tokens (should be in keychain, but just in case)
+*.token

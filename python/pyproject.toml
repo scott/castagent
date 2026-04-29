@@ -1,0 +1,19 @@
+[project]
+name = "cast"
+version = "1.0.0"
+description = "Cast - Agent Building & Deployment Platform Runtime"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.11"
+
+[project.scripts]
+cast-builder = "cast.builder:main"
+cast-runtime = "cast.runtime:main"
+
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["cast*"]

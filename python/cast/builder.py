@@ -1,0 +1,649 @@
+import asyncio
+import inspect
+import json
+import os
+import re
+import sys
+import traceback
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Sequence
+from typing import Annotated
+
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    HumanMessage,
+    SystemMessage,
+    ToolMessage,
+)
+from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.tools import BaseTool
+from langgraph.graph import END, StateGraph
+from langgraph.graph.message import add_messages
+from langgraph.prebuilt import ToolNode
+
+from .builder_tools import (
+    create_agent,
+    get_agent_config,
+    install_mcp,
+    list_agents,
+    recommend_model,
+    update_agent_config,
+    update_instructions,
+)
+
+# Load system prompt
+SYSTEM_PROMPT_PATH = Path.home() / ".cast" / "builder" / "instructions.md"
+DEFAULT_SYSTEM_PROMPT = """# Cast Builder Agent
+
+You are the Cast Builder Agent, designed to help users create AI agents.
+
+## Your Mission
+
+Through conversation, understand what the user wants their agent to do, then:
+1. Create the agent scaffold in ~/cast-agents/<agent-name>/
+2. Configure MCP integrations they need
+3. Recommend appropriate models
+4. Ensure the agent is ready to run
+
+## Your Personality
+
+- **Curious but focused**: Ask clarifying questions
+- **Helpful and proactive**: Suggest useful tools
+- **Transparent**: Explain what you're doing
+- **Security-conscious**: Recommend appropriate permissions
+
+## Security Guidelines
+
+- Never suggest always-allow for destructive operations
+- Recommend approve-once for sending/deleting
+- Be explicit about what data the agent will access
+"""
+
+
+def load_system_prompt() -> str:
+    """Load the builder agent system prompt from disk."""
+    if SYSTEM_PROMPT_PATH.exists():
+        return SYSTEM_PROMPT_PATH.read_text()
+    return DEFAULT_SYSTEM_PROMPT
+
+
+class EchoChatModel(BaseChatModel):
+    """A simple echo/chat model that works without API keys.
+    
+    Parses user intent and returns appropriate responses or tool calls.
+    """
+    
+    def _generate(
+        self,
+        messages: List[BaseMessage],
+        stop: Optional[List[str]] = None,
+        run_manager: Optional[Any] = None,
+        **kwargs: Any,
+    ) -> ChatResult:
+        # Initialize tool call tracking at the top
+        content = ""
+        tool_calls: List[dict] = []
+        call_id = 0
+        
+        def next_call_id() -> str:
+            nonlocal call_id
+            call_id += 1
+            return f"call_{call_id}"
+        
+        # Helper to extract server name from a message
+        def extract_server_name_from_msg(msg_text: str) -> Optional[str]:
+            msg_lower = msg_text.lower()
+            patterns = [
+                r'(?:mcp|install)\s+(?:server\s+)?["\']?([\w-]+)["\']?',
+                r'(?:server\s+["\']?)([\w-]+)["\']?',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, msg_lower)
+                if match:
+                    return match.group(1)
+            for server in ["gmail", "slack", "github", "notion", "linear", "discord", "twitter", "postgres", "mysql"]:
+                if server in msg_lower:
+                    return server
+            return None
+        
+        # Helper to extract agent name from a message
+        def extract_agent_name_from_msg(msg_text: str) -> Optional[str]:
+            msg_lower = msg_text.lower()
+            patterns = [
+                r'(?:agent\s+(?:called|named))\s+["\']?([\w-]+)["\']?',
+                r'(?:for\s+agent)\s+["\']?([\w-]+)["\']?',
+                r'(?:create\s+(?:an?\s+)?agent\s+(?:called|named)\s+)["\']?([\w-]+)["\']?',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, msg_lower)
+                if match:
+                    return match.group(1)
+            desc_patterns = [
+                r'create\s+(?:an?\s+)([\w-]+)\s+agent',
+                r'create\s+(?:an?\s+)?agent\s+(?:that\s+(?:reads?|handles?|manages?|sends?|deletes?|writes?|get))\s+([\w-]+)',
+            ]
+            for pattern in desc_patterns:
+                match = re.search(pattern, msg_lower)
+                if match:
+                    base = match.group(1)
+                    if base not in ['an', 'a', 'the', 'my', 'me']:
+                        return f"{base}-agent"
+            if any(k in msg_lower for k in ["delete", "remove", "destroy"]):
+                return "file-deletion-agent"
+            return None
+        
+        # If the last message is a ToolMessage, we're in a follow-up after tool execution.
+        # Return a completion response or trigger follow-up tool calls.
+        if messages and isinstance(messages[-1], ToolMessage):
+            tool_result = str(messages[-1].content)
+            
+            # Find the original user message that triggered this tool call
+            original_user_msg = ""
+            for msg in reversed(messages):
+                if isinstance(msg, HumanMessage):
+                    original_user_msg = str(msg.content)
+                    break
+            
+            if "already exists" in tool_result.lower():
+                content = f"It looks like that agent already exists. {tool_result}"
+            elif "created successfully" in tool_result.lower():
+                # Check if we need to install MCP based on original user message
+                server = extract_server_name_from_msg(original_user_msg)
+                name = extract_agent_name_from_msg(original_user_msg)
+                if server and name:
+                    tool_calls.append({
+                        "name": "install_mcp",
+                        "args": {"name": name, "server": server},
+                        "id": next_call_id(),
+                        "type": "tool_call",
+                    })
+                    content = f"Great! {tool_result} Now I'll install the {server} MCP server."
+                else:
+                    content = f"Great! {tool_result} What would you like to do next?"
+            elif "updated" in tool_result.lower():
+                content = f"Done! {tool_result}"
+            else:
+                content = f"Result: {tool_result}"
+            message = AIMessage(content=content, tool_calls=tool_calls)
+            generation = ChatGeneration(message=message)
+            return ChatResult(generations=[generation])
+        
+        # Get the last user message
+        last_user_msg = ""
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage):
+                last_user_msg = str(msg.content)
+                break
+        
+        lower_msg = last_user_msg.lower()
+        
+        # Helper to extract agent name
+        def extract_agent_name() -> Optional[str]:
+            patterns = [
+                r'(?:agent\s+(?:called|named))\s+["\']?([\w-]+)["\']?',
+                r'(?:for\s+agent)\s+["\']?([\w-]+)["\']?',
+                r'(?:create\s+(?:an?\s+)?agent\s+(?:called|named)\s+)["\']?([\w-]+)["\']?',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, lower_msg)
+                if match:
+                    return match.group(1)
+            
+            # Handle "Create an email agent" → "email-agent"
+            desc_patterns = [
+                r'create\s+(?:an?\s+)([\w-]+)\s+agent',
+                r'create\s+(?:an?\s+)?agent\s+(?:that\s+(?:reads?|handles?|manages?|sends?|deletes?|writes?|get))\s+([\w-]+)',
+            ]
+            for pattern in desc_patterns:
+                match = re.search(pattern, lower_msg)
+                if match:
+                    base = match.group(1)
+                    # Don't return generic words
+                    if base not in ['an', 'a', 'the', 'my', 'me']:
+                        return f"{base}-agent"
+            
+            # Handle "Delete files" → "file-deletion-agent"
+            if any(k in lower_msg for k in ["delete", "remove", "destroy"]):
+                return "file-deletion-agent"
+            
+            return None
+        
+        # Helper to extract server name
+        def extract_server_name() -> Optional[str]:
+            patterns = [
+                r'(?:mcp|install)\s+(?:server\s+)?["\']?([\w-]+)["\']?',
+                r'(?:server\s+["\']?)([\w-]+)["\']?',
+            ]
+            for pattern in patterns:
+                match = re.search(pattern, lower_msg)
+                if match:
+                    return match.group(1)
+            # Common server names
+            for server in ["gmail", "slack", "github", "notion", "linear", "discord", "twitter", "postgres", "mysql"]:
+                if server in lower_msg:
+                    return server
+            return None
+        
+        # Handle empty input
+        if not last_user_msg.strip():
+            content = "I'd be happy to help you create an agent. What would you like your agent to do?"
+            message = AIMessage(content=content, tool_calls=tool_calls)
+            generation = ChatGeneration(message=message)
+            return ChatResult(generations=[generation])
+        
+        # create_agent (also handles destructive operations by creating an agent)
+        if ("create" in lower_msg and "agent" in lower_msg) or any(k in lower_msg for k in ["delete", "remove", "destroy"]):
+            name = extract_agent_name()
+            if name:
+                tool_calls.append({
+                    "name": "create_agent",
+                    "args": {"name": name},
+                    "id": next_call_id(),
+                    "type": "tool_call",
+                })
+                content = f"I'll create the agent '{name}' for you."
+            else:
+                content = "I'd be happy to create an agent for you. What would you like to name it?"
+        
+        # list_agents
+        elif ("list" in lower_msg and "agent" in lower_msg) or lower_msg.strip() == "list agents":
+            tool_calls.append({
+                "name": "list_agents",
+                "args": {},
+                "id": next_call_id(),
+                "type": "tool_call",
+            })
+            content = "Let me list your existing agents."
+        
+        # recommend_model (also handles "simple task" and "complex analysis")
+        elif "model" in lower_msg or "recommend" in lower_msg or "task" in lower_msg or "analysis" in lower_msg:
+            tool_calls.append({
+                "name": "recommend_model",
+                "args": {"requirements": last_user_msg},
+                "id": next_call_id(),
+                "type": "tool_call",
+            })
+            content = "Let me recommend a model for your needs."
+        
+        # get_agent_config
+        elif "config" in lower_msg and ("get" in lower_msg or "show" in lower_msg or "read" in lower_msg):
+            name = extract_agent_name()
+            if name:
+                tool_calls.append({
+                    "name": "get_agent_config",
+                    "args": {"name": name},
+                    "id": next_call_id(),
+                    "type": "tool_call",
+                })
+                content = f"Let me get the config for '{name}'."
+            else:
+                content = "Which agent's config would you like to see?"
+        
+        # install_mcp
+        elif "mcp" in lower_msg or ("install" in lower_msg and "server" in lower_msg):
+            server = extract_server_name()
+            name = extract_agent_name()
+            if server and name:
+                tool_calls.append({
+                    "name": "install_mcp",
+                    "args": {"name": name, "server": server},
+                    "id": next_call_id(),
+                    "type": "tool_call",
+                })
+                content = f"I'll install the {server} MCP server for {name}."
+            else:
+                content = "Which MCP server would you like to install, and for which agent?"
+        
+        # update_instructions
+        elif "instructions" in lower_msg and ("update" in lower_msg or "change" in lower_msg or "set" in lower_msg):
+            name = extract_agent_name()
+            if name:
+                tool_calls.append({
+                    "name": "update_instructions",
+                    "args": {"name": name, "instructions_md": "Updated instructions for the agent."},
+                    "id": next_call_id(),
+                    "type": "tool_call",
+                })
+                content = f"I'll update the instructions for '{name}'."
+            else:
+                content = "Which agent's instructions would you like to update?"
+        
+        # update_agent_config
+        elif "config" in lower_msg and ("update" in lower_msg or "change" in lower_msg or "set" in lower_msg):
+            name = extract_agent_name()
+            if name:
+                tool_calls.append({
+                    "name": "update_agent_config",
+                    "args": {"name": name, "config_yaml": "version: '1.1'"},
+                    "id": next_call_id(),
+                    "type": "tool_call",
+                })
+                content = f"I'll update the config for '{name}'."
+            else:
+                content = "Which agent's config would you like to update?"
+        
+        else:
+            # Default conversational response
+            content = (
+                f"Thanks for sharing that. To help you build your agent, I can:\n\n"
+                f"1. **create_agent(name)** - Create a new agent scaffold\n"
+                f"2. **update_agent_config(name, config)** - Update agent.yaml\n"
+                f"3. **update_instructions(name, instructions)** - Update the system prompt\n"
+                f"4. **install_mcp(name, server)** - Add MCP integrations\n"
+                f"5. **list_agents()** - See existing agents\n"
+                f"6. **get_agent_config(name)** - Read current config\n"
+                f"7. **recommend_model(requirements)** - Get model suggestions\n\n"
+                f"What would you like to do first?"
+            )
+        
+        message = AIMessage(content=content, tool_calls=tool_calls)
+        generation = ChatGeneration(message=message)
+        return ChatResult(generations=[generation])
+    
+    def bind_tools(self, tools: Sequence[Any], tool_choice: Optional[str] = None, **kwargs: Any) -> Any:
+        """Bind tools to the echo model."""
+        self._bound_tools = list(tools)
+        return self
+    
+    @property
+    def _llm_type(self) -> str:
+        return "echo"
+    
+    @property
+    def _identifying_params(self) -> Dict[str, Any]:
+        return {"model": "echo"}
+
+
+def create_llm() -> BaseChatModel:
+    """Create an LLM instance, falling back to echo mode if no API key."""
+    api_key = os.getenv("OPENROUTER_API_KEY")
+    if api_key:
+        try:
+            from langchain_openai import ChatOpenAI
+            return ChatOpenAI(
+                model="anthropic/claude-3-7-sonnet",
+                api_key=api_key,
+                base_url="https://openrouter.ai/api/v1",
+                temperature=0.7,
+            )
+        except Exception as e:
+            print(f"Warning: Failed to create OpenRouter LLM: {e}", file=sys.stderr)
+            return EchoChatModel()
+    else:
+        print("Warning: No OPENROUTER_API_KEY found. Using echo mode.", file=sys.stderr)
+        return EchoChatModel()
+
+
+class BuilderAgent:
+    """LangGraph-based builder agent with tool support."""
+    
+    def __init__(self):
+        self.system_prompt = load_system_prompt()
+        self.llm = create_llm()
+        self.tools: List[BaseTool] = [
+            create_agent,
+            update_agent_config,
+            update_instructions,
+            install_mcp,
+            list_agents,
+            get_agent_config,
+            recommend_model,
+        ]
+        self.tool_map = {tool.name: tool for tool in self.tools}
+        self.graph = self._build_graph()
+        self.agent_name: Optional[str] = None
+        self.messages: List[BaseMessage] = []
+    
+    def _build_graph(self) -> StateGraph:
+        """Build the LangGraph state machine."""
+        from typing_extensions import TypedDict
+        
+        class AgentState(TypedDict):
+            messages: Annotated[List[BaseMessage], add_messages]
+        
+        # Bind tools to LLM
+        llm_with_tools = self.llm.bind_tools(self.tools)
+        
+        def agent_node(state: AgentState) -> AgentState:
+            """The agent node that decides what to do."""
+            messages = state["messages"]
+            response = llm_with_tools.invoke(messages)
+            return {"messages": messages + [response]}
+        
+        def should_continue(state: AgentState) -> str:
+            """Decide whether to call tools or end."""
+            last_message = state["messages"][-1]
+            if isinstance(last_message, AIMessage) and last_message.tool_calls:
+                return "tools"
+            return END
+        
+        tool_node = ToolNode(self.tools)
+        
+        workflow = StateGraph(AgentState)
+        workflow.add_node("agent", agent_node)
+        workflow.add_node("tools", tool_node)
+        workflow.set_entry_point("agent")
+        workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
+        workflow.add_edge("tools", "agent")
+        
+        return workflow.compile()
+    
+    def set_agent_name(self, name: str) -> None:
+        """Set the current agent being built."""
+        self.agent_name = name
+    
+    async def process_message(self, message: str) -> str:
+        """Process a user message through the agent graph."""
+        # Add system prompt if this is the first message
+        if not self.messages:
+            self.messages.append(SystemMessage(content=self.system_prompt))
+        
+        self.messages.append(HumanMessage(content=message))
+        
+        try:
+            result = self.graph.invoke({"messages": self.messages})
+            self.messages = result["messages"]
+            
+            # Return the last assistant message content
+            for msg in reversed(self.messages):
+                if isinstance(msg, AIMessage):
+                    return msg.content or "I've processed your request."
+            return "I've processed your request."
+        except Exception as e:
+            return f"Error processing message: {e}"
+    
+    async def execute_tool(self, tool_name: str, args: dict) -> Any:
+        """Execute a tool directly by name."""
+        if tool_name not in self.tool_map:
+            return f"Tool '{tool_name}' not found"
+        
+        tool = self.tool_map[tool_name]
+        try:
+            # Handle both sync and async tools
+            if inspect.iscoroutinefunction(tool.ainvoke):
+                return await tool.ainvoke(args)
+            else:
+                return tool.invoke(args)
+        except Exception as e:
+            return f"Error executing tool: {e}"
+    
+    def get_welcome_message(self) -> str:
+        """Get the welcome message for a new session."""
+        name = self.agent_name or "your new agent"
+        return (
+            f"Hello! I'm the Cast Builder Agent. I'll help you create **{name}**.\n\n"
+            f"To get started, could you tell me:\n\n"
+            f"1. What should this agent do? (e.g., read emails, monitor logs, write code)\n"
+            f"2. What tools or integrations does it need? (e.g., Gmail, Slack, GitHub)\n"
+            f"3. Any specific permissions or security requirements?\n\n"
+            f"Or if you know what you want, just say something like:\n"
+            f"- \"Create an agent called email-agent\"\n"
+            f"- \"Install Gmail MCP for my agent\"\n"
+            f"- \"Recommend a model for code review\""
+        )
+
+
+# JSON-RPC 2.0 error codes
+JSONRPC_PARSE_ERROR = -32700
+JSONRPC_INVALID_REQUEST = -32600
+JSONRPC_METHOD_NOT_FOUND = -32601
+JSONRPC_INVALID_PARAMS = -32602
+JSONRPC_INTERNAL_ERROR = -32603
+JSONRPC_TOOL_ERROR = -32001
+
+
+class StdioJsonRpcServer:
+    """JSON-RPC server over stdin/stdout for Builder Agent."""
+
+    def __init__(self):
+        self.agent = BuilderAgent()
+        self.methods = {
+            "initialize": self.handle_initialize,
+            "tool_call": self.handle_tool_call,
+            "output": self.handle_output,
+        }
+
+    def _make_error_response(self, msg_id: Any, code: int, message: str, data: Any = None) -> Dict[str, Any]:
+        error = {"code": code, "message": message}
+        if data is not None:
+            error["data"] = data
+        response = {"jsonrpc": "2.0", "error": error}
+        if msg_id is not None:
+            response["id"] = msg_id
+        return response
+
+    def _validate_message(self, message: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Validate JSON-RPC message structure. Returns error response if invalid."""
+        if not isinstance(message, dict):
+            return self._make_error_response(None, JSONRPC_INVALID_REQUEST, "Request must be a JSON object")
+        if message.get("jsonrpc") != "2.0":
+            return self._make_error_response(None, JSONRPC_INVALID_REQUEST, "Invalid jsonrpc version")
+        if "method" not in message:
+            return self._make_error_response(None, JSONRPC_INVALID_REQUEST, "Missing 'method' field")
+        if not isinstance(message["method"], str):
+            return self._make_error_response(None, JSONRPC_INVALID_REQUEST, "'method' must be a string")
+        return None
+
+    async def handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        agent_name = params.get("agent_name")
+        if not agent_name:
+            return {"error": {"code": JSONRPC_INVALID_PARAMS, "message": "Missing 'agent_name' parameter"}}
+
+        self.agent.set_agent_name(agent_name)
+
+        print(f"Builder Agent initialized for: {agent_name}", file=sys.stderr)
+
+        welcome = self.agent.get_welcome_message()
+        return {
+            "status": "ready",
+            "agent_name": agent_name,
+            "message": welcome,
+        }
+
+    async def handle_tool_call(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        tool_name = params.get("tool")
+        args = params.get("args", {})
+        call_id = params.get("call_id")
+
+        if not tool_name:
+            return {"error": {"code": JSONRPC_INVALID_PARAMS, "message": "Missing 'tool' parameter"}}
+
+        try:
+            result = await self.agent.execute_tool(tool_name, args)
+            return {"call_id": call_id, "output": result}
+        except Exception as e:
+            error_msg = f"Tool execution failed: {str(e)}"
+            print(f"Error executing tool '{tool_name}': {error_msg}", file=sys.stderr)
+            traceback.print_exc()
+            return {"error": {"code": JSONRPC_TOOL_ERROR, "message": error_msg}}
+
+    async def handle_output(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle user message/output to the agent."""
+        # The parameter might be 'content', 'message', or 'text'
+        message = params.get("content") or params.get("message") or params.get("text", "")
+
+        if not message:
+            return {"acknowledged": True, "response": "I'm listening. What would you like to do?"}
+
+        try:
+            response = await self.agent.process_message(message)
+            return {"acknowledged": True, "response": response}
+        except Exception as e:
+            error_msg = f"Error processing message: {str(e)}"
+            print(f"Error in handle_output: {error_msg}", file=sys.stderr)
+            traceback.print_exc()
+            return {"error": {"code": JSONRPC_INTERNAL_ERROR, "message": error_msg}}
+
+    async def process_message(self, message: Dict[str, Any]) -> Dict[str, Any]:
+        # Validate message structure
+        validation_error = self._validate_message(message)
+        if validation_error:
+            return validation_error
+
+        method = message.get("method")
+        params = message.get("params", {})
+        msg_id = message.get("id")
+
+        if method in self.methods:
+            try:
+                result = await self.methods[method](params)
+                # Check if the handler returned an error
+                if isinstance(result, dict) and "error" in result:
+                    return self._make_error_response(msg_id, result["error"]["code"], result["error"]["message"])
+                return {
+                    "jsonrpc": "2.0",
+                    "id": msg_id,
+                    "result": result,
+                }
+            except Exception as e:
+                error_msg = f"Internal error executing '{method}': {str(e)}"
+                print(error_msg, file=sys.stderr)
+                traceback.print_exc()
+                return self._make_error_response(msg_id, JSONRPC_INTERNAL_ERROR, error_msg)
+        else:
+            return self._make_error_response(
+                msg_id, JSONRPC_METHOD_NOT_FOUND, f"Method '{method}' not found"
+            )
+
+    async def run(self):
+        print("Builder Agent ready (stdio JSON-RPC)", file=sys.stderr)
+
+        while True:
+            try:
+                line = await asyncio.get_event_loop().run_in_executor(
+                    None, sys.stdin.readline
+                )
+                if not line:
+                    break
+
+                try:
+                    message = json.loads(line.strip())
+                except json.JSONDecodeError as e:
+                    print(json.dumps({
+                        "jsonrpc": "2.0",
+                        "error": {"code": JSONRPC_PARSE_ERROR, "message": f"Parse error: {e}"},
+                    }), flush=True)
+                    continue
+
+                response = await self.process_message(message)
+                print(json.dumps(response), flush=True)
+
+            except KeyboardInterrupt:
+                print("\nShutting down Builder Agent...", file=sys.stderr)
+                break
+            except Exception as e:
+                print(json.dumps({
+                    "jsonrpc": "2.0",
+                    "error": {"code": JSONRPC_INTERNAL_ERROR, "message": f"Internal error: {e}"},
+                }), flush=True)
+
+
+async def main():
+    server = StdioJsonRpcServer()
+    await server.run()
+
+
+if __name__ == "__main__":
+    asyncio.run(main())

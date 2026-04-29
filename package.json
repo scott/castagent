@@ -1,0 +1,20 @@
+{
+  "name": "agent-cast",
+  "version": "1.0.0",
+  "description": "Cast - Agent Building & Deployment Platform",
+  "private": true,
+  "workspaces": [
+    "typescript/*"
+  ],
+  "scripts": {
+    "build:cli": "cd typescript/cast-cli && npm run build",
+    "build:tui": "cd typescript/cast-tui && npm run build",
+    "build": "npm run build:cli && npm run build:tui",
+    "install:all": "npm install && cd typescript/cast-cli && npm install && cd ../cast-tui && npm install",
+    "dev:cli": "cd typescript/cast-cli && npm run dev",
+    "dev:tui": "cd typescript/cast-tui && npm run dev"
+  },
+  "devDependencies": {
+    "typescript": "^5"
+  }
+}

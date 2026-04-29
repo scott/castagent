@@ -1,0 +1,72 @@
+{
+  "name": "cast-cli",
+  "version": "1.0.0",
+  "description": "Cast - Agent Building & Deployment Platform CLI",
+  "author": "Cast Team",
+  "bin": {
+    "cast": "./bin/run"
+  },
+  "homepage": "https://github.com/agent-cast/cast",
+  "license": "Apache-2.0",
+  "main": "dist/index.js",
+  "repository": "agent-cast/cast",
+  "files": [
+    "/bin",
+    "/dist",
+    "/npm-shrinkwrap.json",
+    "/oclif.manifest.json"
+  ],
+  "dependencies": {
+    "@oclif/core": "^3",
+    "@oclif/plugin-help": "^6",
+    "@oclif/plugin-plugins": "^5",
+    "better-sqlite3": "^9.4.3",
+    "keytar": "^7.9.0",
+    "yaml": "^2.4.1",
+    "axios": "^1.6.8",
+    "ws": "^8.16.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.9",
+    "@types/node": "^20",
+    "@types/ws": "^8.5.10",
+    "typescript": "^5",
+    "ts-node": "^10.9.2",
+    "oclif": "^4",
+    "shx": "^0.3.4"
+  },
+  "oclif": {
+    "bin": "cast",
+    "dirname": "cast",
+    "commands": "./dist/commands",
+    "plugins": [
+      "@oclif/plugin-help",
+      "@oclif/plugin-plugins"
+    ],
+    "topicSeparator": " ",
+    "topics": {
+      "meta": {
+        "description": "Meta-builder test commands"
+      }
+    }
+  },
+  "scripts": {
+    "build": "shx rm -rf dist && tsc -b",
+    "lint": "eslint . --ext .ts",
+    "postpack": "shx rm -f oclif.manifest.json",
+    "posttest": "npm run lint",
+    "prepack": "npm run build && oclif manifest && oclif readme",
+    "test": "mocha --forbid-only \"tests/**/*.test.ts\"",
+    "version": "oclif readme && git add README.md"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  },
+  "keywords": [
+    "oclif",
+    "ai",
+    "agents",
+    "cli"
+  ],
+  "types": "dist/index.d.ts"
+}

@@ -1,0 +1,14 @@
+#!/bin/bash
+# Cast CLI wrapper script
+# This script runs the Cast CLI from the project directory
+
+# Get the directory where this script is located
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# If this is a symlink, resolve it
+if [ -L "$0" ]; then
+    SCRIPT_DIR="$(cd "$(dirname "$(readlink "$0")")" && pwd)"
+fi
+
+# Run the actual CLI
+exec "$SCRIPT_DIR/typescript/cast-cli/bin/run" "$@"
