@@ -214,3 +214,15 @@ export function getOpenRouterApiKey(): string | undefined {
     loadConfig().providers?.openrouter?.api_key
   )
 }
+
+export async function execCommandIgnoreError(
+  command: string,
+  args: string[],
+  options?: { cwd?: string; silent?: boolean },
+): Promise<void> {
+  try {
+    await execCommand(command, args, {...options, silent: options?.silent ?? true})
+  } catch {
+    // ignore errors
+  }
+}

@@ -193,6 +193,7 @@ cast <agent-name>                   # Run agent (dev if exists, else builder)
 cast <agent-name> dev               # Development mode (local A2A server)
 cast <agent-name> test              # Run test scenarios
 cast <agent-name> deploy            # Deploy to hosting provider
+cast <agent-name> shutdown          # Shut down deployed agent (destroy remote resources)
 cast <agent-name> connect           # Connect to deployed agent
 cast <agent-name> logs              # View runtime logs
 cast <agent-name> update            # Update agent configuration
@@ -211,6 +212,7 @@ Usage:
   cast <agent> dev              Development mode
   cast <agent> test             Run test scenarios
   cast <agent> deploy           Deploy to provider
+  cast <agent> shutdown         Shut down deployed agent
   cast <agent> connect          Connect to deployed agent
   cast meta test                Run meta-builder tests
 
@@ -218,6 +220,7 @@ Examples:
   cast list                       List all agents
   cast email-agent dev           Start email-agent locally
   cast email-agent deploy        Deploy to cloud
+  cast email-agent shutdown      Tear down cloud deployment
   cast email-agent connect       Chat with deployed agent
 
 For more help: cast <command> --help

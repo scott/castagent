@@ -7,6 +7,7 @@ import {
   ensureDockerfile,
   getAgentPath,
   execCommand,
+  execCommandIgnoreError,
   saveDeployment,
   getOpenRouterApiKey,
 } from './deploy-utils'
@@ -118,6 +119,10 @@ export default class FlyDeploy extends Command {
     this.log('')
     this.log('To connect:')
     this.log(`  cast connect ${agentName}`)
+  }
+
+  static async destroy(agentName: string): Promise<void> {
+    await execCommandIgnoreError('flyctl', ['apps', 'destroy', `cast-${agentName}`, '--yes'])
   }
 
   private generateFlyToml(agentPath: string, agentName: string): void {

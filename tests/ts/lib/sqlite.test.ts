@@ -14,4 +14,15 @@ describe('SQLite', () => {
     expect(agent).to.exist
     expect(agent.name).to.equal('test-agent')
   })
+
+  it('should add and remove a deployment', () => {
+    db.setDeployment('test-agent', 'docker', 'http://localhost:8080', 'hash123')
+    const deployment = db.getDeployment('test-agent')
+    expect(deployment).to.exist
+    expect(deployment.provider).to.equal('docker')
+
+    db.removeDeployment('test-agent')
+    const removed = db.getDeployment('test-agent')
+    expect(removed).to.not.exist
+  })
 })

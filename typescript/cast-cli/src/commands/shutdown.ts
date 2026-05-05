@@ -1,0 +1,104 @@
+import {Args, Command, Flags} from '@oclif/core'
+import * as readline from 'readline'
+import {db} from '../lib/sqlite'
+import {keychain} from '../lib/keychain'
+import DockerDeploy from '../lib/deploy/docker'
+import FlyDeploy from '../lib/deploy/fly'
+import RailwayDeploy from '../lib/deploy/railway'
+import DigitalOceanDeploy from '../lib/deploy/digitalocean'
+
+const PROVIDER_DESTROYERS: Record<string, (agentName: string) => Promise<void>> = {
+  docker: DockerDeploy.destroy,
+  fly: FlyDeploy.destroy,
+  railway: RailwayDeploy.destroy,
+  digitalocean: DigitalOceanDeploy.destroy,
+}
+
+export default class Shutdown extends Command {
+  static description = 'Shut down a deployed agent (destroy remote resources)'
+
+  static examples = [
+    '<%= config.bin %> <%= command.id %> email-agent',
+    '<%= config.bin %> <%= command.id %> email-agent --force',
+  ]
+
+  static flags = {
+    force: Flags.boolean({description: 'Skip confirmation prompt'}),
+  }
+
+  static args = {
+    agent: Args.string({description: 'Agent name', required: true}),
+  }
+
+  private async confirm(message: string): Promise<boolean> {
+    const rl = readline.createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    })
+
+    return new Promise((resolve) => {
+      rl.question(`${message} (y/N) `, (answer) => {
+        rl.close()
+        resolve(answer.trim().toLowerCase() === 'y')
+      })
+    })
+  }
+
+  async run(): Promise<void> {
+    const {args, flags} = await this.parse(Shutdown)
+    const agentName = args.agent
+
+    const deployment = db.getDeployment(agentName)
+
+    if (!deployment) {
+      this.log(`Agent '${agentName}' is not currently deployed.`)
+      return
+    }
+
+    const provider = deployment.provider
+    const url = deployment.deployment_url
+
+    this.log(`Agent '${agentName}' is deployed to ${provider} (${url})`)
+
+    if (!flags.force) {
+      const confirmed = await this.confirm(`Are you sure you want to shut down '${agentName}' and destroy all remote resources?`)
+      if (!confirmed) {
+        this.log('Shutdown cancelled.')
+        return
+      }
+    }
+
+    this.log(`Shutting down ${agentName} on ${provider}...`)
+
+    const destroyer = PROVIDER_DESTROYERS[provider]
+    if (!destroyer) {
+      this.warn(`No shutdown handler for provider '${provider}'. Removing local records only.`)
+    } else {
+      try {
+        await destroyer(agentName)
+        this.log(`Remote resources destroyed on ${provider}.`)
+      } catch (error: any) {
+        this.warn(`Failed to destroy remote resources: ${error.message || error}`)
+        this.warn('Removing local records anyway. You may need to clean up manually.')
+      }
+    }
+
+    // Remove deployment from database
+    try {
+      db.removeDeployment(agentName)
+      this.log('Removed deployment record from database.')
+    } catch (error: any) {
+      this.warn('Failed to remove deployment record: ' + error.message)
+    }
+
+    // Remove auth token from keychain
+    try {
+      await keychain.deleteToken(agentName)
+      this.log('Removed auth token from keychain.')
+    } catch (error: any) {
+      this.warn('Failed to remove auth token from keychain: ' + error.message)
+    }
+
+    this.log(`Agent '${agentName}' has been shut down.`)
+  }
+}

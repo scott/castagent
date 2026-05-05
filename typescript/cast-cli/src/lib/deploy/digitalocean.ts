@@ -20,6 +20,22 @@ export default class DigitalOceanDeploy extends Command {
     agent: Args.string({description: 'Agent name', required: true}),
   }
 
+  static async destroy(agentName: string): Promise<void> {
+    const apiToken = getProviderToken('digitalocean')
+    if (!apiToken) {
+      throw new Error('DigitalOcean API token not found. Set DIGITALOCEAN_TOKEN environment variable or add providers.digitalocean.token to ~/.cast/config.yaml')
+    }
+
+    const existingApp = await DigitalOceanDeploy.findExistingApp(apiToken, `cast-${agentName}`)
+    if (!existingApp) {
+      return
+    }
+
+    await axios.delete(`https://api.digitalocean.com/v2/apps/${existingApp.id}`, {
+      headers: {Authorization: `Bearer ${apiToken}`},
+    })
+  }
+
   async run(): Promise<void> {
     const { args } = await this.parse(DigitalOceanDeploy)
     const agentName = args.agent as string
@@ -108,7 +124,7 @@ export default class DigitalOceanDeploy extends Command {
     const appSpec = YAML.parse(fs.readFileSync(path.join(agentPath, 'app.yaml'), 'utf-8'))
 
     // Check if app already exists
-    const existingApp = await this.findExistingApp(apiToken, `cast-${agentName}`)
+    const existingApp = await DigitalOceanDeploy.findExistingApp(apiToken, `cast-${agentName}`)
 
     let deploymentUrl = ''
 
@@ -231,7 +247,7 @@ export default class DigitalOceanDeploy extends Command {
     }
   }
 
-  private async findExistingApp(apiToken: string, appName: string): Promise<any | null> {
+  private static async findExistingApp(apiToken: string, appName: string): Promise<any | null> {
     try {
       const response = await axios.get('https://api.digitalocean.com/v2/apps', {
         headers: {Authorization: `Bearer ${apiToken}`},
@@ -240,7 +256,6 @@ export default class DigitalOceanDeploy extends Command {
       const apps = response.data.apps || []
       return apps.find((app: any) => app.spec?.name === appName) || null
     } catch (error: any) {
-      this.warn(`Failed to list apps: ${error.message}`)
       return null
     }
   }

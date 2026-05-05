@@ -36,6 +36,16 @@ export default class Delete extends Command {
     const agentName = args.agent
     const agentPath = path.join(os.homedir(), 'cast-agents', agentName)
 
+    // Check if agent is deployed
+    const deployment = db.getDeployment(agentName)
+    if (deployment) {
+      this.error(
+        `Agent '${agentName}' is currently deployed to ${deployment.provider} (${deployment.deployment_url}).\n` +
+        `Shut it down first before deleting:\n` +
+        `  cast shutdown ${agentName}`
+      )
+    }
+
     // Handle missing agent gracefully
     if (!fs.existsSync(agentPath)) {
       // Check if it's only in the database

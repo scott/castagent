@@ -7,6 +7,7 @@ import {
   ensureDockerfile,
   getAgentPath,
   execCommand,
+  execCommandIgnoreError,
   saveDeployment,
   getOpenRouterApiKey,
   getProviderToken,
@@ -132,5 +133,10 @@ export default class RailwayDeploy extends Command {
     this.log('')
     this.log('To connect:')
     this.log(`  cast connect ${agentName}`)
+  }
+
+  static async destroy(agentName: string): Promise<void> {
+    const agentPath = getAgentPath(agentName)
+    await execCommandIgnoreError('railway', ['down', '--yes'], {cwd: agentPath})
   }
 }

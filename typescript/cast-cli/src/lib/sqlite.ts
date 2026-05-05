@@ -133,6 +133,11 @@ export class CastDatabase {
     return stmt.get(name)
   }
 
+  public removeDeployment(name: string): void {
+    const stmt = this.db.prepare('DELETE FROM deployments WHERE agent_name = ?')
+    stmt.run(name)
+  }
+
   public setDeployment(name: string, provider: string, url: string, tokenHash: string): void {
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO deployments

@@ -90,6 +90,9 @@ cast stop demo-agent
 # Deploy an agent
 cast deploy demo-agent --provider docker
 
+# Shut down a deployed agent (destroy remote resources)
+cast shutdown demo-agent
+
 # Connect to deployed agent
 cast connect demo-agent
 
@@ -247,6 +250,7 @@ cast meta test --scenario create-simple
 - ✅ Railway deployment
 - ✅ Fly.io deployment
 - ✅ DigitalOcean App Platform deployment
+- ✅ Agent shutdown / undeploy
 - ✅ Streaming responses
 - ✅ Production TUI mode (green theme)
 - ✅ Agent configuration management

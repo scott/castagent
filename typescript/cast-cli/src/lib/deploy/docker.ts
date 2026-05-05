@@ -7,6 +7,7 @@ import * as path from 'path'
 
 import {keychain} from '../keychain'
 import {db} from '../sqlite'
+import {execCommandIgnoreError} from './deploy-utils'
 
 // Helper to run a shell command and return its exit code
 function runCommand(command: string, args: string[], options?: {stdio?: any; cwd?: string}): Promise<number> {
@@ -147,6 +148,12 @@ export default class DockerDeploy extends Command {
     this.log('')
     this.log('To stop:')
     this.log(`  docker stop ${containerName}`)
+  }
+
+  static async destroy(agentName: string): Promise<void> {
+    const containerName = `cast-${agentName}`
+    await execCommandIgnoreError('docker', ['stop', containerName])
+    await execCommandIgnoreError('docker', ['rm', containerName])
   }
 
   private createDockerfile(agentPath: string): void {
