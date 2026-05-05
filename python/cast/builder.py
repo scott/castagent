@@ -5,6 +5,7 @@ import os
 import re
 import sys
 import traceback
+import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 from typing import Annotated
@@ -533,6 +534,7 @@ class BuilderAgent:
         self.name_confirmed: bool = False
         self.agent_created: bool = False
         self.messages: List[BaseMessage] = []
+        self.edit_welcome: Optional[str] = None
 
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph state machine."""
@@ -579,6 +581,60 @@ class BuilderAgent:
         if hasattr(self.llm, 'set_new_mode'):
             self.llm.set_new_mode(enabled)
 
+    def load_agent_for_editing(self, name: str) -> None:
+        """Load an existing agent's configuration for editing."""
+        self.agent_name = name
+        # Ensure default system prompt is present before adding edit context
+        if not self.messages:
+            self.messages.append(SystemMessage(content=self.system_prompt))
+        try:
+            config_text = get_agent_config.invoke({"name": name})
+            self.messages.append(SystemMessage(
+                content=f"You are now editing the existing agent '{name}'. "
+                        f"Here is its current configuration:\n\n{config_text}\n\n"
+                        f"Help the user modify this agent. You can update instructions, config, or install MCP servers."
+            ))
+            # Parse config to build a rich welcome message summarizing attributes
+            config = yaml.safe_load(config_text) or {}
+            self.edit_welcome = self._build_edit_welcome(name, config)
+        except Exception as e:
+            self.messages.append(SystemMessage(
+                content=f"You are now editing the existing agent '{name}'. "
+                        f"Could not load full config: {e}\n\n"
+                        f"Help the user modify this agent."
+            ))
+            self.edit_welcome = None
+
+    def _build_edit_welcome(self, name: str, config: Dict[str, Any]) -> str:
+        """Build a welcome message summarizing an agent's configuration."""
+        lines: List[str] = []
+        lines.append(f"Hello! I'm the Cast Builder Agent. I'm here to help you edit **{name}**.\n")
+
+        description = config.get("description", "No description set.")
+        lines.append(f"**Description:** {description}\n")
+
+        brain = config.get("brain", {})
+        model = brain.get("model", "No model set")
+        lines.append(f"**Model:** {model}")
+
+        tools = config.get("tools", {})
+        builtin = tools.get("builtin", [])
+        if builtin:
+            lines.append(f"**Built-in tools:** {', '.join(builtin)}")
+
+        mcp = tools.get("mcp", [])
+        if mcp:
+            mcp_names = [m.get("server", m) if isinstance(m, dict) else m for m in mcp]
+            lines.append(f"**MCP integrations:** {', '.join(mcp_names)}")
+
+        harness = config.get("harness", {})
+        principles = harness.get("principles", [])
+        if principles:
+            lines.append(f"**Principles:** {', '.join(principles)}")
+
+        lines.append("\nWhat would you like to change?")
+        return "\n".join(lines)
+
     async def process_message(self, message: str) -> str:
         """Process a user message through the agent graph."""
         # Add system prompt if this is the first message
@@ -621,7 +677,6 @@ class BuilderAgent:
             return f"Error executing tool: {e}"
 
     def get_welcome_message(self) -> str:
-        """Get the welcome message for a new session."""
         if self.new_mode:
             return (
                 "Hello! I'm the Cast Builder Agent. Let's create a new agent together.\n\n"
@@ -633,17 +688,18 @@ class BuilderAgent:
                 + "What would you like your agent to do?"
             )
 
-        name = self.agent_name or "your new agent"
+        if self.edit_welcome:
+            return self.edit_welcome
+
+        name = self.agent_name or "your agent"
         return (
-            f"Hello! I'm the Cast Builder Agent. I'll help you create **{name}**.\n\n"
-            + f"To get started, could you tell me:\n\n"
-            + f"1. What should this agent do? (e.g., read emails, monitor logs, write code)\n"
-            + f"2. What tools or integrations does it need? (e.g., Gmail, Slack, GitHub)\n"
-            + f"3. Any specific permissions or security requirements?\n\n"
-            + f"Or if you know what you want, just say something like:\n"
-            + f'- "Create an agent called email-agent"\n'
-            + f'- "Install Gmail MCP for my agent"\n'
-            + f'- "Recommend a model for code review"'
+            f"Hello! I'm the Cast Builder Agent. I'm here to help you edit **{name}**.\n\n"
+            f"I've loaded its current configuration. I can help you:\n"
+            f"- Update instructions or system prompts\n"
+            f"- Modify agent.yaml settings (model, tools, permissions)\n"
+            f"- Add or remove MCP integrations\n"
+            f"- Recommend better models\n\n"
+            f"What would you like to change?"
         )
 
 
@@ -701,7 +757,8 @@ class StdioJsonRpcServer:
             self.agent.set_new_mode(True)
             print("Builder Agent initialized in NEW MODE", file=sys.stderr)
         else:
-            print(f"Builder Agent initialized for: {agent_name}", file=sys.stderr)
+            print(f"Builder Agent initialized for editing: {agent_name}", file=sys.stderr)
+            self.agent.load_agent_for_editing(agent_name)
 
         welcome = self.agent.get_welcome_message()
         return {

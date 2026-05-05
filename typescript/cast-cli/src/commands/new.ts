@@ -88,6 +88,8 @@ export default class New extends Command {
         PYTHONPATH: pythonPath,
         CAST_NEW_MODE: '1',
       } as Record<string, string>,
+      '__new__',
+      true,
     )
 
     let bridgeReady = false
@@ -128,16 +130,22 @@ export default class New extends Command {
       return
     }
 
-    // Pause parent's stdin so TUI gets exclusive keyboard access
-    process.stdin.pause()
-
-    // Spawn TUI with inherited stdio
-    const opentui = spawn(bunPath, [
+    const welcomeMessage = bridge.getWelcomeMessage()
+    const tuiArgs = [
       tuiPath,
       '--agent', 'Cast Builder',
       '--url', `http://127.0.0.1:${bridge.port}`,
       '--mode', 'dev',
-    ], {
+    ]
+    if (welcomeMessage) {
+      tuiArgs.push('--welcome', welcomeMessage)
+    }
+
+    // Pause parent's stdin so TUI gets exclusive keyboard access
+    process.stdin.pause()
+
+    // Spawn TUI with inherited stdio
+    const opentui = spawn(bunPath, tuiArgs, {
       stdio: 'inherit',
       detached: false,
     })

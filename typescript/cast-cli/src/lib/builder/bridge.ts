@@ -31,11 +31,14 @@ export class BuilderA2ABridge extends EventEmitter {
   private pendingResponses: Map<number | string, {resolve: (value: any) => void; reject: (err: Error) => void}> = new Map()
   private responseBuffer = ''
   private isReady = false
+  private welcomeMessage: string | null = null
 
   constructor(
     private command: string,
     private args: string[] = [],
     private env: Record<string, string> = {},
+    private agentName: string = '__new__',
+    private newMode: boolean = true,
   ) {
     super()
   }
@@ -144,11 +147,16 @@ export class BuilderA2ABridge extends EventEmitter {
 
   private async initializeBuilder(): Promise<void> {
     const result = await this.sendBuilderRequest('initialize', {
-      agent_name: '__new__',
-      new_mode: true,
+      agent_name: this.agentName,
+      new_mode: this.newMode,
     })
+    this.welcomeMessage = result?.message || null
     this.isReady = true
     this.emit('ready', result)
+  }
+
+  getWelcomeMessage(): string | null {
+    return this.welcomeMessage
   }
 
   private async startServer(): Promise<void> {

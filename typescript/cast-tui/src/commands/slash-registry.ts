@@ -2,7 +2,9 @@ import clipboardy from 'clipboardy'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
+import { execFileSync } from 'child_process'
 import {BoxRenderable, TextRenderable, StyledText, white, dim, green, yellow, red, cyan} from '@opentui/core'
+import type {KeyEvent} from '@opentui/core'
 import {saveTranscript} from '../lib/transcript.js'
 import {getDb} from '../lib/db.js'
 import {getKeychain} from '../lib/keychain.js'
@@ -61,6 +63,55 @@ function listAgentsFromDisk(): string[] {
   }
 
   return agents.sort()
+}
+
+function launchBuilderEditor(ctx: CommandContext, agentName: string): void {
+  // Destroy renderer to release terminal
+  if (ctx.renderer && !ctx.renderer.isDestroyed) {
+    ctx.renderer.destroy()
+  }
+
+  // Try to find the cast CLI binary
+  const candidates = [
+    'cast',
+    path.resolve(__dirname, '../../cast-cli/bin/run'),
+    path.resolve(__dirname, '../../../cast-cli/bin/run'),
+    path.resolve(__dirname, '../../../../cast-cli/bin/run'),
+  ]
+
+  let binary: string | null = null
+  for (const candidate of candidates) {
+    try {
+      if (candidate === 'cast') {
+        // Check if cast is in PATH
+        execFileSync('which', ['cast'], { stdio: 'ignore' })
+        binary = candidate
+        break
+      } else if (fs.existsSync(candidate)) {
+        binary = candidate
+        break
+      }
+    } catch {
+      // try next
+    }
+  }
+
+  if (!binary) {
+    console.error('Could not find cast CLI binary. Please ensure cast is installed.')
+    process.exit(1)
+  }
+
+  try {
+    execFileSync(binary, ['edit', agentName], { stdio: 'inherit' })
+  } catch (err: any) {
+    if (err.signal === 'SIGINT') {
+      // User pressed Ctrl+C, exit cleanly
+    } else {
+      console.error(`Failed to launch editor: ${err.message}`)
+    }
+  }
+
+  process.exit(0)
 }
 
 const commands: SlashCommand[] = [
@@ -569,6 +620,107 @@ const commands: SlashCommand[] = [
           `Failed to connect: ${err instanceof Error ? err.message : String(err)}`,
           ctx.mode,
         )
+      }
+    },
+  },
+
+  {
+    name: 'edit',
+    description: 'Load an existing agent into the builder for editing',
+    category: 'agent',
+    args: '[agent-name]',
+    handler: async (ctx, args) => {
+      if (args.length > 0) {
+        const agentName = args[0]
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(agentName)) {
+          ctx.messages.addAgentMessage(
+            `Invalid agent name '${agentName}'. Names must start with a letter or number and contain only letters, numbers, and hyphens.`,
+            ctx.mode,
+          )
+          return
+        }
+        const agentPath = path.join(os.homedir(), 'cast-agents', agentName, 'agent.yaml')
+        if (!fs.existsSync(agentPath)) {
+          ctx.messages.addAgentMessage(`Agent '${agentName}' not found.`, ctx.mode)
+          return
+        }
+        launchBuilderEditor(ctx, agentName)
+        return
+      }
+
+      const agents = listAgentsFromDisk()
+      if (agents.length === 0) {
+        ctx.messages.addAgentMessage('No agents found. Create one with: cast new', ctx.mode)
+        return
+      }
+
+      const modal = createModal(ctx.renderer, ctx.input, {
+        title: 'Select Agent to Edit',
+        width: '70%',
+        height: '60%',
+      })
+
+      let selectedIndex = 0
+
+      const contentBox = new BoxRenderable(ctx.renderer, {
+        width: '100%',
+        height: '100%',
+        flexDirection: 'column',
+        gap: 0,
+        paddingTop: 1,
+      })
+
+      function renderList() {
+        for (const child of contentBox.getChildren()) {
+          contentBox.remove(child.id)
+        }
+
+        for (let i = 0; i < agents.length; i++) {
+          const prefix = i === selectedIndex ? cyan('▸ ') : white('  ')
+          const nameColor = i === selectedIndex ? cyan : white
+          const row = new TextRenderable(ctx.renderer, {
+            content: new StyledText([prefix, nameColor(agents[i])]),
+          })
+          contentBox.add(row)
+        }
+
+        const footer = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('\nUse ↑↓ to navigate, Enter to select, ESC to close')]),
+        })
+        contentBox.add(footer)
+      }
+
+      renderList()
+      modal.setContent(contentBox)
+      ctx.renderer.root.add(modal.box)
+      modal.show()
+
+      const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+      modal.box.handleKeyPress = (key: KeyEvent) => {
+        if (key.name === 'up') {
+          selectedIndex = (selectedIndex - 1 + agents.length) % agents.length
+          renderList()
+          ctx.renderer.render()
+          return true
+        }
+        if (key.name === 'down') {
+          selectedIndex = (selectedIndex + 1) % agents.length
+          renderList()
+          ctx.renderer.render()
+          return true
+        }
+        if (key.name === 'return' || key.name === 'enter') {
+          modal.hide()
+          launchBuilderEditor(ctx, agents[selectedIndex])
+          return true
+        }
+        if (key.name === 'escape') {
+          modal.hide()
+          ctx.input.focus()
+          return true
+        }
+        return originalHandleKeyPress ? originalHandleKeyPress(key) : false
       }
     },
   },

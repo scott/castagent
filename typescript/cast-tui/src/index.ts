@@ -10,6 +10,7 @@ interface TuiOptions {
   url: string
   token?: string
   mode?: UiMode
+  welcome?: string
 }
 
 export async function startTui(options: TuiOptions): Promise<void> {
@@ -20,7 +21,7 @@ export async function startTui(options: TuiOptions): Promise<void> {
 
   try {
     await showWelcomeScreen(renderer, options.agent)
-    await showChatScreen(renderer, options.agent, options.url, options.token, options.mode)
+    await showChatScreen(renderer, options.agent, options.url, options.token, options.mode, options.welcome)
   } catch (err) {
     console.error('TUI error:', err)
   } finally {
@@ -59,6 +60,9 @@ if (isMain) {
         if (value === 'dev' || value === 'production') {
           options.mode = value
         }
+        break
+      case '--welcome':
+        options.welcome = value
         break
     }
   }

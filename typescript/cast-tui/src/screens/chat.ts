@@ -14,6 +14,7 @@ export async function showChatScreen(
   initialAgentUrl: string,
   authToken?: string,
   uiMode: UiMode = 'dev',
+  initialWelcome?: string,
 ): Promise<void> {
   return new Promise((resolve) => {
     // Remove previous screen (e.g. welcome screen)
@@ -55,6 +56,13 @@ export async function showChatScreen(
 
     if (uiMode === 'production') {
       messages.showProductionIndicator()
+    }
+
+    // Display initial welcome message from the builder agent (e.g., edit mode summary)
+    if (initialWelcome) {
+      messages.addAgentMessage(initialWelcome, mode)
+      messageHistory.push({role: 'agent', text: initialWelcome})
+      lastAgentMessage = initialWelcome
     }
 
     // Autocomplete dropdown

@@ -72,6 +72,9 @@ cast list
 # Describe an agent's configuration
 cast describe demo-agent
 
+# Edit an existing agent (interactive TUI wizard)
+cast edit demo-agent
+
 # Start an agent in development mode
 cast dev demo-agent
 
@@ -120,6 +123,29 @@ After creation, start your agent with:
 ```bash
 cast dev <agent-name>
 ```
+
+### Editing an Existing Agent
+
+The `cast edit` command loads an existing agent into the interactive Builder TUI, allowing you to modify its configuration, instructions, tools, and MCP integrations through conversation:
+
+```bash
+# Edit an existing agent
+cast edit my-agent
+```
+
+While inside any TUI session (including `cast dev` or `cast new`), you can also use the slash command:
+
+```
+/edit my-agent
+```
+
+Or, to pick from a list of all agents:
+
+```
+/edit
+```
+
+The Builder Agent will load your agent's current configuration and welcome you with suggestions for what you can change.
 
 ### Updating Agent Configuration
 
