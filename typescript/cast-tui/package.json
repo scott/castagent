@@ -12,7 +12,8 @@
     "dev": "ts-node --esm src/index.ts"
   },
   "dependencies": {
-    "@opentui/core": "^0.1.0"
+    "@opentui/core": "^0.1.0",
+    "clipboardy": "^4.0.0"
   },
   "devDependencies": {
     "@types/node": "^20",

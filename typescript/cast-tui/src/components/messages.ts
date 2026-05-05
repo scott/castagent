@@ -1,4 +1,5 @@
-import {ScrollBoxRenderable, TextRenderable, StyledText, stringToStyledText, blue, green, yellow, dim, red, cyan, magenta} from '@opentui/core'
+import {ScrollBoxRenderable, TextRenderable, BoxRenderable, StyledText, stringToStyledText, blue, green, yellow, dim, red, cyan, magenta, TextAttributes} from '@opentui/core'
+import {markdownToStyledText} from '../lib/markdown.js'
 import type {Mode, UiMode} from './header.js'
 
 export type MessageType = 'text' | 'thinking' | 'tool' | 'error'
@@ -39,14 +40,21 @@ export function createMessages(ctx: any, uiMode: UiMode): MessagesComponent {
   })
 
   function addUserMessage(text: string) {
-    const prefix = blue('\u25b8 ')
-    const body = stringToStyledText(text)
-    const styled = new StyledText([prefix, ...body.chunks])
-    const msg = new TextRenderable(ctx, {
-      content: styled,
-      wrapMode: 'word',
+    const row = new BoxRenderable(ctx, {
+      width: '100%',
+      flexDirection: 'row',
     })
-    scrollBox.add(msg)
+    const prefix = new TextRenderable(ctx, {
+      content: new StyledText([blue('\u25b8 ')]),
+    })
+    const body = new TextRenderable(ctx, {
+      content: stringToStyledText(text),
+      wrapMode: 'word',
+      flexGrow: 1,
+    })
+    row.add(prefix)
+    row.add(body)
+    scrollBox.add(row)
   }
 
   function addAgentMessage(content: string | AgentMessage, mode: Mode) {
@@ -75,48 +83,69 @@ export function createMessages(ctx: any, uiMode: UiMode): MessagesComponent {
       return
     }
 
-    let prefix
+    let prefixStyled
     if (messageType === 'error') {
-      prefix = red('\u25b9 ')
+      prefixStyled = red('\u25b9 ')
     } else if (messageType === 'thinking') {
-      prefix = dim(magenta('\u25b9 '))
+      prefixStyled = dim(magenta('\u25b9 '))
     } else if (messageType === 'tool') {
-      prefix = cyan('\u25b9 ')
+      prefixStyled = cyan('\u25b9 ')
     } else {
-      prefix = mode === 'build' ? yellow('\u25b9 ') : green('\u25b9 ')
+      prefixStyled = mode === 'build' ? yellow('\u25b9 ') : green('\u25b9 ')
     }
 
-    const body = stringToStyledText(messageText)
-    const styled = new StyledText([prefix, ...body.chunks])
-    const msg = new TextRenderable(ctx, {
-      content: styled,
-      wrapMode: 'word',
+    const row = new BoxRenderable(ctx, {
+      width: '100%',
+      flexDirection: 'row',
     })
-    scrollBox.add(msg)
+    const prefix = new TextRenderable(ctx, {
+      content: new StyledText([prefixStyled]),
+    })
+    const body = new TextRenderable(ctx, {
+      content: markdownToStyledText(messageText),
+      wrapMode: 'word',
+      flexGrow: 1,
+    })
+    if (messageType === 'thinking') {
+      body.attributes = TextAttributes.DIM
+    }
+    row.add(prefix)
+    row.add(body)
+    scrollBox.add(row)
   }
 
   function addStreamingAgentMessage(mode: Mode): StreamingMessage {
-    const prefix = mode === 'build' ? yellow('\u25b9 ') : green('\u25b9 ')
+    const prefixStyled = mode === 'build' ? yellow('\u25b9 ') : green('\u25b9 ')
     let fullText = ''
-    const typingIndicator = stringToStyledText('\u25cf\u25cf\u25cf')
-    const styled = new StyledText([prefix, ...typingIndicator.chunks])
-    const msg = new TextRenderable(ctx, {
-      content: styled,
-      wrapMode: 'word',
+
+    const row = new BoxRenderable(ctx, {
+      width: '100%',
+      flexDirection: 'row',
     })
-    scrollBox.add(msg)
+    const prefix = new TextRenderable(ctx, {
+      content: new StyledText([prefixStyled]),
+    })
+    const body = new TextRenderable(ctx, {
+      content: stringToStyledText('\u25cf\u25cf\u25cf'),
+      wrapMode: 'word',
+      flexGrow: 1,
+    })
+    body.attributes = TextAttributes.DIM
+    row.add(prefix)
+    row.add(body)
+    scrollBox.add(row)
 
     return {
       update(text: string) {
         fullText += text
-        const body = stringToStyledText(fullText)
-        msg.content = new StyledText([prefix, ...body.chunks])
-        msg.requestRender()
+        body.content = markdownToStyledText(fullText)
+        body.attributes = TextAttributes.DIM
+        body.requestRender()
       },
       done() {
-        const body = stringToStyledText(fullText || '(no response)')
-        msg.content = new StyledText([prefix, ...body.chunks])
-        msg.requestRender()
+        body.content = markdownToStyledText(fullText || '(no response)')
+        body.attributes = TextAttributes.NONE
+        body.requestRender()
       },
     }
   }

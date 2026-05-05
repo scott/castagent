@@ -1,0 +1,636 @@
+import clipboardy from 'clipboardy'
+import * as fs from 'fs'
+import * as path from 'path'
+import * as os from 'os'
+import {BoxRenderable, TextRenderable, StyledText, white, dim, green, yellow, red, cyan} from '@opentui/core'
+import {saveTranscript} from '../lib/transcript.js'
+import {getDb} from '../lib/db.js'
+import {getKeychain} from '../lib/keychain.js'
+import {createModal} from '../components/modal.js'
+
+export interface SlashCommand {
+  name: string
+  description: string
+  category: 'chat' | 'agent' | 'session'
+  args?: string
+  handler: (ctx: CommandContext, args: string[]) => Promise<void>
+}
+
+export interface CommandContext {
+  agentName: string
+  agentUrl: string
+  authToken?: string
+  mode: 'plan' | 'build'
+  renderer: any
+  client: any
+  messages: any
+  input: any
+  setMode: (mode: 'plan' | 'build') => void
+  reinitializeChat: (agentName: string, url: string, token?: string) => Promise<void>
+  exitTui: () => void
+  messageHistory: Array<{role: 'user' | 'agent'; text: string}>
+  lastAgentMessage?: string
+}
+
+function isProcessAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Scan ~/cast-agents/ for agent directories (containing agent.yaml).
+ * This is the canonical source of agents — the SQLite DB only tracks
+ * runtime/deployment state and may be empty for newly-created agents.
+ */
+function listAgentsFromDisk(): string[] {
+  const agentsDir = path.join(os.homedir(), 'cast-agents')
+  if (!fs.existsSync(agentsDir)) {
+    return []
+  }
+
+  const agents: string[] = []
+  for (const item of fs.readdirSync(agentsDir)) {
+    const agentPath = path.join(agentsDir, item)
+    if (fs.statSync(agentPath).isDirectory() && fs.existsSync(path.join(agentPath, 'agent.yaml'))) {
+      agents.push(item)
+    }
+  }
+
+  return agents.sort()
+}
+
+const commands: SlashCommand[] = [
+  {
+    name: 'help',
+    description: 'Show all available slash commands',
+    category: 'chat',
+    handler: async (ctx) => {
+      const lines: string[] = []
+      lines.push('Available commands:')
+      lines.push('')
+
+      const categories: Record<string, string> = {
+        chat: 'Chat',
+        agent: 'Agent',
+        session: 'Session',
+      }
+
+      for (const [cat, label] of Object.entries(categories)) {
+        const cmds = commands.filter((c) => c.category === cat)
+        if (cmds.length > 0) {
+          lines.push(`${label}:`)
+          for (const cmd of cmds) {
+            const args = cmd.args ? ` ${cmd.args}` : ''
+            lines.push(`  /${cmd.name}${args} - ${cmd.description}`)
+          }
+          lines.push('')
+        }
+      }
+
+      ctx.messages.addAgentMessage(lines.join('\n'), ctx.mode)
+    },
+  },
+
+  {
+    name: 'clear',
+    description: 'Clear all messages from the chat',
+    category: 'chat',
+    handler: async (ctx) => {
+      for (const child of ctx.messages.scrollBox.getChildren()) {
+        ctx.messages.scrollBox.remove(child.id)
+      }
+      ctx.messageHistory = []
+      ctx.lastAgentMessage = undefined
+    },
+  },
+
+  {
+    name: 'mode',
+    description: 'Toggle or set plan/build mode',
+    category: 'chat',
+    args: '[plan|build]',
+    handler: async (ctx, args) => {
+      let newMode: 'plan' | 'build'
+      if (args.length > 0) {
+        const arg = args[0].toLowerCase()
+        if (arg !== 'plan' && arg !== 'build') {
+          ctx.messages.addAgentMessage('Usage: /mode [plan|build]', ctx.mode)
+          return
+        }
+        newMode = arg
+      } else {
+        newMode = ctx.mode === 'plan' ? 'build' : 'plan'
+      }
+
+      ctx.setMode(newMode)
+      ctx.messages.addAgentMessage(`Mode set to ${newMode.toUpperCase()}`, ctx.mode)
+    },
+  },
+
+  {
+    name: 'mode?',
+    description: 'Show current mode',
+    category: 'chat',
+    handler: async (ctx) => {
+      ctx.messages.addAgentMessage(`Current mode: ${ctx.mode.toUpperCase()}`, ctx.mode)
+    },
+  },
+
+  {
+    name: 'save',
+    description: 'Save conversation transcript to file',
+    category: 'session',
+    args: '[filename]',
+    handler: async (ctx, args) => {
+      if (ctx.messageHistory.length === 0) {
+        ctx.messages.addAgentMessage('No messages to save.', ctx.mode)
+        return
+      }
+
+      try {
+        const filePath = saveTranscript(ctx.agentName, ctx.messageHistory, args[0])
+        ctx.messages.addAgentMessage(`Transcript saved to: ${filePath}`, ctx.mode)
+      } catch (err) {
+        ctx.messages.addAgentMessage(
+          `Failed to save transcript: ${err instanceof Error ? err.message : String(err)}`,
+          ctx.mode,
+        )
+      }
+    },
+  },
+
+  {
+    name: 'copy',
+    description: 'Copy the last agent response to clipboard',
+    category: 'chat',
+    handler: async (ctx) => {
+      if (!ctx.lastAgentMessage) {
+        ctx.messages.addAgentMessage('No agent response to copy.', ctx.mode)
+        return
+      }
+
+      try {
+        await clipboardy.write(ctx.lastAgentMessage)
+        ctx.messages.addAgentMessage('Last agent response copied to clipboard.', ctx.mode)
+      } catch (err) {
+        ctx.messages.addAgentMessage(
+          `Failed to copy to clipboard: ${err instanceof Error ? err.message : String(err)}`,
+          ctx.mode,
+        )
+      }
+    },
+  },
+
+  {
+    name: 'reset',
+    description: 'Clear messages and reset context',
+    category: 'session',
+    handler: async (ctx) => {
+      for (const child of ctx.messages.scrollBox.getChildren()) {
+        ctx.messages.scrollBox.remove(child.id)
+      }
+      ctx.messageHistory = []
+      ctx.lastAgentMessage = undefined
+      ctx.messages.addAgentMessage('Chat reset. Context cleared.', ctx.mode)
+    },
+  },
+
+  {
+    name: 'list',
+    description: 'List all agents with their status',
+    category: 'agent',
+    handler: async (ctx) => {
+      const db = await getDb()
+      const agents = listAgentsFromDisk()
+
+      // Build modal content
+      const modal = createModal(ctx.renderer, ctx.input, {
+        title: 'Agents',
+        width: '70%',
+        height: '60%',
+      })
+
+      const contentBox = new BoxRenderable(ctx.renderer, {
+        width: '100%',
+        height: '100%',
+        flexDirection: 'column',
+        gap: 0,
+        paddingTop: 1,
+      })
+
+      if (agents.length === 0) {
+        const emptyText = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('No agents found.')]),
+        })
+        contentBox.add(emptyText)
+
+        const hint = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('\nCreate your first agent with: cast new')]),
+        })
+        contentBox.add(hint)
+      } else {
+        // Header row
+        const headerText = new TextRenderable(ctx.renderer, {
+          content: new StyledText([white('Agent Name            Status')]),
+        })
+        contentBox.add(headerText)
+
+        const sep = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('──────────────────────────────────────────')]),
+        })
+        contentBox.add(sep)
+
+        for (const name of agents) {
+          const displayName = name.padEnd(20)
+
+          let statusText = 'stopped'
+          let statusColor = red
+
+          if (db) {
+            try {
+              const deployment = db.getDeployment(name)
+              const localAgent = db.getLocalAgent(name)
+
+              if (deployment?.deployment_url) {
+                statusText = `deployed (${deployment.provider})`
+                statusColor = green
+              } else if (localAgent?.port) {
+                const running = isProcessAlive(localAgent.pid as number)
+                if (running) {
+                  statusText = `local (port ${localAgent.port})`
+                  statusColor = cyan
+                } else {
+                  statusText = 'stopped'
+                  statusColor = yellow
+                }
+              }
+            } catch {
+              // Database lookup failed for this agent — show as stopped
+            }
+          }
+
+          const row = new TextRenderable(ctx.renderer, {
+            content: new StyledText([white(displayName), statusColor(statusText)]),
+          })
+          contentBox.add(row)
+        }
+      }
+
+      const footer = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('\nPress ESC to close')]),
+      })
+      contentBox.add(footer)
+
+      modal.setContent(contentBox)
+      ctx.renderer.root.add(modal.box)
+      modal.show()
+    },
+  },
+
+  {
+    name: 'describe',
+    description: 'Show details for the current agent',
+    category: 'agent',
+    handler: async (ctx) => {
+      const db = await getDb()
+      if (!db) {
+        ctx.messages.addAgentMessage('Unable to access agent database.', ctx.mode)
+        return
+      }
+
+      try {
+        const agent = db.getAgent(ctx.agentName)
+        const localAgent = db.getLocalAgent(ctx.agentName)
+        const deployment = db.getDeployment(ctx.agentName)
+
+        const lines: string[] = []
+        lines.push(`Agent: ${ctx.agentName}`)
+        lines.push('')
+
+        if (agent) {
+          lines.push('Database record:')
+          lines.push(`  Created: ${agent.created_at}`)
+          lines.push(`  Updated: ${agent.updated_at}`)
+          lines.push(`  YAML path: ${agent.agent_yaml_path || 'N/A'}`)
+          lines.push(`  Run count: ${agent.run_count || 0}`)
+          lines.push('')
+        } else {
+          lines.push('No database record found.')
+          lines.push('')
+        }
+
+        if (localAgent) {
+          lines.push('Local status:')
+          lines.push(`  PID: ${localAgent.pid}`)
+          lines.push(`  Port: ${localAgent.port}`)
+          lines.push(`  Started: ${localAgent.started_at}`)
+          if (localAgent.stopped_at) {
+            lines.push(`  Stopped: ${localAgent.stopped_at}`)
+          }
+          lines.push('')
+        } else {
+          lines.push('Local status: not running')
+          lines.push('')
+        }
+
+        if (deployment) {
+          lines.push('Deployment:')
+          lines.push(`  Provider: ${deployment.provider}`)
+          lines.push(`  URL: ${deployment.deployment_url}`)
+          lines.push(`  Deployed: ${deployment.deployed_at}`)
+          if (deployment.last_connected_at) {
+            lines.push(`  Last connected: ${deployment.last_connected_at}`)
+          }
+          lines.push('')
+        } else {
+          lines.push('Deployment: none')
+          lines.push('')
+        }
+
+        lines.push('Current connection:')
+        lines.push(`  URL: ${ctx.agentUrl}`)
+        lines.push(`  Mode: ${ctx.mode}`)
+
+        ctx.messages.addAgentMessage(lines.join('\n'), ctx.mode)
+      } catch (err) {
+        ctx.messages.addAgentMessage(
+          `Failed to describe agent: ${err instanceof Error ? err.message : String(err)}`,
+          ctx.mode,
+        )
+      }
+    },
+  },
+
+  {
+    name: 'stop',
+    description: 'Stop the current local agent',
+    category: 'agent',
+    handler: async (ctx) => {
+      const db = await getDb()
+      if (!db) {
+        ctx.messages.addAgentMessage('Unable to access agent database.', ctx.mode)
+        return
+      }
+
+      try {
+        const localAgent = db.getLocalAgent(ctx.agentName)
+
+        if (!localAgent) {
+          ctx.messages.addAgentMessage(`Agent '${ctx.agentName}' is not currently running locally.`, ctx.mode)
+          return
+        }
+
+        const pid = localAgent.pid as number
+
+        if (!isProcessAlive(pid)) {
+          ctx.messages.addAgentMessage(`Process ${pid} is not running. Cleaning up database entry.`, ctx.mode)
+          db.removeLocalAgent(ctx.agentName)
+          return
+        }
+
+        process.kill(pid, 'SIGTERM')
+
+        let stopped = false
+        for (let i = 0; i < 50; i++) {
+          if (!isProcessAlive(pid)) {
+            stopped = true
+            break
+          }
+          await new Promise((resolve) => setTimeout(resolve, 100))
+        }
+
+        if (stopped) {
+          db.removeLocalAgent(ctx.agentName)
+          ctx.messages.addAgentMessage(`Agent '${ctx.agentName}' stopped successfully.`, ctx.mode)
+        } else {
+          ctx.messages.addAgentMessage(
+            `Agent '${ctx.agentName}' did not stop gracefully. You may need to kill it manually.`,
+            ctx.mode,
+          )
+        }
+      } catch (err) {
+        ctx.messages.addAgentMessage(
+          `Failed to stop agent: ${err instanceof Error ? err.message : String(err)}`,
+          ctx.mode,
+        )
+      }
+    },
+  },
+
+  {
+    name: 'connect',
+    description: 'Connect to a different agent',
+    category: 'session',
+    args: '[agent-name]',
+    handler: async (ctx, args) => {
+      const db = await getDb()
+      const keychain = await getKeychain()
+
+      if (!db) {
+        ctx.messages.addAgentMessage('Unable to access agent database.', ctx.mode)
+        return
+      }
+
+      if (args.length === 0) {
+        // Show available agents in a modal (scan disk for agents)
+        const agents = listAgentsFromDisk()
+
+        const modal = createModal(ctx.renderer, ctx.input, {
+          title: 'Connect to Agent',
+          width: '70%',
+          height: '60%',
+        })
+
+        const contentBox = new BoxRenderable(ctx.renderer, {
+          width: '100%',
+          height: '100%',
+          flexDirection: 'column',
+          gap: 0,
+          paddingTop: 1,
+        })
+
+        if (agents.length === 0) {
+          const emptyText = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('No agents found.')]),
+          })
+          contentBox.add(emptyText)
+
+          const hint = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('\nCreate your first agent with: cast new')]),
+          })
+          contentBox.add(hint)
+        } else {
+          const headerText = new TextRenderable(ctx.renderer, {
+            content: new StyledText([white('Agent Name            Status')]),
+          })
+          contentBox.add(headerText)
+
+          const sep = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('──────────────────────────────────────────')]),
+          })
+          contentBox.add(sep)
+
+          for (const name of agents) {
+            const displayName = name.padEnd(20)
+
+            let statusText = 'stopped'
+            let statusColor = red
+
+            if (db) {
+              try {
+                const deployment = db.getDeployment(name)
+                const localAgent = db.getLocalAgent(name)
+
+                if (deployment?.deployment_url) {
+                  statusText = 'deployed'
+                  statusColor = green
+                } else if (localAgent?.port) {
+                  statusText = 'local'
+                  statusColor = cyan
+                }
+              } catch {
+                // Database lookup failed — show as stopped
+              }
+            }
+
+            const row = new TextRenderable(ctx.renderer, {
+              content: new StyledText([white(displayName), statusColor(statusText)]),
+            })
+            contentBox.add(row)
+          }
+
+          const footer = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('\nUse /connect <agent-name> to switch')]),
+          })
+          contentBox.add(footer)
+        }
+
+        const escFooter = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('\nPress ESC to close')]),
+        })
+        contentBox.add(escFooter)
+
+        modal.setContent(contentBox)
+        ctx.renderer.root.add(modal.box)
+        modal.show()
+        return
+      }
+
+      const targetName = args[0]
+
+      // When given an explicit name, verify it exists on disk or in DB
+      try {
+        const diskAgents = listAgentsFromDisk()
+        const existsOnDisk = diskAgents.includes(targetName)
+
+        let url: string | undefined
+
+        if (db) {
+          const deployment = db.getDeployment(targetName)
+          if (deployment?.deployment_url) {
+            url = deployment.deployment_url as string
+          } else {
+            const localAgent = db.getLocalAgent(targetName)
+            if (localAgent?.port) {
+              url = `http://localhost:${localAgent.port}`
+            }
+          }
+        }
+
+        if (!url && !existsOnDisk) {
+          ctx.messages.addAgentMessage(
+            `Agent '${targetName}' not found.\n` +
+              `Create it with: cast new\n` +
+              `Or start locally: cast dev ${targetName} --no-tui`,
+            ctx.mode,
+          )
+          return
+        }
+
+        if (!url) {
+          ctx.messages.addAgentMessage(
+            `Agent '${targetName}' exists but is not currently running or deployed.\n` +
+              `Start it with: cast dev ${targetName} --no-tui`,
+            ctx.mode,
+          )
+          return
+        }
+
+        const token = keychain ? await keychain.getToken(targetName) : undefined
+
+        ctx.messages.addAgentMessage(`Connecting to ${targetName} at ${url}...`, ctx.mode)
+        await ctx.reinitializeChat(targetName, url, token || undefined)
+      } catch (err) {
+        ctx.messages.addAgentMessage(
+          `Failed to connect: ${err instanceof Error ? err.message : String(err)}`,
+          ctx.mode,
+        )
+      }
+    },
+  },
+
+  {
+    name: 'quit',
+    description: 'Exit the TUI',
+    category: 'session',
+    handler: async (ctx) => {
+      ctx.exitTui()
+    },
+  },
+
+  {
+    name: 'exit',
+    description: 'Exit the TUI',
+    category: 'session',
+    handler: async (ctx) => {
+      ctx.exitTui()
+    },
+  },
+
+  {
+    name: 'update',
+    description: 'Update the current agent',
+    category: 'agent',
+    handler: async (ctx) => {
+      ctx.messages.addAgentMessage(`Use \`cast update ${ctx.agentName}\` from the CLI for now.`, ctx.mode)
+    },
+  },
+
+  {
+    name: 'deploy',
+    description: 'Deploy the current agent',
+    category: 'agent',
+    handler: async (ctx) => {
+      ctx.messages.addAgentMessage(`Use \`cast deploy ${ctx.agentName}\` from the CLI for now.`, ctx.mode)
+    },
+  },
+]
+
+export const slashCommands: SlashCommand[] = commands
+
+export async function executeSlashCommand(name: string, args: string[], ctx: CommandContext): Promise<boolean> {
+  const cmd = slashCommands.find((c) => c.name === name)
+  if (!cmd) {
+    return false
+  }
+
+  try {
+    await cmd.handler(ctx, args)
+  } catch (err) {
+    ctx.messages.addAgentMessage(
+      `Command error: ${err instanceof Error ? err.message : String(err)}`,
+      ctx.mode,
+    )
+  }
+
+  return true
+}
+
+export function getCommandSuggestions(prefix: string): SlashCommand[] {
+  const lowerPrefix = prefix.toLowerCase()
+  return slashCommands.filter((c) => c.name.startsWith(lowerPrefix))
+}

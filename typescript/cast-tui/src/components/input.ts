@@ -1,36 +1,46 @@
-import {BoxRenderable, TextRenderable, InputRenderable, StyledText, blue} from '@opentui/core'
+import {BoxRenderable, TextRenderable, TextareaRenderable, StyledText, blue} from '@opentui/core'
 
 export interface InputComponent {
   box: BoxRenderable
-  input: InputRenderable
+  input: TextareaRenderable
 }
 
 export function createInput(ctx: any, onSubmit: (text: string) => void): InputComponent {
   const box = new BoxRenderable(ctx, {
     width: '100%',
-    height: 1,
+    height: 'auto',
     flexDirection: 'row',
     alignItems: 'center',
     flexShrink: 0,
-    paddingLeft: 1,
-    paddingRight: 1,
+    paddingTop: 1,
+    paddingBottom: 1,
+    paddingLeft: 0,
+    paddingRight: 0,
+    marginLeft: 1,
+    marginRight: 1,
+    marginBottom: 1,
+    backgroundColor: '#333333',
   })
 
   const prompt = new TextRenderable(ctx, {
     content: new StyledText([blue('\u25b8 ')]),
   })
 
-  const input = new InputRenderable(ctx, {
+  const input = new TextareaRenderable(ctx, {
     flexGrow: 1,
     placeholder: 'Type a message...',
-  })
-
-  input.on('enter', (value: string) => {
-    const text = value.trim()
-    if (text) {
-      onSubmit(text)
-      input.value = ''
-    }
+    wrapMode: 'word',
+    keyBindings: [
+      {name: 'return', action: 'submit'},
+      {name: 'linefeed', action: 'submit'},
+    ],
+    onSubmit: () => {
+      const text = input.plainText.trim()
+      if (text) {
+        onSubmit(text)
+        input.setText('')
+      }
+    },
   })
 
   box.add(prompt)

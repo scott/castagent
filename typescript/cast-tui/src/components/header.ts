@@ -6,6 +6,7 @@ export type UiMode = 'dev' | 'production'
 export interface HeaderComponent {
   box: BoxRenderable
   setMode(mode: Mode): void
+  setAgentName(name: string): void
 }
 
 export function createHeader(ctx: any, agentName: string, initialMode: Mode, uiMode: UiMode): HeaderComponent {
@@ -39,7 +40,11 @@ export function createHeader(ctx: any, agentName: string, initialMode: Mode, uiM
     modeText.content = createModeStyledText(mode, isProduction)
   }
 
-  return {box, setMode}
+  function setAgentName(name: string) {
+    nameText.content = new StyledText([white('\u25cf '), white(name)])
+  }
+
+  return {box, setMode, setAgentName}
 }
 
 function createModeStyledText(mode: Mode, isProduction: boolean): StyledText {
