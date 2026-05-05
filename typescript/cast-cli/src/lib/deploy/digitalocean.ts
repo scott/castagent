@@ -134,16 +134,8 @@ export default class DigitalOceanDeploy extends Command {
     this.log('Setting up Docker on droplet...')
     await this.setupDockerOnDroplet(droplet.ip)
 
-    // Get registry info and push image
-    const registry = await this.getRegistry(apiToken)
-    if (!registry) {
-      this.error('No DigitalOcean Container Registry found. Create one at https://cloud.digitalocean.com/registry')
-    }
-
-    const registryEndpoint = `registry.digitalocean.com/${registry.name}`
-    const imageTag = `${registryEndpoint}/cast-${agentName}:latest`
-
-    // Build Docker image
+    // Build Docker image locally
+    const imageTag = `cast-${agentName}:latest`
     this.log('Building Docker image...')
     const buildResult = await execCommand('docker', [
       'build',
@@ -155,44 +147,30 @@ export default class DigitalOceanDeploy extends Command {
       this.error(`Docker build failed: ${buildResult.stderr}`)
     }
 
-    // Get DOCR credentials and login locally
-    this.log('Authenticating with DigitalOcean Container Registry...')
-    const credsResult = await axios.get('https://api.digitalocean.com/v2/registry/docker-credentials', {
-      headers: {Authorization: `Bearer ${apiToken}`},
-      params: {read_write: true, expiry_seconds: 3600},
-    })
-
-    const dockerConfig = credsResult.data
-    const dockerConfigPath = path.join(agentPath, '.docker-config.json')
-    fs.writeFileSync(dockerConfigPath, JSON.stringify(dockerConfig))
-
-    const loginResult = await execCommand('docker', [
-      'login', registryEndpoint,
-      '--username', '_',
-      '--password-stdin',
-    ], {
-      input: dockerConfig.auths?.[registryEndpoint]?.password || '',
-      silent: true,
-    })
-    if (loginResult.exitCode !== 0) {
-      this.warn(`Docker login warning: ${loginResult.stderr}`)
+    // Save image to tar
+    const tarPath = path.join(agentPath, `${agentName}.tar`)
+    this.log('Saving Docker image...')
+    const saveResult = await execCommand('docker', ['save', '-o', tarPath, imageTag])
+    if (saveResult.exitCode !== 0) {
+      this.error(`Failed to save Docker image: ${saveResult.stderr}`)
     }
 
-    // Push image
-    this.log('Pushing image to registry...')
-    const pushResult = await execCommand('docker', ['push', imageTag])
-    if (pushResult.exitCode !== 0) {
-      this.error(`Docker push failed: ${pushResult.stderr}`)
+    // Copy image to droplet
+    this.log('Copying image to droplet...')
+    const scpResult = await execCommand('scp', [
+      '-i', SSH_KEY_PATH,
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      tarPath,
+      `root@${droplet.ip}:/tmp/${agentName}.tar`,
+    ])
+    if (scpResult.exitCode !== 0) {
+      this.error(`Failed to copy image to droplet: ${scpResult.stderr}`)
     }
 
     // Deploy on droplet
     this.log('Deploying on droplet...')
-    await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, registryEndpoint, dockerConfig)
-
-    // Cleanup
-    if (fs.existsSync(dockerConfigPath)) {
-      fs.unlinkSync(dockerConfigPath)
-    }
+    await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, tarPath)
 
     const deploymentUrl = `http://${droplet.ip}:8080`
 
@@ -371,35 +349,19 @@ export default class DigitalOceanDeploy extends Command {
     agentName: string,
     authToken: string,
     imageTag: string,
-    registryEndpoint: string,
-    dockerConfig: any,
+    tarPath: string,
   ): Promise<void> {
-    const password = dockerConfig.auths?.[registryEndpoint]?.password || ''
-
-    // Login to DOCR on droplet
-    const loginResult = await execCommand('ssh', [
+    // Load image on droplet
+    const loadResult = await execCommand('ssh', [
       '-i', SSH_KEY_PATH,
       '-o', 'StrictHostKeyChecking=no',
       '-o', 'UserKnownHostsFile=/dev/null',
       `root@${ip}`,
-      `echo '${password}' | docker login ${registryEndpoint} --username '_' --password-stdin`,
+      `docker load -i /tmp/${path.basename(tarPath)}`,
     ], {silent: true})
 
-    if (loginResult.exitCode !== 0) {
-      this.warn(`Docker login on droplet warning: ${loginResult.stderr}`)
-    }
-
-    // Pull image
-    const pullResult = await execCommand('ssh', [
-      '-i', SSH_KEY_PATH,
-      '-o', 'StrictHostKeyChecking=no',
-      '-o', 'UserKnownHostsFile=/dev/null',
-      `root@${ip}`,
-      `docker pull ${imageTag}`,
-    ], {silent: true})
-
-    if (pullResult.exitCode !== 0) {
-      throw new Error(`Failed to pull image on droplet: ${pullResult.stderr}`)
+    if (loadResult.exitCode !== 0) {
+      throw new Error(`Failed to load image on droplet: ${loadResult.stderr}`)
     }
 
     // Stop old container
@@ -447,15 +409,4 @@ export default class DigitalOceanDeploy extends Command {
     }
   }
 
-  private async getRegistry(apiToken: string): Promise<any | null> {
-    try {
-      const response = await axios.get('https://api.digitalocean.com/v2/registry', {
-        headers: {Authorization: `Bearer ${apiToken}`},
-      })
-      return response.data.registry || null
-    } catch (error: any) {
-      this.warn(`Failed to get registry: ${error.message}`)
-      return null
-    }
-  }
 }
