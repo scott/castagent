@@ -1,9 +1,10 @@
 """Builder Agent tools for creating and managing Cast agents."""
 
 import os
+import re
 import yaml
 from pathlib import Path
-from typing import Dict, List, Any
+from typing import Dict, List, Any, Optional
 from langchain_core.tools import tool
 
 AGENTS_DIR = Path.home() / "cast-agents"
@@ -22,14 +23,140 @@ def _ensure_agent_exists(name: str) -> Path:
     return agent_path
 
 
+def _sanitize_name(name: str) -> str:
+    """Sanitize a suggested name to valid agent name format."""
+    # Replace spaces and underscores with hyphens
+    name = name.replace(' ', '-').replace('_', '-')
+    # Remove invalid characters
+    name = re.sub(r'[^a-zA-Z0-9-]', '', name)
+    # Convert to lowercase
+    name = name.lower()
+    # Remove leading/trailing hyphens and collapse multiple hyphens
+    name = re.sub(r'-+', '-', name).strip('-')
+    return name or "new-agent"
+
+
+def _generate_name_from_description(description: str) -> str:
+    """Generate a suggested agent name from a description."""
+    desc_lower = description.lower()
+    
+    # Common domain keywords and their name mappings
+    domain_map = {
+        "email": "email-agent",
+        "gmail": "gmail-agent",
+        "slack": "slack-agent",
+        "github": "github-agent",
+        "git": "git-agent",
+        "code": "code-agent",
+        "coding": "code-agent",
+        "write": "writer-agent",
+        "writer": "writer-agent",
+        "blog": "blog-agent",
+        "deploy": "deploy-agent",
+        "deployment": "deploy-agent",
+        "docker": "docker-agent",
+        "test": "test-agent",
+        "testing": "test-agent",
+        "monitor": "monitor-agent",
+        "monitoring": "monitor-agent",
+        "log": "log-agent",
+        "logs": "log-agent",
+        "data": "data-agent",
+        "analysis": "data-agent",
+        "analyze": "data-agent",
+        "search": "search-agent",
+        "research": "research-agent",
+        "summarize": "summarizer-agent",
+        "summary": "summarizer-agent",
+        "file": "file-agent",
+        "filesystem": "file-agent",
+        "database": "db-agent",
+        "db": "db-agent",
+        "sql": "sql-agent",
+        "api": "api-agent",
+        "webhook": "webhook-agent",
+        "schedule": "scheduler-agent",
+        "cron": "scheduler-agent",
+        "remind": "reminder-agent",
+        "reminder": "reminder-agent",
+        "ticket": "ticket-agent",
+        "support": "support-agent",
+        "customer": "support-agent",
+        "review": "review-agent",
+        "pr": "pr-agent",
+        "pull request": "pr-agent",
+        "translate": "translator-agent",
+        "translation": "translator-agent",
+    }
+    
+    # Check for domain matches
+    for keyword, name in domain_map.items():
+        if keyword in desc_lower:
+            return name
+    
+    # Extract first meaningful nouns
+    words = re.findall(r'\b[a-zA-Z]{3,}\b', desc_lower)
+    stop_words = {'the', 'and', 'for', 'with', 'that', 'this', 'can', 'you', 'are', 'agent', 'create', 'make', 'new', 'want', 'need', 'help', 'use', 'using', 'will', 'should', 'could', 'would', 'have', 'has', 'had', 'been', 'being', 'does', 'did', 'doing'}
+    
+    meaningful = [w for w in words if w not in stop_words]
+    
+    if meaningful:
+        # Take up to 2 meaningful words
+        base = '-'.join(meaningful[:2])
+        return _sanitize_name(base) + "-agent"
+    
+    return "new-agent"
+
+
+def _is_name_available(name: str) -> bool:
+    """Check if an agent name is available."""
+    agent_path = _get_agent_path(name)
+    return not agent_path.exists()
+
+
+def _find_available_name(base_name: str) -> str:
+    """Find an available name by appending a number if needed."""
+    if _is_name_available(base_name):
+        return base_name
+    
+    # Try appending numbers
+    for i in range(2, 1000):
+        candidate = f"{base_name}-{i}"
+        if _is_name_available(candidate):
+            return candidate
+    
+    return f"{base_name}-{os.urandom(4).hex()}"
+
+
 @tool
-def create_agent(name: str) -> str:
+def suggest_name(description: str) -> str:
+    """
+    Suggest an available agent name based on a description.
+    
+    Args:
+        description: What the agent should do.
+        
+    Returns:
+        A suggested available name for the agent.
+    """
+    base_name = _generate_name_from_description(description)
+    available_name = _find_available_name(base_name)
+    
+    if available_name != base_name:
+        return f"Suggested name: {available_name} ('{base_name}' was taken)"
+    
+    return f"Suggested name: {available_name}"
+
+
+@tool
+def create_agent(name: str, description: str = "") -> str:
     """
     Create a new agent scaffold in ~/cast-agents/<name>/.
     Creates agent.yaml, instructions.md, tools/, mcp/, and tests/ directories.
     
     Args:
         name: The name of the agent to create. Use lowercase with hyphens.
+        description: Optional description of what the agent does.
     """
     agent_path = _get_agent_path(name)
     
@@ -42,11 +169,24 @@ def create_agent(name: str) -> str:
     (agent_path / "tests" / "cli").mkdir(parents=True)
     (agent_path / "tests" / "agent" / "scenarios").mkdir(parents=True)
     
+    # Generate meaningful description and instructions if provided
+    agent_description = description or f"Agent created by Cast Builder"
+    instructions_content = f"# {name}\n\n"
+    
+    if description:
+        instructions_content += f"You are {name}, an AI agent that {description}\n\n"
+        instructions_content += "## Your Capabilities\n\n"
+        instructions_content += "- Use built-in tools (bash, read, glob) when needed\n"
+        instructions_content += "- Be helpful, accurate, and concise\n"
+        instructions_content += "- Ask for clarification when requirements are unclear\n"
+    else:
+        instructions_content += "You are a helpful assistant.\n"
+    
     # Create default agent.yaml
     default_config = {
         "name": name,
         "version": "1.0",
-        "description": f"Agent created by Cast Builder",
+        "description": agent_description,
         "brain": {
             "model": "openrouter/anthropic/claude-3-7-sonnet",
             "model_override": None,
@@ -71,12 +211,28 @@ def create_agent(name: str) -> str:
     with open(agent_yaml_path, "w") as f:
         yaml.dump(default_config, f, default_flow_style=False, sort_keys=False)
     
-    # Create default instructions.md
+    # Create instructions.md with meaningful content
     instructions_path = agent_path / "instructions.md"
     with open(instructions_path, "w") as f:
-        f.write(f"# {name}\n\nYou are a helpful assistant.\n")
+        f.write(instructions_content)
     
     return f"Agent '{name}' created successfully at {agent_path}"
+
+
+@tool
+def check_name_availability(name: str) -> str:
+    """
+    Check if an agent name is available.
+    
+    Args:
+        name: The name to check.
+        
+    Returns:
+        A message indicating whether the name is available.
+    """
+    if _is_name_available(name):
+        return f"'{name}' is available!"
+    return f"'{name}' is already taken. Try a different name."
 
 
 @tool

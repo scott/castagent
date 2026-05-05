@@ -25,10 +25,12 @@ from langgraph.prebuilt import ToolNode
 
 from .builder_tools import (
     create_agent,
+    check_name_availability,
     get_agent_config,
     install_mcp,
     list_agents,
     recommend_model,
+    suggest_name,
     update_agent_config,
     update_instructions,
 )
@@ -71,10 +73,19 @@ def load_system_prompt() -> str:
 
 class EchoChatModel(BaseChatModel):
     """A simple echo/chat model that works without API keys.
-    
+
     Parses user intent and returns appropriate responses or tool calls.
+    Supports both normal mode and new-mode (wizard) flow.
     """
-    
+
+    def __init__(self, **kwargs: Any):
+        super().__init__(**kwargs)
+        self._new_mode = os.getenv("CAST_NEW_MODE") == "1"
+
+    def set_new_mode(self, enabled: bool) -> None:
+        """Set whether the model should use new-mode behavior."""
+        self._new_mode = enabled
+
     def _generate(
         self,
         messages: List[BaseMessage],
@@ -86,12 +97,12 @@ class EchoChatModel(BaseChatModel):
         content = ""
         tool_calls: List[dict] = []
         call_id = 0
-        
+
         def next_call_id() -> str:
             nonlocal call_id
             call_id += 1
             return f"call_{call_id}"
-        
+
         # Helper to extract server name from a message
         def extract_server_name_from_msg(msg_text: str) -> Optional[str]:
             msg_lower = msg_text.lower()
@@ -107,7 +118,7 @@ class EchoChatModel(BaseChatModel):
                 if server in msg_lower:
                     return server
             return None
-        
+
         # Helper to extract agent name from a message
         def extract_agent_name_from_msg(msg_text: str) -> Optional[str]:
             msg_lower = msg_text.lower()
@@ -115,6 +126,8 @@ class EchoChatModel(BaseChatModel):
                 r'(?:agent\s+(?:called|named))\s+["\']?([\w-]+)["\']?',
                 r'(?:for\s+agent)\s+["\']?([\w-]+)["\']?',
                 r'(?:create\s+(?:an?\s+)?agent\s+(?:called|named)\s+)["\']?([\w-]+)["\']?',
+                r'(?:name\s+(?:it\s+)?)["\']?([\w-]+)["\']?',
+                r'^([\w-]+)\s*$',
             ]
             for pattern in patterns:
                 match = re.search(pattern, msg_lower)
@@ -133,25 +146,63 @@ class EchoChatModel(BaseChatModel):
             if any(k in msg_lower for k in ["delete", "remove", "destroy"]):
                 return "file-deletion-agent"
             return None
-        
+
+        # Check if we're in new mode using instance state (falls back to env for compatibility)
+        new_mode = self._new_mode
+
+        # Get the last user message
+        last_user_msg = ""
+        for msg in reversed(messages):
+            if isinstance(msg, HumanMessage):
+                last_user_msg = str(msg.content)
+                break
+
+        lower_msg = last_user_msg.lower()
+
+        # Extract agent description for new mode
+        def extract_description(msg_text: str = "") -> str:
+            """Extract a description from a user message."""
+            text = msg_text or last_user_msg
+            # Remove common prefixes
+            cleaned = text
+            prefixes = [
+                r'^\s*(?:i\s+want\s+(?:an?\s+)?)?(?:agent\s+(?:that\s+)?)?',
+                r'^\s*(?:create\s+(?:an?\s+)?)?(?:agent\s+(?:that\s+)?)?',
+                r'^\s*(?:make\s+(?:an?\s+)?)?(?:agent\s+(?:that\s+)?)?',
+            ]
+            for prefix in prefixes:
+                cleaned = re.sub(prefix, '', cleaned, flags=re.IGNORECASE)
+            return cleaned.strip()
+
         # If the last message is a ToolMessage, we're in a follow-up after tool execution.
-        # Return a completion response or trigger follow-up tool calls.
         if messages and isinstance(messages[-1], ToolMessage):
             tool_result = str(messages[-1].content)
-            
+
             # Find the original user message that triggered this tool call
             original_user_msg = ""
             for msg in reversed(messages):
                 if isinstance(msg, HumanMessage):
                     original_user_msg = str(msg.content)
                     break
-            
-            if "already exists" in tool_result.lower():
-                content = f"It looks like that agent already exists. {tool_result}"
+
+            if "suggested name" in tool_result.lower():
+                # Name suggestion was made, extract it
+                name_match = re.search(r'suggested name: ([\w-]+)', tool_result.lower())
+                if name_match:
+                    suggested_name = name_match.group(1)
+                    content = (
+                        f"How about **{suggested_name}**?\n\n"
+                        f"Does that sound good? Just say 'yes' to use it, or tell me a different name you'd prefer."
+                    )
+                else:
+                    content = "What would you like to name this agent?"
+            elif "already exists" in tool_result.lower():
+                content = f"It looks like that agent already exists. {tool_result}\n\nPlease suggest a different name."
             elif "created successfully" in tool_result.lower():
-                # Check if we need to install MCP based on original user message
+                # Agent was created! Check if we need to install MCP
                 server = extract_server_name_from_msg(original_user_msg)
-                name = extract_agent_name_from_msg(original_user_msg)
+                name_match = re.search(r"agent '([\w-]+)' created", tool_result.lower())
+                name = name_match.group(1) if name_match else extract_agent_name_from_msg(original_user_msg)
                 if server and name:
                     tool_calls.append({
                         "name": "install_mcp",
@@ -159,26 +210,113 @@ class EchoChatModel(BaseChatModel):
                         "id": next_call_id(),
                         "type": "tool_call",
                     })
-                    content = f"Great! {tool_result} Now I'll install the {server} MCP server."
+                    content = (
+                        f"Great! {tool_result}\n\n"
+                        f"I noticed you mentioned {server}, so I'll set up the {server} MCP integration too."
+                    )
                 else:
-                    content = f"Great! {tool_result} What would you like to do next?"
+                    content = (
+                        f"Great! {tool_result}\n\n"
+                        f"Your agent is ready! You can now:\n"
+                        f"- Start it with: `cast dev {name}`\n"
+                        f"- Add MCP integrations by mentioning services like Gmail, Slack, or GitHub\n"
+                        f"- Update its instructions anytime\n\n"
+                        f"Is there anything else you'd like to configure?"
+                    )
             elif "updated" in tool_result.lower():
                 content = f"Done! {tool_result}"
+            elif "available" in tool_result.lower():
+                content = f"{tool_result}"
             else:
                 content = f"Result: {tool_result}"
             message = AIMessage(content=content, tool_calls=tool_calls)
             generation = ChatGeneration(message=message)
             return ChatResult(generations=[generation])
-        
-        # Get the last user message
-        last_user_msg = ""
-        for msg in reversed(messages):
-            if isinstance(msg, HumanMessage):
-                last_user_msg = str(msg.content)
-                break
-        
-        lower_msg = last_user_msg.lower()
-        
+
+        # Handle empty input
+        if not last_user_msg.strip():
+            if new_mode:
+                content = "What would you like your new agent to do? Describe its purpose and I'll suggest a name."
+            else:
+                content = "I'd be happy to help you create an agent. What would you like your agent to do?"
+            message = AIMessage(content=content, tool_calls=tool_calls)
+            generation = ChatGeneration(message=message)
+            return ChatResult(generations=[generation])
+
+        # NEW MODE FLOW
+        if new_mode:
+            # Check if user is confirming a suggested name
+            if lower_msg in ['yes', 'yeah', 'sure', 'ok', 'okay', 'yep', 'y', 'yes please', 'that sounds good']:
+                # Find the last suggested name from previous tool results
+                suggested_name = None
+                for msg in reversed(messages):
+                    if isinstance(msg, ToolMessage):
+                        match = re.search(r'suggested name: ([\w-]+)', str(msg.content).lower())
+                        if match:
+                            suggested_name = match.group(1)
+                            break
+
+                if suggested_name:
+                    # Get the description from earlier messages (not the current "yes")
+                    description = ""
+                    for msg in messages:
+                        if isinstance(msg, HumanMessage):
+                            desc = extract_description(str(msg.content))
+                            if desc and len(desc) > 10:
+                                description = desc
+                                break
+
+                    tool_calls.append({
+                        "name": "create_agent",
+                        "args": {"name": suggested_name, "description": description},
+                        "id": next_call_id(),
+                        "type": "tool_call",
+                    })
+                    content = f"Perfect! I'll create the agent **{suggested_name}** for you."
+                    message = AIMessage(content=content, tool_calls=tool_calls)
+                    generation = ChatGeneration(message=message)
+                    return ChatResult(generations=[generation])
+
+            # Check if user provided a custom name
+            custom_name = extract_agent_name_from_msg(last_user_msg)
+            if custom_name:
+                # Check if this looks like a name confirmation (short input, just a name)
+                if len(last_user_msg.strip()) < 30 and re.match(r'^[\w-]+$', last_user_msg.strip()):
+                    description = ""
+                    for msg in messages:
+                        if isinstance(msg, HumanMessage):
+                            desc = extract_description(str(msg.content))
+                            if desc and len(desc) > 10:
+                                description = desc
+                                break
+
+                    tool_calls.append({
+                        "name": "create_agent",
+                        "args": {"name": custom_name, "description": description},
+                        "id": next_call_id(),
+                        "type": "tool_call",
+                    })
+                    content = f"Great choice! I'll create the agent **{custom_name}** for you."
+                    message = AIMessage(content=content, tool_calls=tool_calls)
+                    generation = ChatGeneration(message=message)
+                    return ChatResult(generations=[generation])
+
+            # User provided a description - suggest a name
+            description = extract_description()
+            if len(description) > 5:
+                tool_calls.append({
+                    "name": "suggest_name",
+                    "args": {"description": description},
+                    "id": next_call_id(),
+                    "type": "tool_call",
+                })
+                content = f"That sounds interesting! Let me suggest a good name for an agent that {description}."
+                message = AIMessage(content=content, tool_calls=tool_calls)
+                generation = ChatGeneration(message=message)
+                return ChatResult(generations=[generation])
+
+        # NORMAL MODE FLOWS
+
         # Helper to extract agent name
         def extract_agent_name() -> Optional[str]:
             patterns = [
@@ -190,7 +328,7 @@ class EchoChatModel(BaseChatModel):
                 match = re.search(pattern, lower_msg)
                 if match:
                     return match.group(1)
-            
+
             # Handle "Create an email agent" → "email-agent"
             desc_patterns = [
                 r'create\s+(?:an?\s+)([\w-]+)\s+agent',
@@ -203,13 +341,13 @@ class EchoChatModel(BaseChatModel):
                     # Don't return generic words
                     if base not in ['an', 'a', 'the', 'my', 'me']:
                         return f"{base}-agent"
-            
+
             # Handle "Delete files" → "file-deletion-agent"
             if any(k in lower_msg for k in ["delete", "remove", "destroy"]):
                 return "file-deletion-agent"
-            
+
             return None
-        
+
         # Helper to extract server name
         def extract_server_name() -> Optional[str]:
             patterns = [
@@ -225,14 +363,7 @@ class EchoChatModel(BaseChatModel):
                 if server in lower_msg:
                     return server
             return None
-        
-        # Handle empty input
-        if not last_user_msg.strip():
-            content = "I'd be happy to help you create an agent. What would you like your agent to do?"
-            message = AIMessage(content=content, tool_calls=tool_calls)
-            generation = ChatGeneration(message=message)
-            return ChatResult(generations=[generation])
-        
+
         # create_agent (also handles destructive operations by creating an agent)
         if ("create" in lower_msg and "agent" in lower_msg) or any(k in lower_msg for k in ["delete", "remove", "destroy"]):
             name = extract_agent_name()
@@ -246,7 +377,7 @@ class EchoChatModel(BaseChatModel):
                 content = f"I'll create the agent '{name}' for you."
             else:
                 content = "I'd be happy to create an agent for you. What would you like to name it?"
-        
+
         # list_agents
         elif ("list" in lower_msg and "agent" in lower_msg) or lower_msg.strip() == "list agents":
             tool_calls.append({
@@ -256,7 +387,7 @@ class EchoChatModel(BaseChatModel):
                 "type": "tool_call",
             })
             content = "Let me list your existing agents."
-        
+
         # recommend_model (also handles "simple task" and "complex analysis")
         elif "model" in lower_msg or "recommend" in lower_msg or "task" in lower_msg or "analysis" in lower_msg:
             tool_calls.append({
@@ -266,7 +397,7 @@ class EchoChatModel(BaseChatModel):
                 "type": "tool_call",
             })
             content = "Let me recommend a model for your needs."
-        
+
         # get_agent_config
         elif "config" in lower_msg and ("get" in lower_msg or "show" in lower_msg or "read" in lower_msg):
             name = extract_agent_name()
@@ -280,7 +411,7 @@ class EchoChatModel(BaseChatModel):
                 content = f"Let me get the config for '{name}'."
             else:
                 content = "Which agent's config would you like to see?"
-        
+
         # install_mcp
         elif "mcp" in lower_msg or ("install" in lower_msg and "server" in lower_msg):
             server = extract_server_name()
@@ -295,7 +426,7 @@ class EchoChatModel(BaseChatModel):
                 content = f"I'll install the {server} MCP server for {name}."
             else:
                 content = "Which MCP server would you like to install, and for which agent?"
-        
+
         # update_instructions
         elif "instructions" in lower_msg and ("update" in lower_msg or "change" in lower_msg or "set" in lower_msg):
             name = extract_agent_name()
@@ -309,7 +440,7 @@ class EchoChatModel(BaseChatModel):
                 content = f"I'll update the instructions for '{name}'."
             else:
                 content = "Which agent's instructions would you like to update?"
-        
+
         # update_agent_config
         elif "config" in lower_msg and ("update" in lower_msg or "change" in lower_msg or "set" in lower_msg):
             name = extract_agent_name()
@@ -323,7 +454,7 @@ class EchoChatModel(BaseChatModel):
                 content = f"I'll update the config for '{name}'."
             else:
                 content = "Which agent's config would you like to update?"
-        
+
         else:
             # Default conversational response
             content = (
@@ -337,20 +468,20 @@ class EchoChatModel(BaseChatModel):
                 f"7. **recommend_model(requirements)** - Get model suggestions\n\n"
                 f"What would you like to do first?"
             )
-        
+
         message = AIMessage(content=content, tool_calls=tool_calls)
         generation = ChatGeneration(message=message)
         return ChatResult(generations=[generation])
-    
+
     def bind_tools(self, tools: Sequence[Any], tool_choice: Optional[str] = None, **kwargs: Any) -> Any:
         """Bind tools to the echo model."""
         self._bound_tools = list(tools)
         return self
-    
+
     @property
     def _llm_type(self) -> str:
         return "echo"
-    
+
     @property
     def _identifying_params(self) -> Dict[str, Any]:
         return {"model": "echo"}
@@ -378,74 +509,94 @@ def create_llm() -> BaseChatModel:
 
 class BuilderAgent:
     """LangGraph-based builder agent with tool support."""
-    
+
     def __init__(self):
         self.system_prompt = load_system_prompt()
         self.llm = create_llm()
         self.tools: List[BaseTool] = [
             create_agent,
+            check_name_availability,
             update_agent_config,
             update_instructions,
             install_mcp,
             list_agents,
             get_agent_config,
             recommend_model,
+            suggest_name,
         ]
         self.tool_map = {tool.name: tool for tool in self.tools}
         self.graph = self._build_graph()
         self.agent_name: Optional[str] = None
+        self.agent_description: str = ""
+        self.new_mode: bool = False
+        self.name_suggested: bool = False
+        self.name_confirmed: bool = False
+        self.agent_created: bool = False
         self.messages: List[BaseMessage] = []
-    
+
     def _build_graph(self) -> StateGraph:
         """Build the LangGraph state machine."""
         from typing_extensions import TypedDict
-        
+
         class AgentState(TypedDict):
             messages: Annotated[List[BaseMessage], add_messages]
-        
+
         # Bind tools to LLM
         llm_with_tools = self.llm.bind_tools(self.tools)
-        
+
         def agent_node(state: AgentState) -> AgentState:
             """The agent node that decides what to do."""
             messages = state["messages"]
             response = llm_with_tools.invoke(messages)
             return {"messages": messages + [response]}
-        
+
         def should_continue(state: AgentState) -> str:
             """Decide whether to call tools or end."""
             last_message = state["messages"][-1]
             if isinstance(last_message, AIMessage) and last_message.tool_calls:
                 return "tools"
             return END
-        
+
         tool_node = ToolNode(self.tools)
-        
+
         workflow = StateGraph(AgentState)
         workflow.add_node("agent", agent_node)
         workflow.add_node("tools", tool_node)
         workflow.set_entry_point("agent")
         workflow.add_conditional_edges("agent", should_continue, {"tools": "tools", END: END})
         workflow.add_edge("tools", "agent")
-        
+
         return workflow.compile()
-    
+
     def set_agent_name(self, name: str) -> None:
         """Set the current agent being built."""
         self.agent_name = name
-    
+
+    def set_new_mode(self, enabled: bool) -> None:
+        """Set whether we're in 'new agent' creation mode."""
+        self.new_mode = enabled
+        # Propagate to LLM so EchoChatModel respects the agent state
+        if hasattr(self.llm, 'set_new_mode'):
+            self.llm.set_new_mode(enabled)
+
     async def process_message(self, message: str) -> str:
         """Process a user message through the agent graph."""
         # Add system prompt if this is the first message
         if not self.messages:
             self.messages.append(SystemMessage(content=self.system_prompt))
-        
+
         self.messages.append(HumanMessage(content=message))
-        
+
         try:
-            result = self.graph.invoke({"messages": self.messages})
+            # Run graph.invoke in a thread pool to avoid blocking the asyncio event loop.
+            # This is critical when using real LLMs (e.g., OpenRouter) because API calls
+            # are synchronous and would block all async operations (including timeouts).
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                None, self.graph.invoke, {"messages": list(self.messages)}
+            )
             self.messages = result["messages"]
-            
+
             # Return the last assistant message content
             for msg in reversed(self.messages):
                 if isinstance(msg, AIMessage):
@@ -453,12 +604,12 @@ class BuilderAgent:
             return "I've processed your request."
         except Exception as e:
             return f"Error processing message: {e}"
-    
+
     async def execute_tool(self, tool_name: str, args: dict) -> Any:
         """Execute a tool directly by name."""
         if tool_name not in self.tool_map:
             return f"Tool '{tool_name}' not found"
-        
+
         tool = self.tool_map[tool_name]
         try:
             # Handle both sync and async tools
@@ -468,20 +619,31 @@ class BuilderAgent:
                 return tool.invoke(args)
         except Exception as e:
             return f"Error executing tool: {e}"
-    
+
     def get_welcome_message(self) -> str:
         """Get the welcome message for a new session."""
+        if self.new_mode:
+            return (
+                "Hello! I'm the Cast Builder Agent. Let's create a new agent together.\n\n"
+                + "**What should your agent do?**\n\n"
+                + "Describe what you'd like your agent to accomplish. For example:\n"
+                + '- "An agent that reads my Gmail inbox and drafts replies"\n'
+                + '- "A code review agent that checks pull requests on GitHub"\n'
+                + '- "A monitoring agent that watches log files and alerts me to errors"\n\n'
+                + "What would you like your agent to do?"
+            )
+
         name = self.agent_name or "your new agent"
         return (
             f"Hello! I'm the Cast Builder Agent. I'll help you create **{name}**.\n\n"
-            f"To get started, could you tell me:\n\n"
-            f"1. What should this agent do? (e.g., read emails, monitor logs, write code)\n"
-            f"2. What tools or integrations does it need? (e.g., Gmail, Slack, GitHub)\n"
-            f"3. Any specific permissions or security requirements?\n\n"
-            f"Or if you know what you want, just say something like:\n"
-            f"- \"Create an agent called email-agent\"\n"
-            f"- \"Install Gmail MCP for my agent\"\n"
-            f"- \"Recommend a model for code review\""
+            + f"To get started, could you tell me:\n\n"
+            + f"1. What should this agent do? (e.g., read emails, monitor logs, write code)\n"
+            + f"2. What tools or integrations does it need? (e.g., Gmail, Slack, GitHub)\n"
+            + f"3. Any specific permissions or security requirements?\n\n"
+            + f"Or if you know what you want, just say something like:\n"
+            + f'- "Create an agent called email-agent"\n'
+            + f'- "Install Gmail MCP for my agent"\n'
+            + f'- "Recommend a model for code review"'
         )
 
 
@@ -528,17 +690,24 @@ class StdioJsonRpcServer:
 
     async def handle_initialize(self, params: Dict[str, Any]) -> Dict[str, Any]:
         agent_name = params.get("agent_name")
+        new_mode = params.get("new_mode", False)
+
         if not agent_name:
             return {"error": {"code": JSONRPC_INVALID_PARAMS, "message": "Missing 'agent_name' parameter"}}
 
         self.agent.set_agent_name(agent_name)
 
-        print(f"Builder Agent initialized for: {agent_name}", file=sys.stderr)
+        if new_mode or agent_name == "__new__":
+            self.agent.set_new_mode(True)
+            print("Builder Agent initialized in NEW MODE", file=sys.stderr)
+        else:
+            print(f"Builder Agent initialized for: {agent_name}", file=sys.stderr)
 
         welcome = self.agent.get_welcome_message()
         return {
             "status": "ready",
             "agent_name": agent_name,
+            "new_mode": self.agent.new_mode,
             "message": welcome,
         }
 

@@ -6,12 +6,14 @@ from pathlib import Path
 
 from cast.builder_tools import (
     create_agent,
+    check_name_availability,
     install_mcp,
     recommend_model,
     list_agents,
     get_agent_config,
     update_agent_config,
     update_instructions,
+    suggest_name,
 )
 from cast.builder_tools.tools import AGENTS_DIR
 
@@ -264,5 +266,81 @@ class TestUpdateInstructions:
                 content = instructions_path.read_text()
                 assert "Custom Instructions" in content
                 assert "Be very helpful." in content
+            finally:
+                tools.AGENTS_DIR = original_dir
+
+
+class TestSuggestName:
+    """Tests for suggest_name tool."""
+
+    def test_suggest_name_from_description(self):
+        result = suggest_name.invoke({"description": "an agent that reads my emails"})
+        assert "suggested name:" in result.lower()
+        assert "email" in result.lower()
+
+    def test_suggest_name_avoids_conflicts(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from cast.builder_tools import tools
+            original_dir = tools.AGENTS_DIR
+            tools.AGENTS_DIR = Path(tmpdir)
+
+            try:
+                # Create an agent to cause a conflict
+                create_agent.invoke({"name": "email-agent"})
+                result = suggest_name.invoke({"description": "an agent that reads my emails"})
+                assert "suggested name:" in result.lower()
+                # Should have suggested an alternative since email-agent exists
+                assert "was taken" in result.lower() or "email-agent-2" in result.lower()
+            finally:
+                tools.AGENTS_DIR = original_dir
+
+
+class TestCheckNameAvailability:
+    """Tests for check_name_availability tool."""
+
+    def test_available_name(self):
+        result = check_name_availability.invoke({"name": "totally-unique-agent-12345"})
+        assert "available" in result.lower()
+
+    def test_taken_name(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from cast.builder_tools import tools
+            original_dir = tools.AGENTS_DIR
+            tools.AGENTS_DIR = Path(tmpdir)
+
+            try:
+                create_agent.invoke({"name": "taken-agent"})
+                result = check_name_availability.invoke({"name": "taken-agent"})
+                assert "taken" in result.lower() or "already" in result.lower()
+            finally:
+                tools.AGENTS_DIR = original_dir
+
+
+class TestCreateAgentWithDescription:
+    """Tests for create_agent with description parameter."""
+
+    def test_create_agent_with_description(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from cast.builder_tools import tools
+            original_dir = tools.AGENTS_DIR
+            tools.AGENTS_DIR = Path(tmpdir)
+
+            try:
+                result = create_agent.invoke({
+                    "name": "described-agent",
+                    "description": "reads emails and drafts replies",
+                })
+                assert "created successfully" in result
+
+                agent_yaml_path = Path(tmpdir) / "described-agent" / "agent.yaml"
+                with open(agent_yaml_path, "r") as f:
+                    config = yaml.safe_load(f)
+
+                assert config["description"] == "reads emails and drafts replies"
+
+                instructions_path = Path(tmpdir) / "described-agent" / "instructions.md"
+                content = instructions_path.read_text()
+                assert "reads emails and drafts replies" in content
+                assert "Your Capabilities" in content
             finally:
                 tools.AGENTS_DIR = original_dir

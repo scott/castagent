@@ -8,6 +8,8 @@ from .tools import (
     list_agents,
     get_agent_config,
     recommend_model,
+    suggest_name,
+    check_name_availability,
 )
 
 __all__ = [
@@ -18,4 +20,6 @@ __all__ = [
     "list_agents",
     "get_agent_config",
     "recommend_model",
+    "suggest_name",
+    "check_name_availability",
 ]

@@ -255,7 +255,7 @@ class A2AServer:
             app = Starlette(routes=routes)
 
             import uvicorn
-            config = uvicorn.Config(app, host=self.host, port=self.port, log_level="info")
+            config = uvicorn.Config(app, host=self.host, port=self.port, log_level="warning", access_log=False)
             server = uvicorn.Server(config)
 
             print(f"Agent ready on port {self.port}", flush=True)
