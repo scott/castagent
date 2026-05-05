@@ -294,7 +294,7 @@ export default class DigitalOceanDeploy extends Command {
       'compute', 'droplet', 'create',
       dropletName,
       '--region', 'nyc3',
-      '--size', 's-1vcpu-512mb-10gb',
+      '--size', 's-1vcpu-1gb',
       '--image', 'docker-20-04',
       '--ssh-keys', fingerprint,
       '--wait',
