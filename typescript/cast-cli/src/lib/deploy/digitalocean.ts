@@ -286,9 +286,9 @@ export default class DigitalOceanDeploy extends Command {
     // Create droplet
     this.log(`Creating droplet '${dropletName}'...`)
 
-    // Get SSH key fingerprint
-    const keyResult = await execCommand('ssh-keygen', ['-lf', `${SSH_KEY_PATH}.pub`], {silent: true})
-    const fingerprint = keyResult.stdout.trim().split(/\s+/)[1]
+    // Get SSH key fingerprint (MD5 format required by DO API)
+    const keyResult = await execCommand('ssh-keygen', ['-l', '-E', 'md5', '-f', `${SSH_KEY_PATH}.pub`], {silent: true})
+    const fingerprint = keyResult.stdout.trim().split(/\s+/)[1].replace(/^MD5:/, '')
 
     const createResult = await execCommand('doctl', [
       'compute', 'droplet', 'create',
