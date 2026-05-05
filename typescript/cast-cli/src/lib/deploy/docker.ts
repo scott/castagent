@@ -7,7 +7,7 @@ import * as path from 'path'
 
 import {keychain} from '../keychain'
 import {db} from '../sqlite'
-import {execCommandIgnoreError} from './deploy-utils'
+import {execCommandIgnoreError, getOpenRouterApiKey} from './deploy-utils'
 
 // Helper to run a shell command and return its exit code
 function runCommand(command: string, args: string[], options?: {stdio?: any; cwd?: string}): Promise<number> {
@@ -90,7 +90,7 @@ export default class DockerDeploy extends Command {
 
     // Build Docker image
     this.log('Building Docker image...')
-    const buildCode = await runCommand('docker', ['build', '-t', imageName, '-f', dockerfilePath, agentPath])
+    const buildCode = await runCommand('docker', ['build', '--load', '-t', imageName, '-f', dockerfilePath, agentPath])
     if (buildCode !== 0) {
       this.error(`Docker build failed with code ${buildCode}`)
     }
@@ -112,7 +112,7 @@ export default class DockerDeploy extends Command {
 
     // Run container
     this.log('Starting Docker container...')
-    const runCode = await runCommand('docker', [
+    const dockerRunArgs = [
       'run',
       '-d',
       '--name', containerName,
@@ -121,8 +121,16 @@ export default class DockerDeploy extends Command {
       '-e', `CAST_AGENT_PATH=/app/agent`,
       '-e', `AUTH_TOKEN=${authToken}`,
       '-e', `PYTHONPATH=/app`,
-      imageName,
-    ])
+    ]
+
+    const openrouterKey = getOpenRouterApiKey()
+    if (openrouterKey) {
+      dockerRunArgs.push('-e', `OPENROUTER_API_KEY=${openrouterKey}`)
+    }
+
+    dockerRunArgs.push(imageName)
+
+    const runCode = await runCommand('docker', dockerRunArgs)
     if (runCode !== 0) {
       this.error(`Docker run failed with code ${runCode}`)
     }
@@ -162,8 +170,9 @@ export default class DockerDeploy extends Command {
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \\
-    gcc \\
+RUN apt-get update && apt-get install -y \
+    gcc \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy and install Python dependencies
@@ -184,7 +193,7 @@ ENV PYTHONPATH=/app
 EXPOSE 8080
 
 # Run agent A2A server
-CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "8080"]
+CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "8080", "--host", "0.0.0.0"]
 `
     fs.writeFileSync(path.join(agentPath, 'Dockerfile'), dockerfile)
   }
@@ -250,6 +259,16 @@ uvicorn>=0.46.0
 xxhash>=3.7.0
 `
     }
+
+    // Filter out the cast package since it's copied directly into the image
+    requirements = requirements
+      .split('\n')
+      .filter(line => {
+        const trimmed = line.trim().toLowerCase()
+        // Remove exact 'cast' package (editable, VCS, or normal install) and agent-cast repo refs
+        return !/^cast\b/.test(trimmed) && !trimmed.includes('agent-cast')
+      })
+      .join('\n')
 
     fs.writeFileSync(path.join(agentPath, 'requirements.txt'), requirements)
   }

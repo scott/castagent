@@ -320,6 +320,7 @@ async def main():
     parser = argparse.ArgumentParser(description="Cast Runtime Agent")
     parser.add_argument("--agent-path", required=True, help="Path to agent directory")
     parser.add_argument("--port", type=int, default=0, help="Port for A2A server")
+    parser.add_argument("--host", default="localhost", help="Host to bind the A2A server to")
     parser.add_argument("--auth-token", help="Auth token for deployed mode")
     args = parser.parse_args()
 
@@ -338,7 +339,7 @@ async def main():
     agent = RuntimeAgent(config)
 
     # Start A2A server
-    server = A2AServer(agent, port=args.port)
+    server = A2AServer(agent, host=args.host, port=args.port)
 
     # Set auth token if provided via CLI or environment variable
     auth_token = args.auth_token or os.environ.get('AUTH_TOKEN')

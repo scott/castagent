@@ -123,8 +123,9 @@ export function ensureDockerfile(agentPath: string): void {
 WORKDIR /app
 
 # Install system dependencies
-RUN apt-get update && apt-get install -y \\
-    gcc \\
+RUN apt-get update && apt-get install -y \
+    gcc \
+    git \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python runtime
@@ -142,7 +143,7 @@ ENV PYTHONPATH=/app
 EXPOSE 8080
 
 # Run agent
-CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "8080"]
+CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "8080", "--host", "0.0.0.0"]
 `
     fs.writeFileSync(dockerfilePath, dockerfile)
   }
