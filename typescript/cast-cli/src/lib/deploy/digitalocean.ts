@@ -176,7 +176,7 @@ export default class DigitalOceanDeploy extends Command {
     this.log(`  Visit https://cloud.digitalocean.com/apps`)
     this.log('')
     this.log('To connect:')
-    this.log(`  cast ${agentName} connect`)
+    this.log(`  cast connect ${agentName}`)
   }
 
   private generateAppYaml(agentPath: string, agentName: string, authToken: string, imageTag: string): void {

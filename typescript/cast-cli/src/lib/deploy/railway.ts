@@ -131,6 +131,6 @@ export default class RailwayDeploy extends Command {
     this.log(`  railway logs`)
     this.log('')
     this.log('To connect:')
-    this.log(`  cast ${agentName} connect`)
+    this.log(`  cast connect ${agentName}`)
   }
 }

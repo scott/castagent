@@ -58,7 +58,7 @@ export default class FlyDeploy extends Command {
       this.log('Launching new Fly.io app...')
       const createResult = await execCommand(
         'flyctl',
-        ['launch', '--name', `cast-${agentName}`, '--region', 'iad', '--dockerfile', 'Dockerfile', '--no-deploy'],
+        ['launch', '--name', `cast-${agentName}`, '--region', 'iad', '--dockerfile', 'Dockerfile', '--no-deploy', '--yes'],
         {
           cwd: agentPath,
         },
@@ -117,7 +117,7 @@ export default class FlyDeploy extends Command {
     this.log(`  flyctl logs --app cast-${agentName}`)
     this.log('')
     this.log('To connect:')
-    this.log(`  cast ${agentName} connect`)
+    this.log(`  cast connect ${agentName}`)
   }
 
   private generateFlyToml(agentPath: string, agentName: string): void {
