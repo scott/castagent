@@ -1,4 +1,5 @@
 import {Args, Command} from '@oclif/core'
+import {execSync} from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -225,16 +226,14 @@ export default class DigitalOceanDeploy extends Command {
 
     fs.mkdirSync(path.dirname(SSH_KEY_PATH), {recursive: true, mode: 0o700})
 
-    // Generate SSH key
-    const genResult = await execCommand('ssh-keygen', [
-      '-t', 'ed25519',
-      '-f', SSH_KEY_PATH,
-      '-N', '',
-      '-C', 'cast@digitalocean',
-    ], {silent: true})
-
-    if (genResult.exitCode !== 0) {
-      throw new Error(`Failed to generate SSH key: ${genResult.stderr}`)
+    // Generate SSH key (use execSync directly to handle empty passphrase properly)
+    try {
+      execSync(`ssh-keygen -t ed25519 -f "${SSH_KEY_PATH}" -N "" -C "cast@digitalocean"`, {
+        encoding: 'utf8',
+        stdio: 'pipe',
+      })
+    } catch (e: any) {
+      throw new Error(`Failed to generate SSH key: ${e.stderr || e.message}`)
     }
 
     // Upload to DigitalOcean
