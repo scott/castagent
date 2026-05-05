@@ -124,15 +124,11 @@ export default class DigitalOceanDeploy extends Command {
     await this.ensureSshKey()
 
     // Get or create droplet
-    const droplet = await this.getOrCreateDroplet(agentName, apiToken)
+    const droplet = await this.getOrCreateDroplet(agentName, agentPath, apiToken)
 
     this.log(`Droplet IP: ${droplet.ip}`)
     this.log('Waiting for SSH to be available...')
     await this.waitForSsh(droplet.ip)
-
-    // Setup Docker on droplet
-    this.log('Setting up Docker on droplet...')
-    await this.setupDockerOnDroplet(droplet.ip)
 
     // Build Docker image locally
     const imageTag = `cast-${agentName}:latest`
@@ -247,7 +243,7 @@ export default class DigitalOceanDeploy extends Command {
     })
   }
 
-  private async getOrCreateDroplet(agentName: string, apiToken?: string): Promise<{id: string; name: string; ip: string}> {
+  private async getOrCreateDroplet(agentName: string, agentPath: string, apiToken?: string): Promise<{id: string; name: string; ip: string}> {
     const dropletName = `cast-${agentName}`
 
     // Check if droplet exists
@@ -261,20 +257,31 @@ export default class DigitalOceanDeploy extends Command {
       }
     }
 
-    // Create droplet
+    // Create droplet with cloud-init
     this.log(`Creating droplet '${dropletName}'...`)
 
     // Get SSH key fingerprint (MD5 format required by DO API)
     const keyResult = await execCommand('ssh-keygen', ['-l', '-E', 'md5', '-f', `${SSH_KEY_PATH}.pub`], {silent: true})
     const fingerprint = keyResult.stdout.trim().split(/\s+/)[1].replace(/^MD5:/, '')
 
+    // Write cloud-init to install Docker
+    const cloudInitPath = path.join(agentPath, '.cloud-init.yml')
+    const cloudInit = `#cloud-config
+runcmd:
+  - curl -fsSL https://get.docker.com | sh
+  - systemctl enable docker
+  - systemctl start docker
+`
+    fs.writeFileSync(cloudInitPath, cloudInit)
+
     const createResult = await execCommand('doctl', [
       'compute', 'droplet', 'create',
       dropletName,
       '--region', 'nyc3',
       '--size', 's-1vcpu-1gb',
-      '--image', 'docker-20-04',
+      '--image', 'ubuntu-24-04-x64',
       '--ssh-keys', fingerprint,
+      '--user-data-file', cloudInitPath,
       '--wait',
     ], {silent: true})
 
@@ -313,35 +320,6 @@ export default class DigitalOceanDeploy extends Command {
     }
 
     throw new Error('Timed out waiting for SSH on droplet')
-  }
-
-  private async setupDockerOnDroplet(ip: string): Promise<void> {
-    // Check if Docker is installed
-    const checkResult = await execCommand('ssh', [
-      '-i', SSH_KEY_PATH,
-      '-o', 'StrictHostKeyChecking=no',
-      '-o', 'UserKnownHostsFile=/dev/null',
-      `root@${ip}`,
-      'docker --version',
-    ], {silent: true})
-
-    if (checkResult.exitCode === 0) {
-      // Docker already installed
-      return
-    }
-
-    // Install Docker
-    const installResult = await execCommand('ssh', [
-      '-i', SSH_KEY_PATH,
-      '-o', 'StrictHostKeyChecking=no',
-      '-o', 'UserKnownHostsFile=/dev/null',
-      `root@${ip}`,
-      'curl -fsSL https://get.docker.com | sh',
-    ], {silent: true})
-
-    if (installResult.exitCode !== 0) {
-      throw new Error(`Failed to install Docker on droplet: ${installResult.stderr}`)
-    }
   }
 
   private async deployOnDroplet(
