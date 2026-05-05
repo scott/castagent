@@ -63,6 +63,9 @@ export PATH="$HOME/.local/bin:$PATH"
 # Show help
 cast --help
 
+# Create a new agent (interactive TUI wizard)
+cast new
+
 # List all agents
 cast list
 
@@ -95,6 +98,27 @@ cast delete demo-agent --force
 
 # Run meta-builder tests
 cast meta test
+```
+
+### Creating a New Agent
+
+The `cast new` command launches an interactive TUI wizard that guides you through creating a new agent:
+
+```bash
+# Launch the agent creation wizard
+cast new
+```
+
+The Builder Agent will:
+1. Ask what your agent should do
+2. Suggest an available name based on your description
+3. Create the agent scaffold (agent.yaml, instructions.md, tools/, mcp/, tests/)
+4. Write meaningful initial instructions
+5. Offer to configure MCP integrations and model settings
+
+After creation, start your agent with:
+```bash
+cast dev <agent-name>
 ```
 
 ### Updating Agent Configuration
