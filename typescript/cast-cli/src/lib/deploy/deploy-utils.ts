@@ -31,13 +31,20 @@ export function loadConfig(): any {
   }
 }
 
-export function getProviderToken(provider: string): string | undefined {
+export function getProviderToken(provider: string, envVarNames?: string[]): string | undefined {
+  // Check custom env vars first
+  if (envVarNames) {
+    for (const envName of envVarNames) {
+      if (process.env[envName]) {
+        return process.env[envName]
+      }
+    }
+  }
+
+  // Fall back to auto-generated env var name
   const envVar = provider.toUpperCase().replace(/[^A-Z0-9]/g, '_') + '_TOKEN'
   if (process.env[envVar]) {
     return process.env[envVar]
-  }
-  if (process.env[`${envVar}_API_KEY`]) {
-    return process.env[`${envVar}_API_KEY`]
   }
 
   const config = loadConfig()

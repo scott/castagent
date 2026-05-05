@@ -39,10 +39,11 @@ const PROVIDERS: Record<string, ProviderInfo> = {
   },
   digitalocean: {
     name: 'DigitalOcean',
-    description: 'App Platform with simple container hosting',
-    cliCommand: 'docker',
-    cliInstallUrl: 'https://docs.docker.com/get-docker/',
-    authEnvVar: 'DIGITALOCEAN_TOKEN',
+    description: 'Droplet with Docker container hosting',
+    cliCommand: 'doctl',
+    cliInstallUrl: 'https://docs.digitalocean.com/reference/doctl/how-to/install/',
+    authCommand: 'doctl auth init',
+    authEnvVar: 'DIGITALOCEAN_ACCESS_TOKEN',
     authConfigKey: 'providers.digitalocean.token',
   },
   docker: {
@@ -196,7 +197,7 @@ export default class Deploy extends Command {
 
       // API token check for DigitalOcean
       if (provider === 'digitalocean') {
-        const token = getProviderToken('digitalocean')
+        const token = getProviderToken('digitalocean', ['DIGITALOCEAN_ACCESS_TOKEN', 'DIGITALOCEAN_API_TOKEN', 'DIGITALOCEAN_API_KEY'])
         if (!token) {
           this.log('')
           this.log('─────────────────────────────────────────────────────────────')
@@ -212,11 +213,11 @@ export default class Deploy extends Command {
           this.log('  4. Copy the token')
           this.log('')
           this.log('Then set it via one of these methods:')
-          this.log('  export DIGITALOCEAN_TOKEN=<your-token>')
+          this.log('  export DIGITALOCEAN_ACCESS_TOKEN=<your-token>')
           this.log('  # or add to ~/.cast/config.yaml:')
           this.log('  providers:')
           this.log('    digitalocean:')
-          this.log('      token: ${DIGITALOCEAN_TOKEN}')
+          this.log('      token: ${DIGITALOCEAN_ACCESS_TOKEN}')
           this.log('')
           const ready = await this.confirm('Have you set your DigitalOcean API token and are ready to continue?')
           if (!ready) {
@@ -224,6 +225,27 @@ export default class Deploy extends Command {
             this.log('Deployment cancelled. Run again when your token is configured.')
             this.exit(0)
           }
+        }
+
+        // doctl check
+        try {
+          await checkCli('doctl', 'https://docs.digitalocean.com/reference/doctl/how-to/install/')
+        } catch {
+          this.log('')
+          this.log('─────────────────────────────────────────────────────────────')
+          this.log('  doctl CLI Required')
+          this.log('─────────────────────────────────────────────────────────────')
+          this.log('')
+          this.log('You need the doctl CLI to deploy to DigitalOcean.')
+          this.log('')
+          this.log('Install it:')
+          this.log('  brew install doctl')
+          this.log('  # or visit: https://docs.digitalocean.com/reference/doctl/how-to/install/')
+          this.log('')
+          this.log('Then authenticate:')
+          this.log('  doctl auth init')
+          this.log('')
+          this.error('doctl is required for DigitalOcean deployment.')
         }
       }
     }
