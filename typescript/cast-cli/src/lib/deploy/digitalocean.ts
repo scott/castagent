@@ -130,11 +130,12 @@ export default class DigitalOceanDeploy extends Command {
     this.log('Waiting for SSH to be available...')
     await this.waitForSsh(droplet.ip)
 
-    // Build Docker image locally
+    // Build Docker image locally for AMD64 target (DO droplets are x86_64)
     const imageTag = `cast-${agentName}:latest`
-    this.log('Building Docker image...')
+    this.log('Building Docker image for linux/amd64...')
     const buildResult = await execCommand('docker', [
-      'build',
+      'buildx', 'build',
+      '--platform', 'linux/amd64',
       '-t', imageTag,
       '-f', path.join(agentPath, 'Dockerfile'),
       agentPath,
