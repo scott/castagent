@@ -8,9 +8,10 @@ import DockerDeploy from '../lib/deploy/docker'
 import RailwayDeploy from '../lib/deploy/railway'
 import FlyDeploy from '../lib/deploy/fly'
 import DigitalOceanDeploy from '../lib/deploy/digitalocean'
+import SpritesDeploy from '../lib/deploy/sprites'
 import {checkCli, getProviderToken} from '../lib/deploy/deploy-utils'
 
-const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'docker', 'local']
+const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'sprites', 'docker', 'local']
 
 interface ProviderInfo {
   name: string
@@ -45,6 +46,14 @@ const PROVIDERS: Record<string, ProviderInfo> = {
     authCommand: 'doctl auth init',
     authEnvVar: 'DIGITALOCEAN_ACCESS_TOKEN',
     authConfigKey: 'providers.digitalocean.token',
+  },
+  sprites: {
+    name: 'Sprites',
+    description: 'Persistent Firecracker VMs on Fly.io (sprites.dev)',
+    cliCommand: 'sprite',
+    cliInstallUrl: 'https://sprites.dev/install.sh',
+    authCommand: 'sprite login',
+    authEnvVar: 'SPRITES_TOKEN',
   },
   docker: {
     name: 'Docker (local)',
@@ -248,6 +257,29 @@ export default class Deploy extends Command {
           this.error('doctl is required for DigitalOcean deployment.')
         }
       }
+
+      // Auth check for Sprites
+      if (provider === 'sprites') {
+        try {
+          await checkCli('sprite', 'https://sprites.dev/install.sh')
+        } catch {
+          this.log('')
+          this.log('─────────────────────────────────────────────────────────────')
+          this.log('  Sprites CLI Required')
+          this.log('─────────────────────────────────────────────────────────────')
+          this.log('')
+          this.log('You need the Sprites CLI to deploy.')
+          this.log('')
+          this.log('Install it:')
+          this.log('  curl https://sprites.dev/install.sh | bash')
+          this.log('')
+          this.log('Then authenticate:')
+          this.log('  sprite login')
+          this.log('  # or set SPRITES_TOKEN environment variable')
+          this.log('')
+          this.error('Sprites CLI is required.')
+        }
+      }
     }
 
     // Docker check for docker and digitalocean providers
@@ -422,6 +454,11 @@ export default class Deploy extends Command {
 
         case 'digitalocean': {
           await DigitalOceanDeploy.run([agentName])
+          break
+        }
+
+        case 'sprites': {
+          await SpritesDeploy.run([agentName])
           break
         }
 
