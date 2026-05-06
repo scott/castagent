@@ -115,13 +115,16 @@ export default class SpritesDeploy extends Command {
   }
 
   private async execOnSprite(spriteName: string, command: string): Promise<string> {
-    const result = await execCommand('sprite', ['exec', '-s', spriteName, '--', 'bash', '-c', command], {
-      silent: true,
-    })
-    if (result.exitCode !== 0) {
-      throw new Error(`Sprite command failed: ${result.stderr || result.stdout}`)
+    // Use execSync directly to avoid shell=true mangling && and other operators
+    try {
+      const stdout = execSync(
+        `sprite exec -s "${spriteName}" -- bash -c "${command.replace(/"/g, '\\"')}"`,
+        {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']},
+      )
+      return stdout
+    } catch (e: any) {
+      throw new Error(`Sprite command failed: ${e.stderr || e.message}`)
     }
-    return result.stdout
   }
 
   private async transferAgentFiles(agentPath: string, spriteName: string): Promise<void> {
@@ -190,13 +193,13 @@ WantedBy=multi-user.target
 `
 
     // Write service file
-    const writeResult = await execCommand('sprite', [
-      'exec', '-s', spriteName, '--', 'bash', '-c',
-      `cat > /etc/systemd/system/cast-agent.service << 'EOF'\n${serviceContent}EOF`,
-    ], {silent: true})
-
-    if (writeResult.exitCode !== 0) {
-      throw new Error(`Failed to write systemd service: ${writeResult.stderr}`)
+    try {
+      execSync(
+        `sprite exec -s "${spriteName}" -- bash -c 'cat > /etc/systemd/system/cast-agent.service << "EOF"\n${serviceContent}EOF'`,
+        {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']},
+      )
+    } catch (e: any) {
+      throw new Error(`Failed to write systemd service: ${e.stderr || e.message}`)
     }
 
     // Enable and start service
