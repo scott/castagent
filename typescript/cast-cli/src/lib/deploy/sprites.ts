@@ -62,34 +62,46 @@ export default class SpritesDeploy extends Command {
       this.error(`Failed to create sprite: ${createResult.stderr}`)
     }
 
-    // Ensure Python is installed
+    // Ensure Python and venv are installed
     this.log('Ensuring Python is installed...')
-    await this.execOnSprite(spriteName, 'apt-get update && apt-get install -y python3 python3-pip')
+    await this.execOnSprite(spriteName, 'apt-get update && apt-get install -y python3 python3-pip python3-venv')
 
     // Package and transfer agent files
     this.log('Transferring agent files...')
     await this.transferAgentFiles(agentPath, spriteName)
 
-    // Install dependencies
+    // Create virtual environment and install dependencies
+    this.log('Setting up Python environment...')
+    await this.execOnSprite(spriteName, `python3 -m venv ${AGENT_DIR}/venv`)
     this.log('Installing dependencies...')
-    await this.execOnSprite(spriteName, `pip3 install -r ${AGENT_DIR}/requirements.txt`)
+    await this.execOnSprite(spriteName, `${AGENT_DIR}/venv/bin/pip install -r ${AGENT_DIR}/requirements.txt`)
 
-    // Setup and start systemd service
+    // Setup and start background service
     this.log('Starting agent service...')
-    await this.setupSystemdService(spriteName, agentName, authToken)
+    await this.setupBackgroundService(spriteName, agentName, authToken)
 
     // Wait a moment for service to start
     await new Promise((resolve) => setTimeout(resolve, 2000))
 
     // Verify service is running
-    const statusResult = await this.execOnSprite(spriteName, 'systemctl is-active cast-agent')
-    if (statusResult.trim() !== 'active') {
-      this.warn('Agent service may not be running. Check logs with: sprite exec -s ' + spriteName + ' -- journalctl -u cast-agent -n 50')
+    const pidResult = await this.execOnSprite(spriteName, `cat ${AGENT_DIR}/agent.pid 2>/dev/null || echo 'no-pid'`)
+    const pid = pidResult.trim()
+    if (pid === 'no-pid' || !pid) {
+      this.warn('Agent service may not be running. Check logs with: sprite exec -s ' + spriteName + ` -- cat ${AGENT_DIR}/agent.log`)
+    } else {
+      const psResult = await this.execOnSprite(spriteName, `ps -p ${pid} > /dev/null 2>&1 && echo 'running' || echo 'not-running'`)
+      if (psResult.trim() !== 'running') {
+        this.warn('Agent service is not running. Check logs with: sprite exec -s ' + spriteName + ` -- cat ${AGENT_DIR}/agent.log`)
+      }
     }
 
     // Get URL
     const urlResult = await execCommand('sprite', ['url', '-s', spriteName], {silent: true})
-    const deploymentUrl = urlResult.stdout.trim() || `https://${spriteName}.sprites.dev`
+    // sprite url may output multiple lines (URL + Auth info); extract only the first line
+    const firstLine = urlResult.stdout.split(/\r?\n/)[0] || ''
+    const deploymentUrl = firstLine
+      .replace(/^URL:\s*/i, '')
+      .trim()
 
     // Save deployment
     saveDeployment(agentName, 'sprites', deploymentUrl, tokenHash)
@@ -105,7 +117,7 @@ export default class SpritesDeploy extends Command {
     this.log(`Provider: sprites`)
     this.log('')
     this.log('To view logs:')
-    this.log(`  sprite exec -s ${spriteName} -- journalctl -u cast-agent -f`)
+    this.log(`  sprite exec -s ${spriteName} -- cat ${AGENT_DIR}/agent.log`)
     this.log('')
     this.log('To connect:')
     this.log(`  cast connect ${agentName}`)
@@ -114,12 +126,13 @@ export default class SpritesDeploy extends Command {
     this.log(`  cast shutdown ${agentName}`)
   }
 
-  private async execOnSprite(spriteName: string, command: string): Promise<string> {
+  private async execOnSprite(spriteName: string, command: string, timeout?: number): Promise<string> {
     // Use execSync directly to avoid shell=true mangling && and other operators
+    // All commands run via sudo since sprite exec runs as the 'sprite' user
     try {
       const stdout = execSync(
-        `sprite exec -s "${spriteName}" -- bash -c "${command.replace(/"/g, '\\"')}"`,
-        {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']},
+        `sprite exec -s "${spriteName}" -- bash -c 'sudo bash -c "${command.replace(/"/g, '\\"')}"'`,
+        {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: timeout || 120000},
       )
       return stdout
     } catch (e: any) {
@@ -149,7 +162,7 @@ export default class SpritesDeploy extends Command {
 
       // Transfer to sprite via base64 decode pipe
       this.log('  Uploading tar to sprite...')
-      execSync(`sprite exec -s ${spriteName} -- bash -c 'mkdir -p ${AGENT_DIR} && base64 -d > /tmp/agent.tar.gz'`, {
+      execSync(`sprite exec -s ${spriteName} -- bash -c 'sudo mkdir -p ${AGENT_DIR} && base64 -d > /tmp/agent.tar.gz'`, {
         input: base64Data,
         encoding: 'utf8',
         stdio: ['pipe', 'pipe', 'pipe'],
@@ -166,45 +179,36 @@ export default class SpritesDeploy extends Command {
     }
   }
 
-  private async setupSystemdService(spriteName: string, agentName: string, authToken: string): Promise<void> {
+  private async setupBackgroundService(spriteName: string, agentName: string, authToken: string): Promise<void> {
     const openrouterKey = getOpenRouterApiKey()
 
-    const serviceContent = `[Unit]
-Description=Cast Agent ${agentName}
-After=network.target
+    // Kill any existing agent process
+    this.log('  Stopping any existing agent process...')
+    await this.execOnSprite(spriteName, `if [ -f ${AGENT_DIR}/agent.pid ]; then kill $(cat ${AGENT_DIR}/agent.pid) 2>/dev/null; rm -f ${AGENT_DIR}/agent.pid; fi`)
 
-[Service]
-Type=simple
-User=root
-WorkingDirectory=${AGENT_DIR}
-Environment=PYTHONPATH=${AGENT_DIR}/.cast-runtime
-Environment=CAST_AGENT_NAME=${agentName}
-Environment=CAST_AGENT_PATH=${AGENT_DIR}
-Environment=AUTH_TOKEN=${authToken}
-${openrouterKey ? `Environment=OPENROUTER_API_KEY=${openrouterKey}` : ''}
-ExecStart=/usr/bin/python3 -m cast.runtime --agent-path ${AGENT_DIR} --port 8080 --host 0.0.0.0
-Restart=always
-RestartSec=5
-StandardOutput=journal
-StandardError=journal
-
-[Install]
-WantedBy=multi-user.target
+    // Create startup script that backgrounds itself and exits immediately
+    this.log('  Creating startup script...')
+    const startScript = `#!/bin/bash
+cd ${AGENT_DIR}
+export PYTHONPATH=${AGENT_DIR}/.cast-runtime
+export CAST_AGENT_NAME=${agentName}
+export CAST_AGENT_PATH=${AGENT_DIR}
+export AUTH_TOKEN=${authToken}
+${openrouterKey ? `export OPENROUTER_API_KEY=${openrouterKey}` : ''}
+# Start agent in background, redirect all output, write PID, then exit
+nohup ${AGENT_DIR}/venv/bin/python -m cast.runtime --agent-path ${AGENT_DIR} --port 8080 --host 0.0.0.0 > ${AGENT_DIR}/agent.log 2>&1 &
+echo $! > ${AGENT_DIR}/agent.pid
 `
 
-    // Write service file
-    try {
-      execSync(
-        `sprite exec -s "${spriteName}" -- bash -c 'cat > /etc/systemd/system/cast-agent.service << "EOF"\n${serviceContent}EOF'`,
-        {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe']},
-      )
-    } catch (e: any) {
-      throw new Error(`Failed to write systemd service: ${e.stderr || e.message}`)
-    }
+    await this.execOnSprite(spriteName, `cat > ${AGENT_DIR}/start.sh << 'EOF'\n${startScript}EOF`)
+    await this.execOnSprite(spriteName, `chmod +x ${AGENT_DIR}/start.sh`)
 
-    // Enable and start service
-    await this.execOnSprite(spriteName, 'systemctl daemon-reload')
-    await this.execOnSprite(spriteName, 'systemctl enable cast-agent')
-    await this.execOnSprite(spriteName, 'systemctl restart cast-agent')
+    // Run the start script using execCommand (spawn) instead of execSync
+    // This avoids blocking on background processes that inherit stdio pipes
+    this.log('  Starting agent process...')
+    const startResult = await execCommand('sprite', ['exec', '-s', spriteName, '--', 'bash', '-c', `sudo bash ${AGENT_DIR}/start.sh`], {silent: true})
+    if (startResult.exitCode !== 0) {
+      this.warn(`Start script returned exit code ${startResult.exitCode}: ${startResult.stderr}`)
+    }
   }
 }

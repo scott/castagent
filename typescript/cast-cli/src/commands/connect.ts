@@ -1,4 +1,4 @@
-import {Args, Command} from '@oclif/core'
+import {Args, Command, Flags} from '@oclif/core'
 import {spawn} from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -18,8 +18,12 @@ export default class Connect extends Command {
     agent: Args.string({description: 'Agent name', required: true}),
   }
 
+  static flags = {
+    proxy: Flags.boolean({description: 'Use sprite proxy for sprites deployments', default: false}),
+  }
+
   async run(): Promise<void> {
-    const {args} = await this.parse(Connect)
+    const {args, flags} = await this.parse(Connect)
     const agentName = args.agent
 
     this.log(`Connecting to ${agentName}...`)
@@ -44,12 +48,30 @@ export default class Connect extends Command {
       )
     }
 
-    const deploymentUrl = deployment.deployment_url
-
-    // Retrieve auth token from keychain
+    let deploymentUrl = deployment.deployment_url
+    const provider = deployment.provider
     const token = await keychain.getToken(agentName)
+    let proxyProcess: ReturnType<typeof spawn> | undefined
+
     if (!token) {
       this.warn(`No auth token found for agent '${agentName}'. Connecting without authentication...`)
+    }
+
+    // For sprites deployments, use proxy if public access is blocked
+    if (provider === 'sprites') {
+      // Check if sprite proxy is available and if public access works
+      const needsProxy = await this.checkNeedsProxy(deploymentUrl)
+      if (needsProxy || flags.proxy) {
+        this.log('Sprites auth detected. Starting local proxy...')
+        const proxyResult = await this.startSpriteProxy(agentName, deploymentUrl)
+        if (proxyResult) {
+          deploymentUrl = proxyResult.url
+          proxyProcess = proxyResult.process
+          this.log(`Proxy started at ${deploymentUrl}`)
+        } else {
+          this.warn('Failed to start sprite proxy. Trying direct connection...')
+        }
+      }
     }
 
     // Verify connection before launching TUI
@@ -84,10 +106,80 @@ export default class Connect extends Command {
       }
     }
 
-    await this.launchTui(agentName, deploymentUrl, token || undefined)
+    await this.launchTui(agentName, deploymentUrl, token || undefined, proxyProcess)
   }
 
-  private async launchTui(agentName: string, url: string, token?: string): Promise<void> {
+  private async checkNeedsProxy(url: string): Promise<boolean> {
+    try {
+      const client = new A2AClient(url)
+      await client.getAgentCard()
+      return false
+    } catch (error: any) {
+      // If we get a redirect or auth error, we need proxy
+      if (error instanceof A2AClientError) {
+        if (error.statusCode === 302 || error.message?.includes('Unsupported protocol')) {
+          return true
+        }
+      }
+      return false
+    }
+  }
+
+  private async startSpriteProxy(agentName: string, deploymentUrl: string): Promise<{url: string; process: ReturnType<typeof spawn>} | null> {
+    const localPort = await this.findAvailablePort(8500, 9000)
+    const spriteName = `cast-${agentName}`
+
+    this.log(`Starting sprite proxy for ${spriteName} on port ${localPort}...`)
+
+    // Use LOCAL:REMOTE syntax to map localhost:${localPort} -> remote:8080
+    const proxyProcess = spawn('sprite', ['proxy', `${localPort}:8080`, '-s', spriteName], {
+      stdio: 'pipe',
+    })
+
+    let proxyError = ''
+    proxyProcess.stderr?.on('data', (data: Buffer) => {
+      proxyError += data.toString()
+    })
+
+    // Wait for proxy to be ready (or fail)
+    await new Promise((resolve) => setTimeout(resolve, 3000))
+
+    // Check if proxy failed
+    if (proxyError.includes('address already in use')) {
+      this.warn(`Port ${localPort} is already in use. Killing old proxy...`)
+      proxyProcess.kill()
+      // Try one more time with a different port
+      return this.startSpriteProxy(agentName, deploymentUrl)
+    }
+
+    if (proxyError.includes('Error:') || proxyError.includes('failed')) {
+      this.warn(`Proxy failed: ${proxyError.trim()}`)
+      proxyProcess.kill()
+      return null
+    }
+
+    return {url: `http://localhost:${localPort}`, process: proxyProcess}
+  }
+
+  private async findAvailablePort(startPort: number, endPort: number): Promise<number> {
+    const net = await import('net')
+    return new Promise((resolve, reject) => {
+      const tryPort = (port: number) => {
+        if (port > endPort) {
+          reject(new Error('No available ports found'))
+          return
+        }
+        const server = net.createServer()
+        server.listen(port, '127.0.0.1', () => {
+          server.close(() => resolve(port))
+        })
+        server.on('error', () => tryPort(port + 1))
+      }
+      tryPort(startPort)
+    })
+  }
+
+  private async launchTui(agentName: string, url: string, token?: string, proxyProcess?: ReturnType<typeof spawn>): Promise<void> {
     this.log(`Deployment URL: ${url}`)
 
     // Launch OpenTUI
@@ -99,6 +191,10 @@ export default class Connect extends Command {
     if (!fs.existsSync(tuiPath)) {
       this.warn(`OpenTUI not found at ${tuiPath}`)
       this.log(`Agent endpoint: ${url}`)
+      // Clean up proxy if it was started
+      if (proxyProcess) {
+        proxyProcess.kill()
+      }
       return
     }
 
@@ -117,12 +213,20 @@ export default class Connect extends Command {
       stdio: 'inherit',
     })
 
+    // Store proxy process reference for cleanup
+    const proxy = proxyProcess
+
     opentui.on('error', (error) => {
       this.error(`Failed to launch OpenTUI: ${error.message}`)
+      proxy?.kill()
     })
 
     opentui.on('exit', (code) => {
       this.log(`OpenTUI exited with code ${code}`)
+      if (proxy) {
+        this.log('Stopping sprite proxy...')
+        proxy.kill()
+      }
       process.exit(code || 0)
     })
   }
