@@ -136,6 +136,7 @@ export default class DigitalOceanDeploy extends Command {
     const buildResult = await execCommand('docker', [
       'buildx', 'build',
       '--platform', 'linux/amd64',
+      '--load',
       '-t', imageTag,
       '-f', path.join(agentPath, 'Dockerfile'),
       agentPath,
