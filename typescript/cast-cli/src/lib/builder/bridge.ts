@@ -282,10 +282,11 @@ export class BuilderA2ABridge extends EventEmitter {
               const responseText = await this.sendBuilderRequest('output', {content: text})
               const response = responseText?.response || responseText?.message || "I've processed your request."
 
-              // Simulate streaming by splitting into words
-              const words = response.split(' ')
-              for (let i = 0; i < words.length; i++) {
-                const chunk = (i > 0 ? ' ' : '') + words[i]
+              // Stream in chunks to balance responsiveness with efficiency.
+              // Word-by-word creates too many tiny SSE events and risks timeouts.
+              const chunkSize = 80
+              for (let i = 0; i < response.length; i += chunkSize) {
+                const chunk = response.slice(i, i + chunkSize)
                 const event = {
                   jsonrpc: '2.0',
                   id: request.id,
@@ -294,8 +295,8 @@ export class BuilderA2ABridge extends EventEmitter {
                   },
                 }
                 safeWrite(`data: ${JSON.stringify(event)}\n\n`)
-                // Minimal delay for streaming effect (reduced to avoid A2A client timeout)
-                await new Promise((r) => setTimeout(r, 1))
+                // Small delay for visual streaming effect
+                await new Promise((r) => setTimeout(r, 5))
               }
 
               safeWrite('data: [DONE]\n\n')
