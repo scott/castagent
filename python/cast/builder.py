@@ -83,10 +83,15 @@ class EchoChatModel(BaseChatModel):
     def __init__(self, **kwargs: Any):
         super().__init__(**kwargs)
         self._new_mode = os.getenv("CAST_NEW_MODE") == "1"
+        self._agent_name: Optional[str] = None
 
     def set_new_mode(self, enabled: bool) -> None:
         """Set whether the model should use new-mode behavior."""
         self._new_mode = enabled
+
+    def set_agent_name(self, name: Optional[str]) -> None:
+        """Set the current agent name for context-aware tool calls."""
+        self._agent_name = name
 
     def _generate(
         self,
@@ -417,16 +422,28 @@ class EchoChatModel(BaseChatModel):
         # read_file (general purpose file reading)
         elif any(k in lower_msg for k in ["read file", "view file", "show file", "cat ", "display file"]):
             # Try to extract a file path from the message
-            path_match = re.search(r'(?:read|view|show|cat|display)\s+(?:file\s+)?["\']?([^"\']+\.\w+)["\']?', lower_msg)
+            # Support quoted paths, paths with extensions, and simple filenames like "instructions"
+            path_match = re.search(r'(?:read|view|show|cat|display)(?:\s+(?:file|the|me|this|that))?\s+["\']?([^"\']+?)(?:["\']|$)', lower_msg)
             if path_match:
-                file_path = path_match.group(1)
-                tool_calls.append({
-                    "name": "read_file",
-                    "args": {"file_path": file_path},
-                    "id": next_call_id(),
-                    "type": "tool_call",
-                })
-                content = f"Let me read the file '{file_path}' for you."
+                file_path = path_match.group(1).strip()
+                # Strip leading filler words and trailing punctuation/common words
+                file_path = re.sub(r'^(?:file|the|me|this|that)\s+', '', file_path)
+                file_path = re.sub(r'\s+(?:please|now|here|there)$', '', file_path)
+                file_path = re.sub(r'[.!?]+$', '', file_path)
+                if file_path and file_path not in ('file', 'the', 'me', 'this', 'that'):
+                    args: Dict[str, Any] = {"file_path": file_path}
+                    # If we know the agent name, pass it so relative paths resolve correctly
+                    if self._agent_name:
+                        args["agent_name"] = self._agent_name
+                    tool_calls.append({
+                        "name": "read_file",
+                        "args": args,
+                        "id": next_call_id(),
+                        "type": "tool_call",
+                    })
+                    content = f"Let me read the file '{file_path}' for you."
+                else:
+                    content = "Which file would you like me to read? Please provide the file path."
             else:
                 content = "Which file would you like me to read? Please provide the file path."
 
@@ -592,6 +609,9 @@ class BuilderAgent:
     def set_agent_name(self, name: str) -> None:
         """Set the current agent being built."""
         self.agent_name = name
+        # Propagate to LLM so EchoChatModel can use agent context
+        if hasattr(self.llm, 'set_agent_name'):
+            self.llm.set_agent_name(name)
 
     def set_new_mode(self, enabled: bool) -> None:
         """Set whether we're in 'new agent' creation mode."""
@@ -608,9 +628,15 @@ class BuilderAgent:
             self.messages.append(SystemMessage(content=self.system_prompt))
         try:
             config_text = get_agent_config.invoke({"name": name})
+            agent_dir = Path.home() / ".cast" / "agents" / name
             self.messages.append(SystemMessage(
                 content=f"You are now editing the existing agent '{name}'. "
+                        f"The agent's files are located at: {agent_dir}\n\n"
                         f"Here is its current configuration:\n\n{config_text}\n\n"
+                        f"When reading agent files (like instructions.md), you can either:\n"
+                        f"1. Use the full path: {agent_dir}/instructions.md\n"
+                        f"2. Use the read_file tool with agent_name='{name}' and file_path='instructions.md'\n\n"
+                        f"IMPORTANT: When the user asks to see the contents of a file, always show the complete file contents in your response. Do not summarize or describe the file instead of showing it.\n\n"
                         f"Help the user modify this agent. You can update instructions, config, or install MCP servers."
             ))
             # Parse config to build a rich welcome message summarizing attributes
