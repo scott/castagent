@@ -44,12 +44,12 @@ function isProcessAlive(pid: number): boolean {
 }
 
 /**
- * Scan ~/cast-agents/ for agent directories (containing agent.yaml).
+ * Scan ~/.cast/agents/ for agent directories (containing agent.yaml).
  * This is the canonical source of agents — the SQLite DB only tracks
  * runtime/deployment state and may be empty for newly-created agents.
  */
 function listAgentsFromDisk(): string[] {
-  const agentsDir = path.join(os.homedir(), 'cast-agents')
+  const agentsDir = path.join(os.homedir(), '.cast', 'agents')
   if (!fs.existsSync(agentsDir)) {
     return []
   }
@@ -639,7 +639,7 @@ const commands: SlashCommand[] = [
           )
           return
         }
-        const agentPath = path.join(os.homedir(), 'cast-agents', agentName, 'agent.yaml')
+        const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName, 'agent.yaml')
         if (!fs.existsSync(agentPath)) {
           ctx.messages.addAgentMessage(`Agent '${agentName}' not found.`, ctx.mode)
           return

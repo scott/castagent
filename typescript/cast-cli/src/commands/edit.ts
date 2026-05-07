@@ -79,7 +79,7 @@ export default class Edit extends Command {
       this.error('Agent name must contain only letters, numbers, and hyphens.')
     }
 
-    const agentConfigPath = path.join(os.homedir(), 'cast-agents', agentName, 'agent.yaml')
+    const agentConfigPath = path.join(os.homedir(), '.cast', 'agents', agentName, 'agent.yaml')
     if (!fs.existsSync(agentConfigPath)) {
       this.error(`Agent '${agentName}' does not exist. Create it first with: cast new`)
     }

@@ -38,7 +38,7 @@ async def test_stdio_server_edit_mode_initialization(tmp_path):
     
     # Create a dummy agent on disk with a rich config
     agent_name = "test-edit-agent"
-    agent_dir = tmp_path / "cast-agents" / agent_name
+    agent_dir = tmp_path / ".cast" / "agents" / agent_name
     agent_dir.mkdir(parents=True)
     config = {
         "name": agent_name,
@@ -68,7 +68,7 @@ async def test_stdio_server_edit_mode_initialization(tmp_path):
     # Temporarily override the agents directory
     from cast.builder_tools import tools
     original_agents_dir = tools.AGENTS_DIR
-    tools.AGENTS_DIR = tmp_path / "cast-agents"
+    tools.AGENTS_DIR = tmp_path / ".cast" / "agents"
     try:
         result = await server.handle_initialize({"agent_name": agent_name, "new_mode": False})
         assert result["status"] == "ready"

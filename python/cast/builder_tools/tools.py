@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from langchain_core.tools import tool
 
-AGENTS_DIR = Path.home() / "cast-agents"
+AGENTS_DIR = Path.home() / ".cast" / "agents"
 
 
 def _get_agent_path(name: str) -> Path:
@@ -151,7 +151,7 @@ def suggest_name(description: str) -> str:
 @tool
 def create_agent(name: str, description: str = "") -> str:
     """
-    Create a new agent scaffold in ~/cast-agents/<name>/.
+    Create a new agent scaffold in ~/.cast/agents/<name>/.
     Creates agent.yaml, instructions.md, tools/, mcp/, and tests/ directories.
     
     Args:
@@ -336,7 +336,7 @@ def install_mcp(name: str, server: str) -> str:
 @tool
 def list_agents() -> List[str]:
     """
-    List all existing agents in ~/cast-agents/.
+    List all existing agents in ~/.cast/agents/.
     
     Returns:
         A list of agent names.

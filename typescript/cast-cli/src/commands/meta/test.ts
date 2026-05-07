@@ -87,7 +87,7 @@ export default class MetaTest extends Command {
       // Initialize the builder agent
       await bridge.send('initialize', {
         agent_name: 'meta-test',
-        agent_path: '~/cast-agents/meta-test',
+        agent_path: '~/.cast/agents/meta-test',
       })
 
       const results: ScenarioRunResult[] = []

@@ -4,7 +4,7 @@ import * as os from 'os'
 import * as yaml from 'yaml'
 import {db} from './sqlite'
 
-const AGENTS_DIR = path.join(os.homedir(), 'cast-agents')
+const AGENTS_DIR = path.join(os.homedir(), '.cast', 'agents')
 
 export interface MCPServerConfig {
   name: string

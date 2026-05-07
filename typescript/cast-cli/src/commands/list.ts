@@ -14,10 +14,10 @@ export default class List extends Command {
   async run(): Promise<void> {
     await this.parse(List)
 
-    const agentsDir = path.join(os.homedir(), 'cast-agents')
+    const agentsDir = path.join(os.homedir(), '.cast', 'agents')
 
     if (!fs.existsSync(agentsDir)) {
-      this.log('No agents directory found at ~/cast-agents/')
+      this.log('No agents directory found at ~/.cast/agents/')
       this.log('')
       this.log("Create your first agent with: cast dev <agent-name>")
       return
@@ -49,7 +49,7 @@ export default class List extends Command {
       return
     }
 
-    this.log('Agents in ~/cast-agents/')
+    this.log('Agents in ~/.cast/agents/')
     this.log('')
 
     for (const agentName of allAgentNames) {

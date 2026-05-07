@@ -34,7 +34,7 @@ export default class Delete extends Command {
   async run(): Promise<void> {
     const {args, flags} = await this.parse(Delete)
     const agentName = args.agent
-    const agentPath = path.join(os.homedir(), 'cast-agents', agentName)
+    const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
 
     // Check if agent is deployed
     const deployment = db.getDeployment(agentName)

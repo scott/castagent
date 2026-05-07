@@ -235,7 +235,7 @@ export default class New extends Command {
   }
 
   private checkForNewAgent(): void {
-    const agentsDir = path.join(os.homedir(), 'cast-agents')
+    const agentsDir = path.join(os.homedir(), '.cast', 'agents')
     if (!fs.existsSync(agentsDir)) {
       return
     }

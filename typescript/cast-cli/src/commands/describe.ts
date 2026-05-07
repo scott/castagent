@@ -19,7 +19,7 @@ export default class Describe extends Command {
   async run(): Promise<void> {
     const {args} = await this.parse(Describe)
     const agentName = args.agent
-    const agentPath = path.join(os.homedir(), 'cast-agents', agentName)
+    const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
 
     // Check if agent exists
     if (!fs.existsSync(agentPath)) {

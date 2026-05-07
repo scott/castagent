@@ -401,7 +401,7 @@ export default class Deploy extends Command {
     let provider = flags.provider
 
     // Validate agent exists
-    const agentPath = path.join(os.homedir(), 'cast-agents', agentName)
+    const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
     if (!fs.existsSync(agentPath)) {
       this.error(
         `Agent '${agentName}' not found at ${agentPath}.\n` +

@@ -16,7 +16,7 @@ export interface DeploymentResult {
 }
 
 export function getAgentPath(agentName: string): string {
-  return path.join(os.homedir(), 'cast-agents', agentName)
+  return path.join(os.homedir(), '.cast', 'agents', agentName)
 }
 
 export function loadConfig(): any {

@@ -270,7 +270,7 @@ export default class Dev extends Command {
     this.checkVenv()
 
     // Check if agent exists
-    const agentPath = path.join(os.homedir(), 'cast-agents', agentName)
+    const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
 
     const pythonExecutable = this.getPythonExecutable()
     const pythonPath = this.getPythonPath()

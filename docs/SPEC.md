@@ -90,7 +90,7 @@ Cast is a CLI+TUI application that helps developers create, test, and deploy AI 
     ├── instructions.md            # Builder Agent system prompt
     └── tools/                     # Builder Agent's tools (Python)
 
-~/cast-agents/                     # User's agents
+~/.cast/agents/                    # User's agents
 └── <agent-name>/
     ├── agent.yaml                 # Agent definition
     ├── instructions.md            # Agent's brain (system prompt)
@@ -188,7 +188,7 @@ agent-cast/                        # Project repo
 
 ```
 cast --help                         # Show general help
-cast list                           # List all agents in ~/cast-agents/
+cast list                           # List all agents in ~/.cast/agents/
 cast <agent-name>                   # Run agent (dev if exists, else builder)
 cast <agent-name> dev               # Development mode (local A2A server)
 cast <agent-name> test              # Run test scenarios
@@ -229,7 +229,7 @@ For more help: cast <command> --help
 ### `cast list` Output
 
 ```
-Agents in ~/cast-agents/
+Agents in ~/.cast/agents/
 
   email-agent     [deployed: railway]
   slack-bot       [local]
@@ -296,7 +296,7 @@ cast:
   version: "1.0"
 
 defaults:
-  agent_storage: ~/cast-agents
+  agent_storage: ~/.cast/agents
   builder_model: openrouter/anthropic/claude-4-sonnet
   deployment_provider: railway
 
@@ -456,7 +456,7 @@ You can change this in agent.yaml."
 
 | Tool | Description |
 |------|-------------|
-| `create_agent` | Creates `~/cast-agents/<name>/` scaffold |
+| `create_agent` | Creates `~/.cast/agents/<name>/` scaffold |
 | `update_agent_config` | Modifies `agent.yaml` |
 | `update_instructions` | Updates `instructions.md` |
 | `install_mcp` | Installs MCP server + handles OAuth |
@@ -483,7 +483,7 @@ You are the Cast Builder Agent, designed to help users create AI agents.
 ## Your Mission
 
 Through conversation, understand what the user wants their agent to do, then:
-1. Create the agent scaffold in ~/cast-agents/<agent-name>/
+1. Create the agent scaffold in ~/.cast/agents/<agent-name>/
 2. Configure MCP integrations they need
 3. Recommend appropriate models
 4. Ensure the agent is ready to run
@@ -633,7 +633,7 @@ Each agent includes an `AgentCard.json` for A2A discoverability:
   "method": "initialize",
   "params": {
     "agent_name": "email-agent",
-    "agent_path": "/Users/scott/cast-agents/email-agent"
+    "agent_path": "/Users/scott/.cast/agents/email-agent"
   }
 }
 
@@ -955,7 +955,7 @@ Examples:
 ### MCP Config
 
 ```yaml
-# ~/cast-agents/<agent>/mcp/gmail.yaml
+# ~/.cast/agents/<agent>/mcp/gmail.yaml
 server: gmail
 version: "1.0.0"
 auth:
@@ -1177,7 +1177,7 @@ cast meta test --verbose         # Show full output
 
 | Test | Input | Assertions |
 |------|-------|------------|
-| Create simple agent | "email agent" | `~/cast-agents/email/agent.yaml` exists, valid YAML |
+| Create simple agent | "email agent" | `~/.cast/agents/email/agent.yaml` exists, valid YAML |
 | Create with MCP | "agent that reads gmail" | `mcp/gmail.yaml` exists, OAuth config valid |
 | Model recommendation | "simple task" | Model is haiku/mini-tier |
 | Model recommendation | "complex analysis" | Model is sonnet/opus-tier |
@@ -1195,15 +1195,15 @@ input: "Create an agent that reads my emails"
 
 assertions:
   - type: file_exists
-    path: ~/cast-agents/email-agent/agent.yaml
+    path: ~/.cast/agents/email-agent/agent.yaml
   - type: file_exists
-    path: ~/cast-agents/email-agent/mcp/gmail.yaml
+    path: ~/.cast/agents/email-agent/mcp/gmail.yaml
   - type: yaml_contains
-    path: ~/cast-agents/email-agent/agent.yaml
+    path: ~/.cast/agents/email-agent/agent.yaml
     key: tools.mcp
     value: gmail
   - type: yaml_not_always_allow
-    path: ~/cast-agents/email-agent/agent.yaml
+    path: ~/.cast/agents/email-agent/agent.yaml
     key: email.draft
 ```
 
@@ -1411,7 +1411,7 @@ Apache License 2.0 - See LICENSE file
 | Local Agent Port | Dynamic allocation |
 | Database | Plain SQLite |
 | Token Storage | keytar (system keychain) |
-| Agent Storage | `~/cast-agents/` |
+| Agent Storage | `~/.cast/agents/` |
 | Global State | `~/.cast/` |
 | License | Apache 2.0 |
 | Commands | `list`, `dev`, `test`, `deploy`, `connect`, `logs`, `update`, `delete`, `meta test` |

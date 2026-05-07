@@ -127,7 +127,7 @@ export default class Update extends Command {
   async run(): Promise<void> {
     const {args, flags} = await this.parse(Update)
     const agentName = args.agent
-    const agentPath = path.join(os.homedir(), 'cast-agents', agentName)
+    const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
     const agentYamlPath = path.join(agentPath, 'agent.yaml')
 
     // Validate agent exists

@@ -273,7 +273,7 @@ cast:
   version: "1.0"
 
 defaults:
-  agent_storage: ~/cast-agents
+  agent_storage: ~/.cast/agents
   builder_model: openrouter/anthropic/claude-4-sonnet
   deployment_provider: docker
 

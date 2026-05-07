@@ -153,7 +153,7 @@ mkdir -p "$HOME/.cast/vault"
 mkdir -p "$HOME/.cast/tokens"
 mkdir -p "$HOME/.cast/builder"
 mkdir -p "$HOME/.cast/builder/tools"
-mkdir -p "$HOME/cast-agents"
+mkdir -p "$HOME/.cast/agents"
 
 log_success "Directories created"
 echo ""
@@ -302,7 +302,7 @@ cast:
   version: "1.0"
 
 defaults:
-  agent_storage: ~/cast-agents
+  agent_storage: ~/.cast/agents
   builder_model: openrouter/anthropic/claude-4-sonnet
   deployment_provider: railway
 
@@ -338,7 +338,7 @@ You are the Cast Builder Agent, designed to help users create AI agents.
 ## Your Mission
 
 Through conversation, understand what the user wants their agent to do, then:
-1. Create the agent scaffold in ~/cast-agents/<agent-name>/
+1. Create the agent scaffold in ~/.cast/agents/<agent-name>/
 2. Configure MCP integrations they need
 3. Recommend appropriate models
 4. Ensure the agent is ready to run
@@ -475,7 +475,7 @@ echo ""
 
 log_info "Project structure:"
 echo "  ~/.cast/                     # Global state and config"
-echo "  ~/cast-agents/               # Your agents"
+echo "  ~/.cast/agents/              # Your agents"
 echo "  $SCRIPT_DIR                  # Project files"
 echo ""
 

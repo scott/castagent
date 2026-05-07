@@ -36,7 +36,7 @@ export default class DockerDeploy extends Command {
   async run(): Promise<void> {
     const {args, flags} = await this.parse(DockerDeploy)
     const agentName = args.agent
-    const agentPath = path.join(os.homedir(), 'cast-agents', agentName)
+    const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
 
     if (!fs.existsSync(agentPath)) {
       this.error(`Agent '${agentName}' not found at ${agentPath}`)
