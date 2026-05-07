@@ -371,6 +371,44 @@ def get_agent_config(name: str) -> str:
 
 
 @tool
+def read_file(file_path: str, offset: int = 0, limit: int = 100) -> str:
+    """
+    Read a file and return its contents without modifying it.
+    
+    Use this to view files like instructions.md, agent.yaml, or any other
+    text file in the agent directory or elsewhere.
+    
+    Args:
+        file_path: Absolute or relative path to the file to read.
+        offset: Line offset to start reading from (default: 0).
+        limit: Maximum number of lines to read (default: 100).
+    
+    Returns:
+        The contents of the file as a string.
+    """
+    try:
+        path = Path(file_path).expanduser()
+        if not path.exists():
+            return f"Error: File '{file_path}' not found."
+        if not path.is_file():
+            return f"Error: '{file_path}' is not a file."
+        
+        with open(path, "r", encoding="utf-8") as f:
+            lines = f.readlines()
+        
+        start = max(0, offset)
+        end = min(offset + limit, len(lines))
+        content = "".join(lines[start:end])
+        
+        if end < len(lines):
+            content += f"\n... ({len(lines) - end} more lines)"
+        
+        return content
+    except Exception as e:
+        return f"Error reading file: {str(e)}"
+
+
+@tool
 def recommend_model(requirements: str) -> str:
     """
     Recommend a model based on task complexity requirements.

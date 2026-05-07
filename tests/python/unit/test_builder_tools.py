@@ -11,6 +11,7 @@ from cast.builder_tools import (
     recommend_model,
     list_agents,
     get_agent_config,
+    read_file,
     update_agent_config,
     update_instructions,
     suggest_name,
@@ -344,3 +345,57 @@ class TestCreateAgentWithDescription:
                 assert "Your Capabilities" in content
             finally:
                 tools.AGENTS_DIR = original_dir
+
+
+class TestReadFile:
+    """Tests for read_file tool."""
+
+    def test_read_file_success(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = Path(tmpdir) / "test.txt"
+            test_file.write_text("Hello, world!\nLine 2\nLine 3\n")
+            
+            result = read_file.invoke({"file_path": str(test_file)})
+            assert "Hello, world!" in result
+            assert "Line 2" in result
+            assert "Line 3" in result
+
+    def test_read_file_not_found(self):
+        result = read_file.invoke({"file_path": "/nonexistent/path/file.txt"})
+        assert "not found" in result.lower()
+
+    def test_read_file_with_offset_and_limit(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = Path(tmpdir) / "test.txt"
+            lines = [f"Line {i}\n" for i in range(1, 21)]
+            test_file.write_text("".join(lines))
+            
+            result = read_file.invoke({"file_path": str(test_file), "offset": 5, "limit": 5})
+            assert "Line 6" in result
+            assert "Line 10" in result
+            assert "Line 5" not in result
+            assert "Line 11" not in result
+            assert "more lines" in result
+
+    def test_read_file_directory(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = read_file.invoke({"file_path": tmpdir})
+            assert "not a file" in result.lower()
+
+    def test_read_file_expands_tilde(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            test_file = Path(tmpdir) / "test.txt"
+            test_file.write_text("Home directory file content")
+            
+            # Mock the home directory by using the tmpdir as home
+            import os
+            original_home = os.environ.get("HOME")
+            os.environ["HOME"] = tmpdir
+            try:
+                result = read_file.invoke({"file_path": "~/test.txt"})
+                assert "Home directory file content" in result
+            finally:
+                if original_home:
+                    os.environ["HOME"] = original_home
+                else:
+                    del os.environ["HOME"]

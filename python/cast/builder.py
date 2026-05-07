@@ -30,6 +30,7 @@ from .builder_tools import (
     get_agent_config,
     install_mcp,
     list_agents,
+    read_file,
     recommend_model,
     suggest_name,
     update_agent_config,
@@ -413,6 +414,22 @@ class EchoChatModel(BaseChatModel):
             else:
                 content = "Which agent's config would you like to see?"
 
+        # read_file (general purpose file reading)
+        elif any(k in lower_msg for k in ["read file", "view file", "show file", "cat ", "display file"]):
+            # Try to extract a file path from the message
+            path_match = re.search(r'(?:read|view|show|cat|display)\s+(?:file\s+)?["\']?([^"\']+\.\w+)["\']?', lower_msg)
+            if path_match:
+                file_path = path_match.group(1)
+                tool_calls.append({
+                    "name": "read_file",
+                    "args": {"file_path": file_path},
+                    "id": next_call_id(),
+                    "type": "tool_call",
+                })
+                content = f"Let me read the file '{file_path}' for you."
+            else:
+                content = "Which file would you like me to read? Please provide the file path."
+
         # install_mcp
         elif "mcp" in lower_msg or ("install" in lower_msg and "server" in lower_msg):
             server = extract_server_name()
@@ -466,7 +483,8 @@ class EchoChatModel(BaseChatModel):
                 f"4. **install_mcp(name, server)** - Add MCP integrations\n"
                 f"5. **list_agents()** - See existing agents\n"
                 f"6. **get_agent_config(name)** - Read current config\n"
-                f"7. **recommend_model(requirements)** - Get model suggestions\n\n"
+                f"7. **read_file(file_path)** - Read any file without modifying it\n"
+                f"8. **recommend_model(requirements)** - Get model suggestions\n\n"
                 f"What would you like to do first?"
             )
 
@@ -522,6 +540,7 @@ class BuilderAgent:
             install_mcp,
             list_agents,
             get_agent_config,
+            read_file,
             recommend_model,
             suggest_name,
         ]

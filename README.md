@@ -240,6 +240,7 @@ cast meta test --scenario create-simple
 - ✅ Python Runtime Agent with A2A HTTP server
 - ✅ Builder Agent with stdio JSON-RPC
 - ✅ Built-in tools (bash, read, glob)
+- ✅ Builder Agent tools (create_agent, update_agent_config, update_instructions, install_mcp, list_agents, get_agent_config, read_file, recommend_model, suggest_name)
 - ✅ MCP Manager (Gmail, Slack, Filesystem)
 - ✅ OAuth flow (browser-based)
 - ✅ OpenRouter LLM integration
