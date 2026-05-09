@@ -5,6 +5,26 @@ import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import clipboardy from 'clipboardy'
+import yaml from 'yaml'
+
+// Get agent description from agent.yaml
+function getAgentDescription(agentName: string): string {
+  const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName, 'agent.yaml')
+  try {
+    if (fs.existsSync(agentPath)) {
+      const content = fs.readFileSync(agentPath, 'utf8')
+      const config = yaml.parse(content)
+      if (config && config.description) {
+        // Truncate to 50 chars with "..."
+        const desc = config.description as string
+        return desc.length > 50 ? desc.slice(0, 47) + '...' : desc
+      }
+    }
+  } catch {
+    // Ignore errors, return empty string
+  }
+  return ''
+}
 
 // List available agents from ~/.cast/agents/
 function listAgents(): string[] {
@@ -85,39 +105,70 @@ async function showProviderSelection(
     {key: 'local', name: 'Local (no container)', desc: 'Run the agent directly without Docker'},
   ]
 
-  // Header
-  const headerText = new TextRenderable(renderer, {
-    content: new StyledText([white('Select a deployment provider:')]),
-  })
-  outputScroll.add(headerText)
+  // Track selected index for keyboard navigation
+  let selectedIndex = 0
 
-  const sepText = new TextRenderable(renderer, {
-    content: new StyledText([dim('────────────────────────────────')]),
-  })
-  outputScroll.add(sepText)
+  // Render function to update the list
+  function renderList() {
+    // Clear existing children
+    for (const child of outputScroll.getChildren()) {
+      outputScroll.remove(child.id)
+    }
 
-  // Provider list
-  for (let i = 0; i < providers.length; i++) {
-    const p = providers[i]
-    const lineText = new TextRenderable(renderer, {
-      content: new StyledText([cyan(`${i + 1}. `), white(p.name), dim(` - ${p.desc}`)]),
+    // Header
+    const headerText = new TextRenderable(renderer, {
+      content: new StyledText([white('Select a deployment provider:')]),
     })
-    outputScroll.add(lineText)
+    outputScroll.add(headerText)
+
+    const sepText = new TextRenderable(renderer, {
+      content: new StyledText([dim('────────────────────────────────')]),
+    })
+    outputScroll.add(sepText)
+
+    // Provider list with selection indicator
+    for (let i = 0; i < providers.length; i++) {
+      const p = providers[i]
+      const isSelected = i === selectedIndex
+      const prefix = isSelected ? cyan('▸ ') : cyan(`${i + 1}. `)
+      const nameColor = isSelected ? cyan : white
+
+      const lineText = new TextRenderable(renderer, {
+        content: new StyledText([prefix, nameColor(p.name), dim(` - ${p.desc}`)]),
+      })
+      outputScroll.add(lineText)
+    }
+
+    // Help
+    const helpText = new TextRenderable(renderer, {
+      content: new StyledText([dim('\n↑↓ Navigate  1-6 Select  ESC Cancel')]),
+    })
+    outputScroll.add(helpText)
   }
 
-  // Help
-  const helpText = new TextRenderable(renderer, {
-    content: new StyledText([dim('\nPress 1-6 to select, ESC to cancel')]),
-  })
-  outputScroll.add(helpText)
+  renderList()
 
   // Use modal.box.handleKeyPress like slash-registry does
   const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
 
   modal.box.handleKeyPress = (key: KeyEvent) => {
+    // Handle up arrow
+    if (key.name === 'up') {
+      selectedIndex = (selectedIndex - 1 + providers.length) % providers.length
+      renderList()
+      return true
+    }
+    // Handle down arrow
+    if (key.name === 'down') {
+      selectedIndex = (selectedIndex + 1) % providers.length
+      renderList()
+      return true
+    }
+    // Handle number keys 1-6
     const num = parseInt(key.name || '')
     if (num >= 1 && num <= 6) {
-      const selectedProvider = providers[num - 1].key
+      selectedIndex = num - 1
+      const selectedProvider = providers[selectedIndex].key
       modal.hide()
       handleDeployModal(renderer, renderer.root, agentName, selectedProvider, messagesComponent)
       return true
@@ -130,7 +181,7 @@ async function showProviderSelection(
   }
 }
 
-// Agent selection modal  
+// Agent selection modal
 async function showAgentSelection(
   renderer: any,
   modal: any,
@@ -142,35 +193,70 @@ async function showAgentSelection(
 ) {
   const validAgents = listAgents()
 
-  const headerText = new TextRenderable(renderer, {
-    content: new StyledText([white('Available agents:')]),
-  })
-  outputScroll.add(headerText)
+  // Track selected index for keyboard navigation
+  let selectedIndex = 0
 
-  const sepText = new TextRenderable(renderer, {
-    content: new StyledText([dim('────────────────────────────────')]),
-  })
-  outputScroll.add(sepText)
+  // Render function to update the list
+  function renderList() {
+    // Clear existing children
+    for (const child of outputScroll.getChildren()) {
+      outputScroll.remove(child.id)
+    }
 
-  for (const name of validAgents) {
-    const lineText = new TextRenderable(renderer, {
-      content: new StyledText([cyan('  ' + name)]),
+    // Header
+    const headerText = new TextRenderable(renderer, {
+      content: new StyledText([white('Available agents:')]),
     })
-    outputScroll.add(lineText)
+    outputScroll.add(headerText)
+
+    const sepText = new TextRenderable(renderer, {
+      content: new StyledText([dim('────────────────────────────────')]),
+    })
+    outputScroll.add(sepText)
+
+    // Agent list with selection indicator (no numbers)
+    for (let i = 0; i < validAgents.length; i++) {
+      const name = validAgents[i]
+      const isSelected = i === selectedIndex
+      const prefix = isSelected ? cyan('▸ ') : white('  ')
+      const nameColor = isSelected ? cyan : white
+      const description = getAgentDescription(name)
+      const descText = description ? dim(` — ${description}`) : dim('')
+
+      const lineText = new TextRenderable(renderer, {
+        content: new StyledText([prefix, nameColor(name), descText]),
+      })
+      outputScroll.add(lineText)
+    }
+
+    // Help
+    const helpText = new TextRenderable(renderer, {
+      content: new StyledText([dim('\n↑↓ Navigate  Enter Select  ESC Cancel')]),
+    })
+    outputScroll.add(helpText)
   }
 
-  const helpText = new TextRenderable(renderer, {
-    content: new StyledText([dim('\nPress 1-' + validAgents.length + ' to select, ESC to cancel')]),
-  })
-  outputScroll.add(helpText)
+  renderList()
 
   // Use modal.box.handleKeyPress like slash-registry does
   const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
 
   modal.box.handleKeyPress = (key: KeyEvent) => {
-    const num = parseInt(key.name || '')
-    if (num >= 1 && num <= validAgents.length) {
-      const selectedAgent = validAgents[num - 1]
+    // Handle up arrow
+    if (key.name === 'up') {
+      selectedIndex = (selectedIndex - 1 + validAgents.length) % validAgents.length
+      renderList()
+      return true
+    }
+    // Handle down arrow
+    if (key.name === 'down') {
+      selectedIndex = (selectedIndex + 1) % validAgents.length
+      renderList()
+      return true
+    }
+    // Handle Enter to select
+    if (key.name === 'return' || key.name === 'enter') {
+      const selectedAgent = validAgents[selectedIndex]
       modal.hide()
       handleDeployModal(renderer, renderer.root, selectedAgent, provider, messagesComponent)
       return true
@@ -197,10 +283,13 @@ export async function handleDeployModal(
   if (!provider) {
     const modal = createModal(renderer, prevFocused, {
       title: 'Select Deployment Provider',
-      width: '60%',
-      height: '50%',
-      centered: true,
+      overlay: true,
     })
+
+    // Add overlay to renderer if present
+    if (modal.overlay) {
+      renderer.root.add(modal.overlay)
+    }
 
     const contentBox = new BoxRenderable(renderer, {
       width: '100%',
@@ -234,10 +323,13 @@ export async function handleDeployModal(
   if (!agentName || !validAgents.includes(agentName)) {
     const modal = createModal(renderer, prevFocused, {
       title: 'Select Agent to Deploy',
-      width: '60%',
-      height: '50%',
-      centered: true,
+      overlay: true,
     })
+
+    // Add overlay to renderer if present
+    if (modal.overlay) {
+      renderer.root.add(modal.overlay)
+    }
 
     const contentBox = new BoxRenderable(renderer, {
       width: '100%',
@@ -284,8 +376,13 @@ export async function handleDeployModal(
     title: `Deploying ${agentName}...`,
     width: '90%',
     height: '90%',
-    centered: true,
+    overlay: true,
   })
+
+  // Add overlay to renderer if present
+  if (modal.overlay) {
+    renderer.root.add(modal.overlay)
+  }
 
   const contentBox = new BoxRenderable(renderer, {
     width: '100%',

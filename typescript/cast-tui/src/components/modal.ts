@@ -6,10 +6,12 @@ export interface ModalOptions {
   height?: number | string
   title?: string
   centered?: boolean
+  overlay?: boolean
 }
 
 export interface ModalComponent {
   box: BoxRenderable
+  overlay?: BoxRenderable | null
   show(): void
   hide(): void
   setTitle(title: string): void
@@ -22,15 +24,15 @@ export function createModal(
   previouslyFocused: Renderable,
   options: ModalOptions = {},
 ): ModalComponent {
-  // Calculate centered position based on width/height
-  // For percentage values, center = (100 - value) / 2
-  const width = options.width ?? '60%'
-  const height = options.height ?? '40%'
+  // Default to 90% width and 80% height, centered
+  const width = options.width ?? '90%'
+  const height = options.height ?? '80%'
+  const centered = options.centered ?? true
 
   let top: string
   let left: string
 
-  if (options.centered) {
+  if (centered) {
     // Parse percentage values and calculate centered position
     const widthNum = typeof width === 'number' ? width : parseFloat(width as string)
     const heightNum = typeof height === 'number' ? height : parseFloat(height as string)
@@ -51,6 +53,21 @@ export function createModal(
     left = '20%'
   }
 
+  // Create optional overlay background behind the modal
+  let overlayBox: BoxRenderable | null = null
+  if (options.overlay) {
+    overlayBox = new BoxRenderable(ctx, {
+      width: '100%',
+      height: '100%',
+      position: 'absolute',
+      top: '0%',
+      left: '0%',
+      zIndex: 99,
+      visible: false,
+      backgroundColor: '#1a1a1a',
+    })
+  }
+
   const box = new BoxRenderable(ctx, {
     width: width as number | 'auto' | `${number}%`,
     height: height as number | 'auto' | `${number}%`,
@@ -63,7 +80,7 @@ export function createModal(
     border: true,
     borderColor: '#FFFFFF',
     borderStyle: 'single',
-    padding: 1,
+    padding: 0,
     title: options.title,
     focusable: true,
   })
@@ -71,11 +88,17 @@ export function createModal(
   let currentContent: Renderable | null = null
 
   function show(): void {
+    if (overlayBox) {
+      overlayBox.visible = true
+    }
     box.visible = true
     box.focus()
   }
 
   function hide(): void {
+    if (overlayBox) {
+      overlayBox.visible = false
+    }
     box.visible = false
     box.blur()
     previouslyFocused.focus()
@@ -107,6 +130,7 @@ export function createModal(
 
   return {
     box,
+    overlay: overlayBox,
     show,
     hide,
     setTitle,

@@ -3,13 +3,33 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import { execFileSync } from 'child_process'
-import {BoxRenderable, TextRenderable, StyledText, white, dim, green, yellow, red, cyan} from '@opentui/core'
-import type {KeyEvent} from '@opentui/core'
+import yaml from 'yaml'
+import {BoxRenderable, TextRenderable, TextTableRenderable, StyledText, white, dim, green, yellow, red, cyan} from '@opentui/core'
+import type {KeyEvent, TextChunk} from '@opentui/core'
 import {saveTranscript} from '../lib/transcript.js'
 import {getDb} from '../lib/db.js'
 import {getKeychain} from '../lib/keychain.js'
 import {createModal} from '../components/modal.js'
 import {runDeployInTerminal} from '../components/terminal.js'
+
+// Get agent description from agent.yaml
+function getAgentDescription(agentName: string): string {
+  const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName, 'agent.yaml')
+  try {
+    if (fs.existsSync(agentPath)) {
+      const content = fs.readFileSync(agentPath, 'utf8')
+      const config = yaml.parse(content)
+      if (config && config.description) {
+        // Truncate to 100 chars with "..."
+        const desc = config.description as string
+        return desc.length > 100 ? desc.slice(0, 97) + '...' : desc
+      }
+    }
+  } catch {
+    // Ignore errors, return empty string
+  }
+  return ''
+}
 
 export interface SlashCommand {
   name: string
@@ -262,16 +282,22 @@ const commands: SlashCommand[] = [
       // Build modal content
       const modal = createModal(ctx.renderer, ctx.input, {
         title: 'Agents',
-        width: '70%',
-        height: '60%',
+        overlay: true,
       })
+
+      // Add overlay to renderer if present
+      if (modal.overlay) {
+        ctx.renderer.root.add(modal.overlay)
+      }
 
       const contentBox = new BoxRenderable(ctx.renderer, {
         width: '100%',
         height: '100%',
         flexDirection: 'column',
         gap: 0,
-        paddingTop: 1,
+        paddingTop: 2,
+        paddingLeft: 2,
+        paddingRight: 2,
       })
 
       if (agents.length === 0) {
@@ -285,19 +311,19 @@ const commands: SlashCommand[] = [
         })
         contentBox.add(hint)
       } else {
-        // Header row
-        const headerText = new TextRenderable(ctx.renderer, {
-          content: new StyledText([white('Agent Name            Status')]),
-        })
-        contentBox.add(headerText)
+        const tableData: (TextChunk[] | null)[][] = []
 
-        const sep = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('──────────────────────────────────────────')]),
-        })
-        contentBox.add(sep)
+        // Header row with selection column
+        tableData.push([
+          [white('')],
+          [white('Agent Name')],
+          [white('Description')],
+          [white('Status')],
+        ])
 
+        // Data rows with selection column
         for (const name of agents) {
-          const displayName = name.padEnd(20)
+          const description = getAgentDescription(name)
 
           let statusText = 'stopped'
           let statusColor = red
@@ -325,17 +351,33 @@ const commands: SlashCommand[] = [
             }
           }
 
-          const row = new TextRenderable(ctx.renderer, {
-            content: new StyledText([white(displayName), statusColor(statusText)]),
-          })
-          contentBox.add(row)
+          tableData.push([
+            [dim('  ')],
+            [white(name)],
+            description ? [dim(description)] : [dim('-')],
+            [statusColor(statusText)],
+          ])
         }
+
+        const table = new TextTableRenderable(ctx.renderer, {
+          content: tableData,
+          columnWidthMode: 'content',
+          showBorders: false,
+          columnGap: 0,
+          cellPadding: 0,
+        })
+        contentBox.add(table)
       }
 
       const footer = new TextRenderable(ctx.renderer, {
-        content: new StyledText([dim('\nPress ESC to close')]),
+        content: new StyledText([dim('ESC Close')]),
       })
-      contentBox.add(footer)
+      const footerBox = new BoxRenderable(ctx.renderer, {
+        width: '100%',
+        alignItems: 'center',
+      })
+      footerBox.add(footer)
+      contentBox.add(footerBox)
 
       modal.setContent(contentBox)
       ctx.renderer.root.add(modal.box)
@@ -488,21 +530,27 @@ const commands: SlashCommand[] = [
       }
 
       if (args.length === 0) {
-        // Show available agents in a modal (scan disk for agents)
+        // Show available agents in a modal with keyboard navigation
         const agents = listAgentsFromDisk()
 
         const modal = createModal(ctx.renderer, ctx.input, {
           title: 'Connect to Agent',
-          width: '70%',
-          height: '60%',
+          overlay: true,
         })
+
+        // Add overlay to renderer if present
+        if (modal.overlay) {
+          ctx.renderer.root.add(modal.overlay)
+        }
 
         const contentBox = new BoxRenderable(ctx.renderer, {
           width: '100%',
           height: '100%',
           flexDirection: 'column',
           gap: 0,
-          paddingTop: 1,
+          paddingTop: 3,
+          paddingLeft: 2,
+          paddingRight: 2,
         })
 
         if (agents.length === 0) {
@@ -516,19 +564,11 @@ const commands: SlashCommand[] = [
           })
           contentBox.add(hint)
         } else {
-          const headerText = new TextRenderable(ctx.renderer, {
-            content: new StyledText([white('Agent Name            Status')]),
-          })
-          contentBox.add(headerText)
+          // Track selected index for keyboard navigation
+          let selectedIndex = 0
 
-          const sep = new TextRenderable(ctx.renderer, {
-            content: new StyledText([dim('──────────────────────────────────────────')]),
-          })
-          contentBox.add(sep)
-
-          for (const name of agents) {
-            const displayName = name.padEnd(20)
-
+          // Helper to get agent status info
+          function getAgentStatus(name: string): {text: string; color: typeof green} {
             let statusText = 'stopped'
             let statusColor = red
 
@@ -548,19 +588,127 @@ const commands: SlashCommand[] = [
                 // Database lookup failed — show as stopped
               }
             }
-
-            const row = new TextRenderable(ctx.renderer, {
-              content: new StyledText([white(displayName), statusColor(statusText)]),
-            })
-            contentBox.add(row)
+            return {text: statusText, color: statusColor}
           }
 
-          const footer = new TextRenderable(ctx.renderer, {
-            content: new StyledText([dim('\nUse /connect <agent-name> to switch')]),
-          })
-          contentBox.add(footer)
+          // Render function to update the list
+          function renderList() {
+            // Clear existing children
+            for (const child of contentBox.getChildren()) {
+              contentBox.remove(child.id)
+            }
+
+            const tableData: (TextChunk[] | null)[][] = []
+
+            // Header row with selection column
+            tableData.push([
+              [white('')],
+              [white('Agent Name')],
+              [white('Description')],
+              [white('Status')],
+            ])
+
+            // Data rows with selection column
+            for (let i = 0; i < agents.length; i++) {
+              const isSelected = i === selectedIndex
+              const description = getAgentDescription(agents[i])
+              const {text: statusText, color: statusColor} = getAgentStatus(agents[i])
+              const nameColor = isSelected ? cyan : white
+
+              // Selection column
+              const selectionColumn = isSelected ? [cyan('▸ ')] : [dim('  ')]
+
+              tableData.push([
+                selectionColumn,
+                [nameColor(agents[i])],
+                description ? [dim(description)] : [dim('-')],
+                [statusColor(statusText)],
+              ])
+            }
+
+            const table = new TextTableRenderable(ctx.renderer, {
+              content: tableData,
+              columnWidthMode: 'content',
+              showBorders: false,
+              columnGap: 0,
+              cellPadding: 0,
+            })
+            contentBox.add(table)
+
+            // Footer with instructions
+            const footer = new TextRenderable(ctx.renderer, {
+              content: new StyledText([
+                white('↑↓  '),
+                dim('Navigate  '),
+                white('Enter  '),
+                dim('Connect  '),
+                white('ESC  '),
+                dim('Close'),
+              ]),
+            })
+            const footerBox = new BoxRenderable(ctx.renderer, {
+              width: '100%',
+              alignItems: 'center',
+            })
+            footerBox.add(footer)
+            contentBox.add(footerBox)
+          }
+
+          renderList()
+
+          // Override modal's key handler for custom keyboard navigation
+          const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+          modal.box.handleKeyPress = (key: KeyEvent) => {
+            // Handle up arrow
+            if (key.name === 'up') {
+              selectedIndex = (selectedIndex - 1 + agents.length) % agents.length
+              renderList()
+              ctx.renderer.render()
+              return true
+            }
+            // Handle down arrow
+            if (key.name === 'down') {
+              selectedIndex = (selectedIndex + 1) % agents.length
+              renderList()
+              ctx.renderer.render()
+              return true
+            }
+            // Handle number keys 1-9 for quick selection
+            if (key.name && key.name.length === 1 && key.name >= '1' && key.name <= '9') {
+              const num = parseInt(key.name, 10)
+              if (num <= agents.length) {
+                selectedIndex = num - 1
+                // Connect immediately on number press
+                const targetName = agents[selectedIndex]
+                modal.hide()
+                handleConnect(targetName)
+                return true
+              }
+            }
+            // Handle Enter to connect
+            if (key.name === 'return' || key.name === 'enter') {
+              const targetName = agents[selectedIndex]
+              modal.hide()
+              handleConnect(targetName)
+              return true
+            }
+            // Handle Escape to close
+            if (key.name === 'escape') {
+              modal.hide()
+              ctx.input.focus()
+              return true
+            }
+            return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+          }
+
+          modal.setContent(contentBox)
+          ctx.renderer.root.add(modal.box)
+          modal.show()
+          return
         }
 
+        // No agents case - just show basic modal
         const escFooter = new TextRenderable(ctx.renderer, {
           content: new StyledText([dim('\nPress ESC to close')]),
         })
@@ -572,55 +720,61 @@ const commands: SlashCommand[] = [
         return
       }
 
+      // Handle explicit agent name
       const targetName = args[0]
+      await handleConnect(targetName)
+      return
 
-      // When given an explicit name, verify it exists on disk or in DB
-      try {
-        const diskAgents = listAgentsFromDisk()
-        const existsOnDisk = diskAgents.includes(targetName)
+      // Helper function to connect to an agent
+      async function handleConnect(targetName: string) {
+        // When given an explicit name, verify it exists on disk or in DB
+        try {
+          const diskAgents = listAgentsFromDisk()
+          const existsOnDisk = diskAgents.includes(targetName)
 
-        let url: string | undefined
+          let url: string | undefined
 
-        if (db) {
-          const deployment = db.getDeployment(targetName)
-          if (deployment?.deployment_url) {
-            url = deployment.deployment_url as string
-          } else {
-            const localAgent = db.getLocalAgent(targetName)
-            if (localAgent?.port) {
-              url = `http://localhost:${localAgent.port}`
+          if (db) {
+            const deployment = db.getDeployment(targetName)
+            if (deployment?.deployment_url) {
+              url = deployment.deployment_url as string
+            } else {
+              const localAgent = db.getLocalAgent(targetName)
+              if (localAgent?.port) {
+                url = `http://localhost:${localAgent.port}`
+              }
             }
           }
-        }
 
-        if (!url && !existsOnDisk) {
+          if (!url && !existsOnDisk) {
+            ctx.messages.addAgentMessage(
+              `Agent '${targetName}' not found.\n` +
+                `Create it with: cast new\n` +
+                `Or start locally: cast dev ${targetName} --no-tui`,
+              ctx.mode,
+            )
+            return
+          }
+
+          if (!url) {
+            ctx.messages.addAgentMessage(
+              `Agent '${targetName}' exists but is not currently running or deployed.\n` +
+                `Start it with: cast dev ${targetName} --no-tui`,
+              ctx.mode,
+            )
+            return
+          }
+
+          const token = keychain ? await keychain.getToken(targetName) : undefined
+
+          ctx.messages.addAgentMessage(`Connecting to ${targetName} at ${url}...`, ctx.mode)
+          await ctx.reinitializeChat(targetName, url, token || undefined)
+        } catch (err) {
           ctx.messages.addAgentMessage(
-            `Agent '${targetName}' not found.\n` +
-              `Create it with: cast new\n` +
-              `Or start locally: cast dev ${targetName} --no-tui`,
+            `Failed to connect: ${err instanceof Error ? err.message : String(err)}`,
             ctx.mode,
           )
-          return
         }
-
-        if (!url) {
-          ctx.messages.addAgentMessage(
-            `Agent '${targetName}' exists but is not currently running or deployed.\n` +
-              `Start it with: cast dev ${targetName} --no-tui`,
-            ctx.mode,
-          )
-          return
-        }
-
-        const token = keychain ? await keychain.getToken(targetName) : undefined
-
-        ctx.messages.addAgentMessage(`Connecting to ${targetName} at ${url}...`, ctx.mode)
-        await ctx.reinitializeChat(targetName, url, token || undefined)
-      } catch (err) {
-        ctx.messages.addAgentMessage(
-          `Failed to connect: ${err instanceof Error ? err.message : String(err)}`,
-          ctx.mode,
-        )
       }
     },
   },
@@ -657,9 +811,13 @@ const commands: SlashCommand[] = [
 
       const modal = createModal(ctx.renderer, ctx.input, {
         title: 'Select Agent to Edit',
-        width: '70%',
-        height: '60%',
+        overlay: true,
       })
+
+      // Add overlay to renderer if present
+      if (modal.overlay) {
+        ctx.renderer.root.add(modal.overlay)
+      }
 
       let selectedIndex = 0
 
@@ -668,7 +826,9 @@ const commands: SlashCommand[] = [
         height: '100%',
         flexDirection: 'column',
         gap: 0,
-        paddingTop: 1,
+        paddingTop: 3,
+        paddingLeft: 2,
+        paddingRight: 2,
       })
 
       function renderList() {
@@ -676,19 +836,49 @@ const commands: SlashCommand[] = [
           contentBox.remove(child.id)
         }
 
+        const tableData: (TextChunk[] | null)[][] = []
+
+        // Header row with selection column
+        tableData.push([
+          [white('')],
+          [white('Agent Name')],
+          [white('Description')],
+        ])
+
+        // Data rows with selection column
         for (let i = 0; i < agents.length; i++) {
-          const prefix = i === selectedIndex ? cyan('▸ ') : white('  ')
-          const nameColor = i === selectedIndex ? cyan : white
-          const row = new TextRenderable(ctx.renderer, {
-            content: new StyledText([prefix, nameColor(agents[i])]),
-          })
-          contentBox.add(row)
+          const isSelected = i === selectedIndex
+          const nameColor = isSelected ? cyan : white
+          const description = getAgentDescription(agents[i])
+
+          // Selection column
+          const selectionColumn = isSelected ? [cyan('▸ ')] : [dim('  ')]
+
+          tableData.push([
+            selectionColumn,
+            [nameColor(agents[i])],
+            description ? [dim(description)] : [dim('-')],
+          ])
         }
 
-        const footer = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('\nUse ↑↓ to navigate, Enter to select, ESC to close')]),
+        const table = new TextTableRenderable(ctx.renderer, {
+          content: tableData,
+          columnWidthMode: 'content',
+          showBorders: false,
+          columnGap: 0,
+          cellPadding: 0,
         })
-        contentBox.add(footer)
+        contentBox.add(table)
+
+        const footer = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('↑↓ Navigate  Enter Select  ESC Close')]),
+        })
+        const footerBox = new BoxRenderable(ctx.renderer, {
+          width: '100%',
+          alignItems: 'center',
+        })
+        footerBox.add(footer)
+        contentBox.add(footerBox)
       }
 
       renderList()
