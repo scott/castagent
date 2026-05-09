@@ -1,0 +1,582 @@
+{
+  "commands": {
+    "connect": {
+      "aliases": [],
+      "args": {
+        "agent": {
+          "description": "Agent name",
+          "name": "agent",
+          "required": true
+        }
+      },
+      "description": "Connect to deployed agent",
+      "examples": [
+        "<%= config.bin %> <%= command.id %> email-agent"
+      ],
+      "flags": {
+        "proxy": {
+          "description": "Use sprite proxy for sprites deployments",
+          "name": "proxy",
+          "allowNo": false,
+          "type": "boolean"
+        }
+      },
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "connect",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "connect.js"
+      ]
+    },
+    "default": {
+      "aliases": [],
+      "args": {},
+      "description": "Create a new agent through an interactive TUI wizard",
+      "flags": {},
+      "hasDynamicHelp": false,
+      "hidden": true,
+      "hiddenAliases": [],
+      "id": "default",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": false,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "default.js"
+      ]
+    },
+    "delete": {
+      "aliases": [],
+      "args": {
+        "agent": {
+          "description": "Agent name",
+          "name": "agent",
+          "required": true
+        }
+      },
+      "description": "Delete agent",
+      "flags": {
+        "force": {
+          "description": "Force deletion without confirmation",
+          "name": "force",
+          "allowNo": false,
+          "type": "boolean"
+        }
+      },
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "delete",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "delete.js"
+      ]
+    },
+    "deploy": {
+      "aliases": [],
+      "args": {
+        "agent": {
+          "description": "Agent name",
+          "name": "agent",
+          "required": true
+        }
+      },
+      "description": "Deploy agent to hosting provider",
+      "examples": [
+        "<%= config.bin %> <%= command.id %> email-agent",
+        "<%= config.bin %> <%= command.id %> email-agent --provider railway",
+        "<%= config.bin %> <%= command.id %> email-agent --provider fly",
+        "<%= config.bin %> <%= command.id %> email-agent --provider digitalocean",
+        "<%= config.bin %> <%= command.id %> email-agent --provider docker",
+        "<%= config.bin %> <%= command.id %> email-agent --provider local"
+      ],
+      "flags": {
+        "provider": {
+          "description": "Deployment provider",
+          "name": "provider",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "options": [
+            "railway",
+            "fly",
+            "digitalocean",
+            "sprites",
+            "docker",
+            "local"
+          ],
+          "type": "option"
+        },
+        "port": {
+          "description": "Port for local deployment",
+          "name": "port",
+          "default": 8080,
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        }
+      },
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "deploy",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "deploy.js"
+      ]
+    },
+    "describe": {
+      "aliases": [],
+      "args": {
+        "agent": {
+          "description": "Agent name",
+          "name": "agent",
+          "required": true
+        }
+      },
+      "description": "Show agent description and details",
+      "examples": [
+        "<%= config.bin %> <%= command.id %> email-agent"
+      ],
+      "flags": {},
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "describe",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "describe.js"
+      ]
+    },
+    "dev": {
+      "aliases": [],
+      "args": {
+        "agent": {
+          "description": "Agent name",
+          "name": "agent",
+          "required": true
+        }
+      },
+      "description": "Start agent in development mode",
+      "examples": [
+        "<%= config.bin %> <%= command.id %> email-agent"
+      ],
+      "flags": {
+        "port": {
+          "description": "Port for A2A server",
+          "name": "port",
+          "default": 0,
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "no-tui": {
+          "description": "Run without TUI (headless mode)",
+          "name": "no-tui",
+          "allowNo": false,
+          "type": "boolean"
+        }
+      },
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "dev",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "dev.js"
+      ]
+    },
+    "edit": {
+      "aliases": [],
+      "args": {
+        "agent": {
+          "description": "Agent name",
+          "name": "agent",
+          "required": true
+        }
+      },
+      "description": "Edit an existing agent through an interactive TUI wizard",
+      "examples": [
+        "<%= config.bin %> <%= command.id %> <agent-name>"
+      ],
+      "flags": {},
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "edit",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "edit.js"
+      ]
+    },
+    "list": {
+      "aliases": [],
+      "args": {},
+      "description": "List all agents",
+      "examples": [
+        "<%= config.bin %> <%= command.id %>"
+      ],
+      "flags": {},
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "list",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "list.js"
+      ]
+    },
+    "logs": {
+      "aliases": [],
+      "args": {
+        "agent": {
+          "description": "Agent name",
+          "name": "agent",
+          "required": true
+        }
+      },
+      "description": "View runtime logs",
+      "flags": {},
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "logs",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "logs.js"
+      ]
+    },
+    "new": {
+      "aliases": [],
+      "args": {},
+      "description": "Create a new agent through an interactive TUI wizard",
+      "examples": [
+        "<%= config.bin %> <%= command.id %>"
+      ],
+      "flags": {},
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "new",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "new.js"
+      ]
+    },
+    "shutdown": {
+      "aliases": [],
+      "args": {
+        "agent": {
+          "description": "Agent name",
+          "name": "agent",
+          "required": true
+        }
+      },
+      "description": "Shut down a deployed agent (destroy remote resources)",
+      "examples": [
+        "<%= config.bin %> <%= command.id %> email-agent",
+        "<%= config.bin %> <%= command.id %> email-agent --force"
+      ],
+      "flags": {
+        "force": {
+          "description": "Skip confirmation prompt",
+          "name": "force",
+          "allowNo": false,
+          "type": "boolean"
+        }
+      },
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "shutdown",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "shutdown.js"
+      ]
+    },
+    "stop": {
+      "aliases": [],
+      "args": {
+        "agent": {
+          "description": "Agent name",
+          "name": "agent",
+          "required": true
+        }
+      },
+      "description": "Stop a running agent",
+      "examples": [
+        "<%= config.bin %> <%= command.id %> email-agent",
+        "<%= config.bin %> <%= command.id %> email-agent --force"
+      ],
+      "flags": {
+        "force": {
+          "description": "Force kill (SIGKILL instead of SIGTERM)",
+          "name": "force",
+          "allowNo": false,
+          "type": "boolean"
+        }
+      },
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "stop",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "stop.js"
+      ]
+    },
+    "update": {
+      "aliases": [],
+      "args": {
+        "agent": {
+          "description": "Agent name",
+          "name": "agent",
+          "required": true
+        }
+      },
+      "description": "Update agent configuration",
+      "examples": [
+        "<%= config.bin %> <%= command.id %> email-agent --model openrouter/anthropic/claude-3.7-sonnet",
+        "<%= config.bin %> <%= command.id %> email-agent --description \"Handles incoming emails\"",
+        "<%= config.bin %> <%= command.id %> email-agent --instructions-text \"You are an email assistant.\"",
+        "<%= config.bin %> <%= command.id %> email-agent --add-tool bash --add-tool read",
+        "<%= config.bin %> <%= command.id %> email-agent --remove-tool glob",
+        "<%= config.bin %> <%= command.id %> email-agent --add-principle \"Be concise\" --add-principle \"Ask clarifying questions\"",
+        "<%= config.bin %> <%= command.id %> email-agent --permission bash=always-allow --permission read=ask",
+        "<%= config.bin %> <%= command.id %> email-agent --python-version 3.12 --add-requirement requests"
+      ],
+      "flags": {
+        "model": {
+          "description": "Update LLM model (e.g., openrouter/anthropic/claude-3.7-sonnet)",
+          "name": "model",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "description": {
+          "description": "Update agent description",
+          "name": "description",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "version": {
+          "description": "Update agent version (e.g., 1.1.0)",
+          "name": "version",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "instructions": {
+          "description": "Update system prompt from a file path",
+          "name": "instructions",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "instructions-text": {
+          "description": "Update system prompt directly from command line text",
+          "name": "instructions-text",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "add-tool": {
+          "description": "Add built-in tool (bash, read, glob)",
+          "name": "add-tool",
+          "hasDynamicHelp": false,
+          "multiple": true,
+          "type": "option"
+        },
+        "remove-tool": {
+          "description": "Remove built-in tool (bash, read, glob)",
+          "name": "remove-tool",
+          "hasDynamicHelp": false,
+          "multiple": true,
+          "type": "option"
+        },
+        "add-principle": {
+          "description": "Add a principle to the agent harness",
+          "name": "add-principle",
+          "hasDynamicHelp": false,
+          "multiple": true,
+          "type": "option"
+        },
+        "remove-principle": {
+          "description": "Remove a principle from the agent harness by exact text match",
+          "name": "remove-principle",
+          "hasDynamicHelp": false,
+          "multiple": true,
+          "type": "option"
+        },
+        "permission": {
+          "description": "Set a permission (format: tool=level, e.g., bash=always-allow)",
+          "name": "permission",
+          "hasDynamicHelp": false,
+          "multiple": true,
+          "type": "option"
+        },
+        "remove-permission": {
+          "description": "Remove a permission by tool name",
+          "name": "remove-permission",
+          "hasDynamicHelp": false,
+          "multiple": true,
+          "type": "option"
+        },
+        "python-version": {
+          "description": "Update runtime Python version (e.g., 3.11, 3.12)",
+          "name": "python-version",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "add-requirement": {
+          "description": "Add a Python package requirement",
+          "name": "add-requirement",
+          "hasDynamicHelp": false,
+          "multiple": true,
+          "type": "option"
+        },
+        "remove-requirement": {
+          "description": "Remove a Python package requirement",
+          "name": "remove-requirement",
+          "hasDynamicHelp": false,
+          "multiple": true,
+          "type": "option"
+        },
+        "dry-run": {
+          "description": "Preview changes without writing to disk",
+          "name": "dry-run",
+          "allowNo": false,
+          "type": "boolean"
+        }
+      },
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "update",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "update.js"
+      ]
+    },
+    "meta:test": {
+      "aliases": [],
+      "args": {},
+      "description": "Run meta-builder tests",
+      "examples": [
+        "<%= config.bin %> meta test",
+        "<%= config.bin %> meta test --scenario create-simple",
+        "<%= config.bin %> meta test --verbose"
+      ],
+      "flags": {
+        "scenario": {
+          "description": "Run specific scenario",
+          "name": "scenario",
+          "hasDynamicHelp": false,
+          "multiple": false,
+          "type": "option"
+        },
+        "verbose": {
+          "description": "Show full output",
+          "name": "verbose",
+          "allowNo": false,
+          "type": "boolean"
+        }
+      },
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "meta:test",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "meta",
+        "test.js"
+      ]
+    }
+  },
+  "version": "1.0.0"
+}
