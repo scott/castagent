@@ -7,7 +7,6 @@ import {
   ensureDockerfile,
   getAgentPath,
   execCommand,
-  execCommandIgnoreError,
   saveDeployment,
   getOpenRouterApiKey,
   getProviderToken,
@@ -137,6 +136,15 @@ export default class RailwayDeploy extends Command {
 
   static async destroy(agentName: string): Promise<void> {
     const agentPath = getAgentPath(agentName)
-    await execCommandIgnoreError('railway', ['down', '--yes'], {cwd: agentPath})
+    const result = await execCommand('railway', ['down', '--yes'], {cwd: agentPath})
+    if (result.exitCode !== 0) {
+      // Check if it's a "no project linked" or similar error - that's okay, project might already be gone
+      if (result.stderr.includes('no project linked') || result.stderr.includes('not found') || result.stdout.includes('No services')) {
+        console.log(`Railway project for '${agentName}' does not exist (already deleted or never deployed).`)
+        return
+      }
+      throw new Error(`Failed to destroy Railway project for '${agentName}': ${result.stderr || result.stdout}`)
+    }
+    console.log(`Railway project for '${agentName}' has been destroyed.`)
   }
 }

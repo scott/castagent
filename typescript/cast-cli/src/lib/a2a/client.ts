@@ -7,6 +7,12 @@ export interface AgentResponse {
   thinking?: string[]
   toolCalls?: string[]
   isError?: boolean
+  uiAction?: Record<string, unknown>
+}
+
+export interface StreamChunk {
+  text: string
+  uiAction?: Record<string, unknown>
 }
 
 export class A2AClientError extends Error {
@@ -208,16 +214,18 @@ export class A2AClient {
     const thinking = metadata.thinking || []
     const toolCalls = metadata.toolCalls || []
     const isError = metadata.isError === true
+    const uiAction = metadata.uiAction as Record<string, unknown> | undefined
 
     return {
       text: textContent,
       thinking: Array.isArray(thinking) ? thinking : [],
       toolCalls: Array.isArray(toolCalls) ? toolCalls : [],
       isError,
+      uiAction,
     }
   }
 
-  async *sendMessageStream(text: string): AsyncGenerator<string> {
+  async *sendMessageStream(text: string): AsyncGenerator<StreamChunk> {
     const message: A2AMessage = {
       role: 'user',
       parts: [{kind: 'text', text}],
@@ -262,9 +270,12 @@ export class A2AClient {
             }
 
             const parts: A2APart[] = parsed.result?.parts || []
+            const metadata = parsed.result?.metadata
+            const uiAction = metadata?.uiAction as Record<string, unknown> | undefined
+
             for (const part of parts) {
               if (part.text) {
-                yield part.text
+                yield { text: part.text, uiAction }
               }
             }
           } catch (error) {

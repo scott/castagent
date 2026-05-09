@@ -143,7 +143,7 @@ export default class Edit extends Command {
     const welcomeMessage = bridge.getWelcomeMessage()
     const tuiArgs = [
       tuiPath,
-      '--agent', 'Cast Builder',
+      '--agent', agentName,
       '--url', `http://127.0.0.1:${bridge.port}`,
       '--mode', 'dev',
     ]

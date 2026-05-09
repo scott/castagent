@@ -18,6 +18,31 @@ import {
 const SSH_KEY_NAME = 'cast-do-key'
 const SSH_KEY_PATH = path.join(os.homedir(), '.ssh', 'cast_do_key')
 
+// Helper to get SSH base options that prevent interactive prompts
+function getSshBaseOptions(): string[] {
+  return [
+    '-i', SSH_KEY_PATH,
+    '-o', 'StrictHostKeyChecking=no',
+    '-o', 'UserKnownHostsFile=/dev/null',
+    '-o', 'BatchMode=yes',
+    '-o', 'ConnectTimeout=10',
+    '-o', 'ServerAliveInterval=5',
+    '-o', 'ServerAliveCountMax=1',
+    '-o', 'LogLevel=ERROR',
+  ]
+}
+
+// Helper to build full SSH command args for a given IP and remote command
+function buildSshArgs(ip: string, remoteCmd: string): string[] {
+  return [...getSshBaseOptions(), `root@${ip}`, remoteCmd]
+}
+
+// Execute SSH command with shell: false to prevent shell from interfering with options
+async function execSsh(ip: string, remoteCmd: string, silent = false): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  const { execCommand } = await import('./deploy-utils')
+  return execCommand('ssh', buildSshArgs(ip, remoteCmd), { silent, shell: false })
+}
+
 export default class DigitalOceanDeploy extends Command {
   static description = 'Deploy agent to DigitalOcean Droplet with Docker'
 
@@ -63,13 +88,7 @@ export default class DigitalOceanDeploy extends Command {
     // Stop container first
     if (dropletIp) {
       try {
-        await execCommand('ssh', [
-          '-i', SSH_KEY_PATH,
-          '-o', 'StrictHostKeyChecking=no',
-          '-o', 'UserKnownHostsFile=/dev/null',
-          `root@${dropletIp}`,
-          'docker stop cast-agent && docker rm cast-agent',
-        ], {silent: true})
+        await execSsh(dropletIp, 'docker stop cast-agent && docker rm cast-agent', true)
       } catch {
         // ignore
       }
@@ -159,9 +178,11 @@ export default class DigitalOceanDeploy extends Command {
       '-i', SSH_KEY_PATH,
       '-o', 'StrictHostKeyChecking=no',
       '-o', 'UserKnownHostsFile=/dev/null',
+      '-o', 'BatchMode=yes',
+      '-o', 'ConnectTimeout=10',
       tarPath,
       `root@${droplet.ip}:/tmp/${agentName}.tar`,
-    ])
+    ], {silent: true, shell: false})
     if (scpResult.exitCode !== 0) {
       this.error(`Failed to copy image to droplet: ${scpResult.stderr}`)
     }
@@ -169,6 +190,12 @@ export default class DigitalOceanDeploy extends Command {
     // Deploy on droplet
     this.log('Deploying on droplet...')
     await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, tarPath)
+
+    // Clean up local tar file after transfer
+    this.log('Cleaning up local artifacts...')
+    if (fs.existsSync(tarPath)) {
+      fs.unlinkSync(tarPath)
+    }
 
     const deploymentUrl = `http://${droplet.ip}:8080`
 
@@ -304,14 +331,7 @@ runcmd:
 
     for (let i = 0; i < maxAttempts; i++) {
       try {
-        const result = await execCommand('ssh', [
-          '-i', SSH_KEY_PATH,
-          '-o', 'StrictHostKeyChecking=no',
-          '-o', 'UserKnownHostsFile=/dev/null',
-          '-o', 'ConnectTimeout=5',
-          `root@${ip}`,
-          'echo ok',
-        ], {silent: true})
+        const result = await execSsh(ip, 'echo ok', true)
         if (result.exitCode === 0) {
           return
         }
@@ -332,35 +352,17 @@ runcmd:
     tarPath: string,
   ): Promise<void> {
     // Load image on droplet
-    const loadResult = await execCommand('ssh', [
-      '-i', SSH_KEY_PATH,
-      '-o', 'StrictHostKeyChecking=no',
-      '-o', 'UserKnownHostsFile=/dev/null',
-      `root@${ip}`,
-      `docker load -i /tmp/${path.basename(tarPath)}`,
-    ], {silent: true})
+    const loadResult = await execSsh(ip, `docker load -i /tmp/${path.basename(tarPath)}`, true)
 
     if (loadResult.exitCode !== 0) {
       throw new Error(`Failed to load image on droplet: ${loadResult.stderr}`)
     }
 
     // Stop old container
-    await execCommandIgnoreError('ssh', [
-      '-i', SSH_KEY_PATH,
-      '-o', 'StrictHostKeyChecking=no',
-      '-o', 'UserKnownHostsFile=/dev/null',
-      `root@${ip}`,
-      'docker stop cast-agent && docker rm cast-agent',
-    ])
+    await execSsh(ip, 'docker stop cast-agent && docker rm cast-agent', true)
 
     // Open UFW port
-    await execCommand('ssh', [
-      '-i', SSH_KEY_PATH,
-      '-o', 'StrictHostKeyChecking=no',
-      '-o', 'UserKnownHostsFile=/dev/null',
-      `root@${ip}`,
-      'ufw allow 8080/tcp || true',
-    ], {silent: true})
+    await execSsh(ip, 'ufw allow 8080/tcp || true', true)
 
     // Build env vars
     const envArgs = [
@@ -376,17 +378,14 @@ runcmd:
     }
 
     // Run container
-    const runResult = await execCommand('ssh', [
-      '-i', SSH_KEY_PATH,
-      '-o', 'StrictHostKeyChecking=no',
-      '-o', 'UserKnownHostsFile=/dev/null',
-      `root@${ip}`,
-      `docker run -d --name cast-agent --restart unless-stopped -p 8080:8080 ${envArgs.join(' ')} ${imageTag}`,
-    ], {silent: true})
+    const runResult = await execSsh(ip, `docker run -d --name cast-agent --restart unless-stopped -p 8080:8080 ${envArgs.join(' ')} ${imageTag}`, true)
 
     if (runResult.exitCode !== 0) {
       throw new Error(`Failed to start container on droplet: ${runResult.stderr}`)
     }
+
+    // Clean up remote tar file after loading
+    await execSsh(ip, `rm -f /tmp/${path.basename(tarPath)}`, true)
   }
 
 }

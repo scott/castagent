@@ -5,6 +5,7 @@ export interface ModalOptions {
   width?: number | string
   height?: number | string
   title?: string
+  centered?: boolean
 }
 
 export interface ModalComponent {
@@ -21,12 +22,41 @@ export function createModal(
   previouslyFocused: Renderable,
   options: ModalOptions = {},
 ): ModalComponent {
+  // Calculate centered position based on width/height
+  // For percentage values, center = (100 - value) / 2
+  const width = options.width ?? '60%'
+  const height = options.height ?? '40%'
+
+  let top: string
+  let left: string
+
+  if (options.centered) {
+    // Parse percentage values and calculate centered position
+    const widthNum = typeof width === 'number' ? width : parseFloat(width as string)
+    const heightNum = typeof height === 'number' ? height : parseFloat(height as string)
+
+    if (!isNaN(widthNum)) {
+      left = `${(100 - widthNum) / 2}%`
+    } else {
+      left = '50%'
+    }
+
+    if (!isNaN(heightNum)) {
+      top = `${(100 - heightNum) / 2}%`
+    } else {
+      top = '50%'
+    }
+  } else {
+    top = '30%'
+    left = '20%'
+  }
+
   const box = new BoxRenderable(ctx, {
-    width: (options.width ?? '60%') as number | 'auto' | `${number}%`,
-    height: (options.height ?? '40%') as number | 'auto' | `${number}%`,
+    width: width as number | 'auto' | `${number}%`,
+    height: height as number | 'auto' | `${number}%`,
     position: 'absolute',
-    top: '30%',
-    left: '20%',
+    top: top as any,
+    left: left as any,
     zIndex: 100,
     visible: false,
     backgroundColor: '#333333',

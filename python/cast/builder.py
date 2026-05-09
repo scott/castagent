@@ -27,6 +27,7 @@ from langgraph.prebuilt import ToolNode
 from .builder_tools import (
     create_agent,
     check_name_availability,
+    deploy_agent,
     get_agent_config,
     install_mcp,
     list_agents,
@@ -552,6 +553,7 @@ class BuilderAgent:
         self.tools: List[BaseTool] = [
             create_agent,
             check_name_availability,
+            deploy_agent,
             update_agent_config,
             update_instructions,
             install_mcp,

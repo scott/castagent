@@ -1,5 +1,5 @@
 import {Args, Command} from '@oclif/core'
-import {execSync} from 'child_process'
+import {execSync, spawn} from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -8,7 +8,6 @@ import {
   generateAuthToken,
   getAgentPath,
   execCommand,
-  execCommandIgnoreError,
   saveDeployment,
   getOpenRouterApiKey,
 } from './deploy-utils'
@@ -23,7 +22,17 @@ export default class SpritesDeploy extends Command {
   }
 
   static async destroy(agentName: string): Promise<void> {
-    await execCommandIgnoreError('sprite', ['delete', `cast-${agentName}`])
+    const spriteName = `cast-${agentName}`
+    const result = await execCommand('sprite', ['destroy', spriteName, '--force'])
+    if (result.exitCode !== 0) {
+      // Check if it's a "not found" error - that's actually okay, the sprite is already gone
+      if (result.stderr.includes('not found') || result.stderr.includes('does not exist') || result.stderr.includes('No such sprite')) {
+        console.log(`Sprite '${spriteName}' does not exist (already deleted or never created).`)
+        return
+      }
+      throw new Error(`Failed to destroy sprite '${spriteName}': ${result.stderr || result.stdout}`)
+    }
+    console.log(`Sprite '${spriteName}' has been destroyed.`)
   }
 
   async run(): Promise<void> {
@@ -62,19 +71,36 @@ export default class SpritesDeploy extends Command {
       this.error(`Failed to create sprite: ${createResult.stderr}`)
     }
 
-    // Ensure Python and venv are installed
+    // Wait for sprite to be ready (check up to 30 seconds)
+    this.log('Waiting for sprite to be ready...')
+    let spriteReady = false
+    for (let i = 0; i < 10; i++) {
+      if (await this.checkSpriteReady(spriteName)) {
+        spriteReady = true
+        break
+      }
+      await new Promise((resolve) => setTimeout(resolve, 3000))
+    }
+    if (!spriteReady) {
+      this.warn('Sprite may not be fully ready, trying anyway...')
+    }
+
+    // Ensure Python and venv are installed (use longer timeout for apt)
     this.log('Ensuring Python is installed...')
-    await this.execOnSprite(spriteName, 'apt-get update && apt-get install -y python3 python3-pip python3-venv')
+    await this.execOnSprite(spriteName, 'apt-get update && apt-get install -y python3 python3-pip python3-venv', 300000)
 
     // Package and transfer agent files
     this.log('Transferring agent files...')
     await this.transferAgentFiles(agentPath, spriteName)
 
     // Create virtual environment and install dependencies
+    // Use longer timeout for venv creation and pip install (5 minutes)
+    const longTimeout = 300000
+
     this.log('Setting up Python environment...')
-    await this.execOnSprite(spriteName, `python3 -m venv ${AGENT_DIR}/venv`)
+    await this.execOnSprite(spriteName, `python3 -m venv ${AGENT_DIR}/venv`, longTimeout)
     this.log('Installing dependencies...')
-    await this.execOnSprite(spriteName, `${AGENT_DIR}/venv/bin/pip install -r ${AGENT_DIR}/requirements.txt`)
+    await this.execOnSprite(spriteName, `${AGENT_DIR}/venv/bin/pip install -r ${AGENT_DIR}/requirements.txt`, longTimeout)
 
     // Setup and start background service
     this.log('Starting agent service...')
@@ -136,7 +162,25 @@ export default class SpritesDeploy extends Command {
       )
       return stdout
     } catch (e: any) {
-      throw new Error(`Sprite command failed: ${e.stderr || e.message}`)
+      // Provide more helpful error message
+      const errorMsg = e.message || ''
+      if (errorMsg.includes('ETIMEDOUT') || errorMsg.includes('timed out')) {
+        throw new Error(`Sprite command timed out after ${(timeout || 120000) / 1000}s: ${command.substring(0, 50)}...`)
+      }
+      throw new Error(`Sprite command failed: ${e.stderr || errorMsg}`)
+    }
+  }
+
+  private async checkSpriteReady(spriteName: string): Promise<boolean> {
+    try {
+      // Run a quick test command to see if sprite is responsive
+      const result = execSync(
+        `sprite exec -s "${spriteName}" -- echo "ready"`,
+        {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 30000},
+      )
+      return result.trim() === 'ready'
+    } catch {
+      return false
     }
   }
 
@@ -151,32 +195,109 @@ export default class SpritesDeploy extends Command {
       }
 
       // Create tar of agent directory
+      // Note: We don't exclude files here as macOS tar (BSD) has limited exclude support.
+      // The main fix is the streaming transfer to avoid the string length limit.
+      // Large files should be cleaned up before deployment or will be handled by user.
       execSync(`tar czf "${tarPath}" -C "${agentPath}" .`, {
         encoding: 'utf8',
         stdio: 'pipe',
       })
 
-      // Read and base64 encode
-      const tarData = fs.readFileSync(tarPath)
-      const base64Data = tarData.toString('base64')
+      // Get file size to check if it's too large
+      const tarStats = fs.statSync(tarPath)
+      const fileSizeMB = (tarStats.size / (1024 * 1024)).toFixed(2)
+      this.log(`  Tar file size: ${fileSizeMB}MB`)
 
-      // Transfer to sprite via base64 decode pipe
-      this.log('  Uploading tar to sprite...')
-      execSync(`sprite exec -s ${spriteName} -- bash -c 'sudo mkdir -p ${AGENT_DIR} && base64 -d > /tmp/agent.tar.gz'`, {
-        input: base64Data,
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-      })
+      // Use streaming transfer to avoid Node.js string length limit (~512MB)
+      // The base64 encoding increases size by ~33%, so we need to stream to avoid hitting the limit
+      this.log('  Transferring tar to sprite (streaming)...')
+      await this.streamFileToSprite(tarPath, spriteName, tarStats.size)
 
-      // Extract on sprite
+      // Extract on sprite (use longer timeout for extraction)
       this.log('  Extracting files...')
-      await this.execOnSprite(spriteName, `tar xzf /tmp/agent.tar.gz -C ${AGENT_DIR} && rm /tmp/agent.tar.gz`)
+      await this.execOnSprite(spriteName, `tar xzf /tmp/agent.tar.gz -C ${AGENT_DIR} && rm /tmp/agent.tar.gz`, 300000)
     } finally {
       // Clean up local tar
       if (fs.existsSync(tarPath)) {
         fs.unlinkSync(tarPath)
       }
     }
+  }
+
+  private streamFileToSprite(localPath: string, spriteName: string, originalSize: number): Promise<void> {
+    return new Promise((resolve, reject) => {
+      // Spawn the sprite exec command - truncate to original size after decode
+      const child = spawn(
+        'sprite',
+        ['exec', '-s', spriteName, '--', 'bash', '-c', `sudo mkdir -p ${AGENT_DIR} && base64 -d > /tmp/agent.tar.gz && truncate -s ${originalSize} /tmp/agent.tar.gz`],
+        {
+          stdio: ['pipe', 'pipe', 'pipe'],
+        },
+      )
+
+      let stderr = ''
+
+      child.stderr?.on('data', (data: Buffer) => {
+        stderr += data.toString()
+      })
+
+      child.on('error', (err) => {
+        reject(new Error(`Failed to spawn sprite command: ${err.message}`))
+      })
+
+      child.on('close', (code) => {
+        if (code === 0) {
+          resolve()
+        } else {
+          reject(new Error(`Sprite command failed with code ${code}: ${stderr}`))
+        }
+      })
+
+      // Use streaming base64 transfer with proper chunking
+      // Read file in chunks that are multiples of 3 bytes for valid base64
+      const CHUNK_SIZE = 3 * 1024 * 1024 // 3MB chunks (multiple of 3 for clean base64 boundaries)
+      let leftover = Buffer.alloc(0)
+
+      const readStream = fs.createReadStream(localPath, { highWaterMark: CHUNK_SIZE })
+
+      readStream.on('data', (chunk: Buffer | string) => {
+        // Handle both Buffer and string chunks
+        const bufferChunk = typeof chunk === 'string' ? Buffer.from(chunk) : chunk
+
+        // Combine with any leftover bytes from previous chunk
+        const combined = Buffer.concat([leftover, bufferChunk])
+        const remainder = combined.length % 3
+
+        // Process all complete 3-byte groups
+        const complete = remainder ? combined.slice(0, -remainder) : combined
+        leftover = remainder ? combined.slice(-remainder) : Buffer.alloc(0)
+
+        if (complete.length > 0) {
+          const encoded = complete.toString('base64')
+          if (!child.stdin?.write(encoded)) {
+            // Handle backpressure
+            readStream.pause()
+            child.stdin?.once('drain', () => readStream.resume())
+          }
+        }
+      })
+
+      readStream.on('end', () => {
+        // Process remaining bytes with proper base64 padding
+        if (leftover.length > 0) {
+          // Pad with null bytes to make it a multiple of 3, then encode
+          // The remote will decode correctly since the original size is known
+          const padded = Buffer.concat([leftover, Buffer.alloc(3 - leftover.length)])
+          const encoded = padded.toString('base64')
+          child.stdin?.write(encoded)
+        }
+        child.stdin?.end()
+      })
+
+      readStream.on('error', (err) => {
+        reject(new Error(`Failed to read tar file: ${err.message}`))
+      })
+    })
   }
 
   private async setupBackgroundService(spriteName: string, agentName: string, authToken: string): Promise<void> {
@@ -187,14 +308,15 @@ export default class SpritesDeploy extends Command {
     await this.execOnSprite(spriteName, `if [ -f ${AGENT_DIR}/agent.pid ]; then kill $(cat ${AGENT_DIR}/agent.pid) 2>/dev/null; rm -f ${AGENT_DIR}/agent.pid; fi`)
 
     // Create startup script that backgrounds itself and exits immediately
+    // Use proper quoting for auth token to handle special characters
     this.log('  Creating startup script...')
     const startScript = `#!/bin/bash
 cd ${AGENT_DIR}
 export PYTHONPATH=${AGENT_DIR}/.cast-runtime
 export CAST_AGENT_NAME=${agentName}
 export CAST_AGENT_PATH=${AGENT_DIR}
-export AUTH_TOKEN=${authToken}
-${openrouterKey ? `export OPENROUTER_API_KEY=${openrouterKey}` : ''}
+export AUTH_TOKEN="${authToken.replace(/"/g, '\\"')}"
+${openrouterKey ? `export OPENROUTER_API_KEY="${openrouterKey}"` : ''}
 # Start agent in background, redirect all output, write PID, then exit
 nohup ${AGENT_DIR}/venv/bin/python -m cast.runtime --agent-path ${AGENT_DIR} --port 8080 --host 0.0.0.0 > ${AGENT_DIR}/agent.log 2>&1 &
 echo $! > ${AGENT_DIR}/agent.pid

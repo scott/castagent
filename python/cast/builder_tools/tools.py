@@ -1,5 +1,6 @@
 """Builder Agent tools for creating and managing Cast agents."""
 
+import json
 import os
 import re
 import yaml
@@ -449,3 +450,47 @@ def recommend_model(requirements: str) -> str:
         return "openrouter/anthropic/claude-3-haiku or openrouter/openai/gpt-4o-mini - Fast and cost-effective for simple automation"
     else:
         return "openrouter/anthropic/claude-3-7-sonnet - Good all-rounder for most agent tasks"
+
+
+@tool
+def deploy_agent(name: str = "", provider: str = "") -> str:
+    """
+    Deploy an agent to a hosting provider. Opens a terminal modal to run the deploy command.
+
+    Args:
+        name: The name of the agent to deploy. If not provided, the TUI will use
+            the current agent being edited.
+        provider: The hosting provider to deploy to (e.g., 'railway', 'fly',
+            'digitalocean', 'sprites', 'docker', 'local'). If not specified,
+            the deploy will be interactive and prompt for provider selection.
+
+    Returns:
+        A response indicating the deploy modal will open, or an error if
+        the agent doesn't exist.
+    """
+    valid_providers = ["railway", "fly", "digitalocean", "sprites", "docker", "local"]
+
+    # If name is provided, validate agent exists
+    if name:
+        try:
+            agent_path = _ensure_agent_exists(name)
+        except ValueError as e:
+            return str(e)
+    else:
+        # No name provided - TUI will use current agent
+        name = None
+
+    # Validate provider if specified
+    if provider and provider not in valid_providers:
+        return f"Invalid provider '{provider}'. Valid providers: {', '.join(valid_providers)}"
+
+    # Return structured response with ui_action
+    response = {
+        "text": f"Opening deploy modal...",
+        "ui_action": {
+            "type": "open_deploy_modal",
+            "agent_name": name,  # None means use current agent from TUI context
+            "provider": provider
+        }
+    }
+    return json.dumps(response)

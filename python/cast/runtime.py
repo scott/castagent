@@ -214,6 +214,22 @@ class A2AServer:
             from starlette.routing import Route
 
             async def handle_http(request: Request):
+                # Verify auth token if configured
+                if self.auth_token_hash:
+                    auth_header = request.headers.get("authorization", "")
+                    if not auth_header.startswith("Bearer "):
+                        return JSONResponse({
+                            "jsonrpc": "2.0",
+                            "error": {"code": JSONRPC_SERVER_ERROR, "message": "Authentication required"},
+                        }, status_code=401)
+
+                    token = auth_header[7:]  # Strip "Bearer " prefix
+                    if not self.verify_token(token):
+                        return JSONResponse({
+                            "jsonrpc": "2.0",
+                            "error": {"code": JSONRPC_SERVER_ERROR, "message": "Invalid auth token"},
+                        }, status_code=401)
+
                 body = await request.body()
                 try:
                     data = json.loads(body)
@@ -270,7 +286,34 @@ class A2AServer:
         import threading
 
         class Handler(BaseHTTPRequestHandler):
+            # Store reference to server for auth checking
+            server_ref = None
+
             def do_POST(self):
+                # Verify auth token if configured
+                if self.server_ref and self.server_ref.auth_token_hash:
+                    auth_header = self.headers.get('Authorization', '')
+                    if not auth_header.startswith('Bearer '):
+                        self.send_response(401)
+                        self.send_header('Content-Type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({
+                            "jsonrpc": "2.0",
+                            "error": {"code": JSONRPC_SERVER_ERROR, "message": "Authentication required"},
+                        }).encode())
+                        return
+
+                    token = auth_header[7:]  # Strip "Bearer " prefix
+                    if not self.server_ref.verify_token(token):
+                        self.send_response(401)
+                        self.send_header('Content-Type', 'application/json')
+                        self.end_headers()
+                        self.wfile.write(json.dumps({
+                            "jsonrpc": "2.0",
+                            "error": {"code": JSONRPC_SERVER_ERROR, "message": "Invalid auth token"},
+                        }).encode())
+                        return
+
                 content_length = int(self.headers.get('Content-Length', 0))
                 body = self.rfile.read(content_length)
 
@@ -304,6 +347,9 @@ class A2AServer:
 
             def log_message(self, format, *args):
                 pass
+
+        # Set server reference for auth checking
+        Handler.server_ref = self
 
         server = HTTPServer((self.host, self.port), Handler)
         print(f"Agent ready on port {self.port}", flush=True)

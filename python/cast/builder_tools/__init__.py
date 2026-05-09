@@ -11,6 +11,7 @@ from .tools import (
     recommend_model,
     suggest_name,
     check_name_availability,
+    deploy_agent,
 )
 
 __all__ = [
@@ -24,4 +25,5 @@ __all__ = [
     "recommend_model",
     "suggest_name",
     "check_name_availability",
+    "deploy_agent",
 ]

@@ -9,6 +9,7 @@ import {saveTranscript} from '../lib/transcript.js'
 import {getDb} from '../lib/db.js'
 import {getKeychain} from '../lib/keychain.js'
 import {createModal} from '../components/modal.js'
+import {runDeployInTerminal} from '../components/terminal.js'
 
 export interface SlashCommand {
   name: string
@@ -756,8 +757,10 @@ const commands: SlashCommand[] = [
     name: 'deploy',
     description: 'Deploy the current agent',
     category: 'agent',
-    handler: async (ctx) => {
-      ctx.messages.addAgentMessage(`Use \`cast deploy ${ctx.agentName}\` from the CLI for now.`, ctx.mode)
+    args: '[provider]',
+    handler: async (ctx, args) => {
+      const provider = args[0] || ''
+      await runDeployInTerminal(ctx.renderer, ctx.input, ctx.agentName, provider, ctx.messages)
     },
   },
 ]

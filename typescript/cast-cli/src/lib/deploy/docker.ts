@@ -7,15 +7,32 @@ import * as path from 'path'
 
 import {keychain} from '../keychain'
 import {db} from '../sqlite'
-import {execCommandIgnoreError, getOpenRouterApiKey} from './deploy-utils'
+import {execCommand, getOpenRouterApiKey} from './deploy-utils'
 
 // Helper to run a shell command and return its exit code
-function runCommand(command: string, args: string[], options?: {stdio?: any; cwd?: string}): Promise<number> {
+function runCommand(command: string, args: string[], options?: {stdio?: any; cwd?: string; silent?: boolean}): Promise<number> {
   return new Promise((resolve, reject) => {
+    // If not silent and stdout is a TTY, use inherit to show output in real-time
+    // Otherwise use pipe so output can be captured (e.g., by TUI)
+    const useInherit = !options?.silent && process.stdout.isTTY
+
     const proc = spawn(command, args, {
-      stdio: options?.stdio ?? 'inherit',
+      stdio: options?.stdio ?? (useInherit ? 'inherit' : 'pipe'),
       cwd: options?.cwd,
     })
+
+    // If using pipe, also output to console for visibility
+    if (!useInherit && proc.stdout) {
+      proc.stdout.on('data', (data: Buffer) => {
+        process.stdout.write(data)
+      })
+    }
+    if (!useInherit && proc.stderr) {
+      proc.stderr.on('data', (data: Buffer) => {
+        process.stderr.write(data)
+      })
+    }
+
     proc.on('error', (err) => reject(err))
     proc.on('exit', (code) => resolve(code ?? 0))
   })
@@ -90,7 +107,8 @@ export default class DockerDeploy extends Command {
 
     // Build Docker image
     this.log('Building Docker image...')
-    const buildCode = await runCommand('docker', ['build', '--load', '-t', imageName, '-f', dockerfilePath, agentPath])
+    // Use --progress=plain for cleaner output in non-TTY environments (like TUI)
+    const buildCode = await runCommand('docker', ['build', '--progress=plain', '--load', '-t', imageName, '-f', dockerfilePath, agentPath])
     if (buildCode !== 0) {
       this.error(`Docker build failed with code ${buildCode}`)
     }
@@ -160,8 +178,17 @@ export default class DockerDeploy extends Command {
 
   static async destroy(agentName: string): Promise<void> {
     const containerName = `cast-${agentName}`
-    await execCommandIgnoreError('docker', ['stop', containerName])
-    await execCommandIgnoreError('docker', ['rm', containerName])
+    // Stop the container (ignore errors if it doesn't exist)
+    const stopResult = await execCommand('docker', ['stop', containerName])
+    if (stopResult.exitCode !== 0 && !stopResult.stderr.includes('No such container')) {
+      console.log(`Warning: Failed to stop container '${containerName}': ${stopResult.stderr}`)
+    }
+    // Remove the container (ignore errors if it doesn't exist)
+    const rmResult = await execCommand('docker', ['rm', containerName])
+    if (rmResult.exitCode !== 0 && !rmResult.stderr.includes('No such container')) {
+      console.log(`Warning: Failed to remove container '${containerName}': ${rmResult.stderr}`)
+    }
+    console.log(`Docker container '${containerName}' has been destroyed.`)
   }
 
   private createDockerfile(agentPath: string): void {

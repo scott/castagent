@@ -7,7 +7,6 @@ import {
   ensureDockerfile,
   getAgentPath,
   execCommand,
-  execCommandIgnoreError,
   saveDeployment,
   getOpenRouterApiKey,
 } from './deploy-utils'
@@ -122,7 +121,20 @@ export default class FlyDeploy extends Command {
   }
 
   static async destroy(agentName: string): Promise<void> {
-    await execCommandIgnoreError('flyctl', ['apps', 'destroy', `cast-${agentName}`, '--yes'])
+    const appName = `cast-${agentName}`
+    const result = await execCommand('flyctl', ['apps', 'destroy', appName, '--yes'])
+    if (result.exitCode !== 0) {
+      // Check if it's a "not found" error - that's actually okay, the app is already gone
+      if (result.stderr.includes('not found') || result.stderr.includes('does not exist') || result.stderr.toLowerCase().includes('error')) {
+        // For fly, the error message might be different - let's check stdout too
+        if (result.stdout.includes('not found') || result.stdout.includes('does not exist')) {
+          console.log(`App '${appName}' does not exist (already deleted or never created).`)
+          return
+        }
+        throw new Error(`Failed to destroy Fly app '${appName}': ${result.stderr || result.stdout}`)
+      }
+    }
+    console.log(`Fly app '${appName}' has been destroyed.`)
   }
 
   private generateFlyToml(agentPath: string, agentName: string): void {

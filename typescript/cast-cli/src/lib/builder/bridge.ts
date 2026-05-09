@@ -282,16 +282,32 @@ export class BuilderA2ABridge extends EventEmitter {
               const responseText = await this.sendBuilderRequest('output', {content: text})
               const response = responseText?.response || responseText?.message || "I've processed your request."
 
+              // Check if response contains a ui_action (JSON from tool with ui_action)
+              let uiAction: Record<string, unknown> | undefined
+              let displayText = response
+
+              try {
+                const parsed = JSON.parse(response)
+                if (parsed.ui_action) {
+                  uiAction = parsed.ui_action
+                  displayText = parsed.text || response
+                }
+              } catch {
+                // Not JSON, use as-is
+              }
+
               // Stream in chunks to balance responsiveness with efficiency.
               // Word-by-word creates too many tiny SSE events and risks timeouts.
               const chunkSize = 80
-              for (let i = 0; i < response.length; i += chunkSize) {
-                const chunk = response.slice(i, i + chunkSize)
+              for (let i = 0; i < displayText.length; i += chunkSize) {
+                const chunk = displayText.slice(i, i + chunkSize)
+                const isLastChunk = i + chunkSize >= displayText.length
                 const event = {
                   jsonrpc: '2.0',
                   id: request.id,
                   result: {
                     parts: [{kind: 'text', text: chunk}],
+                    metadata: isLastChunk ? { uiAction } : undefined,
                   },
                 }
                 safeWrite(`data: ${JSON.stringify(event)}\n\n`)
@@ -318,15 +334,30 @@ export class BuilderA2ABridge extends EventEmitter {
               const responseText = await this.sendBuilderRequest('output', {content: text})
               const response = responseText?.response || responseText?.message || "I've processed your request."
 
+              // Check if response contains a ui_action (JSON from tool with ui_action)
+              let uiAction: Record<string, unknown> | undefined
+              let displayText = response
+
+              try {
+                const parsed = JSON.parse(response)
+                if (parsed.ui_action) {
+                  uiAction = parsed.ui_action
+                  displayText = parsed.text || response
+                }
+              } catch {
+                // Not JSON, use as-is
+              }
+
               res.writeHead(200, {'Content-Type': 'application/json'})
               res.end(JSON.stringify({
                 jsonrpc: '2.0',
                 id: request.id,
                 result: {
-                  parts: [{kind: 'text', text: response}],
+                  parts: [{kind: 'text', text: displayText}],
                   metadata: {
                     thinking: [],
                     toolCalls: [],
+                    uiAction,
                   },
                 },
               }))

@@ -146,13 +146,41 @@ export async function showChatScreen(
       try {
         const stream = messages.addStreamingAgentMessage(mode)
         let fullResponse = ''
+        let uiAction: Record<string, unknown> | undefined
+
         for await (const chunk of client.sendMessageStream(text)) {
-          stream.update(chunk)
-          fullResponse += chunk
+          stream.update(chunk.text)
+          fullResponse += chunk.text
+          if (chunk.uiAction) {
+            uiAction = chunk.uiAction
+          }
         }
         stream.done()
         lastAgentMessage = fullResponse
         messageHistory.push({role: 'agent', text: fullResponse})
+
+        // Handle uiAction (e.g., open deploy modal)
+        if (uiAction && uiAction.type === 'open_deploy_modal') {
+          // Use provided agent_name or fall back to current agent in context
+          const deployAgentName = (uiAction.agent_name as string) || agentName
+          const deployProvider = uiAction.provider as string
+          
+          console.error('DEBUG: uiAction detected, calling handleDeployModal')
+          
+          // Capture renderer and messages for the async import callback
+          const currentRenderer = renderer
+          const currentMessages = messages
+          
+          try {
+            // Import and call deploy handler
+            const {handleDeployModal} = await import('../components/terminal.js')
+            await handleDeployModal(currentRenderer, inputComp.input, deployAgentName, deployProvider, currentMessages)
+            console.error('DEBUG: handleDeployModal completed')
+          } catch (err: any) {
+            console.error('DEBUG handleDeployModal error:', err.message)
+            messages.addAgentMessage(`Deploy error: ${err.message}`, mode)
+          }
+        }
       } catch (err) {
         const errorMsg = `Error: ${err instanceof Error ? err.message : String(err)}`
         messages.addAgentMessage(errorMsg, mode)

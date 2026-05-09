@@ -172,13 +172,13 @@ python-dotenv>=1.0.0
 export async function execCommand(
   command: string,
   args: string[],
-  options?: { cwd?: string; env?: NodeJS.ProcessEnv; silent?: boolean; input?: string },
+  options?: { cwd?: string; env?: NodeJS.ProcessEnv; silent?: boolean; input?: string; shell?: boolean },
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
     const proc = spawn(command, args, {
       cwd: options?.cwd,
       env: options?.env || process.env,
-      shell: true,
+      shell: options?.shell ?? true,  // default to true for backwards compatibility
     })
     let stdout = ''
     let stderr = ''
