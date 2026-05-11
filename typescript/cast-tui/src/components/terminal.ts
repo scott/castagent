@@ -173,6 +173,13 @@ async function showProviderSelection(
       handleDeployModal(renderer, renderer.root, agentName, selectedProvider, messagesComponent)
       return true
     }
+    // Handle Enter key
+    if (key.name === 'return' || key.name === 'enter') {
+      const selectedProvider = providers[selectedIndex].key
+      modal.hide()
+      handleDeployModal(renderer, renderer.root, agentName, selectedProvider, messagesComponent)
+      return true
+    }
     if (key.name === 'escape') {
       modal.hide()
       return true
