@@ -8,6 +8,8 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 from langchain_core.tools import tool
 
+from cast.versioning import create_version
+
 AGENTS_DIR = Path.home() / ".cast" / "agents"
 
 
@@ -182,14 +184,14 @@ def create_agent(name: str, description: str = "") -> str:
         instructions_content += "- Ask for clarification when requirements are unclear\n"
     else:
         instructions_content += "You are a helpful assistant.\n"
-    
+
     # Create default agent.yaml
     default_config = {
         "name": name,
         "version": "1.0",
         "description": agent_description,
         "brain": {
-            "model": "openrouter/anthropic/claude-3-7-sonnet",
+            "model": "openrouter/anthropic/claude-sonnet-4-20250514",
             "model_override": None,
             "instructions_file": "instructions.md",
         },
@@ -216,7 +218,10 @@ def create_agent(name: str, description: str = "") -> str:
     instructions_path = agent_path / "instructions.md"
     with open(instructions_path, "w") as f:
         f.write(instructions_content)
-    
+
+    # Create initial version
+    create_version(name, source="create", message="Initial version")
+
     return f"Agent '{name}' created successfully at {agent_path}"
 
 
@@ -264,12 +269,38 @@ def update_agent_config(name: str, config_yaml: str) -> str:
             else:
                 base[key] = value
         return base
-    
+
     merged = deep_merge(existing, updates)
-    
+
     with open(agent_yaml_path, "w") as f:
         yaml.dump(merged, f, default_flow_style=False, sort_keys=False)
-    
+
+    # Generate descriptive message about what changed
+    changes = []
+    if 'brain' in updates and 'model' in updates.get('brain', {}):
+        changes.append(f"model: {updates['brain']['model']}")
+    if 'description' in updates:
+        changes.append("description")
+    if 'tools' in updates:
+        if 'builtin' in updates.get('tools', {}):
+            changes.append("tools")
+        if 'mcp' in updates.get('tools', []):
+            changes.append("MCP servers")
+    if 'harness' in updates:
+        if 'permissions' in updates.get('harness', {}):
+            changes.append("permissions")
+        if 'principles' in updates.get('harness', {}):
+            changes.append("principles")
+    if 'runtime' in updates:
+        changes.append("runtime")
+
+    if changes:
+        message = "Updated: " + ", ".join(changes)
+    else:
+        message = "Updated agent configuration"
+
+    create_version(name, source="builder", message=message)
+
     return f"Updated agent.yaml for '{name}'"
 
 
@@ -284,10 +315,12 @@ def update_instructions(name: str, instructions_md: str) -> str:
     """
     agent_path = _ensure_agent_exists(name)
     instructions_path = agent_path / "instructions.md"
-    
+
     with open(instructions_path, "w") as f:
         f.write(instructions_md)
-    
+
+    create_version(name, source="builder", message="Updated instructions")
+
     return f"Updated instructions.md for '{name}'"
 
 
@@ -327,10 +360,12 @@ def install_mcp(name: str, server: str) -> str:
     mcp_list = config.setdefault("tools", {}).setdefault("mcp", [])
     if server not in [m.get("server") if isinstance(m, dict) else m for m in mcp_list]:
         mcp_list.append({"server": server, "config": f"mcp/{server}.yaml"})
-    
+
     with open(agent_yaml_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
-    
+
+    create_version(name, source="builder", message=f"Added MCP server: {server}")
+
     return f"Installed MCP server '{server}' for agent '{name}'"
 
 

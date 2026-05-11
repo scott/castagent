@@ -1,0 +1,387 @@
+"""Agent versioning module for creating and managing agent snapshots."""
+
+import json
+import os
+import tarfile
+import shutil
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Any, Optional
+from dataclasses import dataclass, asdict
+
+AGENTS_DIR = Path.home() / ".cast" / "agents"
+
+
+@dataclass
+class VersionInfo:
+    """Information about a single version."""
+    id: int
+    timestamp: str
+    source: str  # "create", "cli", "builder"
+    message: str
+
+
+class VersioningError(Exception):
+    """Exception raised for versioning errors."""
+    pass
+
+
+def _get_versions_dir(name: str) -> Path:
+    """Get the versions directory path for an agent."""
+    return AGENTS_DIR / name / ".cast" / "versions"
+
+
+def _get_versions_json_path(name: str) -> Path:
+    """Get the versions.json path for an agent."""
+    return _get_versions_dir(name) / "versions.json"
+
+
+def _ensure_versions_dir(name: str) -> Path:
+    """Ensure the versions directory exists."""
+    versions_dir = _get_versions_dir(name)
+    versions_dir.mkdir(parents=True, exist_ok=True)
+    return versions_dir
+
+
+def _get_version_filename(version_id: int) -> str:
+    """Get the filename for a version archive."""
+    # Use both sequential number and timestamp for naming
+    return f"{version_id:03d}.tar.gz"
+
+
+def _get_next_version_id(name: str) -> int:
+    """Get the next version ID for a new version."""
+    versions_json = _get_versions_json_path(name)
+    if versions_json.exists():
+        with open(versions_json, "r") as f:
+            data = json.load(f)
+            return data.get("current", 0) + 1
+    return 1
+
+
+def create_version(agent_name: str, source: str = "builder", message: str = "") -> VersionInfo:
+    """
+    Create a version snapshot of the current agent state.
+
+    Args:
+        agent_name: The name of the agent.
+        source: The source of the change ("create", "cli", "builder").
+        message: Optional description of the changes.
+
+    Returns:
+        VersionInfo about the created version.
+    """
+    agent_path = AGENTS_DIR / agent_name
+
+    if not agent_path.exists():
+        raise VersioningError(f"Agent '{agent_name}' does not exist")
+
+    # Ensure versions directory exists
+    versions_dir = _ensure_versions_dir(agent_name)
+
+    # Get next version ID
+    version_id = _get_next_version_id(agent_name)
+
+    # Generate timestamp
+    timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+    # Default message if not provided
+    if not message:
+        if source == "create":
+            message = "Initial version"
+        elif source == "cli":
+            message = "Updated via CLI"
+        else:
+            message = "Updated via builder agent"
+
+    # Files to include in the snapshot
+    files_to_snapshot = [
+        "agent.yaml",
+        "instructions.md",
+    ]
+
+    # Add MCP configs if they exist
+    mcp_dir = agent_path / "mcp"
+    if mcp_dir.exists() and any(mcp_dir.iterdir()):
+        files_to_snapshot.append("mcp")
+
+    # Add tools directory if it exists and has content
+    tools_dir = agent_path / "tools"
+    if tools_dir.exists() and any(tools_dir.iterdir()):
+        files_to_snapshot.append("tools")
+
+    # Create tar.gz archive
+    version_filename = _get_version_filename(version_id)
+    version_path = versions_dir / version_filename
+
+    with tarfile.open(version_path, "w:gz") as tar:
+        for file_or_dir in files_to_snapshot:
+            file_path = agent_path / file_or_dir
+            if file_path.exists():
+                # Use arcname to store relative path in archive
+                tar.add(file_path, arcname=file_or_dir)
+
+    # Update versions.json
+    versions_json_path = _get_versions_json_path(agent_name)
+    if versions_json_path.exists():
+        with open(versions_json_path, "r") as f:
+            versions_data = json.load(f)
+    else:
+        versions_data = {"versions": [], "current": 0}
+
+    # Add new version to the list
+    version_info = VersionInfo(
+        id=version_id,
+        timestamp=timestamp,
+        source=source,
+        message=message
+    )
+    versions_data["versions"].append(asdict(version_info))
+    versions_data["current"] = version_id
+
+    with open(versions_json_path, "w") as f:
+        json.dump(versions_data, f, indent=2)
+
+    return version_info
+
+
+def list_versions(agent_name: str) -> List[VersionInfo]:
+    """
+    List all versions for an agent.
+
+    Args:
+        agent_name: The name of the agent.
+
+    Returns:
+        List of VersionInfo objects, sorted by version ID (newest last).
+    """
+    versions_json_path = _get_versions_json_path(agent_name)
+
+    if not versions_json_path.exists():
+        return []
+
+    with open(versions_json_path, "r") as f:
+        versions_data = json.load(f)
+
+    versions = []
+    for v in versions_data.get("versions", []):
+        versions.append(VersionInfo(**v))
+
+    return sorted(versions, key=lambda v: v.id)
+
+
+def revert_to_version(agent_name: str, version_id: Optional[int] = None, message: str = "") -> VersionInfo:
+    """
+    Revert an agent to a specific version.
+
+    Creates a snapshot of the current state before reverting,
+    then extracts the selected version.
+
+    Args:
+        agent_name: The name of the agent.
+        version_id: The version to revert to (default: latest).
+        message: Optional message for the revert version.
+
+    Returns:
+        VersionInfo about the newly created revert version.
+    """
+    agent_path = AGENTS_DIR / agent_name
+    versions_dir = _get_versions_dir(agent_name)
+
+    if not agent_path.exists():
+        raise VersioningError(f"Agent '{agent_name}' does not exist")
+
+    if not versions_dir.exists():
+        raise VersioningError(f"No versions found for agent '{agent_name}'")
+
+    # Get the target version
+    versions = list_versions(agent_name)
+    if not versions:
+        raise VersioningError(f"No versions found for agent '{agent_name}'")
+
+    if version_id is None:
+        # Default to latest
+        target_version = versions[-1]
+    else:
+        target_version = next((v for v in versions if v.id == version_id), None)
+        if target_version is None:
+            raise VersioningError(f"Version {version_id} not found for agent '{agent_name}'")
+
+    # Create a snapshot of current state before reverting
+    revert_message = message or f"Reverted to version {target_version.id}"
+    create_version(agent_name, source="cli", message=revert_message)
+
+    # Extract the target version
+    version_filename = _get_version_filename(target_version.id)
+    version_path = versions_dir / version_filename
+
+    with tarfile.open(version_path, "r:gz") as tar:
+        # Extract to a temporary location
+        temp_extract = versions_dir / "_temp_extract"
+        temp_extract.mkdir(exist_ok=True)
+
+        try:
+            tar.extractall(temp_extract)
+
+            # Restore files to agent directory
+            for item in temp_extract.iterdir():
+                dest = agent_path / item.name
+                if item.is_dir():
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.copytree(item, dest)
+                else:
+                    shutil.copy2(item, dest)
+        finally:
+            # Clean up temp directory
+            if temp_extract.exists():
+                shutil.rmtree(temp_extract)
+
+    # Return info about the new revert version
+    new_versions = list_versions(agent_name)
+    return new_versions[-1]
+
+
+def get_version_details(agent_name: str, version_id: int) -> Optional[Dict[str, Any]]:
+    """
+    Get details about a specific version.
+
+    Args:
+        agent_name: The name of the agent.
+        version_id: The version ID.
+
+    Returns:
+        Dictionary with version details, or None if not found.
+    """
+    versions = list_versions(agent_name)
+    version = next((v for v in versions if v.id == version_id), None)
+
+    if version is None:
+        return None
+
+    return asdict(version)
+
+
+def get_version_archive_path(agent_name: str, version_id: int) -> Optional[Path]:
+    """
+    Get the path to a version archive file.
+
+    Args:
+        agent_name: The name of the agent.
+        version_id: The version ID.
+
+    Returns:
+        Path to the archive file, or None if not found.
+    """
+    versions_dir = _get_versions_dir(agent_name)
+    version_filename = _get_version_filename(version_id)
+    version_path = versions_dir / version_filename
+
+    if version_path.exists():
+        return version_path
+    return None
+
+
+def diff_versions(agent_name: str, version1_id: int, version2_id: int) -> Dict[str, Any]:
+    """
+    Compare two versions of an agent.
+
+    Args:
+        agent_name: The name of the agent.
+        version1_id: The first version ID.
+        version2_id: The second version ID.
+
+    Returns:
+        Dictionary with diff results for each file.
+    """
+    import tarfile
+    import tempfile
+
+    agent_path = AGENTS_DIR / agent_name
+
+    if not agent_path.exists():
+        raise VersioningError(f"Agent '{agent_name}' does not exist")
+
+    result = {}
+
+    # Helper to extract and compare files from two versions
+    def compare_files(file_paths: list) -> None:
+        for file_path in file_paths:
+            v1_path = _get_version_archive_path(agent_name, version1_id)
+            v2_path = _get_version_archive_path(agent_name, version2_id)
+
+            if not v1_path or not v2_path:
+                continue
+
+            # Extract to temp directories
+            with tempfile.TemporaryDirectory() as tmpdir:
+                # Extract version 1
+                with tarfile.open(v1_path, "r:gz") as tar:
+                    tar.extractall(tmpdir)
+                v1_full_path = Path(tmpdir) / file_path
+
+                # Extract version 2 (need a different temp dir)
+                with tempfile.TemporaryDirectory() as tmpdir2:
+                    with tarfile.open(v2_path, "r:gz") as tar:
+                        tar.extractall(tmpdir2)
+                    v2_full_path = Path(tmpdir2) / file_path
+
+                    v1_content = v1_full_path.read_text() if v1_full_path.exists() else None
+                    v2_content = v2_full_path.read_text() if v2_full_path.exists() else None
+
+                    if v1_content is None and v2_content is None:
+                        continue
+                    elif v1_content != v2_content:
+                        result[file_path] = {
+                            "changed": True,
+                            "v1_exists": v1_content is not None,
+                            "v2_exists": v2_content is not None,
+                            "v1_content": v1_content[:500] if v1_content else None,
+                            "v2_content": v2_content[:500] if v2_content else None,
+                        }
+
+    # Compare agent.yaml and instructions.md
+    compare_files(["agent.yaml", "instructions.md"])
+
+    # Compare MCP configs
+    versions_dir = _get_versions_dir(agent_name)
+    v1_path = _get_version_archive_path(agent_name, version1_id)
+    v2_path = _get_version_archive_path(agent_name, version2_id)
+
+    if v1_path and v2_path:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with tarfile.open(v1_path, "r:gz") as tar:
+                tar.extractall(tmpdir)
+            mcp_dir_v1 = Path(tmpdir) / "mcp"
+
+            with tempfile.TemporaryDirectory() as tmpdir2:
+                with tarfile.open(v2_path, "r:gz") as tar:
+                    tar.extractall(tmpdir2)
+                mcp_dir_v2 = Path(tmpdir2) / "mcp"
+
+                mcp_changes = {}
+                all_mcp_files = set()
+
+                if mcp_dir_v1.exists():
+                    all_mcp_files.update(f.name for f in mcp_dir_v1.iterdir())
+                if mcp_dir_v2.exists():
+                    all_mcp_files.update(f.name for f in mcp_dir_v2.iterdir())
+
+                for mcp_file in all_mcp_files:
+                    v1_mcp = mcp_dir_v1 / mcp_file
+                    v2_mcp = mcp_dir_v2 / mcp_file
+
+                    v1_content = v1_mcp.read_text() if v1_mcp.exists() else None
+                    v2_content = v2_mcp.read_text() if v2_mcp.exists() else None
+
+                    if v1_content != v2_content:
+                        mcp_changes[mcp_file] = {
+                            "changed": True,
+                            "v1_exists": v1_content is not None,
+                            "v2_exists": v2_content is not None,
+                        }
+
+                if mcp_changes:
+                    result["mcp"] = mcp_changes
+
+    return result

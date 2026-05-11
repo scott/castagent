@@ -4,21 +4,36 @@ import * as path from 'path'
 import * as os from 'os'
 import * as yaml from 'yaml'
 import {db} from '../lib/sqlite'
+import {createVersion} from '../lib/versioning'
 
 const VALID_TOOLS = ['bash', 'read', 'glob']
 
 // Known models that OpenRouter supports (for validation warnings)
+// These are commonly used models - any valid OpenRouter model ID will work
 const KNOWN_MODELS = [
-  'anthropic/claude-sonnet-4',
-  'anthropic/claude-opus-4',
+  // Anthropic
+  'anthropic/claude-sonnet-4-20250514',
+  'anthropic/claude-opus-4-20250514',
   'anthropic/claude-3.7-sonnet',
-  'anthropic/claude-3.7-sonnet:thinking',
+  'anthropic/claude-3.5-sonnet-20241022',
   'anthropic/claude-3.5-haiku',
   'anthropic/claude-3-haiku',
+  // OpenAI
   'openai/gpt-4o',
   'openai/gpt-4o-mini',
-  'google/gemini-2.5-pro-preview-03-25',
+  'openai/gpt-4-turbo',
+  // Google
+  'google/gemini-2.5-pro',
+  // Meta
   'meta-llama/llama-4-maverick',
+  'meta-llama/llama-3.3-70b-instruct',
+  // Kimi
+  'kimi/k2.5',
+  'kimi/k2',
+  // Other popular
+  'deepseek/deepseek-chat',
+  'mistralai/mistral-large',
+  'cohere/command-r-plus',
 ]
 
 export default class Update extends Command {

@@ -953,6 +953,190 @@ const commands: SlashCommand[] = [
       await runDeployInTerminal(ctx.renderer, ctx.input, ctx.agentName, provider, ctx.messages)
     },
   },
+
+  {
+    name: 'versions',
+    description: 'Show version history for current agent',
+    category: 'session',
+    args: '[version]',
+    handler: async (ctx, args) => {
+      const agentName = ctx.agentName
+      const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+      const versionsJsonPath = path.join(agentPath, '.cast', 'versions', 'versions.json')
+
+      // Build modal content
+      const modal = createModal(ctx.renderer, ctx.input, {
+        title: `Versions: ${agentName}`,
+        overlay: true,
+      })
+
+      // Add overlay to renderer if present
+      if (modal.overlay) {
+        ctx.renderer.root.add(modal.overlay)
+      }
+
+      const contentBox = new BoxRenderable(ctx.renderer, {
+        width: '100%',
+        height: '100%',
+        flexDirection: 'column',
+        gap: 0,
+        paddingTop: 2,
+        paddingLeft: 2,
+        paddingRight: 2,
+      })
+
+      if (!fs.existsSync(versionsJsonPath)) {
+        const emptyText = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('No versions found.')]),
+        })
+        contentBox.add(emptyText)
+
+        const hint = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('\nVersions are created when the agent is edited.')]),
+        })
+        contentBox.add(hint)
+
+        // Footer for no versions case
+        const footer = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('ESC Close')]),
+        })
+        const footerBox = new BoxRenderable(ctx.renderer, {
+          width: '100%',
+          alignItems: 'center',
+        })
+        footerBox.add(footer)
+        contentBox.add(footerBox)
+      } else {
+        try {
+          const versionsData = JSON.parse(fs.readFileSync(versionsJsonPath, 'utf8'))
+          const versions = versionsData.versions
+
+          // Track selected index for keyboard navigation
+          let selectedIndex = versions.length > 0 ? versions.length - 1 : 0
+
+          // Render function to update the list
+          function renderList() {
+            // Clear existing children
+            for (const child of contentBox.getChildren()) {
+              contentBox.remove(child.id)
+            }
+
+            // Header
+            const headerText = new TextRenderable(ctx.renderer, {
+              content: new StyledText([
+                white('Version History'),
+                dim(' | '),
+                white(`Current: v${versionsData.current}`),
+              ]),
+            })
+            contentBox.add(headerText)
+
+            const sep = new TextRenderable(ctx.renderer, {
+              content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
+            })
+            contentBox.add(sep)
+
+            // Show each version with selection
+            for (let i = 0; i < versions.length; i++) {
+              const v = versions[i]
+              const isSelected = i === selectedIndex
+              const date = new Date(v.timestamp)
+              const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
+              const sourceLabel = v.source === 'create' ? dim('[CREATED]') :
+                                 v.source === 'cli' ? cyan('[CLI]') :
+                                 green('[BUILDER]')
+
+              const prefix = isSelected ? cyan('▸ ') : dim('  ')
+              const versionColor = isSelected ? white : dim
+
+              const versionText = new TextRenderable(ctx.renderer, {
+                content: new StyledText([
+                  prefix,
+                  versionColor(`v${v.id}`),
+                  dim('  '),
+                  sourceLabel,
+                  dim('  '),
+                  dim(dateStr),
+                  dim('\n    '),
+                  versionColor(v.message),
+                ]),
+              })
+              contentBox.add(versionText)
+            }
+
+            const sep2 = new TextRenderable(ctx.renderer, {
+              content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
+            })
+            contentBox.add(sep2)
+
+            // Footer instructions
+            const footer = new TextRenderable(ctx.renderer, {
+              content: new StyledText([dim('↑↓ Navigate  Enter Revert  ESC Close')]),
+            })
+            const footerBox = new BoxRenderable(ctx.renderer, {
+              width: '100%',
+              alignItems: 'center',
+            })
+            footerBox.add(footer)
+            contentBox.add(footerBox)
+          }
+
+          renderList()
+
+          // Override modal's key handler for custom keyboard navigation
+          const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+          modal.box.handleKeyPress = (key: KeyEvent) => {
+            // Handle up arrow
+            if (key.name === 'up') {
+              selectedIndex = Math.max(0, selectedIndex - 1)
+              renderList()
+              ctx.renderer.render()
+              return true
+            }
+            // Handle down arrow
+            if (key.name === 'down') {
+              selectedIndex = Math.min(versions.length - 1, selectedIndex + 1)
+              renderList()
+              ctx.renderer.render()
+              return true
+            }
+            // Handle Enter to revert
+            if (key.name === 'return' || key.name === 'enter') {
+              const targetVersion = versions[selectedIndex]
+              if (targetVersion) {
+                modal.hide()
+                ctx.input.focus()
+
+                // Show confirmation message
+                ctx.messages.addAgentMessage(
+                  `Revert to v${targetVersion.id}? Use \`cast revert ${agentName} ${targetVersion.id}\` from CLI to confirm.`,
+                  ctx.mode
+                )
+              }
+              return true
+            }
+            // Handle Escape to close
+            if (key.name === 'escape') {
+              modal.hide()
+              ctx.input.focus()
+              return true
+            }
+            return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+          }
+        } catch (err) {
+          const errorText = new TextRenderable(ctx.renderer, {
+            content: new StyledText([red('Failed to load version history.')]),
+          })
+          contentBox.add(errorText)
+        }
+      }
+
+      modal.setContent(contentBox)
+      ctx.renderer.root.add(modal.box)
+      modal.show()
+    },
+  },
 ]
 
 export const slashCommands: SlashCommand[] = commands
