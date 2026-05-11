@@ -183,6 +183,24 @@ cast update my-agent --python-version 3.12 --add-requirement requests
 cast update my-agent --model openrouter/openai/gpt-4o --dry-run
 ```
 
+### Agent Versioning
+
+Cast automatically versions your agent whenever changes are made (via CLI, edit command, or builder agent). Each version captures a snapshot of `agent.yaml`, `instructions.md`, and MCP configurations.
+
+```bash
+# List all versions of an agent
+cast versions my-agent
+
+# Compare two versions
+cast diff my-agent 1 3
+
+# Revert to a specific version (creates a new version first for safety)
+cast revert my-agent 2
+cast revert my-agent        # Revert to latest version
+```
+
+In the TUI, use `/versions` to view version history with keyboard navigation.
+
 ## Development
 
 ### Project Structure
