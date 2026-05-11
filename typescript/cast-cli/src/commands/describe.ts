@@ -103,7 +103,7 @@ export default class Describe extends Command {
 
     // Instructions
     if (instructions) {
-      this.log('📝 Instructions')
+      this.log('📝 Instructions Preview')
       this.log('───────────────────────────────────────────────────────────────')
       // Show first 10 lines, then truncate if longer
       const lines = instructions.split('\n')
@@ -120,6 +120,14 @@ export default class Describe extends Command {
         this.log(`  ... (${lines.length - 10} more lines)`)
       }
       this.log('')
+
+      // Full instructions content
+      this.log('📝 Instructions (Full)')
+      this.log('───────────────────────────────────────────────────────────────')
+      this.log('```markdown')
+      this.log(instructions)
+      this.log('```')
+      this.log('')
     }
 
     // Permissions
@@ -134,6 +142,15 @@ export default class Describe extends Command {
     } else {
       this.log('  No permissions configured')
     }
+    this.log('')
+
+    // Full agent.yaml content
+    this.log('📄 Agent Configuration (Full)')
+    this.log('───────────────────────────────────────────────────────────────')
+    const formattedYaml = yaml.stringify(agentConfig, {indent: 2, lineWidth: 0})
+    this.log('```yaml')
+    this.log(formattedYaml)
+    this.log('```')
     this.log('')
 
     // Location
