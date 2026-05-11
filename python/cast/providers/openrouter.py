@@ -36,8 +36,8 @@ MODEL_ALIASES = {
     "deepseek-chat": "deepseek/deepseek-chat",
     "deepseek-coder": "deepseek/deepseek-coder",
     # Minimax models
-    "minimax-2.5": "minimax/minimax-2.5",
-    "minimax-2.5-chat": "minimax/minimax-2.5-chat",
+    "minimax-2.5": "minimax/minimax-m2.5",
+    "minimax-2.5-chat": "minimax/minimax-m2.5-chat",
 }
 
 
@@ -76,8 +76,8 @@ class OpenRouterProvider:
         "mistralai/mistral-large",
         "cohere/command-r-plus",
         # Minimax
-        "minimax/minimax-2.5",
-        "minimax/minimax-2.5-chat",
+        "minimax/minimax-m2.5",
+        "minimax/minimax-m2.5-chat",
     ]
 
     def __init__(self):

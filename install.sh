@@ -303,7 +303,7 @@ cast:
 
 defaults:
   agent_storage: ~/.cast/agents
-  builder_model: openrouter/anthropic/claude-4-sonnet
+  builder_model: openrouter/minimax/minimax-m2.5
   deployment_provider: railway
 
 providers:

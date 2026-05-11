@@ -10,6 +10,28 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 from typing import Annotated
 
+
+def load_global_config() -> dict:
+    """Load the global Cast config from ~/.cast/config.yaml."""
+    config_path = Path.home() / ".cast" / "config.yaml"
+    if config_path.exists():
+        try:
+            return yaml.safe_load(config_path.read_text()) or {}
+        except Exception:
+            pass
+    return {}
+
+
+def get_builder_model() -> str:
+    """Get the builder model from config, defaulting to a sensible fallback."""
+    config = load_global_config()
+    defaults = config.get("defaults", {})
+    model = defaults.get("builder_model", "openrouter/minimax/minimax-m2.5")
+    # Strip openrouter/ prefix for display
+    if model.startswith("openrouter/"):
+        model = model[len("openrouter/"):]
+    return model
+
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import (
     AIMessage,
@@ -531,7 +553,7 @@ def create_llm() -> BaseChatModel:
         try:
             from langchain_openai import ChatOpenAI
             return ChatOpenAI(
-                model="anthropic/claude-3-7-sonnet",
+                model="minimax/minimax-m2.5",
                 api_key=api_key,
                 base_url="https://openrouter.ai/api/v1",
                 temperature=0.7,
@@ -724,9 +746,10 @@ class BuilderAgent:
             return f"Error executing tool: {e}"
 
     def get_welcome_message(self) -> str:
+        model = get_builder_model()
         if self.new_mode:
             return (
-                "Hello! I'm the Cast Builder Agent. Let's create a new agent together.\n\n"
+                f"Hello! I'm the Cast Builder Agent (powered by **{model}**). Let's create a new agent together.\n\n"
                 + "**What should your agent do?**\n\n"
                 + "Describe what you'd like your agent to accomplish. For example:\n"
                 + '- "An agent that reads my Gmail inbox and drafts replies"\n'
@@ -740,7 +763,7 @@ class BuilderAgent:
 
         name = self.agent_name or "your agent"
         return (
-            f"Hello! I'm the Cast Builder Agent. I'm here to help you edit **{name}**.\n\n"
+            f"Hello! I'm the Cast Builder Agent (powered by **{model}**). I'm here to help you edit **{name}**.\n\n"
             f"I've loaded its current configuration. I can help you:\n"
             f"- Update instructions or system prompts\n"
             f"- Modify agent.yaml settings (model, tools, permissions)\n"
