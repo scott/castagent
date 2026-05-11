@@ -62,11 +62,16 @@ export default class DockerDeploy extends Command {
     this.log(`Deploying ${agentName} locally with Docker...`)
 
     // Resolve project root so we can locate python/cast
+    // Starting from typescript/cast-cli/dist/lib/deploy, we need to go up 4 levels
+    // to reach the project root where python/cast exists
     let projectRoot = process.cwd()
     if (!fs.existsSync(path.join(projectRoot, 'python', 'cast'))) {
       projectRoot = path.resolve(__dirname, '../../..')
       if (!fs.existsSync(path.join(projectRoot, 'python', 'cast'))) {
         projectRoot = path.resolve(__dirname, '../../../..')
+        if (!fs.existsSync(path.join(projectRoot, 'python', 'cast'))) {
+          projectRoot = path.resolve(__dirname, '../../../../..')
+        }
       }
     }
 
