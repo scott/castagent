@@ -317,36 +317,7 @@ cast meta test
 cast meta test --scenario create-simple
 ```
 
-## Features
-
-### Implemented
-
-- ✅ TypeScript CLI with oclif
-- ✅ OpenTUI terminal interface
-- ✅ Python Runtime Agent with A2A HTTP server
-- ✅ Builder Agent with stdio JSON-RPC
-- ✅ Built-in tools (bash, read, glob)
-- ✅ Builder Agent tools (create_agent, update_agent_config, update_instructions, install_mcp, list_agents, get_agent_config, read_file, recommend_model, suggest_name)
-- ✅ MCP Manager (Gmail, Slack, Filesystem)
-- ✅ OAuth flow (browser-based)
-- ✅ OpenRouter LLM integration
-- ✅ Anthropic LLM integration
-- ✅ OpenAI LLM integration
-- ✅ Ollama (local) LLM integration
-- ✅ Docker deployment
-- ✅ Railway deployment
-- ✅ Fly.io deployment
-- ✅ DigitalOcean App Platform deployment
-- ✅ Agent shutdown / undeploy
-- ✅ Streaming responses
-- ✅ Production TUI mode (green theme)
-- ✅ Agent configuration management
-- ✅ SQLite database for agent metadata and deployments
-- ✅ Secure auth token storage (keychain / system credential store)
-- ✅ OAuth credential vault (~/.cast/vault/)
-- ✅ Meta-builder test framework
-
-### The `cast` Wrapper Script
+## Configuration
 
 The `cast` command at the repository root is a bash wrapper that delegates to `typescript/cast-cli/bin/run`. When you run `./setup.sh` or `./install.sh`, it creates a symlink from `~/.local/bin/cast` to this wrapper, making the CLI available globally.
 
