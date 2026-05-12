@@ -1,6 +1,46 @@
-# Cast: Agent Building & Deployment Platform
+# Agent Cast: Build and Deploy AI Agents
 
-Cast is a CLI+TUI application that helps developers create, test, and deploy AI agents.
+Agent Cast is a complete platform for creating, testing, and deploying autonomous AI agents. It combines an interactive CLI with a beautiful terminal UI to guide you through building agents that can reason, use tools, and operate independently.
+
+**Cast transforms how developers build AI agents** — instead of writing boilerplate code, you describe what you want your agent to do, and Cast handles the scaffolding, configuration, and deployment. Your agent becomes a production-ready A2A server that can be connected to from any client.
+
+## Why Agent Cast?
+
+- **Interactive Builder**: Describe your agent in plain language, get a fully scaffolded agent with proper instructions, tools, and configuration
+- **Built-in Runtime**: Python-based runtime with A2A protocol support, streaming responses, and secure auth
+- **Multiple Deployment Options**: Deploy to Docker, Railway, Fly.io, DigitalOcean, or Sprites with a single command
+- **Production-Ready**: Automatic versioning, secure token storage, OAuth credential vault, and deployment tracking
+
+## What Can You Build?
+
+Cast agents are flexible AI assistants that can be customized for virtually any task. Here are examples of agents you can create:
+
+**Developer Agents**
+- Code review assistant — reviews PRs, suggests improvements, checks style
+- Debugging partner — analyzes errors, traces issues, proposes fixes
+- Documentation writer — generates API docs, README files, code comments
+
+**Business Agents**
+- Customer support agent — answers questions, handles tickets, escalates issues
+- Data analyst — queries databases, generates reports, creates visualizations
+- Meeting scheduler — coordinates calendars, sends invites, handles conflicts
+
+**Productivity Agents**
+- Email assistant — drafts responses, summarizes threads, manages inbox
+- Research assistant — finds information, summarizes papers, extracts insights
+- File organizer — categorizes documents, renames files, manages storage
+
+**Communications Agents**
+- Slack bot — responds to mentions, runs commands, posts updates
+- Newsletter writer — curates content, writes summaries, formats for delivery
+- Social media manager — schedules posts, monitors mentions, engages followers
+
+Create any agent with:
+```bash
+cast new
+```
+
+Describe what you want, and Cast builds the complete agent scaffold with instructions, tools, and configuration ready for development.
 
 ## Architecture
 
@@ -19,10 +59,15 @@ Cast is a CLI+TUI application that helps developers create, test, and deploy AI 
 
 ### Installation
 
+**One-liner** (when repository is public):
+```bash
+curl -sL https://raw.githubusercontent.com/scott/agent-cast/main/install.sh | bash
+```
+
 **Full installation** (recommended for first-time setup):
 ```bash
 # Clone the repository
-git clone <repo-url>
+git clone https://github.com/scott/agent-cast.git
 cd agent-cast
 
 # Run the full installation script (installs deps, builds, creates config)
@@ -104,6 +149,29 @@ cast delete demo-agent --force
 
 # Run meta-builder tests
 cast meta test
+```
+
+### Deployment Providers
+
+Cast supports deploying agents to multiple platforms:
+
+| Provider | Description | Command |
+|----------|-------------|---------|
+| **Docker** | Containerized deployment to any Docker host | `cast deploy demo-agent --provider docker` |
+| **Railway** | Deploy to Railway's cloud platform | `cast deploy demo-agent --provider railway` |
+| **Fly.io** | Deploy to Fly.io's global edge network | `cast deploy demo-agent --provider fly` |
+| **DigitalOcean** | Deploy to DigitalOcean App Platform | `cast deploy demo-agent --provider digitalocean` |
+| **Sprites** | Firecracker VMs on Fly.io (lightweight, fast) | `cast deploy demo-agent --provider sprites` |
+
+Each provider handles the complete deployment lifecycle including building, provisioning, and configuration. After deployment, connect to your running agent with:
+
+```bash
+cast connect demo-agent
+```
+
+To shut down and clean up resources:
+```bash
+cast shutdown demo-agent
 ```
 
 ### Creating a New Agent
