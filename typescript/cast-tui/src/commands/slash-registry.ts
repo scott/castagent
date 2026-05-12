@@ -135,6 +135,55 @@ function launchBuilderEditor(ctx: CommandContext, agentName: string): void {
   process.exit(0)
 }
 
+function launchConnect(ctx: CommandContext, agentName: string): void {
+  // Destroy renderer to release terminal
+  if (ctx.renderer && !ctx.renderer.isDestroyed) {
+    ctx.renderer.destroy()
+  }
+
+  // Try to find the cast CLI binary
+  const candidates = [
+    'cast',
+    path.resolve(__dirname, '../../cast-cli/bin/run'),
+    path.resolve(__dirname, '../../../cast-cli/bin/run'),
+    path.resolve(__dirname, '../../../../cast-cli/bin/run'),
+  ]
+
+  let binary: string | null = null
+  for (const candidate of candidates) {
+    try {
+      if (candidate === 'cast') {
+        // Check if cast is in PATH
+        execFileSync('which', ['cast'], { stdio: 'ignore' })
+        binary = candidate
+        break
+      } else if (fs.existsSync(candidate)) {
+        binary = candidate
+        break
+      }
+    } catch {
+      // try next
+    }
+  }
+
+  if (!binary) {
+    console.error('Could not find cast CLI binary. Please ensure cast is installed.')
+    process.exit(1)
+  }
+
+  try {
+    execFileSync(binary, ['connect', agentName], { stdio: 'inherit' })
+  } catch (err: any) {
+    if (err.signal === 'SIGINT') {
+      // User pressed Ctrl+C, exit cleanly
+    } else {
+      console.error(`Failed to connect: ${err.message}`)
+    }
+  }
+
+  process.exit(0)
+}
+
 const commands: SlashCommand[] = [
   {
     name: 'help',
@@ -448,6 +497,51 @@ const commands: SlashCommand[] = [
         lines.push('Current connection:')
         lines.push(`  URL: ${ctx.agentUrl}`)
         lines.push(`  Mode: ${ctx.mode}`)
+        lines.push('')
+
+        // Read and display full instructions.md and agent.yaml
+        const fs = require('fs')
+        const path = require('path')
+        const os = require('os')
+        const yaml = require('yaml')
+
+        // Use stored yaml path or fallback to default location
+        const agentYamlPath = agent?.agent_yaml_path || path.join(os.homedir(), '.cast', 'agents', ctx.agentName, 'agent.yaml')
+        const agentDir = path.dirname(agentYamlPath)
+
+          if (fs.existsSync(agentYamlPath)) {
+            try {
+              const agentConfig = yaml.parse(fs.readFileSync(agentYamlPath, 'utf8'))
+              const instructionsFile = agentConfig.brain?.instructions_file || 'instructions.md'
+              const instructionsPath = path.join(agentDir, instructionsFile)
+
+              if (fs.existsSync(instructionsPath)) {
+                const instructions = fs.readFileSync(instructionsPath, 'utf8')
+                lines.push('📝 Instructions (Full):')
+                lines.push('```markdown')
+                lines.push(instructions)
+                lines.push('```')
+                lines.push('')
+              }
+            } catch (e) {
+              // Ignore errors reading instructions
+            }
+          }
+
+          // Read and display full agent.yaml
+          if (fs.existsSync(agentYamlPath)) {
+            try {
+              const agentYamlContent = fs.readFileSync(agentYamlPath, 'utf8')
+              const parsed = yaml.parse(agentYamlContent)
+              const formattedYaml = yaml.stringify(parsed, {indent: 2, lineWidth: 0})
+              lines.push('📄 Agent Configuration (Full):')
+              lines.push('```yaml')
+              lines.push(formattedYaml)
+              lines.push('```')
+            } catch (e) {
+              // Ignore errors reading agent.yaml
+            }
+          }
 
         ctx.messages.addAgentMessage(lines.join('\n'), ctx.mode)
       } catch (err) {
@@ -682,7 +776,7 @@ const commands: SlashCommand[] = [
                 // Connect immediately on number press
                 const targetName = agents[selectedIndex]
                 modal.hide()
-                handleConnect(targetName)
+                launchConnect(ctx, targetName)
                 return true
               }
             }
@@ -690,7 +784,7 @@ const commands: SlashCommand[] = [
             if (key.name === 'return' || key.name === 'enter') {
               const targetName = agents[selectedIndex]
               modal.hide()
-              handleConnect(targetName)
+              launchConnect(ctx, targetName)
               return true
             }
             // Handle Escape to close
@@ -722,60 +816,9 @@ const commands: SlashCommand[] = [
 
       // Handle explicit agent name
       const targetName = args[0]
-      await handleConnect(targetName)
+      // Launch CLI connect which handles keychain access in Node.js
+      launchConnect(ctx, targetName)
       return
-
-      // Helper function to connect to an agent
-      async function handleConnect(targetName: string) {
-        // When given an explicit name, verify it exists on disk or in DB
-        try {
-          const diskAgents = listAgentsFromDisk()
-          const existsOnDisk = diskAgents.includes(targetName)
-
-          let url: string | undefined
-
-          if (db) {
-            const deployment = db.getDeployment(targetName)
-            if (deployment?.deployment_url) {
-              url = deployment.deployment_url as string
-            } else {
-              const localAgent = db.getLocalAgent(targetName)
-              if (localAgent?.port) {
-                url = `http://localhost:${localAgent.port}`
-              }
-            }
-          }
-
-          if (!url && !existsOnDisk) {
-            ctx.messages.addAgentMessage(
-              `Agent '${targetName}' not found.\n` +
-                `Create it with: cast new\n` +
-                `Or start locally: cast dev ${targetName} --no-tui`,
-              ctx.mode,
-            )
-            return
-          }
-
-          if (!url) {
-            ctx.messages.addAgentMessage(
-              `Agent '${targetName}' exists but is not currently running or deployed.\n` +
-                `Start it with: cast dev ${targetName} --no-tui`,
-              ctx.mode,
-            )
-            return
-          }
-
-          const token = keychain ? await keychain.getToken(targetName) : undefined
-
-          ctx.messages.addAgentMessage(`Connecting to ${targetName} at ${url}...`, ctx.mode)
-          await ctx.reinitializeChat(targetName, url, token || undefined)
-        } catch (err) {
-          ctx.messages.addAgentMessage(
-            `Failed to connect: ${err instanceof Error ? err.message : String(err)}`,
-            ctx.mode,
-          )
-        }
-      }
     },
   },
 

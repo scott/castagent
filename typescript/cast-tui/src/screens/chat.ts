@@ -27,6 +27,7 @@ export async function showChatScreen(
     let agentUrl = initialAgentUrl
     let client = new A2AClient(agentUrl, authToken)
     let mode: Mode = 'plan'
+    let currentUiMode: UiMode = uiMode
 
     // Message tracking for /save and /copy
     let messageHistory: Array<{role: 'user' | 'agent'; text: string}> = []
@@ -48,13 +49,13 @@ export async function showChatScreen(
       flexDirection: 'column',
     })
 
-    const header = createHeader(renderer, agentName, mode, uiMode)
+    const header = createHeader(renderer, agentName, mode, currentUiMode)
     layout.add(header.box)
 
-    const messages = createMessages(renderer, uiMode)
+    const messages = createMessages(renderer, currentUiMode)
     layout.add(messages.scrollBox)
 
-    if (uiMode === 'production') {
+    if (currentUiMode === 'production') {
       messages.showProductionIndicator()
     }
 
@@ -107,13 +108,20 @@ export async function showChatScreen(
             mode = newMode
             header.setMode(mode)
           },
-          reinitializeChat: async (newName: string, newUrl: string, newToken?: string) => {
+          reinitializeChat: async (newName: string, newUrl: string, newToken?: string, newUiMode?: UiMode) => {
             agentName = newName
             agentUrl = newUrl
             client = new A2AClient(newUrl, newToken)
             messageHistory = []
             lastAgentMessage = undefined
             header.setAgentName(agentName)
+
+            // Update uiMode if provided, otherwise apply current uiMode to header/messages
+            if (newUiMode) {
+              currentUiMode = newUiMode
+            }
+            header.setUiMode(currentUiMode)
+            messages.setUiMode(currentUiMode)
 
             // Clear messages
             for (const child of messages.scrollBox.getChildren()) {

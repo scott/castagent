@@ -21,10 +21,11 @@ export interface MessagesComponent {
   addAgentMessage(content: string | AgentMessage, mode: Mode): void
   addStreamingAgentMessage(mode: Mode): StreamingMessage
   showProductionIndicator(): void
+  setUiMode(mode: UiMode): void
 }
 
 export function createMessages(ctx: any, uiMode: UiMode): MessagesComponent {
-  const isProduction = uiMode === 'production'
+  let isProduction = uiMode === 'production'
 
   const scrollBox = new ScrollBoxRenderable(ctx, {
     width: '100%',
@@ -159,5 +160,12 @@ export function createMessages(ctx: any, uiMode: UiMode): MessagesComponent {
     scrollBox.add(indicator)
   }
 
-  return {scrollBox, addUserMessage, addAgentMessage, addStreamingAgentMessage, showProductionIndicator}
+  function setUiMode(newUiMode: UiMode) {
+    isProduction = newUiMode === 'production'
+    if (isProduction) {
+      showProductionIndicator()
+    }
+  }
+
+  return {scrollBox, addUserMessage, addAgentMessage, addStreamingAgentMessage, showProductionIndicator, setUiMode}
 }

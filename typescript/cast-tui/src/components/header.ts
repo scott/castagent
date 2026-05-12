@@ -7,11 +7,13 @@ export interface HeaderComponent {
   box: BoxRenderable
   setMode(mode: Mode): void
   setAgentName(name: string): void
+  setUiMode(mode: UiMode): void
 }
 
 export function createHeader(ctx: any, agentName: string, initialMode: Mode, uiMode: UiMode): HeaderComponent {
   const isProduction = uiMode === 'production'
   const backgroundColor = isProduction ? '#10B981' : '#8B5CF6'
+  let currentMode: Mode = initialMode
 
   const box = new BoxRenderable(ctx, {
     width: '100%',
@@ -37,6 +39,7 @@ export function createHeader(ctx: any, agentName: string, initialMode: Mode, uiM
   box.add(modeText)
 
   function setMode(mode: Mode) {
+    currentMode = mode
     modeText.content = createModeStyledText(mode, isProduction)
   }
 
@@ -44,7 +47,14 @@ export function createHeader(ctx: any, agentName: string, initialMode: Mode, uiM
     nameText.content = new StyledText([white('\u25cf '), white(name)])
   }
 
-  return {box, setMode, setAgentName}
+  function setUiMode(newUiMode: UiMode) {
+    const newIsProduction = newUiMode === 'production'
+    // Note: Background color cannot be changed dynamically after creation
+    // The mode text will still update to show [● LIVE] in production
+    modeText.content = createModeStyledText(currentMode, newIsProduction)
+  }
+
+  return {box, setMode, setAgentName, setUiMode}
 }
 
 function createModeStyledText(mode: Mode, isProduction: boolean): StyledText {
