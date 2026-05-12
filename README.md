@@ -157,10 +157,10 @@ Cast supports deploying agents to multiple platforms:
 
 | Provider | Description | Command |
 |----------|-------------|---------|
+| **DigitalOcean** | Deploy to DigitalOcean Droplets (cloud VMs) | `cast deploy demo-agent --provider digitalocean` |
 | **Docker** | Containerized deployment to any Docker host | `cast deploy demo-agent --provider docker` |
 | **Railway** | Deploy to Railway's cloud platform | `cast deploy demo-agent --provider railway` |
 | **Fly.io** | Deploy to Fly.io's global edge network | `cast deploy demo-agent --provider fly` |
-| **DigitalOcean** | Deploy to DigitalOcean App Platform | `cast deploy demo-agent --provider digitalocean` |
 | **Sprites** | Firecracker VMs on Fly.io (lightweight, fast) | `cast deploy demo-agent --provider sprites` |
 
 Each provider handles the complete deployment lifecycle including building, provisioning, and configuration. After deployment, connect to your running agent with:
