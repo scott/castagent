@@ -115,9 +115,18 @@ export default class Connect extends Command {
       await client.getAgentCard()
       return false
     } catch (error: any) {
-      // If we get a redirect or auth error, we need proxy
+      // If we get a redirect, auth error, or unsupported protocol, we need proxy
       if (error instanceof A2AClientError) {
-        if (error.statusCode === 302 || error.message?.includes('Unsupported protocol')) {
+        // 302 = redirect (Sprites auth page)
+        // 401/403 = authentication required
+        // ECONNREFUSED may mean Sprites is blocking direct access
+        if (
+          error.statusCode === 302 ||
+          error.statusCode === 401 ||
+          error.statusCode === 403 ||
+          error.code === 'ECONNREFUSED' ||
+          error.message?.includes('Unsupported protocol')
+        ) {
           return true
         }
       }
@@ -131,8 +140,11 @@ export default class Connect extends Command {
 
     this.log(`Starting sprite proxy for ${spriteName} on port ${localPort}...`)
 
+    // Resolve sprite path - try common locations
+    const spritePath = this.resolveSprite()
+
     // Use LOCAL:REMOTE syntax to map localhost:${localPort} -> remote:8080
-    const proxyProcess = spawn('sprite', ['proxy', `${localPort}:8080`, '-s', spriteName], {
+    const proxyProcess = spawn(spritePath, ['proxy', `${localPort}:8080`, '-s', spriteName], {
       stdio: 'pipe',
     })
 
@@ -235,20 +247,36 @@ export default class Connect extends Command {
     const candidates = [
       'bun',
       path.join(os.homedir(), '.bun', 'bin', 'bun'),
+      path.join(os.homedir(), '.local', 'bin', 'bun'),
       '/usr/local/bin/bun',
       '/opt/homebrew/bin/bun',
     ]
 
     for (const candidate of candidates) {
-      if (candidate === 'bun') {
-        return candidate
-      }
-
       if (fs.existsSync(candidate)) {
         return candidate
       }
     }
 
-    return 'node'
+    // Fall back to 'bun' and let it fail with proper error if not found
+    return 'bun'
+  }
+
+  private resolveSprite(): string {
+    const candidates = [
+      'sprite',
+      path.join(os.homedir(), '.local', 'bin', 'sprite'),
+      '/usr/local/bin/sprite',
+      '/opt/homebrew/bin/sprite',
+    ]
+
+    for (const candidate of candidates) {
+      if (fs.existsSync(candidate)) {
+        return candidate
+      }
+    }
+
+    // Default to 'sprite' and let it fail with proper error
+    return 'sprite'
   }
 }
