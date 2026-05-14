@@ -35,7 +35,7 @@ export class A2AClient {
   ) {
     this.http = axios.create({
       baseURL: this.baseUrl,
-      timeout: 30000,
+      timeout: 120000,
       headers: {
         'Content-Type': 'application/json',
         ...(this.authToken ? {Authorization: `Bearer ${this.authToken}`} : {}),
