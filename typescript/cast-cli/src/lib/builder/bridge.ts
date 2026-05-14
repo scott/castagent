@@ -135,13 +135,13 @@ export class BuilderA2ABridge extends EventEmitter {
 
       this.builderProcess.stdin.write(JSON.stringify(message) + '\n')
 
-      // Timeout after 60 seconds (builder may take time for LLM calls)
+      // Timeout after 120 seconds (builder may take time for LLM calls)
       setTimeout(() => {
         if (this.pendingResponses.has(id)) {
           this.pendingResponses.delete(id)
           reject(new Error(`Builder request timeout: ${method}`))
         }
-      }, 60000)
+      }, 120000)
     })
   }
 
