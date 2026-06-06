@@ -409,6 +409,33 @@ export default class Deploy extends Command {
       )
     }
 
+    // Check if agent is a git repo and prompt for commit
+    const gitDir = path.join(agentPath, '.git')
+    if (fs.existsSync(gitDir)) {
+      const simpleGit = await import('simple-git')
+      const git = simpleGit.default(agentPath)
+      const status = await git.status()
+
+      if (!status.isClean()) {
+        this.log('')
+        this.log('─────────────────────────────────────────────────────────────')
+        this.log('  Uncommitted Changes Detected')
+        this.log('─────────────────────────────────────────────────────────────')
+        this.log('')
+        this.log(`'${agentName}' has uncommitted changes.`)
+        this.log('')
+        const commitNow = await this.confirm('Commit changes before deploying? (y/N)')
+        if (commitNow) {
+          const timestamp = new Date().toISOString()
+          await git.add('.')
+          await git.commit(`Auto-commit before deployment: ${timestamp}`)
+          this.log('Changes committed.')
+        } else {
+          this.log('Proceeding without committing.')
+        }
+      }
+    }
+
     // Interactive provider selection if not specified
     if (!provider) {
       provider = await this.selectProvider()
