@@ -6,38 +6,75 @@ from langchain_openai import ChatOpenAI
 
 
 # Model ID mappings for common models
-# Format: "claude-sonnet-4" -> "anthropic/claude-sonnet-4-20250514"
+# Format: "claude-sonnet-4" -> "anthropic/claude-sonnet-4.6"
 MODEL_ALIASES = {
-    # Anthropic models - latest versions
-    "claude-sonnet-4": "anthropic/claude-sonnet-4-20250514",
-    "claude-opus-4": "anthropic/claude-opus-4-20250603",  # Opus 4.6
-    "claude-opus-4.6": "anthropic/claude-opus-4-20250603",
+    # Anthropic models - Claude 4 series
+    "claude-sonnet-4": "anthropic/claude-sonnet-4.6",
+    "claude-sonnet-4.6": "anthropic/claude-sonnet-4.6",
+    "claude-opus-4": "anthropic/claude-opus-4.5",
+    "claude-opus-4.5": "anthropic/claude-opus-4.5",
+    "claude-opus-4.6": "anthropic/claude-opus-4.5",
+    "claude-haiku-4": "anthropic/claude-haiku-4",
+    # Anthropic models - Claude 3.7 series
     "claude-3.7-sonnet": "anthropic/claude-3.7-sonnet",
     "claude-3.7-sonnet:thinking": "anthropic/claude-3.7-sonnet:thinking",
-    "claude-3.5-sonnet": "anthropic/claude-3.5-sonnet-20241022",
+    # Anthropic models - Claude 3.5 series
+    "claude-3.5-sonnet": "anthropic/claude-3.5-sonnet",
     "claude-3.5-haiku": "anthropic/claude-3.5-haiku",
+    # Anthropic models - Claude 3 series
+    "claude-3-opus": "anthropic/claude-3-opus",
+    "claude-3-sonnet": "anthropic/claude-3-sonnet",
     "claude-3-haiku": "anthropic/claude-3-haiku",
     # OpenAI models
     "gpt-4o": "openai/gpt-4o",
     "gpt-4o-mini": "openai/gpt-4o-mini",
-    "gpt-4o-2024-05-13": "openai/gpt-4o-2024-05-13",
+    "gpt-4o-search-preview": "openai/gpt-4o-search-preview",
+    "gpt-4.5-turbo": "openai/gpt-4.5-turbo",
     "gpt-4-turbo": "openai/gpt-4-turbo",
     # Google models
     "gemini-2.5-pro": "google/gemini-2.5-pro",
+    "gemini-2.5-flash": "google/gemini-2.5-flash",
     "gemini-2.0-flash": "google/gemini-2.0-flash",
-    # Meta models
-    "llama-4-maverick": "meta-llama/llama-4-maverick",
+    "gemini-1.5-pro": "google/gemini-1.5-pro",
+    "gemini-1.5-flash": "google/gemini-1.5-flash",
+    # Meta models - Llama 4
     "llama-4-scout": "meta-llama/llama-4-scout",
-    "llama-3-3-70b": "meta-llama/llama-3.3-70b-instruct",
+    "llama-4-maverick": "meta-llama/llama-4-maverick",
+    "llama-4-17b": "meta-llama/llama-4-17b-16e-instruct",
+    # Meta models - Llama 3 series
+    "llama-3.3-70b": "meta-llama/llama-3.3-70b-instruct",
+    "llama-3.2-90b-vision": "meta-llama/llama-3.2-90b-vision-instruct",
+    "llama-3.2-11b-vision": "meta-llama/llama-3.2-11b-vision-instruct",
+    "llama-3.1-405b": "meta-llama/llama-3.1-405b-instruct",
+    "llama-3.1-70b": "meta-llama/llama-3.1-70b-instruct",
+    "llama-3.1-8b": "meta-llama/llama-3.1-8b-instruct",
     # Kimi models
     "kimi-k2.5": "kimi/k2.5",
     "kimi-k2": "kimi/k2",
-    # DeepSeek
+    "kimi-2.5": "kimi/kimi-2.5",
+    "kimi-2": "kimi/kimi-2",
+    # DeepSeek models
+    "deepseek-chat-v3": "deepseek/deepseek-chat-v3-0324",
     "deepseek-chat": "deepseek/deepseek-chat",
     "deepseek-coder": "deepseek/deepseek-coder",
     # Minimax models
+    "minimax-m4": "minimax/minimax-m4",
     "minimax-2.5": "minimax/minimax-m2.5",
-    "minimax-2.5-chat": "minimax/minimax-m2.5-chat",
+    "minimax-2": "minimax/minimax-m2",
+    # Mistral models
+    "mistral-large": "mistralai/mistral-large",
+    "mistral-medium": "mistralai/mistral-medium",
+    "mistral-small": "mistralai/mistral-small",
+    "mistral-nemo": "mistralai/mistral-nemo",
+    # Cohere models
+    "command-r-plus-08": "cohere/command-r-plus-08-2024",
+    "command-r-plus": "cohere/command-r-plus",
+    "command-r7b": "cohere/command-r7b-12-2024",
+    "command-r": "cohere/command-r",
+    # xAI models
+    "grok-2": "x-ai/grok-2",
+    "grok-2-mini": "x-ai/grok-2-mini",
+    "grok-beta": "x-ai/grok-beta",
 }
 
 
@@ -48,36 +85,76 @@ class OpenRouterProvider:
     default_base_url = "https://openrouter.ai/api/v1"
 
     supported_models = [
-        # Anthropic - latest
-        "anthropic/claude-sonnet-4-20250514",
-        "anthropic/claude-opus-4-20250603",  # Opus 4.6
+        # Anthropic - Claude 4 series
+        "anthropic/claude-opus-4.5",
+        "anthropic/claude-sonnet-4.6",
+        "anthropic/claude-haiku-4",
+        # Anthropic - Claude 3.7 series
         "anthropic/claude-3.7-sonnet",
         "anthropic/claude-3.7-sonnet:thinking",
-        "anthropic/claude-3.5-sonnet-20241022",
+        # Anthropic - Claude 3.5 series
+        "anthropic/claude-3.5-sonnet",
         "anthropic/claude-3.5-haiku",
+        # Anthropic - Claude 3 series
+        "anthropic/claude-3-opus",
+        "anthropic/claude-3-sonnet",
         "anthropic/claude-3-haiku",
-        # OpenAI
+        # OpenAI - GPT-4o series
         "openai/gpt-4o",
         "openai/gpt-4o-mini",
-        "openai/gpt-4o-2024-05-13",
-        # Google
+        "openai/gpt-4o-search-preview",
+        # OpenAI - GPT-4.5
+        "openai/gpt-4.5-turbo",
+        # OpenAI - GPT-4 series
+        "openai/gpt-4-turbo",
+        # Google - Gemini 2 series
         "google/gemini-2.5-pro",
+        "google/gemini-2.5-flash",
         "google/gemini-2.0-flash",
-        # Meta
-        "meta-llama/llama-4-maverick",
+        # Google - Gemini 1.5 series
+        "google/gemini-1.5-pro",
+        "google/gemini-1.5-flash",
+        # Meta - Llama 4 series
         "meta-llama/llama-4-scout",
+        "meta-llama/llama-4-maverick",
+        "meta-llama/llama-4-17b-16e-instruct",
+        # Meta - Llama 3 series
         "meta-llama/llama-3.3-70b-instruct",
+        "meta-llama/llama-3.2-90b-vision-instruct",
+        "meta-llama/llama-3.2-11b-vision-instruct",
+        "meta-llama/llama-3.1-405b-instruct",
+        "meta-llama/llama-3.1-70b-instruct",
+        "meta-llama/llama-3.1-8b-instruct",
         # Kimi
         "kimi/k2.5",
         "kimi/k2",
-        # Other popular
+        "kimi/kimi-2.5",
+        "kimi/kimi-2",
+        # DeepSeek
+        "deepseek/deepseek-chat-v3-0324",
         "deepseek/deepseek-chat",
         "deepseek/deepseek-coder",
-        "mistralai/mistral-large",
-        "cohere/command-r-plus",
         # Minimax
+        "minimax/minimax-m4",
         "minimax/minimax-m2.5",
-        "minimax/minimax-m2.5-chat",
+        "minimax/minimax-m2",
+        # Mistral
+        "mistralai/mistral-large",
+        "mistralai/mistral-medium",
+        "mistralai/mistral-small",
+        "mistralai/mistral-nemo",
+        # Cohere
+        "cohere/command-r-plus-08-2024",
+        "cohere/command-r-plus",
+        "cohere/command-r7b-12-2024",
+        "cohere/command-r",
+        # xAI
+        "x-ai/grok-2",
+        "x-ai/grok-2-mini",
+        "x-ai/grok-beta",
+        # Perplexity
+        "perplexity/llama-3.1-sonar-large-128k-online",
+        "perplexity/llama-3.1-sonar-huge-128k-online",
     ]
 
     def __init__(self):
@@ -96,7 +173,7 @@ class OpenRouterProvider:
         if model_name.startswith("openrouter/"):
             model_name = model_name[len("openrouter/"):]
 
-        # If model already has a date in it (e.g., "claude-opus-4-20250603"), pass through as-is
+        # If model already has a date in it (e.g., "claude-opus-4.5"), pass through as-is
         if re.search(r"-\d{8}$", model_name) or re.search(r":\w+$", model_name):
             # Already has version date or suffix, just ensure provider prefix
             if "/" not in model_name:
@@ -114,11 +191,11 @@ class OpenRouterProvider:
             model_name = MODEL_ALIASES[model_lower]
         # Check for partial matches and add appropriate dates
         elif model_name.lower().startswith("anthropic/claude-sonnet-4") or model_name.lower() == "claude-sonnet-4":
-            model_name = "anthropic/claude-sonnet-4-20250514"
+            model_name = "anthropic/claude-sonnet-4.6"
         elif model_name.lower().startswith("anthropic/claude-opus-4") or model_name.lower() == "claude-opus-4":
-            model_name = "anthropic/claude-opus-4-20250603"  # Latest Opus 4.6
+            model_name = "anthropic/claude-opus-4.5"  # Latest Opus 4.5
         elif model_name.lower().startswith("anthropic/claude-opus") and "4.6" in model_name:
-            model_name = "anthropic/claude-opus-4-20250603"
+            model_name = "anthropic/claude-opus-4.5"
         # Normalize old-style model names: claude-3-7-sonnet -> claude-3.7-sonnet
         elif re.match(r"claude-\d-\d-sonnet", model_name):
             model_name = model_name.replace("claude-3-5-", "claude-3.5-")

@@ -101,6 +101,16 @@ export class CastDatabase {
     this.db.prepare('DELETE FROM agents WHERE name = ?').run(name)
   }
 
+  public renameAgent(currentName: string, newName: string): void {
+    const transaction = this.db.transaction(() => {
+      this.db.prepare('UPDATE agents SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?').run(newName, currentName)
+      this.db.prepare('UPDATE deployments SET agent_name = ? WHERE agent_name = ?').run(newName, currentName)
+      this.db.prepare('UPDATE local_agents SET agent_name = ? WHERE agent_name = ?').run(newName, currentName)
+      this.db.prepare('UPDATE agent_mcp SET agent_name = ? WHERE agent_name = ?').run(newName, currentName)
+    })
+    transaction()
+  }
+
   public updateAgentRun(name: string): void {
     const stmt = this.db.prepare(`
       UPDATE agents 

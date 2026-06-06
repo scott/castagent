@@ -191,7 +191,7 @@ def create_agent(name: str, description: str = "") -> str:
         "version": "1.0",
         "description": agent_description,
         "brain": {
-            "model": "openrouter/anthropic/claude-sonnet-4-20250514",
+            "model": "openrouter/minimax/minimax-m2.5",
             "model_override": None,
             "instructions_file": "instructions.md",
         },

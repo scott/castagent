@@ -385,6 +385,40 @@
         "new.js"
       ]
     },
+    "rename": {
+      "aliases": [],
+      "args": {
+        "currentName": {
+          "description": "Current agent name",
+          "name": "currentName",
+          "required": true
+        },
+        "newName": {
+          "description": "New agent name",
+          "name": "newName",
+          "required": true
+        }
+      },
+      "description": "Rename an existing agent",
+      "examples": [
+        "<%= config.bin %> <%= command.id %> old-name new-name"
+      ],
+      "flags": {},
+      "hasDynamicHelp": false,
+      "hiddenAliases": [],
+      "id": "rename",
+      "pluginAlias": "cast-cli",
+      "pluginName": "cast-cli",
+      "pluginType": "core",
+      "strict": true,
+      "enableJsonFlag": false,
+      "isESM": false,
+      "relativePath": [
+        "dist",
+        "commands",
+        "rename.js"
+      ]
+    },
     "revert": {
       "aliases": [],
       "args": {

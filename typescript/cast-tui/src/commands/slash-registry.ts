@@ -4,6 +4,7 @@ import * as path from 'path'
 import * as os from 'os'
 import { execFileSync } from 'child_process'
 import yaml from 'yaml'
+import { simpleGit } from 'simple-git'
 import {BoxRenderable, TextRenderable, TextTableRenderable, StyledText, white, dim, green, yellow, red, cyan} from '@opentui/core'
 import type {KeyEvent, TextChunk} from '@opentui/core'
 import {saveTranscript} from '../lib/transcript.js'
@@ -182,6 +183,157 @@ function launchConnect(ctx: CommandContext, agentName: string): void {
   }
 
   process.exit(0)
+}
+
+function promptForNewName(ctx: CommandContext, currentName: string): void {
+  const modal = createModal(ctx.renderer, ctx.input, {
+    title: `Rename: ${currentName}`,
+    overlay: true,
+  })
+
+  if (modal.overlay) {
+    ctx.renderer.root.add(modal.overlay)
+  }
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 1,
+    paddingTop: 3,
+    paddingLeft: 2,
+    paddingRight: 2,
+  })
+
+  const instructions = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim(`Enter new name for '${currentName}':`)]),
+  })
+  contentBox.add(instructions)
+
+  const inputDisplay = new TextRenderable(ctx.renderer, {
+    content: new StyledText([white('_')]),
+  })
+  contentBox.add(inputDisplay)
+
+  const errorText = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim(' ')]),
+  })
+  contentBox.add(errorText)
+
+  const footer = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim('Enter Confirm  ESC Cancel')]),
+  })
+  const footerBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    alignItems: 'center',
+  })
+  footerBox.add(footer)
+  contentBox.add(footerBox)
+
+  let newName = ''
+  const MAX_LENGTH = 50
+
+  function updateInputDisplay(error?: string) {
+    const displayText = newName + '_'
+    inputDisplay.content = new StyledText([white(displayText)])
+    if (error) {
+      errorText.content = new StyledText([red(error)])
+    } else {
+      errorText.content = new StyledText([dim(' ')])
+    }
+    ctx.renderer.render()
+  }
+
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+  modal.box.handleKeyPress = (key: KeyEvent) => {
+    if (key.name === 'escape') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    if (key.name === 'return' || key.name === 'enter') {
+      if (newName.length > 0) {
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(newName)) {
+          updateInputDisplay('Invalid name (letters, numbers, hyphens only)')
+          return true
+        }
+        const newPath = path.join(os.homedir(), '.cast', 'agents', newName)
+        if (fs.existsSync(newPath)) {
+          updateInputDisplay(`Agent '${newName}' already exists`)
+          return true
+        }
+        modal.hide()
+        launchRenameWithName(ctx, currentName, newName)
+      }
+      return true
+    }
+    if (key.name === 'backspace') {
+      if (newName.length > 0) {
+        newName = newName.slice(0, -1)
+        updateInputDisplay()
+      }
+      return true
+    }
+    if (key.ctrl && key.name === 'h') {
+      if (newName.length > 0) {
+        newName = newName.slice(0, -1)
+        updateInputDisplay()
+      }
+      return true
+    }
+    if (key.name && key.name.length === 1 && /^[a-zA-Z0-9-]$/.test(key.name) && newName.length < MAX_LENGTH) {
+      newName += key.name
+      updateInputDisplay()
+      return true
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+
+  updateInputDisplay()
+  ctx.renderer.render()
+}
+
+function launchRenameWithName(ctx: CommandContext, currentName: string, newName: string): void {
+  const candidates = [
+    'cast',
+    path.resolve(__dirname, '../../cast-cli/bin/run'),
+    path.resolve(__dirname, '../../../cast-cli/bin/run'),
+    path.resolve(__dirname, '../../../../cast-cli/bin/run'),
+  ]
+
+  let binary: string | null = null
+  for (const candidate of candidates) {
+    try {
+      if (candidate === 'cast') {
+        execFileSync('which', ['cast'], { stdio: 'ignore' })
+        binary = candidate
+        break
+      } else if (fs.existsSync(candidate)) {
+        binary = candidate
+        break
+      }
+    } catch {
+      // try next
+    }
+  }
+
+  if (!binary) {
+    ctx.messages.addAgentMessage('Could not find cast CLI binary. Please ensure cast is installed.', ctx.mode)
+    return
+  }
+
+  try {
+    execFileSync(binary, ['rename', currentName, newName], { stdio: 'inherit' })
+  } catch (err: any) {
+    if (err.signal !== 'SIGINT') {
+      ctx.messages.addAgentMessage(`Failed to rename agent: ${err.message}`, ctx.mode)
+    }
+  }
 }
 
 const commands: SlashCommand[] = [
@@ -961,6 +1113,169 @@ const commands: SlashCommand[] = [
   },
 
   {
+    name: 'rename',
+    description: 'Rename an existing agent',
+    category: 'agent',
+    args: '[current-name] [new-name]',
+    handler: async (ctx, args) => {
+      const agents = listAgentsFromDisk()
+
+      if (args.length === 0) {
+        if (agents.length === 0) {
+          ctx.messages.addAgentMessage('No agents found. Create one with: cast new', ctx.mode)
+          return
+        }
+
+        const modal = createModal(ctx.renderer, ctx.input, {
+          title: 'Select Agent to Rename',
+          overlay: true,
+        })
+
+        if (modal.overlay) {
+          ctx.renderer.root.add(modal.overlay)
+        }
+
+        let selectedIndex = 0
+
+        const contentBox = new BoxRenderable(ctx.renderer, {
+          width: '100%',
+          height: '100%',
+          flexDirection: 'column',
+          gap: 0,
+          paddingTop: 3,
+          paddingLeft: 2,
+          paddingRight: 2,
+        })
+
+        function renderList() {
+          for (const child of contentBox.getChildren()) {
+            contentBox.remove(child.id)
+          }
+
+          const tableData: (TextChunk[] | null)[][] = []
+          tableData.push([
+            [white('')],
+            [white('Agent Name')],
+            [white('Description')],
+          ])
+
+          for (let i = 0; i < agents.length; i++) {
+            const isSelected = i === selectedIndex
+            const nameColor = isSelected ? cyan : white
+            const description = getAgentDescription(agents[i])
+            const selectionColumn = isSelected ? [cyan('▸ ')] : [dim('  ')]
+
+            tableData.push([
+              selectionColumn,
+              [nameColor(agents[i])],
+              description ? [dim(description)] : [dim('-')],
+            ])
+          }
+
+          const table = new TextTableRenderable(ctx.renderer, {
+            content: tableData,
+            columnWidthMode: 'content',
+            showBorders: false,
+            columnGap: 0,
+            cellPadding: 0,
+          })
+          contentBox.add(table)
+
+          const footer = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('↑↓ Navigate  Enter Select  ESC Close')]),
+          })
+          const footerBox = new BoxRenderable(ctx.renderer, {
+            width: '100%',
+            alignItems: 'center',
+          })
+          footerBox.add(footer)
+          contentBox.add(footerBox)
+        }
+
+        renderList()
+        modal.setContent(contentBox)
+        ctx.renderer.root.add(modal.box)
+        modal.show()
+
+        const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+        modal.box.handleKeyPress = (key: KeyEvent) => {
+          if (key.name === 'up') {
+            selectedIndex = (selectedIndex - 1 + agents.length) % agents.length
+            renderList()
+            ctx.renderer.render()
+            return true
+          }
+          if (key.name === 'down') {
+            selectedIndex = (selectedIndex + 1) % agents.length
+            renderList()
+            ctx.renderer.render()
+            return true
+          }
+          if (key.name === 'return' || key.name === 'enter') {
+            modal.hide()
+            promptForNewName(ctx, agents[selectedIndex])
+            return true
+          }
+          if (key.name === 'escape') {
+            modal.hide()
+            ctx.input.focus()
+            return true
+          }
+          return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+        }
+        return
+      }
+
+      if (args.length === 1) {
+        const currentName = args[0]
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(currentName)) {
+          ctx.messages.addAgentMessage(
+            `Invalid agent name '${currentName}'. Names must contain only letters, numbers, and hyphens.`,
+            ctx.mode,
+          )
+          return
+        }
+        const agentPath = path.join(os.homedir(), '.cast', 'agents', currentName, 'agent.yaml')
+        if (!fs.existsSync(agentPath)) {
+          ctx.messages.addAgentMessage(`Agent '${currentName}' not found.`, ctx.mode)
+          return
+        }
+        promptForNewName(ctx, currentName)
+        return
+      }
+
+      if (args.length >= 2) {
+        const currentName = args[0]
+        const newName = args[1]
+
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(currentName)) {
+          ctx.messages.addAgentMessage(`Invalid current agent name '${currentName}'.`, ctx.mode)
+          return
+        }
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(newName)) {
+          ctx.messages.addAgentMessage(`Invalid new agent name '${newName}'. Names must contain only letters, numbers, and hyphens.`, ctx.mode)
+          return
+        }
+
+        const agentPath = path.join(os.homedir(), '.cast', 'agents', currentName, 'agent.yaml')
+        if (!fs.existsSync(agentPath)) {
+          ctx.messages.addAgentMessage(`Agent '${currentName}' not found.`, ctx.mode)
+          return
+        }
+
+        const newPath = path.join(os.homedir(), '.cast', 'agents', newName)
+        if (fs.existsSync(newPath)) {
+          ctx.messages.addAgentMessage(`An agent named '${newName}' already exists.`, ctx.mode)
+          return
+        }
+
+        launchRenameWithName(ctx, currentName, newName)
+      }
+    },
+  },
+
+  {
     name: 'quit',
     description: 'Exit the TUI',
     category: 'session',
@@ -1186,26 +1501,115 @@ const commands: SlashCommand[] = [
     name: 'git',
     description: 'Git operations for the current agent',
     category: 'git',
-    args: '[status|commit|push|log|diff]',
+    args: '[init|status|add|commit|push|log|diff]',
     handler: async (ctx, args) => {
       const agentName = ctx.agentName
       const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
       const gitDir = path.join(agentPath, '.git')
 
+      const subcommand = args[0] || 'status'
+
+      if (subcommand === 'init') {
+        if (fs.existsSync(gitDir)) {
+          ctx.messages.addAgentMessage(
+            `'${agentName}' is already a Git repository.`,
+            ctx.mode
+          )
+          return
+        }
+
+        try {
+          const git = simpleGit(agentPath)
+          await git.init()
+
+          const gitignorePath = path.join(agentPath, '.gitignore')
+          fs.writeFileSync(gitignorePath, `.cast/versions/\ncast.db\n*.log\n.env\n__pycache__/\n`)
+
+          const configPath = path.join(agentPath, 'agent.yaml')
+          if (fs.existsSync(configPath)) {
+            const config = yaml.parse(fs.readFileSync(configPath, 'utf8')) || {}
+            const readmePath = path.join(agentPath, 'README.md')
+            const description = config.description || 'No description provided'
+            const model = config.brain?.model || 'Not specified'
+            const version = config.version || '1.0'
+            const runtime = config.runtime?.python_version || '3.11'
+
+            const builtinTools = config.tools?.builtin || []
+            const mcpServers = config.tools?.mcp || []
+
+            const formatList = (items: any[]): string => {
+              if (!items || items.length === 0) return 'None'
+              return items.map(item => typeof item === 'string' ? item : item.name || item.server || JSON.stringify(item)).join(', ')
+            }
+
+            const readme = `# ${agentName}
+
+${description}
+
+## Configuration
+
+- **Model:** ${model}
+- **Runtime:** Python ${runtime}
+- **Version:** ${version}
+
+## Tools
+
+### Built-in
+${formatList(builtinTools)}
+
+### MCP Servers
+${formatList(mcpServers)}
+
+## Setup
+
+\`\`\`bash
+# Clone this agent
+cast clone <remote-url>
+
+# Run the agent
+cast dev ${agentName}
+\`\`\`
+
+---
+
+*Generated by cast*
+`
+            fs.writeFileSync(readmePath, readme)
+
+            config.repository = { remote: 'origin', branch: 'main' }
+            fs.writeFileSync(configPath, yaml.stringify(config))
+          }
+
+          await git.add('.')
+          await git.commit(`Initial commit: ${agentName}`)
+
+          ctx.messages.addAgentMessage(
+            `Git repository initialized for '${agentName}'!\n\n` +
+            `Next steps:\n` +
+            `  - Add a remote: /git remote create origin\n` +
+            `  - Check status: /git status`,
+            ctx.mode
+          )
+        } catch (err) {
+          ctx.messages.addAgentMessage(
+            `Failed to initialize Git: ${err instanceof Error ? err.message : String(err)}`,
+            ctx.mode
+          )
+        }
+        return
+      }
+
       if (!fs.existsSync(gitDir)) {
         ctx.messages.addAgentMessage(
-          `'${agentName}' is not a Git repository.\n\nInitialize it with:\n  cast git init ${agentName}`,
+          `'${agentName}' is not a Git repository.\n\nInitialize it with:\n  /git init`,
           ctx.mode
         )
         return
       }
 
-      const subcommand = args[0] || 'status'
-
       if (subcommand === 'status') {
         try {
-          const simpleGit = await import('simple-git')
-          const git = simpleGit.default(agentPath)
+          const git = simpleGit(agentPath)
           const status = await git.status()
 
           const lines: string[] = []
@@ -1216,18 +1620,30 @@ const commands: SlashCommand[] = [
             lines.push(`Branch: ${status.current}`)
           }
 
-          if (status.isClean()) {
-            lines.push('Status: Working tree is clean')
-          } else {
+          const workingTreeChanges = status.modified.length + status.not_added.length + status.deleted.length
+          const stagedChanges = status.staged.length
+
+          if (stagedChanges > 0) {
+            lines.push(`Staged (${stagedChanges}): ready to commit`)
+            status.staged.forEach(f => lines.push(`  A ${f}`))
+          }
+
+          if (workingTreeChanges > 0) {
+            lines.push('')
+            lines.push(`Changes (${workingTreeChanges}):`)
             if (status.modified.length > 0) {
-              lines.push(`Modified: ${status.modified.length} file(s)`)
+              status.modified.forEach(f => lines.push(`  M ${f}`))
             }
             if (status.not_added.length > 0) {
-              lines.push(`Untracked: ${status.not_added.length} file(s)`)
+              status.not_added.forEach(f => lines.push(`  ?? ${f}`))
             }
-            if (status.staged.length > 0) {
-              lines.push(`Staged: ${status.staged.length} file(s)`)
+            if (status.deleted.length > 0) {
+              status.deleted.forEach(f => lines.push(`  D ${f}`))
             }
+          }
+
+          if (stagedChanges === 0 && workingTreeChanges === 0) {
+            lines.push('Status: Working tree is clean')
           }
 
           if (status.ahead > 0) {
@@ -1237,7 +1653,7 @@ const commands: SlashCommand[] = [
             lines.push(`Behind: ${status.behind} commit(s)`)
           }
 
-          const remotes = await git.getRemotes()
+          const remotes = await git.getRemotes(true)
           if (remotes.length > 0) {
             lines.push(`Remotes: ${remotes.map(r => r.name).join(', ')}`)
           } else {
@@ -1252,17 +1668,71 @@ const commands: SlashCommand[] = [
       }
 
       if (subcommand === 'commit') {
-        const message = args.slice(1).join(' ')
-        if (!message) {
-          ctx.messages.addAgentMessage('Usage: /git commit <message>', ctx.mode)
-          return
-        }
+        let message = args.slice(1).join(' ')
+
         try {
-          const simpleGit = await import('simple-git')
-          const git = simpleGit.default(agentPath)
+          const git = simpleGit(agentPath)
+          const status = await git.status()
+
+          if (!message) {
+            const staged = status.staged
+            const modified = status.modified
+            const deleted = status.deleted
+
+            if (staged.length === 0 && modified.length === 0 && deleted.length === 0) {
+              ctx.messages.addAgentMessage('Nothing to commit.', ctx.mode)
+              return
+            }
+
+            const files = [...staged, ...modified, ...deleted]
+
+            const categorize = (files: string[]) => {
+              const categories: Record<string, string[]> = {
+                'config': [],
+                'instructions': [],
+                'tools': [],
+                'tests': [],
+                'docs': [],
+                'mcp': [],
+                'other': []
+              }
+
+              files.forEach(f => {
+                if (f.includes('agent.yaml') || f.includes('.castignore') || f.includes('.gitignore')) {
+                  categories['config'].push(f)
+                } else if (f.includes('instructions') || f.includes('system')) {
+                  categories['instructions'].push(f)
+                } else if (f.includes('tools/')) {
+                  categories['tools'].push(f)
+                } else if (f.includes('tests/') || f.includes('.test.')) {
+                  categories['tests'].push(f)
+                } else if (f.includes('README') || f.includes('.md')) {
+                  categories['docs'].push(f)
+                } else if (f.includes('mcp/')) {
+                  categories['mcp'].push(f)
+                } else {
+                  categories['other'].push(f)
+                }
+              })
+
+              return Object.entries(categories)
+                .filter(([, files]) => files.length > 0)
+                .map(([cat, files]) => `${cat}: ${files.length} file(s)`)
+            }
+
+            const summary = categorize(files)
+            const timestamp = new Date().toISOString().split('T')[0]
+
+            if (summary.length > 0) {
+              message = `Update ${timestamp}\n\nChanges:\n${summary.map(s => `  - ${s}`).join('\n')}`
+            } else {
+              message = `Update ${timestamp}`
+            }
+          }
+
           await git.add('.')
           const result = await git.commit(message)
-          ctx.messages.addAgentMessage(`Committed successfully!\nCommit: ${result.commit.substring(0, 7)}\nMessage: ${message}`, ctx.mode)
+          ctx.messages.addAgentMessage(`Committed successfully!\n\nCommit: ${result.commit.substring(0, 7)}\n\n${message}`, ctx.mode)
         } catch (err) {
           ctx.messages.addAgentMessage(`Failed to commit: ${err instanceof Error ? err.message : String(err)}`, ctx.mode)
         }
@@ -1271,8 +1741,7 @@ const commands: SlashCommand[] = [
 
       if (subcommand === 'push') {
         try {
-          const simpleGit = await import('simple-git')
-          const git = simpleGit.default(agentPath)
+          const git = simpleGit(agentPath)
           await git.push()
           ctx.messages.addAgentMessage('Pushed to remote successfully!', ctx.mode)
         } catch (err) {
@@ -1283,8 +1752,7 @@ const commands: SlashCommand[] = [
 
       if (subcommand === 'log') {
         try {
-          const simpleGit = await import('simple-git')
-          const git = simpleGit.default(agentPath)
+          const git = simpleGit(agentPath)
           const log = await git.log({maxCount: 5})
 
           if (log.all.length === 0) {
@@ -1312,10 +1780,31 @@ const commands: SlashCommand[] = [
         return
       }
 
+      if (subcommand === 'add') {
+        const files = args.slice(1)
+        if (files.length === 0) {
+          ctx.messages.addAgentMessage('Usage: /git add <file>...\n\nStage files for commit.\n  /git add .      - Stage all\n  /git add -A     - Stage all including deleted', ctx.mode)
+          return
+        }
+
+        try {
+          const git = simpleGit(agentPath)
+          if (files[0] === '.' || files[0] === '-A' || files[0] === '--all') {
+            await git.add('--all')
+            ctx.messages.addAgentMessage('All files staged (including deletions).', ctx.mode)
+          } else {
+            await git.add(files)
+            ctx.messages.addAgentMessage(`Staged: ${files.join(', ')}`, ctx.mode)
+          }
+        } catch (err) {
+          ctx.messages.addAgentMessage(`Failed to stage files: ${err instanceof Error ? err.message : String(err)}`, ctx.mode)
+        }
+        return
+      }
+
       if (subcommand === 'diff') {
         try {
-          const simpleGit = await import('simple-git')
-          const git = simpleGit.default(agentPath)
+          const git = simpleGit(agentPath)
           const diff = await git.diff()
 
           if (!diff) {
@@ -1332,12 +1821,16 @@ const commands: SlashCommand[] = [
 
       ctx.messages.addAgentMessage(
         `Git subcommand '${subcommand}' not recognized.\n\nUsage:\n` +
-        `  /git              - Show status\n` +
-        `  /git status       - Show working tree status\n` +
-        `  /git commit <msg> - Commit changes\n` +
-        `  /git push         - Push to remote\n` +
-        `  /git log          - Show recent commits\n` +
-        `  /git diff         - Show changes\n\n` +
+        `  /git init                    - Initialize Git repository\n` +
+        `  /git                         - Show status\n` +
+        `  /git status                  - Show working tree status\n` +
+        `  /git add <file>              - Stage specific file(s)\n` +
+        `  /git add .                   - Stage all files\n` +
+        `  /git add -A                  - Stage all (including deleted)\n` +
+        `  /git commit <msg>            - Commit staged changes\n` +
+        `  /git push                    - Push to remote\n` +
+        `  /git log                     - Show recent commits\n` +
+        `  /git diff                    - Show changes\n\n` +
         `Or use CLI: cast git <command> ${agentName}`,
         ctx.mode
       )
