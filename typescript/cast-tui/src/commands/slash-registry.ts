@@ -185,11 +185,120 @@ function launchConnect(ctx: CommandContext, agentName: string): void {
   process.exit(0)
 }
 
-function launchRename(ctx: CommandContext, currentName: string, newName?: string): void {
-  if (ctx.renderer && !ctx.renderer.isDestroyed) {
-    ctx.renderer.destroy()
+function promptForNewName(ctx: CommandContext, currentName: string): void {
+  const modal = createModal(ctx.renderer, ctx.input, {
+    title: `Rename: ${currentName}`,
+    overlay: true,
+  })
+
+  if (modal.overlay) {
+    ctx.renderer.root.add(modal.overlay)
   }
 
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 1,
+    paddingTop: 3,
+    paddingLeft: 2,
+    paddingRight: 2,
+  })
+
+  const instructions = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim(`Enter new name for '${currentName}':`)]),
+  })
+  contentBox.add(instructions)
+
+  const inputDisplay = new TextRenderable(ctx.renderer, {
+    content: new StyledText([white('_')]),
+  })
+  contentBox.add(inputDisplay)
+
+  const errorText = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim(' ')]),
+  })
+  contentBox.add(errorText)
+
+  const footer = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim('Enter Confirm  ESC Cancel')]),
+  })
+  const footerBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    alignItems: 'center',
+  })
+  footerBox.add(footer)
+  contentBox.add(footerBox)
+
+  let newName = ''
+  const MAX_LENGTH = 50
+
+  function updateInputDisplay(error?: string) {
+    const displayText = newName + '_'
+    inputDisplay.content = new StyledText([white(displayText)])
+    if (error) {
+      errorText.content = new StyledText([red(error)])
+    } else {
+      errorText.content = new StyledText([dim(' ')])
+    }
+    ctx.renderer.render()
+  }
+
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+  modal.box.handleKeyPress = (key: KeyEvent) => {
+    if (key.name === 'escape') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    if (key.name === 'return' || key.name === 'enter') {
+      if (newName.length > 0) {
+        if (!/^[a-zA-Z0-9][a-zA-Z0-9-]*$/.test(newName)) {
+          updateInputDisplay('Invalid name (letters, numbers, hyphens only)')
+          return true
+        }
+        const newPath = path.join(os.homedir(), '.cast', 'agents', newName)
+        if (fs.existsSync(newPath)) {
+          updateInputDisplay(`Agent '${newName}' already exists`)
+          return true
+        }
+        modal.hide()
+        launchRenameWithName(ctx, currentName, newName)
+      }
+      return true
+    }
+    if (key.name === 'backspace') {
+      if (newName.length > 0) {
+        newName = newName.slice(0, -1)
+        updateInputDisplay()
+      }
+      return true
+    }
+    if (key.ctrl && key.name === 'h') {
+      if (newName.length > 0) {
+        newName = newName.slice(0, -1)
+        updateInputDisplay()
+      }
+      return true
+    }
+    if (key.name && key.name.length === 1 && /^[a-zA-Z0-9-]$/.test(key.name) && newName.length < MAX_LENGTH) {
+      newName += key.name
+      updateInputDisplay()
+      return true
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+
+  updateInputDisplay()
+  ctx.renderer.render()
+}
+
+function launchRenameWithName(ctx: CommandContext, currentName: string, newName: string): void {
   const candidates = [
     'cast',
     path.resolve(__dirname, '../../cast-cli/bin/run'),
@@ -214,22 +323,17 @@ function launchRename(ctx: CommandContext, currentName: string, newName?: string
   }
 
   if (!binary) {
-    console.error('Could not find cast CLI binary. Please ensure cast is installed.')
-    process.exit(1)
+    ctx.messages.addAgentMessage('Could not find cast CLI binary. Please ensure cast is installed.', ctx.mode)
+    return
   }
 
-  const args = newName ? ['rename', currentName, newName] : ['rename', currentName]
   try {
-    execFileSync(binary, args, { stdio: 'inherit' })
+    execFileSync(binary, ['rename', currentName, newName], { stdio: 'inherit' })
   } catch (err: any) {
-    if (err.signal === 'SIGINT') {
-      // User pressed Ctrl+C, exit cleanly
-    } else {
-      console.error(`Failed to rename agent: ${err.message}`)
+    if (err.signal !== 'SIGINT') {
+      ctx.messages.addAgentMessage(`Failed to rename agent: ${err.message}`, ctx.mode)
     }
   }
-
-  process.exit(0)
 }
 
 const commands: SlashCommand[] = [
@@ -1110,7 +1214,7 @@ const commands: SlashCommand[] = [
           }
           if (key.name === 'return' || key.name === 'enter') {
             modal.hide()
-            launchRename(ctx, agents[selectedIndex])
+            promptForNewName(ctx, agents[selectedIndex])
             return true
           }
           if (key.name === 'escape') {
@@ -1137,7 +1241,7 @@ const commands: SlashCommand[] = [
           ctx.messages.addAgentMessage(`Agent '${currentName}' not found.`, ctx.mode)
           return
         }
-        launchRename(ctx, currentName)
+        promptForNewName(ctx, currentName)
         return
       }
 
@@ -1166,7 +1270,7 @@ const commands: SlashCommand[] = [
           return
         }
 
-        launchRename(ctx, currentName, newName)
+        launchRenameWithName(ctx, currentName, newName)
       }
     },
   },

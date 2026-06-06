@@ -18,7 +18,7 @@ export default class Rename extends Command {
 
   static args = {
     currentName: Args.string({description: 'Current agent name', required: true}),
-    newName: Args.string({description: 'New agent name', required: true}),
+    newName: Args.string({description: 'New agent name'}),
   }
 
   private validateAgentName(name: string): boolean {
@@ -42,10 +42,23 @@ export default class Rename extends Command {
   async run(): Promise<void> {
     const {args} = await this.parse(Rename)
     const currentName = args.currentName
-    const newName = args.newName
+    let newName = args.newName
 
     if (!this.validateAgentName(currentName)) {
       this.error(`Invalid current agent name '${currentName}'. Names must start with a letter or number and contain only letters, numbers, and hyphens.`)
+    }
+
+    if (!newName) {
+      const rl = readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+      })
+      newName = await new Promise<string>((resolve) => {
+        rl.question(`Enter new name for '${currentName}': `, (answer) => {
+          rl.close()
+          resolve(answer.trim())
+        })
+      })
     }
 
     if (!this.validateAgentName(newName)) {
