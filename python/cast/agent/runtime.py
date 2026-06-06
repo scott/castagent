@@ -10,12 +10,19 @@ from ..providers.openrouter import OpenRouterProvider
 from ..tools.bash import bash_tool
 from ..tools.read import read_tool
 from ..tools.glob import glob_tool
+from ..tools.git import git_status, git_commit, git_push, git_log, git_diff, git_add
 
 # Map of built-in tool names to their implementations
 BUILTIN_TOOLS = {
     "bash": bash_tool,
     "read": read_tool,
     "glob": glob_tool,
+    "git_status": git_status,
+    "git_commit": git_commit,
+    "git_push": git_push,
+    "git_log": git_log,
+    "git_diff": git_diff,
+    "git_add": git_add,
 }
 
 

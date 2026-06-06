@@ -34,7 +34,7 @@ function getAgentDescription(agentName: string): string {
 export interface SlashCommand {
   name: string
   description: string
-  category: 'chat' | 'agent' | 'session'
+  category: 'chat' | 'agent' | 'session' | 'git'
   args?: string
   handler: (ctx: CommandContext, args: string[]) => Promise<void>
 }
@@ -198,6 +198,7 @@ const commands: SlashCommand[] = [
         chat: 'Chat',
         agent: 'Agent',
         session: 'Session',
+        git: 'Git',
       }
 
       for (const [cat, label] of Object.entries(categories)) {
@@ -1178,6 +1179,168 @@ const commands: SlashCommand[] = [
       modal.setContent(contentBox)
       ctx.renderer.root.add(modal.box)
       modal.show()
+    },
+  },
+
+  {
+    name: 'git',
+    description: 'Git operations for the current agent',
+    category: 'git',
+    args: '[status|commit|push|log|diff]',
+    handler: async (ctx, args) => {
+      const agentName = ctx.agentName
+      const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+      const gitDir = path.join(agentPath, '.git')
+
+      if (!fs.existsSync(gitDir)) {
+        ctx.messages.addAgentMessage(
+          `'${agentName}' is not a Git repository.\n\nInitialize it with:\n  cast git init ${agentName}`,
+          ctx.mode
+        )
+        return
+      }
+
+      const subcommand = args[0] || 'status'
+
+      if (subcommand === 'status') {
+        try {
+          const simpleGit = await import('simple-git')
+          const git = simpleGit.default(agentPath)
+          const status = await git.status()
+
+          const lines: string[] = []
+          lines.push(`Git Status for '${agentName}'`)
+          lines.push('')
+
+          if (status.current) {
+            lines.push(`Branch: ${status.current}`)
+          }
+
+          if (status.isClean()) {
+            lines.push('Status: Working tree is clean')
+          } else {
+            if (status.modified.length > 0) {
+              lines.push(`Modified: ${status.modified.length} file(s)`)
+            }
+            if (status.not_added.length > 0) {
+              lines.push(`Untracked: ${status.not_added.length} file(s)`)
+            }
+            if (status.staged.length > 0) {
+              lines.push(`Staged: ${status.staged.length} file(s)`)
+            }
+          }
+
+          if (status.ahead > 0) {
+            lines.push(`Ahead: ${status.ahead} commit(s)`)
+          }
+          if (status.behind > 0) {
+            lines.push(`Behind: ${status.behind} commit(s)`)
+          }
+
+          const remotes = await git.getRemotes()
+          if (remotes.length > 0) {
+            lines.push(`Remotes: ${remotes.map(r => r.name).join(', ')}`)
+          } else {
+            lines.push('No remotes configured.')
+          }
+
+          ctx.messages.addAgentMessage(lines.join('\n'), ctx.mode)
+        } catch (err) {
+          ctx.messages.addAgentMessage(`Failed to get git status: ${err instanceof Error ? err.message : String(err)}`, ctx.mode)
+        }
+        return
+      }
+
+      if (subcommand === 'commit') {
+        const message = args.slice(1).join(' ')
+        if (!message) {
+          ctx.messages.addAgentMessage('Usage: /git commit <message>', ctx.mode)
+          return
+        }
+        try {
+          const simpleGit = await import('simple-git')
+          const git = simpleGit.default(agentPath)
+          await git.add('.')
+          const result = await git.commit(message)
+          ctx.messages.addAgentMessage(`Committed successfully!\nCommit: ${result.commit.substring(0, 7)}\nMessage: ${message}`, ctx.mode)
+        } catch (err) {
+          ctx.messages.addAgentMessage(`Failed to commit: ${err instanceof Error ? err.message : String(err)}`, ctx.mode)
+        }
+        return
+      }
+
+      if (subcommand === 'push') {
+        try {
+          const simpleGit = await import('simple-git')
+          const git = simpleGit.default(agentPath)
+          await git.push()
+          ctx.messages.addAgentMessage('Pushed to remote successfully!', ctx.mode)
+        } catch (err) {
+          ctx.messages.addAgentMessage(`Failed to push: ${err instanceof Error ? err.message : String(err)}`, ctx.mode)
+        }
+        return
+      }
+
+      if (subcommand === 'log') {
+        try {
+          const simpleGit = await import('simple-git')
+          const git = simpleGit.default(agentPath)
+          const log = await git.log({maxCount: 5})
+
+          if (log.all.length === 0) {
+            ctx.messages.addAgentMessage('No commits yet.', ctx.mode)
+            return
+          }
+
+          const lines: string[] = []
+          lines.push(`Recent commits for '${agentName}'`)
+          lines.push('')
+
+          for (const commit of log.all) {
+            lines.push(`commit ${commit.hash.substring(0, 7)}`)
+            lines.push(`Author: ${commit.author_name}`)
+            lines.push(`Date: ${new Date(commit.date).toLocaleString()}`)
+            lines.push('')
+            lines.push(`    ${commit.message}`)
+            lines.push('')
+          }
+
+          ctx.messages.addAgentMessage(lines.join('\n'), ctx.mode)
+        } catch (err) {
+          ctx.messages.addAgentMessage(`Failed to get git log: ${err instanceof Error ? err.message : String(err)}`, ctx.mode)
+        }
+        return
+      }
+
+      if (subcommand === 'diff') {
+        try {
+          const simpleGit = await import('simple-git')
+          const git = simpleGit.default(agentPath)
+          const diff = await git.diff()
+
+          if (!diff) {
+            ctx.messages.addAgentMessage('No changes to show.', ctx.mode)
+            return
+          }
+
+          ctx.messages.addAgentMessage(`Changes in '${agentName}'\n\n\`\`\`diff\n${diff}\n\`\`\``, ctx.mode)
+        } catch (err) {
+          ctx.messages.addAgentMessage(`Failed to get diff: ${err instanceof Error ? err.message : String(err)}`, ctx.mode)
+        }
+        return
+      }
+
+      ctx.messages.addAgentMessage(
+        `Git subcommand '${subcommand}' not recognized.\n\nUsage:\n` +
+        `  /git              - Show status\n` +
+        `  /git status       - Show working tree status\n` +
+        `  /git commit <msg> - Commit changes\n` +
+        `  /git push         - Push to remote\n` +
+        `  /git log          - Show recent commits\n` +
+        `  /git diff         - Show changes\n\n` +
+        `Or use CLI: cast git <command> ${agentName}`,
+        ctx.mode
+      )
     },
   },
 ]

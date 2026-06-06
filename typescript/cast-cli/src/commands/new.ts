@@ -254,6 +254,24 @@ export default class New extends Command {
         this.log(`  - ${agent}`)
       }
       this.log(`\nRun 'cast dev <agent-name>' to start an agent in development mode.`)
+
+      const latestAgent = agents[agents.length - 1]
+      const agentPath = path.join(agentsDir, latestAgent)
+      const gitDir = path.join(agentPath, '.git')
+
+      if (!fs.existsSync(gitDir)) {
+        this.log('')
+        this.log('─────────────────────────────────────────────────────────────')
+        this.log(`  Git Integration Available`)
+        this.log('─────────────────────────────────────────────────────────────')
+        this.log('')
+        this.log(`Initialize Git for '${latestAgent}'?`)
+        this.log('')
+        this.log(`  cast git init ${latestAgent}`)
+        this.log('')
+        this.log(`This will create a README and initial commit.`)
+        this.log('')
+      }
     }
   }
 }

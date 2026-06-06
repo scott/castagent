@@ -5,6 +5,9 @@ description = "Cast - Agent Building & Deployment Platform Runtime"
 readme = "README.md"
 license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
+dependencies = [
+  "GitPython>=3.1.0",
+]
 
 [project.scripts]
 cast-builder = "cast.builder:main"
