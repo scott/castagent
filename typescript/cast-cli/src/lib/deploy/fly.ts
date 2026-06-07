@@ -9,6 +9,8 @@ import {
   execCommand,
   saveDeployment,
   getOpenRouterApiKey,
+  generateDeploymentId,
+  getVolumeName,
 } from './deploy-utils'
 
 export default class FlyDeploy extends Command {
@@ -39,13 +41,25 @@ export default class FlyDeploy extends Command {
     // Ensure Docker packaging
     ensureDockerfile(agentPath)
 
-    // Generate auth token
+    // Generate auth token and deployment ID
     const { authToken, tokenHash } = await generateAuthToken(agentName)
+    const deploymentId = generateDeploymentId()
+    const volumeId = getVolumeName(agentName, deploymentId)
 
     // Generate fly.toml if missing
     const flyTomlPath = path.join(agentPath, 'fly.toml')
     if (!fs.existsSync(flyTomlPath)) {
-      this.generateFlyToml(agentPath, agentName)
+      this.generateFlyToml(agentPath, agentName, volumeId)
+    }
+
+    // Create memory volume
+    this.log(`Creating memory volume: ${volumeId}`)
+    const volumeResult = await execCommand('flyctl', ['volumes', 'create', volumeId, '--size', '1', '--app', `cast-${agentName}`], {
+      cwd: agentPath,
+      silent: true,
+    })
+    if (volumeResult.exitCode !== 0 && !volumeResult.stderr.includes('already exists')) {
+      this.warn(`Failed to create volume: ${volumeResult.stderr}`)
     }
 
     // Launch app if not already launched
@@ -102,7 +116,8 @@ export default class FlyDeploy extends Command {
     const deploymentUrl = `https://cast-${agentName}.fly.dev`
 
     // Save deployment
-    saveDeployment(agentName, 'fly', deploymentUrl, tokenHash)
+    const volumeConfig = JSON.stringify({ deploymentId, mountPath: '/app/agent/memory' })
+    saveDeployment(agentName, 'fly', deploymentUrl, tokenHash, volumeId, volumeConfig)
 
     this.log('')
     this.log('╔══════════════════════════════════════════════════════════════╗')
@@ -135,9 +150,17 @@ export default class FlyDeploy extends Command {
       }
     }
     console.log(`Fly app '${appName}' has been destroyed.`)
+
+    // Clean up memory volume
+    try {
+      await execCommand('flyctl', ['volumes', 'delete', `cast-${agentName}-memory`, '--app', appName, '--yes'], {silent: true})
+      console.log(`Memory volume for '${appName}' has been removed.`)
+    } catch {
+      // Volume may have been deleted with the app or not exist
+    }
   }
 
-  private generateFlyToml(agentPath: string, agentName: string): void {
+  private generateFlyToml(agentPath: string, agentName: string, volumeId: string): void {
     const flyToml = `app = "cast-${agentName}"
 primary_region = "iad"
 
@@ -151,6 +174,10 @@ primary_region = "iad"
   auto_start_machines = true
   min_machines_running = 0
   processes = ["app"]
+
+[mounts]
+  source = "${volumeId}"
+  destination = "/app/agent/memory"
 
 [[vm]]
   cpu_kind = "shared"

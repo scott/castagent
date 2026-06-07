@@ -10,6 +10,8 @@ import {
   saveDeployment,
   getOpenRouterApiKey,
   getProviderToken,
+  generateDeploymentId,
+  getVolumeName,
 } from './deploy-utils'
 
 export default class RailwayDeploy extends Command {
@@ -40,8 +42,10 @@ export default class RailwayDeploy extends Command {
     // Ensure Docker packaging
     ensureDockerfile(agentPath)
 
-    // Generate auth token
+    // Generate auth token and deployment ID
     const { authToken, tokenHash } = await generateAuthToken(agentName)
+    const deploymentId = generateDeploymentId()
+    const volumeId = getVolumeName(agentName, deploymentId)
 
     // Initialize Railway project if needed
     const railwayDir = path.join(agentPath, '.railway')
@@ -73,6 +77,7 @@ export default class RailwayDeploy extends Command {
     const envVars: Record<string, string> = {
       CAST_AGENT_NAME: agentName,
       AUTH_TOKEN: authToken,
+      CAST_MEMORY_PATH: `/var/runtime/data/${volumeId}`,
     }
     if (openrouterKey) {
       envVars.OPENROUTER_API_KEY = openrouterKey
@@ -86,6 +91,16 @@ export default class RailwayDeploy extends Command {
       if (setResult.exitCode !== 0) {
         this.warn(`Failed to set variable ${key}: ${setResult.stderr}`)
       }
+    }
+
+    // Create persistent volume
+    this.log(`Creating persistent volume: ${volumeId}`)
+    const volumeResult = await execCommand('railway', ['volume', 'create', volumeId], {
+      cwd: agentPath,
+      silent: true,
+    })
+    if (volumeResult.exitCode !== 0 && !volumeResult.stderr.includes('already exists')) {
+      this.warn(`Failed to create volume: ${volumeResult.stderr}`)
     }
 
     // Deploy
@@ -116,7 +131,8 @@ export default class RailwayDeploy extends Command {
     }
 
     // Save deployment
-    saveDeployment(agentName, 'railway', deploymentUrl, tokenHash)
+    const volumeConfig = JSON.stringify({ deploymentId, mountPath: `/var/runtime/data/${volumeId}` })
+    saveDeployment(agentName, 'railway', deploymentUrl, tokenHash, volumeId, volumeConfig)
 
     this.log('')
     this.log('╔══════════════════════════════════════════════════════════════╗')

@@ -57,7 +57,9 @@ export class CastDatabase {
         deployment_url TEXT,
         auth_token_hash TEXT,
         deployed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        last_connected_at DATETIME
+        last_connected_at DATETIME,
+        volume_id TEXT,
+        volume_config TEXT
       );
 
       CREATE TABLE IF NOT EXISTS local_agents (
@@ -148,13 +150,13 @@ export class CastDatabase {
     stmt.run(name)
   }
 
-  public setDeployment(name: string, provider: string, url: string, tokenHash: string): void {
+  public setDeployment(name: string, provider: string, url: string, tokenHash: string, volumeId?: string | null, volumeConfig?: string | null): void {
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO deployments
-      (agent_name, provider, deployment_url, auth_token_hash)
-      VALUES (?, ?, ?, ?)
+      (agent_name, provider, deployment_url, auth_token_hash, volume_id, volume_config)
+      VALUES (?, ?, ?, ?, ?, ?)
     `)
-    stmt.run(name, provider, url, tokenHash)
+    stmt.run(name, provider, url, tokenHash, volumeId || null, volumeConfig || null)
   }
 
   // Agent MCP methods

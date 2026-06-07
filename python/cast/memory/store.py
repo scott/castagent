@@ -1,3 +1,4 @@
+import os
 import sqlite3
 import json
 from datetime import datetime, timezone
@@ -30,20 +31,27 @@ class MemoryHighlight:
         return result
 
 
+def _get_memory_path(agent_path: Path) -> Path:
+    memory_path = os.environ.get('CAST_MEMORY_PATH')
+    if memory_path:
+        return Path(memory_path)
+    return agent_path / "memory"
+
+
 class MemoryStore:
     def __init__(self, agent_path: Path, warn_on_new: bool = True):
         self.agent_path = Path(agent_path)
-        self.memory_dir = self.agent_path / "memory"
+        self.memory_dir = _get_memory_path(self.agent_path)
         self.db_path = self.memory_dir / "memory.db"
         
         self._was_new = not self.db_path.exists()
         
         if warn_on_new and self._was_new:
             import warnings
-            import os
             
             path_str = str(self.agent_path).lower()
-            if "memory" in path_str or self.memory_dir.exists():
+            memory_dir_path = str(self.memory_dir).lower()
+            if "memory" in path_str or "memory" in memory_dir_path or self.memory_dir.exists():
                 warnings.warn(
                     f"MemoryStore path '{agent_path}' appears to be a memory directory. "
                     f"Expected agent root path. This will create nested structure at "

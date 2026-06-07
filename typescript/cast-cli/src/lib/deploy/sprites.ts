@@ -10,9 +10,12 @@ import {
   execCommand,
   saveDeployment,
   getOpenRouterApiKey,
+  generateDeploymentId,
+  getVolumeName,
 } from './deploy-utils'
 
 const AGENT_DIR = '/opt/cast-agent'
+const HOST_MOUNT_BASE = '/mnt/cast-memory'
 
 export default class SpritesDeploy extends Command {
   static description = 'Deploy agent to Sprites (Fly.io Firecracker VM)'
@@ -33,6 +36,17 @@ export default class SpritesDeploy extends Command {
       throw new Error(`Failed to destroy sprite '${spriteName}': ${result.stderr || result.stdout}`)
     }
     console.log(`Sprite '${spriteName}' has been destroyed.`)
+
+    // Clean up host memory directory
+    const volumeId = getVolumeName(agentName, generateDeploymentId())
+    const hostMemoryPath = `${HOST_MOUNT_BASE}/${volumeId}`
+    try {
+      // Try to remove the specific path (will only work if directory is empty)
+      await execCommand('sudo', ['rmdir', hostMemoryPath], {silent: true})
+      console.log(`Host memory directory '${hostMemoryPath}' has been removed.`)
+    } catch {
+      // Directory may not exist or not be empty (other deployments using it)
+    }
   }
 
   async run(): Promise<void> {
@@ -59,8 +73,11 @@ export default class SpritesDeploy extends Command {
       this.error('Not authenticated with Sprites. Run "sprite login" or set SPRITES_TOKEN environment variable.')
     }
 
-    // Generate auth token
+    // Generate auth token and deployment ID
     const { authToken, tokenHash } = await generateAuthToken(agentName)
+    const deploymentId = generateDeploymentId()
+    const volumeId = getVolumeName(agentName, deploymentId)
+    const hostMemoryPath = `${HOST_MOUNT_BASE}/${volumeId}`
 
     const spriteName = `cast-${agentName}`
 
@@ -85,6 +102,11 @@ export default class SpritesDeploy extends Command {
       this.warn('Sprite may not be fully ready, trying anyway...')
     }
 
+    // Create host directory for memory volume
+    this.log(`Creating host memory directory: ${hostMemoryPath}`)
+    await execCommand('sudo', ['mkdir', '-p', hostMemoryPath], {silent: true})
+    await execCommand('sudo', ['chmod', '777', hostMemoryPath], {silent: true})
+
     // Ensure Python and venv are installed (use longer timeout for apt)
     this.log('Ensuring Python is installed...')
     await this.execOnSprite(spriteName, 'apt-get update && apt-get install -y python3 python3-pip python3-venv', 300000)
@@ -92,6 +114,10 @@ export default class SpritesDeploy extends Command {
     // Package and transfer agent files
     this.log('Transferring agent files...')
     await this.transferAgentFiles(agentPath, spriteName)
+
+    // Create memory directory inside sprite
+    this.log('Creating memory directory inside sprite...')
+    await this.execOnSprite(spriteName, `mkdir -p ${AGENT_DIR}/memory`)
 
     // Create virtual environment and install dependencies
     // Use longer timeout for venv creation and pip install (5 minutes)
@@ -130,7 +156,8 @@ export default class SpritesDeploy extends Command {
       .trim()
 
     // Save deployment
-    saveDeployment(agentName, 'sprites', deploymentUrl, tokenHash)
+    const volumeConfig = JSON.stringify({ deploymentId, mountPath: '/opt/cast-agent/memory', hostPath: hostMemoryPath })
+    saveDeployment(agentName, 'sprites', deploymentUrl, tokenHash, volumeId, volumeConfig)
 
     this.log('')
     this.log('╔══════════════════════════════════════════════════════════════╗')

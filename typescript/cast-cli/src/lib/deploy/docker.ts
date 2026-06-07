@@ -7,7 +7,7 @@ import * as path from 'path'
 
 import {keychain} from '../keychain'
 import {db} from '../sqlite'
-import {execCommand, getOpenRouterApiKey} from './deploy-utils'
+import {execCommand, getOpenRouterApiKey, generateDeploymentId, getVolumeName, createMemoryVolume, deleteMemoryVolume} from './deploy-utils'
 
 // Helper to run a shell command and return its exit code
 function runCommand(command: string, args: string[], options?: {stdio?: any; cwd?: string; silent?: boolean}): Promise<number> {
@@ -80,12 +80,18 @@ export default class DockerDeploy extends Command {
       this.error(`Cast Python package not found at ${castPackageSource}. Make sure you're running from the project root.`)
     }
 
-    // Generate auth token
+    // Generate auth token and deployment ID
     const authToken = crypto.randomBytes(32).toString('base64')
     const tokenHash = crypto.createHash('sha256').update(authToken).digest('hex')
+    const deploymentId = generateDeploymentId()
+    const volumeId = getVolumeName(agentName, deploymentId)
 
     // Store token in keychain
     await keychain.setToken(agentName, authToken)
+
+    // Create memory volume
+    this.log(`Creating memory volume: ${volumeId}`)
+    await createMemoryVolume('docker', agentName, deploymentId)
 
     // Copy cast runtime package into agent directory so it is inside the Docker build context
     const castRuntimeDir = path.join(agentPath, '.cast-runtime', 'cast')
@@ -105,7 +111,7 @@ export default class DockerDeploy extends Command {
 
     this.createDockerignore(agentPath)
     this.createRequirementsTxt(projectRoot, agentPath)
-    this.createDockerCompose(agentPath, agentName, flags.port, authToken)
+    this.createDockerCompose(agentPath, agentName, flags.port, authToken, volumeId)
 
     const imageName = `cast-${agentName}:latest`
     const containerName = `cast-${agentName}`
@@ -144,6 +150,7 @@ export default class DockerDeploy extends Command {
       '-e', `CAST_AGENT_PATH=/app/agent`,
       '-e', `AUTH_TOKEN=${authToken}`,
       '-e', `PYTHONPATH=/app`,
+      '-v', `${volumeId}:/app/agent/memory`,
     ]
 
     const openrouterKey = getOpenRouterApiKey()
@@ -159,7 +166,8 @@ export default class DockerDeploy extends Command {
     }
 
     const deploymentUrl = `http://localhost:${flags.port}`
-    db.setDeployment(agentName, 'docker', deploymentUrl, tokenHash)
+    const volumeConfig = JSON.stringify({ deploymentId, mountPath: '/app/agent/memory' })
+    db.setDeployment(agentName, 'docker', deploymentUrl, tokenHash, volumeId, volumeConfig)
 
     this.log('')
     this.log('╔══════════════════════════════════════════════════════════════╗')
@@ -194,6 +202,17 @@ export default class DockerDeploy extends Command {
       console.log(`Warning: Failed to remove container '${containerName}': ${rmResult.stderr}`)
     }
     console.log(`Docker container '${containerName}' has been destroyed.`)
+
+    // Clean up memory volume
+    const deployment = db.getDeployment(agentName)
+    if (deployment?.volume_id) {
+      try {
+        await execCommand('docker', ['volume', 'rm', deployment.volume_id])
+        console.log(`Memory volume '${deployment.volume_id}' has been removed.`)
+      } catch {
+        console.log(`Note: Memory volume '${deployment.volume_id}' could not be removed (may be in use or already deleted).`)
+      }
+    }
   }
 
   private createDockerfile(agentPath: string): void {
@@ -310,6 +329,7 @@ xxhash>=3.7.0
     agentName: string,
     port: number,
     authToken: string,
+    volumeId: string,
   ): void {
     const compose = `version: '3.8'
 
@@ -328,8 +348,11 @@ services:
       - PYTHONPATH=/app
       - OPENROUTER_API_KEY=\${OPENROUTER_API_KEY}
     volumes:
-      - .:/app/agent
+      - ${volumeId}:/app/agent/memory
     restart: unless-stopped
+
+volumes:
+  ${volumeId}:
 `
     fs.writeFileSync(path.join(agentPath, 'docker-compose.yml'), compose)
   }

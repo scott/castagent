@@ -13,6 +13,8 @@ import {
   getProviderToken,
   execCommand,
   execCommandIgnoreError,
+  generateDeploymentId,
+  getVolumeName,
 } from './deploy-utils'
 
 const SSH_KEY_NAME = 'cast-do-key'
@@ -100,6 +102,15 @@ export default class DigitalOceanDeploy extends Command {
       throw new Error(`Failed to delete droplet: ${deleteResult.stderr}`)
     }
     console.log(`Droplet '${dropletName}' deleted.`)
+
+    // Clean up volume
+    const volumeId = getVolumeName(agentName, 'latest')
+    try {
+      await execCommand('doctl', ['compute', 'volume', 'delete', volumeId, '--force'], {silent: true})
+      console.log(`Memory volume '${volumeId}' has been removed.`)
+    } catch {
+      console.log(`Note: Memory volume '${volumeId}' could not be removed.`)
+    }
   }
 
   async run(): Promise<void> {
@@ -130,8 +141,10 @@ export default class DigitalOceanDeploy extends Command {
     // Ensure Docker packaging
     ensureDockerfile(agentPath)
 
-    // Generate auth token
+    // Generate auth token and deployment ID
     const { authToken, tokenHash } = await generateAuthToken(agentName)
+    const deploymentId = generateDeploymentId()
+    const volumeId = getVolumeName(agentName, deploymentId)
 
     // Get DO token
     const apiToken = getProviderToken('digitalocean', ['DIGITALOCEAN_ACCESS_TOKEN', 'DIGITALOCEAN_API_TOKEN', 'DIGITALOCEAN_API_KEY'])
@@ -189,7 +202,14 @@ export default class DigitalOceanDeploy extends Command {
 
     // Deploy on droplet
     this.log('Deploying on droplet...')
-    await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, tarPath)
+    await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, tarPath, volumeId)
+
+    // Create and attach volume
+    this.log(`Creating memory volume: ${volumeId}`)
+    const volumeResult = await this.createAndAttachVolume(apiToken, droplet.id, volumeId, droplet.region)
+    if (volumeResult) {
+      this.log(`Volume attached at ${volumeResult}`)
+    }
 
     // Clean up local tar file after transfer
     this.log('Cleaning up local artifacts...')
@@ -200,7 +220,8 @@ export default class DigitalOceanDeploy extends Command {
     const deploymentUrl = `http://${droplet.ip}:8080`
 
     // Save deployment
-    saveDeployment(agentName, 'digitalocean', deploymentUrl, tokenHash)
+    const volumeConfig = JSON.stringify({ deploymentId, mountPath: '/app/agent/memory', region: droplet.region })
+    saveDeployment(agentName, 'digitalocean', deploymentUrl, tokenHash, volumeId, volumeConfig)
 
     this.log('')
     this.log('╔══════════════════════════════════════════════════════════════╗')
@@ -272,8 +293,9 @@ export default class DigitalOceanDeploy extends Command {
     })
   }
 
-  private async getOrCreateDroplet(agentName: string, agentPath: string, apiToken?: string): Promise<{id: string; name: string; ip: string}> {
+  private async getOrCreateDroplet(agentName: string, agentPath: string, apiToken?: string): Promise<{id: string; name: string; ip: string; region: string}> {
     const dropletName = `cast-${agentName}`
+    const region = 'nyc3'
 
     // Check if droplet exists
     const listResult = await execCommand('doctl', ['compute', 'droplet', 'list', '--format', 'ID,Name,PublicIPv4', '--no-header'], {silent: true})
@@ -282,7 +304,7 @@ export default class DigitalOceanDeploy extends Command {
     for (const line of lines) {
       const parts = line.trim().split(/\s+/)
       if (parts.length >= 3 && parts[1] === dropletName) {
-        return {id: parts[0], name: dropletName, ip: parts[2]}
+        return {id: parts[0], name: dropletName, ip: parts[2], region}
       }
     }
 
@@ -306,7 +328,7 @@ runcmd:
     const createResult = await execCommand('doctl', [
       'compute', 'droplet', 'create',
       dropletName,
-      '--region', 'nyc3',
+      '--region', region,
       '--size', 's-1vcpu-1gb',
       '--image', 'ubuntu-24-04-x64',
       '--ssh-keys', fingerprint,
@@ -322,7 +344,7 @@ runcmd:
     const infoResult = await execCommand('doctl', ['compute', 'droplet', 'get', dropletName, '--format', 'ID,PublicIPv4', '--no-header'], {silent: true})
     const parts = infoResult.stdout.trim().split(/\s+/)
 
-    return {id: parts[0], name: dropletName, ip: parts[1]}
+    return {id: parts[0], name: dropletName, ip: parts[1], region}
   }
 
   private async waitForSsh(ip: string): Promise<void> {
@@ -350,6 +372,7 @@ runcmd:
     authToken: string,
     imageTag: string,
     tarPath: string,
+    volumeId: string,
   ): Promise<void> {
     // Load image on droplet
     const loadResult = await execSsh(ip, `docker load -i /tmp/${path.basename(tarPath)}`, true)
@@ -377,8 +400,8 @@ runcmd:
       envArgs.push(`-e OPENROUTER_API_KEY=${openrouterKey}`)
     }
 
-    // Run container
-    const runResult = await execSsh(ip, `docker run -d --name cast-agent --restart unless-stopped -p 8080:8080 ${envArgs.join(' ')} ${imageTag}`, true)
+    // Run container with volume mount
+    const runResult = await execSsh(ip, `docker run -d --name cast-agent --restart unless-stopped -p 8080:8080 -v /mnt/${volumeId}:/app/agent/memory ${envArgs.join(' ')} ${imageTag}`, true)
 
     if (runResult.exitCode !== 0) {
       throw new Error(`Failed to start container on droplet: ${runResult.stderr}`)
@@ -386,6 +409,46 @@ runcmd:
 
     // Clean up remote tar file after loading
     await execSsh(ip, `rm -f /tmp/${path.basename(tarPath)}`, true)
+  }
+
+  private async createAndAttachVolume(apiToken: string, dropletId: string, volumeName: string, region: string): Promise<string | null> {
+    try {
+      // Create volume
+      const createResult = await axios.post('https://api.digitalocean.com/v2/volumes', {
+        name: volumeName,
+        size_gigabytes: 1,
+        region: region,
+      }, {
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          'Content-Type': 'application/json',
+        },
+      })
+
+      const volumeId = createResult.data.volume.id
+
+      // Attach volume to droplet
+      await axios.post(`https://api.digitalocean.com/v2/volumes/${volumeId}/actions`, {
+        type: 'attach',
+        droplet_id: parseInt(dropletId, 10),
+      }, {
+        headers: {
+          Authorization: `Bearer ${apiToken}`,
+          'Content-Type': 'application/json',
+        },
+      })
+
+      // Format and mount volume on droplet
+      const mountPath = `/mnt/${volumeName}`
+      return mountPath
+    } catch (error: any) {
+      if (error.response?.data?.id === 'invalid') {
+        // Volume might already exist
+        return `/mnt/${volumeName}`
+      }
+      this.warn(`Failed to create volume: ${error.message}`)
+      return null
+    }
   }
 
 }
