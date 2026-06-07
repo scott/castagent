@@ -382,7 +382,7 @@ async def main():
         print(f"Error loading agent config: {e}", file=sys.stderr)
         sys.exit(1)
 
-    agent = RuntimeAgent(config)
+    agent = RuntimeAgent(config, agent_path=args.agent_path)
 
     # Start A2A server
     server = A2AServer(agent, host=args.host, port=args.port)

@@ -169,6 +169,7 @@ def create_agent(name: str, description: str = "") -> str:
     # Create directories
     (agent_path / "tools").mkdir(parents=True)
     (agent_path / "mcp").mkdir(parents=True)
+    (agent_path / "memory").mkdir(parents=True)
     (agent_path / "tests" / "cli").mkdir(parents=True)
     (agent_path / "tests" / "agent" / "scenarios").mkdir(parents=True)
     
@@ -218,6 +219,24 @@ def create_agent(name: str, description: str = "") -> str:
     instructions_path = agent_path / "instructions.md"
     with open(instructions_path, "w") as f:
         f.write(instructions_content)
+
+    # Create default memory config
+    memory_config_path = agent_path / "memory" / "config.yaml"
+    memory_config = {
+        "memory": {
+            "enabled": True,
+            "categories": [
+                "learned", "decision", "pattern", "error_learned", "accomplishment",
+                "preference", "context", "project", "tools_used", "boundary",
+                "relationship", "todo", "question_asked", "directive_given"
+            ],
+            "max_per_category": 100,
+            "relevance_threshold": 0.7,
+            "reflection_model": None,
+        }
+    }
+    with open(memory_config_path, "w") as f:
+        yaml.dump(memory_config, f, default_flow_style=False, sort_keys=False)
 
     # Create initial version
     create_version(name, source="create", message="Initial version")
