@@ -35,11 +35,20 @@ class RuntimeAgent:
         self.agent_path = agent_path or os.environ.get("AGENT_PATH", ".")
         self.chat_history = []
         self.graph = None
-        self.memory = MemoryMiddleware(self.agent_path)
+        self.llm = None
+        self.memory = None
         
         # Set up LLM if OpenRouter API key is available
         if OpenRouterProvider.is_available():
             self._setup_llm()
+        
+        # Initialize memory with the model being used
+        model_name = None
+        if self.llm:
+            model_name = self.config.model
+        
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        self.memory = MemoryMiddleware(self.agent_path, model_name=model_name, api_key=api_key)
     
     def _setup_llm(self):
         """Initialize the LLM and ReAct agent graph."""
