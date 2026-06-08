@@ -26,10 +26,15 @@ jobs:
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git tag "v$VERSION" || true
-          git push origin "v$VERSION" || true
+          if ! git tag "v$VERSION" 2>/dev/null; then
+            echo "Tag v$VERSION already exists, skipping..."
+            echo "SKIP_RELEASE=true" >> $GITHUB_ENV
+            exit 0
+          fi
+          git push origin "v$VERSION"
 
       - name: Create GitHub Release
+        if: env.SKIP_RELEASE != 'true'
         uses: ncipollo/release-action@v1
         with:
           tag: v${{ env.VERSION }}
