@@ -10,6 +10,9 @@ Agent Cast is a complete platform for creating, testing, and deploying autonomou
 - **Built-in Runtime**: Python-based runtime with A2A protocol support, streaming responses, and secure auth
 - **Multiple Deployment Options**: Deploy to Docker, Railway, Fly.io, DigitalOcean, or Sprites with a single command
 - **Production-Ready**: Automatic versioning, secure token storage, OAuth credential vault, and deployment tracking
+- **Agent Versioning**: Track every change to your agent with automatic snapshots, diff comparison, and rollback support
+- **GitHub Integration**: Full Git operations for agents—init, commit, push, pull, and branch management
+- **Agent Memory**: Persistent memory system for agents to maintain context across sessions
 
 ## What Can You Build?
 
@@ -108,6 +111,9 @@ export PATH="$HOME/.local/bin:$PATH"
 # Show help
 cast --help
 
+# Show version
+cast version
+
 # Create a new agent (interactive TUI wizard)
 cast new
 
@@ -131,6 +137,13 @@ cast logs demo-agent
 
 # Stop a running agent
 cast stop demo-agent
+
+# Rename an agent
+cast rename old-name new-name
+
+# Clone an agent from Git repository
+cast clone https://github.com/user/my-agent
+cast clone https://github.com/user/my-agent my-local-name
 
 # Deploy an agent
 cast deploy demo-agent --provider docker
@@ -269,6 +282,35 @@ cast revert my-agent        # Revert to latest version
 
 In the TUI, use `/versions` to view version history with keyboard navigation.
 
+### Git Integration
+
+Cast agents include built-in Git support for version control:
+
+```bash
+# Initialize a Git repository
+cast git init my-agent
+
+# Check status
+cast git status my-agent
+
+# Stage and commit changes
+cast git add my-agent -A
+cast git commit my-agent -m "Update instructions"
+
+# Push to remote
+cast git push my-agent
+
+# View commit history
+cast git log my-agent
+
+# View changes
+cast git diff my-agent
+
+# Manage remotes
+cast git remote my-agent add origin https://github.com/user/repo.git
+cast git remote my-agent list
+```
+
 ## Development
 
 ### Project Structure
@@ -320,8 +362,6 @@ cast meta test --scenario create-simple
 ## Configuration
 
 The `cast` command at the repository root is a bash wrapper that delegates to `typescript/cast-cli/bin/run`. When you run `./setup.sh` or `./install.sh`, it creates a symlink from `~/.local/bin/cast` to this wrapper, making the CLI available globally.
-
-## Configuration
 
 Create `~/.cast/config.yaml`:
 

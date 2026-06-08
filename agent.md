@@ -64,6 +64,25 @@ All changes to `master` must go through pull requests:
 - No direct pushes to `master`
 - Squash and merge to keep history clean
 
+### Branch Workflow
+
+All new work must be conducted in a new branch. Never commit directly to `master` or `main`. Before starting any task:
+
+1. Create a new branch: `git checkout -b feature/my-feature`
+2. Make your changes and commit them
+3. Push the branch: `git push -u origin feature/my-feature`
+4. Open a pull request against `master`
+
+### Documentation Updates
+
+Always update `README.md` when notable changes are made. This includes:
+- New features or commands
+- Changed behavior or breaking changes
+- New deployment options
+- Updated requirements or dependencies
+
+Keep documentation aligned with the code to avoid misleading users.
+
 ### Release Process
 
 1. Developer creates PR with changes
