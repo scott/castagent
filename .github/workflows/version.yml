@@ -15,36 +15,22 @@ jobs:
           fetch-depth: 0
 
       - name: Read version
-        id: version
         run: |
           VERSION=$(node -p "require('./package.json').version")
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
-
-      - name: Check if tag exists
-        id: check_tag
-        run: |
-          if git tag | grep -q "^v${{ steps.version.outputs.version }}$"; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-          fi
+          echo "VERSION=$VERSION" >> $GITHUB_ENV
 
       - name: Create tag
-        if: steps.check_tag.outputs.exists == 'false'
         run: |
           git config user.name "GitHub Actions"
           git config user.email "actions@github.com"
-          git tag "v${{ steps.version.outputs.version }}"
-          git push origin "v${{ steps.version.outputs.version }}"
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          git tag "v$VERSION" || true
+          git push origin "v$VERSION" || true
 
       - name: Create GitHub Release
-        if: steps.check_tag.outputs.exists == 'false'
         uses: ncipollo/release-action@v1
         with:
-          tag: v${{ steps.version.outputs.version }}
-          name: v${{ steps.version.outputs.version }}
+          tag: v${{ env.VERSION }}
+          name: v${{ env.VERSION }}
           draft: false
           prerelease: false
           token: ${{ secrets.GITHUB_TOKEN }}
