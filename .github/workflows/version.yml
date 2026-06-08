@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Read version
         id: version
@@ -34,6 +36,8 @@ jobs:
           git config user.email "actions@github.com"
           git tag "v${{ steps.version.outputs.version }}"
           git push origin "v${{ steps.version.outputs.version }}"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Create GitHub Release
         if: steps.check_tag.outputs.exists == 'false'
@@ -43,3 +47,4 @@ jobs:
           name: v${{ steps.version.outputs.version }}
           draft: false
           prerelease: false
+          token: ${{ secrets.GITHUB_TOKEN }}
