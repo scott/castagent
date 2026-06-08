@@ -140,6 +140,11 @@ export class CastDatabase {
     stmt.run(name)
   }
 
+  public listLocalAgents(): any[] {
+    const stmt = this.db.prepare('SELECT * FROM local_agents')
+    return stmt.all()
+  }
+
   public getDeployment(name: string): any {
     const stmt = this.db.prepare('SELECT * FROM deployments WHERE agent_name = ?')
     return stmt.get(name)

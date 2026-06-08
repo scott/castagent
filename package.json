@@ -12,14 +12,23 @@
     "build": "npm run build:cli && npm run build:tui",
     "install:all": "npm install && cd typescript/cast-cli && npm install && cd ../cast-tui && npm install",
     "dev:cli": "cd typescript/cast-cli && npm run dev",
-    "dev:tui": "cd typescript/cast-tui && npm run dev"
+    "dev:tui": "cd typescript/cast-tui && npm run dev",
+    "test": "nyc mocha --forbid-only 'tests/**/*.test.ts'; npm run clean:test",
+    "test:clean": "npx ts-node tests/ts/cleanup-test-agents.ts && npm test",
+    "clean:test": "npx ts-node tests/ts/cleanup-test-agents.ts",
+    "coverage": "nyc report --reporter=text-lcov > coverage/lcov.info"
   },
   "devDependencies": {
+    "@istanbuljs/nyc-config-typescript": "^1.0.2",
     "@oclif/test": "^4.1.18",
     "@types/chai": "^5.2.3",
     "@types/mocha": "^10.0.10",
+    "@types/sinon": "^10.0.20",
     "chai": "^6.2.2",
+    "chai-as-promised": "^7.1.2",
     "mocha": "^11.7.5",
+    "nyc": "^18.0.0",
+    "sinon": "^18.0.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.9.3"
   }
