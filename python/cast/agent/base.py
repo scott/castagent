@@ -13,8 +13,11 @@ class AgentConfig:
         config_path = os.path.join(self.path, "agent.yaml")
         if not os.path.exists(config_path):
             return {}
-        with open(config_path, "r") as f:
-            return yaml.safe_load(f) or {}
+        try:
+            with open(config_path, "r") as f:
+                return yaml.safe_load(f) or {}
+        except yaml.YAMLError:
+            return {}
     
     @property
     def name(self) -> str:

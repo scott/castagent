@@ -239,7 +239,7 @@ def create_agent(name: str, description: str = "") -> str:
         yaml.dump(memory_config, f, default_flow_style=False, sort_keys=False)
 
     # Create initial version
-    create_version(name, source="create", message="Initial version")
+    create_version(name, source="create", message="Initial version", agents_dir=AGENTS_DIR)
 
     return f"Agent '{name}' created successfully at {agent_path}"
 
@@ -318,7 +318,7 @@ def update_agent_config(name: str, config_yaml: str) -> str:
     else:
         message = "Updated agent configuration"
 
-    create_version(name, source="builder", message=message)
+    create_version(name, source="builder", message=message, agents_dir=AGENTS_DIR)
 
     return f"Updated agent.yaml for '{name}'"
 
@@ -338,7 +338,7 @@ def update_instructions(name: str, instructions_md: str) -> str:
     with open(instructions_path, "w") as f:
         f.write(instructions_md)
 
-    create_version(name, source="builder", message="Updated instructions")
+    create_version(name, source="builder", message="Updated instructions", agents_dir=AGENTS_DIR)
 
     return f"Updated instructions.md for '{name}'"
 
@@ -383,7 +383,7 @@ def install_mcp(name: str, server: str) -> str:
     with open(agent_yaml_path, "w") as f:
         yaml.dump(config, f, default_flow_style=False, sort_keys=False)
 
-    create_version(name, source="builder", message=f"Added MCP server: {server}")
+    create_version(name, source="builder", message=f"Added MCP server: {server}", agents_dir=AGENTS_DIR)
 
     return f"Installed MCP server '{server}' for agent '{name}'"
 

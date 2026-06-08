@@ -59,7 +59,7 @@ def _get_next_version_id(name: str) -> int:
     return 1
 
 
-def create_version(agent_name: str, source: str = "builder", message: str = "") -> VersionInfo:
+def create_version(agent_name: str, source: str = "builder", message: str = "", agents_dir: Optional[Path] = None) -> VersionInfo:
     """
     Create a version snapshot of the current agent state.
 
@@ -67,11 +67,14 @@ def create_version(agent_name: str, source: str = "builder", message: str = "") 
         agent_name: The name of the agent.
         source: The source of the change ("create", "cli", "builder").
         message: Optional description of the changes.
+        agents_dir: Optional path to agents directory. Defaults to AGENTS_DIR.
 
     Returns:
         VersionInfo about the created version.
     """
-    agent_path = AGENTS_DIR / agent_name
+    if agents_dir is None:
+        agents_dir = AGENTS_DIR
+    agent_path = agents_dir / agent_name
 
     if not agent_path.exists():
         raise VersioningError(f"Agent '{agent_name}' does not exist")
@@ -209,7 +212,7 @@ def revert_to_version(agent_name: str, version_id: Optional[int] = None, message
 
     # Create a snapshot of current state before reverting
     revert_message = message or f"Reverted to version {target_version.id}"
-    create_version(agent_name, source="cli", message=revert_message)
+    create_version(agent_name, source="cli", message=revert_message, agents_dir=AGENTS_DIR)
 
     # Extract the target version
     version_filename = _get_version_filename(target_version.id)

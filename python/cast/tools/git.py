@@ -17,8 +17,11 @@ def get_agent_path() -> str:
 def load_agent_config(agent_path: str) -> dict:
     config_path = os.path.join(agent_path, 'agent.yaml')
     if os.path.exists(config_path):
-        with open(config_path, 'r') as f:
-            return yaml.safe_load(f) or {}
+        try:
+            with open(config_path, 'r') as f:
+                return yaml.safe_load(f) or {}
+        except yaml.YAMLError:
+            return {}
     return {}
 
 

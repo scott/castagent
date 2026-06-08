@@ -40,8 +40,8 @@ class PrivacyFilter:
         return result
 
     def _restore_structure(self, text: str) -> str:
+        # Normalize whitespace but preserve multiple [REDACTED] markers
         text = re.sub(r'\s+', ' ', text)
-        text = re.sub(r'\[REDACTED\]\s*\[REDACTED\]', self.PLACEHOLDER, text)
         return text.strip()
 
     def scrub_dict(self, data: dict, keys_to_scrub: Optional[list[str]] = None) -> dict:
