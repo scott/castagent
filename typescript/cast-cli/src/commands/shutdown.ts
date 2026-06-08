@@ -8,7 +8,7 @@ import RailwayDeploy from '../lib/deploy/railway'
 import DigitalOceanDeploy from '../lib/deploy/digitalocean'
 import SpritesDeploy from '../lib/deploy/sprites'
 
-const PROVIDER_DESTROYERS: Record<string, (agentName: string) => Promise<void>> = {
+export const PROVIDER_DESTROYERS: Record<string, (agentName: string) => Promise<void>> = {
   docker: DockerDeploy.destroy,
   fly: FlyDeploy.destroy,
   railway: RailwayDeploy.destroy,

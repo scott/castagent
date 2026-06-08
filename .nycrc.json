@@ -1,0 +1,10 @@
+{
+  "extends": "@istanbuljs/nyc-config-typescript",
+  "extension": [".ts"],
+  "exclude": ["**/*.d.ts", "bin/**"],
+  "reporter": ["html", "text", "lcov"],
+  "sourceMap": true,
+  "instrument": true,
+  "hookRunInContext": true,
+  "hookRequire": true
+}
