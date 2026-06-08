@@ -15,6 +15,17 @@ export interface DeploymentResult {
   authToken: string
 }
 
+export interface VolumeConfig {
+  volumeId: string
+  mountPath: string
+  provider: string
+  config?: Record<string, any>
+}
+
+export function generateDeploymentId(): string {
+  return crypto.randomUUID()
+}
+
 export function getAgentPath(agentName: string): string {
   return path.join(os.homedir(), '.cast', 'agents', agentName)
 }
@@ -212,8 +223,10 @@ export function saveDeployment(
   provider: string,
   url: string,
   tokenHash: string,
+  volumeId?: string,
+  volumeConfig?: string,
 ): void {
-  db.setDeployment(agentName, provider, url, tokenHash)
+  db.setDeployment(agentName, provider, url, tokenHash, volumeId, volumeConfig)
 }
 
 export function getOpenRouterApiKey(): string | undefined {
@@ -232,5 +245,79 @@ export async function execCommandIgnoreError(
     await execCommand(command, args, {...options, silent: options?.silent ?? true})
   } catch {
     // ignore errors
+  }
+}
+
+export function getVolumeName(agentName: string, deploymentId: string): string {
+  return `cast-${agentName}-${deploymentId}-memory`
+}
+
+export function getMemoryMountPath(provider: string): string {
+  switch (provider) {
+    case 'docker':
+      return '/app/agent/memory'
+    case 'fly':
+      return '/app/agent/memory'
+    case 'sprites':
+      return '/opt/cast-agent/memory'
+    case 'railway':
+      return '' // Railway uses CAST_MEMORY_PATH env var
+    case 'digitalocean':
+      return '/app/agent/memory'
+    default:
+      return '/app/agent/memory'
+  }
+}
+
+export async function createMemoryVolume(
+  provider: string,
+  agentName: string,
+  deploymentId: string,
+): Promise<VolumeConfig> {
+  const volumeId = getVolumeName(agentName, deploymentId)
+  const mountPath = getMemoryMountPath(provider)
+
+  switch (provider) {
+    case 'docker':
+      await execCommand('docker', ['volume', 'create', volumeId])
+      break
+    case 'fly':
+      await execCommand('flyctl', ['volumes', 'create', volumeId, '--size', '1', '--app', `cast-${agentName}`])
+      break
+    case 'sprites':
+      // For sprites, we create the host directory (actual volume creation happens at deploy time)
+      break
+    case 'railway':
+      await execCommand('railway', ['volume', 'create', volumeId])
+      break
+    case 'digitalocean':
+      // Volume creation and attachment happen in digitalocean.ts
+      break
+    default:
+      throw new Error(`Unsupported provider for memory volume: ${provider}`)
+  }
+
+  return { volumeId, mountPath, provider }
+}
+
+export async function deleteMemoryVolume(volumeConfig: VolumeConfig, agentName: string): Promise<void> {
+  const { provider, volumeId } = volumeConfig
+
+  switch (provider) {
+    case 'docker':
+      await execCommandIgnoreError('docker', ['volume', 'rm', volumeId])
+      break
+    case 'fly':
+      await execCommandIgnoreError('flyctl', ['volumes', 'delete', volumeId, '--app', `cast-${agentName}`, '--yes'])
+      break
+    case 'sprites':
+      // Host directory cleanup happens at deploy time
+      break
+    case 'railway':
+      // Railway volumes are tied to projects and cleaned up with project deletion
+      break
+    case 'digitalocean':
+      // DigitalOcean volumes are cleaned up in digitalocean.ts destroy
+      break
   }
 }

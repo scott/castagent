@@ -6,6 +6,7 @@ from langchain_core.messages import AIMessageChunk, HumanMessage
 from langgraph.prebuilt import create_react_agent
 
 from .base import AgentConfig
+from ..memory import MemoryMiddleware
 from ..providers.openrouter import OpenRouterProvider
 from ..tools.bash import bash_tool
 from ..tools.read import read_tool
@@ -29,14 +30,25 @@ BUILTIN_TOOLS = {
 class RuntimeAgent:
     """Runtime agent with optional LLM integration via OpenRouter."""
     
-    def __init__(self, config: AgentConfig):
+    def __init__(self, config: AgentConfig, agent_path: str = None):
         self.config = config
+        self.agent_path = agent_path or os.environ.get("AGENT_PATH", ".")
         self.chat_history = []
         self.graph = None
+        self.llm = None
+        self.memory = None
         
         # Set up LLM if OpenRouter API key is available
         if OpenRouterProvider.is_available():
             self._setup_llm()
+        
+        # Initialize memory with the model being used
+        model_name = None
+        if self.llm:
+            model_name = self.config.model
+        
+        api_key = os.environ.get("OPENROUTER_API_KEY")
+        self.memory = MemoryMiddleware(self.agent_path, model_name=model_name, api_key=api_key)
     
     def _setup_llm(self):
         """Initialize the LLM and ReAct agent graph."""
@@ -75,9 +87,15 @@ class RuntimeAgent:
         if self.graph is None:
             return self._echo_response(message)
         
+        # Enrich message with relevant memories
+        memory_context = self.memory.format_memories(message)
+        
         # Process through LLM
         try:
-            self.chat_history.append(HumanMessage(content=message))
+            if memory_context:
+                self.chat_history.append(HumanMessage(content=f"{memory_context}\n\nUser: {message}"))
+            else:
+                self.chat_history.append(HumanMessage(content=message))
             
             response = await self.graph.ainvoke({"messages": self.chat_history})
             
@@ -86,7 +104,14 @@ class RuntimeAgent:
             
             # Extract the last AI message content
             last_message = self.chat_history[-1]
-            return last_message.content
+            agent_response = last_message.content
+            
+            # Record this exchange for future memory
+            asyncio.create_task(
+                self.memory.record(message, agent_response, f"exchange_{len(self.chat_history)//2}")
+            )
+            
+            return agent_response
         except Exception as e:
             # Log the error but return a friendly message
             error_msg = str(e)
@@ -118,9 +143,15 @@ class RuntimeAgent:
                 yield chunk
             return
         
+        # Enrich message with relevant memories
+        memory_context = self.memory.format_memories(message)
+        
         # Process through LLM with streaming
         try:
-            self.chat_history.append(HumanMessage(content=message))
+            if memory_context:
+                self.chat_history.append(HumanMessage(content=f"{memory_context}\n\nUser: {message}"))
+            else:
+                self.chat_history.append(HumanMessage(content=message))
             
             full_content = ""
             async for msg, metadata in self.graph.astream(
@@ -142,6 +173,11 @@ class RuntimeAgent:
             # Update chat history with the final accumulated message
             from langchain_core.messages import AIMessage
             self.chat_history.append(AIMessage(content=full_content))
+            
+            # Record this exchange for future memory
+            asyncio.create_task(
+                self.memory.record(message, full_content, f"stream_exchange_{len(self.chat_history)//2}")
+            )
         except Exception as e:
             yield f"Error processing message: {str(e)}"
     

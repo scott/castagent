@@ -588,6 +588,7 @@ export async function handleDeployModal(
   modal.box.handleKeyPress = (key: KeyEvent) => {
     if (key.name === 'escape') {
       modal.hide()
+      prevFocused.focus()
       return true
     }
     // Ctrl+Shift+C to copy all output to clipboard
@@ -605,8 +606,8 @@ export async function handleDeployModal(
     return originalHandleKeyPress ? originalHandleKeyPress(key) : false
   }
 
-  // Force a render to ensure the modal is properly displayed with key handling
-  // Some renderer implementations may not have a .render() method
+  // Force focus and render to ensure the modal is properly capturing keyboard events
+  modal.box.focus()
   if (typeof renderer.render === 'function') {
     renderer.render()
   }
