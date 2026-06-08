@@ -1,0 +1,93 @@
+name: Auto Create Changeset
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  create-changeset:
+    name: Create Changeset
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Generate unique changeset ID
+        id: changeset-id
+        run: echo "id=$(openssl rand -hex 8)" >> $GITHUB_OUTPUT
+
+      - name: Determine version bump
+        id: version
+        run: |
+          # Default to patch
+          VERSION="patch"
+          
+          # Check labels for version bump hints
+          LABELS="${{ join github.event.pull_request.labels.*.name ',' }}"
+          
+          if echo "$LABELS" | grep -qi "major\|breaking"; then
+            VERSION="major"
+          elif echo "$LABELS" | grep -qi "minor\|feature\|enhancement"; then
+            VERSION="minor"
+          elif echo "$LABELS" | grep -qi "fix\|bugfix\|hotfix"; then
+            VERSION="patch"
+          fi
+          
+          # Also check PR title for conventional commits
+          TITLE="${{ github.event.pull_request.title }}"
+          if echo "$TITLE" | grep -qi "^feat\|feat:"; then
+            VERSION="minor"
+          elif echo "$TITLE" | grep -qi "^fix\|fix:"; then
+            VERSION="patch"
+          elif echo "$TITLE" | grep -qi "^ BREAKING"; then
+            VERSION="major"
+          fi
+          
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Version bump determined: $VERSION"
+
+      - name: Generate release notes
+        id: notes
+        run: |
+          # Clean up the PR title for use in changeset
+          TITLE="${{ github.event.pull_request.title }}"
+          TITLE=$(echo "$TITLE" | sed 's/^\[.*\] //' | sed 's/^[a-z]*(\w*): //')
+          
+          # Use PR body if available and useful, otherwise use title
+          BODY="${{ github.event.pull_request.body }}"
+          if [ -n "$BODY" ] && [ ${#BODY} -gt 20 ]; then
+            # Take first paragraph of body, up to 200 chars
+            NOTES=$(echo "$BODY" | head -5 | tr '\n' ' ' | cut -c1-200)
+          else
+            NOTES="$TITLE"
+          fi
+          
+          echo "notes=$NOTES" >> $GITHUB_OUTPUT
+
+      - name: Create changeset file
+        run: |
+          cat > .changeset/${{ steps.changeset-id.outputs.id }}.md << 'EOF'
+---
+"agent-cast": ${{ steps.version.outputs.version }}
+---
+
+${{ steps.notes.outputs.notes }}
+
+* PR #${{ github.event.pull_request.number }}: @${{ github.event.pull_request.user.login }}
+EOF
+
+      - name: Display changeset content
+        run: cat .changeset/${{ steps.changeset-id.outputs.id }}.md
+
+      - name: Commit and push changeset
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add .changeset/
+          git commit -m "chore: add changeset for PR #${{ github.event.pull_request.number }}"
+          git push
