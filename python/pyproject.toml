@@ -9,6 +9,15 @@ dependencies = [
   "GitPython>=3.1.0",
 ]
 
+[project.optional-dependencies]
+test = [
+  "pytest>=7.0",
+  "pytest-asyncio",
+  "pytest-cov",
+  "pytest-mock",
+  "httpx",
+]
+
 [project.scripts]
 cast-builder = "cast.builder:main"
 cast-runtime = "cast.runtime:main"
@@ -20,3 +29,20 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["cast*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests", "tests/python"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+asyncio_mode = "auto"
+addopts = "-v --tb=short"
+
+[tool.coverage.run]
+source = ["cast"]
+omit = ["**/__pycache__/**", "**/test_*.py"]
+
+[tool.coverage.report]
+precision = 2
+show_missing = true
+skip_covered = false
