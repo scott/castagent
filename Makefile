@@ -1,4 +1,4 @@
-.PHONY: build build:cli build:tui test test:all install install:all clean release help
+.PHONY: build build:cli build:tui test test-all install install-all clean release help
 
 # Default target
 help:
@@ -11,9 +11,9 @@ help:
 	@echo "  build:cli      Build CLI only"
 	@echo "  build:tui      Build TUI only"
 	@echo "  test           Run TypeScript test suite"
-	@echo "  test:all       Run all tests (TS + Python)"
+	@echo "  test-all       Run all tests (TS + Python)"
 	@echo "  install        Install all dependencies"
-	@echo "  install:all     Install all dependencies (alias for install)"
+	@echo "  install-all     Install all dependencies (alias for install)"
 	@echo "  clean          Clean test artifacts and build outputs"
 	@echo "  release        Create changeset and open PR"
 	@echo ""
@@ -31,14 +31,14 @@ build:tui:
 test:
 	npm test
 
-test:all:
+test-all:
 	npm test && cd python && python -m pytest tests/python -v
 
 # Install commands
 install:
 	npm install && cd typescript && npm install
 
-install:all: install
+install-all: install
 
 # Clean commands
 clean:
