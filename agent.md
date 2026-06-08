@@ -1,5 +1,80 @@
 # Agent-Cast Design Standards
 
+## Versioning
+
+This project uses Semantic Versioning (SemVer). All version bumps are managed by the coding agent during PR review.
+
+### Version Scope
+
+The following packages share the same version and must be updated together:
+- `package.json` (root)
+- `typescript/cast-cli/package.json`
+- `typescript/cast-tui/package.json`
+- `python/cast/__init__.py` (`__version__` variable)
+
+### Version Bump Types
+
+Determine the bump type from conventional commits in the PR:
+
+| Trigger | Bump Type | Example |
+|---------|-----------|---------|
+| `fix:` in commit/PR title | Patch | 0.1.0 → 0.1.1 |
+| `feat:` in commit/PR title | Minor | 0.1.0 → 0.2.0 |
+| `feat!:` or `BREAKING CHANGE:` | Major | 0.1.0 → 1.0.0 |
+
+### Version Update Steps
+
+When reviewing a PR that requires a version bump:
+
+1. **Determine bump type** from conventional commits (fix:, feat:, feat!:, BREAKING CHANGE:)
+
+2. **Update all package versions**:
+   - `package.json`: `"version": "<new_version>"`
+   - `typescript/cast-cli/package.json`: `"version": "<new_version>"`
+   - `typescript/cast-tui/package.json`: `"version": "<new_version>"`
+   - `python/cast/__init__.py`: `__version__ = "<new_version>"`
+
+3. **Update CHANGELOG.md**:
+   - Add new version section at top
+   - Include date (YYYY-MM-DD format)
+   - Group changes by type: Added, Fixed, Changed, Deprecated, Removed, Security
+   - Include PR link: `([#PR_NUMBER](https://github.com/agent-cast/cast/pull/PR_NUMBER))`
+
+4. **Create git tag** after merge (handled by GitHub Actions):
+   - Tag format: `v<version>` (e.g., `v0.2.0`)
+
+### CHANGELOG Format
+
+```markdown
+## [0.2.0] - 2026-06-15
+
+### Added
+- New deployment provider ([#42](https://github.com/agent-cast/cast/pull/42))
+
+### Fixed
+- Memory leak in agent runtime ([#43](https://github.com/agent-cast/cast/pull/43))
+```
+
+### Branch Protection
+
+All changes to `master` must go through pull requests:
+- Create feature branches from `master`
+- Open PR against `master`
+- Require at least one review before merge
+- No direct pushes to `master`
+- Squash and merge to keep history clean
+
+### Release Process
+
+1. Developer creates PR with changes
+2. Coding agent reviews PR and determines version bump
+3. Agent updates all package versions and CHANGELOG.md
+4. PR merged to `master`
+5. GitHub Actions workflow triggers on push to `master`
+6. Workflow creates git tag `v<version>` and GitHub Release
+
+---
+
 ## Modal Component Requirements
 
 All modals in the TUI must follow these standards to ensure consistency across the application.

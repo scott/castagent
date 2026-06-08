@@ -1,6 +1,6 @@
 {
   "name": "agent-cast",
-  "version": "1.0.0",
+  "version": "0.1.0",
   "description": "Cast - Agent Building & Deployment Platform",
   "private": true,
   "workspaces": [
