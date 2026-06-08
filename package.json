@@ -16,9 +16,13 @@
     "test": "nyc mocha --forbid-only 'tests/**/*.test.ts'; npm run clean:test",
     "test:clean": "npx ts-node tests/ts/cleanup-test-agents.ts && npm test",
     "clean:test": "npx ts-node tests/ts/cleanup-test-agents.ts",
-    "coverage": "nyc report --reporter=text-lcov > coverage/lcov.info"
+    "coverage": "nyc report --reporter=text-lcov > coverage/lcov.info",
+    "changeset": "changeset",
+    "version": "changeset version",
+    "release": "changeset publish"
   },
   "devDependencies": {
+    "@changesets/cli": "^2.31.0",
     "@istanbuljs/nyc-config-typescript": "^1.0.2",
     "@oclif/test": "^4.1.18",
     "@types/chai": "^5.2.3",

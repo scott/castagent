@@ -388,6 +388,36 @@ export FLY_API_TOKEN="your-token"
 export DO_API_TOKEN="your-token"  # DigitalOcean
 ```
 
+## Versioning
+
+We use [changesets](https://github.com/changesets/changesets) for automated version management. All packages in the monorepo share a unified version.
+
+### Making a Change
+
+1. Make your changes in a feature branch
+2. Run `npx changeset` to describe your change
+3. Commit the changeset file along with your code
+4. Open a PR with your changeset
+
+### Changeset Prompt Guide
+
+When running `npx changeset`:
+- **Package**: Select `*` (all packages — unified versioning)
+- **Bump type**:
+  - `patch` — Bug fixes (0.1.0 → 0.1.1)
+  - `minor` — New features (0.1.0 → 0.2.0)
+  - `major` — Breaking changes (0.1.0 → 1.0.0)
+- **Summary**: Brief description of the change
+
+### Release Process
+
+1. PR with changeset merged to `main`/`master`
+2. GitHub Actions workflow automatically:
+   - Bumps version in all package.json files
+   - Creates a git tag (e.g., `v0.2.0`)
+   - Creates a GitHub Release
+3. No manual version bumping required
+
 ## License
 
 Apache License 2.0
