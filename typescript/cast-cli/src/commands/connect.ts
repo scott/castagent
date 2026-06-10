@@ -6,45 +6,60 @@ import * as os from 'os'
 import {db} from '../lib/sqlite'
 import {keychain} from '../lib/keychain'
 import {A2AClient, A2AClientError} from '../lib/a2a/client'
+import {resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
 
 export default class Connect extends Command {
   static description = 'Connect to deployed agent'
 
   static examples = [
     '<%= config.bin %> <%= command.id %> email-agent',
+    '<%= config.bin %> <%= command.id %> abc123  # Connect by deployment SHA',
   ]
 
   static args = {
-    agent: Args.string({description: 'Agent name', required: true}),
+    agent: Args.string({description: 'Agent name or deployment SHA', required: true}),
   }
 
   static flags = {
     proxy: Flags.boolean({description: 'Use sprite proxy for sprites deployments', default: false}),
+    sha: Flags.boolean({description: 'Treat input as deployment SHA (auto-detected)', default: false}),
   }
 
   async run(): Promise<void> {
     const {args, flags} = await this.parse(Connect)
-    const agentName = args.agent
+    const target = args.agent
 
-    this.log(`Connecting to ${agentName}...`)
+    // Resolve target (SHA or agent name)
+    const resolution = resolveDeploymentTarget(target)
 
-    // Retrieve deployment info from SQLite
-    const deployment = db.getDeployment(agentName)
-    if (!deployment || !deployment.deployment_url) {
+    if (resolution.type === 'not_found') {
       // Check if there's a local agent running
-      const localAgent = db.getLocalAgent(agentName)
+      const localAgent = db.getLocalAgent(target)
       if (localAgent?.port) {
-        this.log(`No deployment found, but local agent is running on port ${localAgent.port}.`)
+        this.log(`No deployment found for '${target}', but local agent is running on port ${localAgent.port}.`)
         this.log(`Connecting to local agent instead...`)
-        await this.launchTui(agentName, `http://localhost:${localAgent.port}`)
+        await this.launchTui(target, `http://localhost:${localAgent.port}`)
         return
       }
 
+      this.error(resolution.message!)
+    }
+
+    if (resolution.type === 'ambiguous') {
+      this.error(resolution.message!)
+    }
+
+    // resolution.type is 'sha' or 'single'
+    const deployment = resolution.deployment!
+    const agentName = deployment.agent_name
+
+    this.log(`Connecting to ${agentName}...`)
+
+    if (!deployment.deployment_url) {
       this.error(
-        `No deployment found for agent '${agentName}'.\n\n` +
-        `To fix this:\n` +
-        `  1. Deploy the agent: cast deploy ${agentName}\n` +
-        `  2. Or start it locally: cast dev ${agentName} --no-tui`
+        `No deployment URL found for '${target}'.\n\n` +
+        `The deployment may be corrupted. Try redeploying with:\n` +
+        `  cast deploy ${agentName}`
       )
     }
 

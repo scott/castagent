@@ -1,0 +1,337 @@
+"""Agent releases module for semantic versioning."""
+
+import json
+import os
+import tarfile
+import shutil
+import re
+import warnings
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Dict, List, Any, Optional
+from dataclasses import dataclass, asdict
+
+AGENTS_DIR = Path.home() / ".cast" / "agents"
+
+# Deprecation warning helper
+def _emit_deprecation_warning(old_name: str, new_name: str) -> None:
+    """Emit a deprecation warning for renamed functions."""
+    warnings.warn(
+        f"'{old_name}' is deprecated. Use '{new_name}' instead.",
+        DeprecationWarning,
+        stacklevel=3
+    )
+
+
+@dataclass
+class ReleaseInfo:
+    """Information about a release."""
+    version: str  # Semantic version: "1.0", "1.6", "2.0.0"
+    change_number: int  # Which change this was based on
+    message: str
+    changelog: str
+    created_at: str
+    tarball_path: str
+
+
+def _get_releases_dir(name: str) -> Path:
+    """Get the releases directory path for an agent."""
+    return AGENTS_DIR / name / ".cast" / "releases"
+
+
+def _get_releases_json_path(name: str) -> Path:
+    """Get the releases.json path for an agent."""
+    return _get_releases_dir(name) / "releases.json"
+
+
+def _ensure_releases_dir(name: str) -> Path:
+    """Ensure the releases directory exists."""
+    releases_dir = _get_releases_dir(name)
+    releases_dir.mkdir(parents=True, exist_ok=True)
+    return releases_dir
+
+
+def validate_semver(version: str) -> bool:
+    """Validate semantic version format (1.0, 1.6, 2.0.0, etc.)."""
+    pattern = r'^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$|^(0|[1-9]\d*)\.(0|[1-9]\d*)$'
+    return bool(re.match(pattern, version))
+
+
+def get_current_release(agent_name: str) -> Optional[str]:
+    """Get the current (latest) semantic version for an agent."""
+    releases_json_path = _get_releases_json_path(agent_name)
+    if not releases_json_path.exists():
+        return None
+    with open(releases_json_path, "r") as f:
+        data = json.load(f)
+    current = data.get("current")
+    if current:
+        return current.get("version")
+    return None
+
+
+def list_releases(agent_name: str) -> List[ReleaseInfo]:
+    """List all releases for an agent."""
+    releases_json_path = _get_releases_json_path(agent_name)
+    if not releases_json_path.exists():
+        return []
+    with open(releases_json_path, "r") as f:
+        data = json.load(f)
+    releases = []
+    for r in data.get("releases", []):
+        releases.append(ReleaseInfo(**r))
+    return sorted(releases, key=lambda r: _version_tuple(r.version), reverse=True)
+
+
+def _version_tuple(version: str) -> tuple:
+    """Convert version string to tuple for sorting."""
+    parts = version.split('.')
+    return tuple(int(p) for p in parts)
+
+
+def get_release(agent_name: str, version: str) -> Optional[ReleaseInfo]:
+    """Get a specific release."""
+    releases_json_path = _get_releases_json_path(agent_name)
+    if not releases_json_path.exists():
+        return None
+    with open(releases_json_path, "r") as f:
+        data = json.load(f)
+    for r in data.get("releases", []):
+        if r.get("version") == version:
+            return ReleaseInfo(**r)
+    return None
+
+
+def get_latest_release_change_number(agent_name: str) -> int:
+    """Get the change number of the latest release (for changelog generation)."""
+    releases = list_releases(agent_name)
+    if releases:
+        return releases[0].change_number
+    return 0
+
+
+def generate_changelog(agent_name: str, since_change: int = 0) -> str:
+    """Generate changelog from changes since a given change number.
+
+    Reads from the changes.json file (formerly versions.json).
+    Groups changes by type and generates a human-readable summary.
+    """
+    changes_json_path = AGENTS_DIR / agent_name / ".cast" / "changes" / "changes.json"
+    if not changes_json_path.exists():
+        return ""
+
+    with open(changes_json_path, "r") as f:
+        data = json.load(f)
+
+    changes = data.get("versions", [])
+
+    # Filter changes after since_change
+    relevant_changes = [c for c in changes if c.get("id", 0) > since_change]
+
+    if not relevant_changes:
+        return ""
+
+    # Group by message keywords
+    features = []
+    improvements = []
+    patches = []
+
+    for change in relevant_changes:
+        msg = change.get("message", "").lower()
+        if "added" in msg or "new" in msg or "create" in msg:
+            features.append(f"- {change.get('message')}")
+        elif "updated" in msg or "change" in msg:
+            improvements.append(f"- {change.get('message')}")
+        else:
+            patches.append(f"- {change.get('message')}")
+
+    lines = []
+    if features:
+        lines.append("### Features")
+        lines.extend(features)
+        lines.append("")
+    if improvements:
+        lines.append("### Improvements")
+        lines.extend(improvements)
+        lines.append("")
+    if patches:
+        lines.append("### Bug Fixes")
+        lines.extend(patches)
+        lines.append("")
+
+    return "\n".join(lines).strip()
+
+
+def suggest_version(agent_name: str) -> Dict[str, str]:
+    """Suggest next semantic version based on recent changes.
+
+    Returns dict with 'patch', 'minor', 'major' suggestions.
+    Detects breaking changes (removed tools, permissions changes).
+    """
+    current = get_current_release(agent_name)
+    if not current:
+        return {"patch": "0.1.0", "minor": "0.1.0", "major": "1.0.0"}
+
+    parts = current.split('.')
+    major = int(parts[0])
+    minor = int(parts[1]) if len(parts) > 1 else 0
+    patch = int(parts[2]) if len(parts) > 2 else 0
+
+    # Check for breaking changes in recent changes
+    latest_change = _get_latest_change_number(agent_name)
+    if latest_change > 0:
+        changes_json_path = AGENTS_DIR / agent_name / ".cast" / "changes" / "changes.json"
+        if changes_json_path.exists():
+            with open(changes_json_path, "r") as f:
+                data = json.load(f)
+            # Look for breaking change indicators
+            for change in data.get("versions", []):
+                msg = change.get("message", "").lower()
+                if "remove" in msg or "delete" in msg or "break" in msg:
+                    return {
+                        "patch": f"{major}.{minor}.{patch + 1}",
+                        "minor": f"{major}.{minor + 1}.0",
+                        "major": f"{major + 1}.0.0",
+                        "breaking": True
+                    }
+
+    return {
+        "patch": f"{major}.{minor}.{patch + 1}",
+        "minor": f"{major}.{minor + 1}.0",
+        "major": f"{major + 1}.0.0"
+    }
+
+
+def _get_latest_change_number(agent_name: str) -> int:
+    """Get the current (latest) change number."""
+    changes_json_path = AGENTS_DIR / agent_name / ".cast" / "changes" / "changes.json"
+    if not changes_json_path.exists():
+        return 0
+    with open(changes_json_path, "r") as f:
+        data = json.load(f)
+    return data.get("current", 0)
+
+
+def create_release(agent_name: str, version: str, message: str = "", agents_dir: Optional[Path] = None) -> ReleaseInfo:
+    """Create a semantic release snapshot.
+
+    Args:
+        agent_name: The name of the agent.
+        version: The semantic version (e.g., "1.6").
+        message: Optional release message.
+        agents_dir: Optional path to agents directory.
+
+    Returns:
+        ReleaseInfo about the created release.
+    """
+    if agents_dir is None:
+        agents_dir = AGENTS_DIR
+    agent_path = agents_dir / agent_name
+
+    if not agent_path.exists():
+        raise ValueError(f"Agent '{agent_name}' does not exist")
+
+    if not validate_semver(version):
+        raise ValueError(f"Invalid semantic version: '{version}'")
+
+    # Ensure releases directory exists
+    releases_dir = _ensure_releases_dir(agent_name)
+
+    # Get current change number
+    change_number = _get_latest_change_number(agent_name)
+
+    # Generate timestamp
+    timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
+
+    # Files to include in the snapshot (same as versioning.py)
+    files_to_snapshot = [
+        "agent.yaml",
+        "instructions.md",
+    ]
+
+    mcp_dir = agent_path / "mcp"
+    if mcp_dir.exists() and any(mcp_dir.iterdir()):
+        files_to_snapshot.append("mcp")
+
+    tools_dir = agent_path / "tools"
+    if tools_dir.exists() and any(tools_dir.iterdir()):
+        files_to_snapshot.append("tools")
+
+    # Create tar.gz archive
+    tarball_filename = f"{version}.tar.gz"
+    tarball_path = releases_dir / tarball_filename
+
+    with tarfile.open(tarball_path, "w:gz") as tar:
+        for file_or_dir in files_to_snapshot:
+            file_path = agent_path / file_or_dir
+            if file_path.exists():
+                tar.add(file_path, arcname=file_or_dir)
+
+    # Generate changelog
+    last_release_change = get_latest_release_change_number(agent_name)
+    changelog = generate_changelog(agent_name, last_release_change)
+
+    # Create release info
+    release_info = ReleaseInfo(
+        version=version,
+        change_number=change_number,
+        message=message or f"Release {version}",
+        changelog=changelog,
+        created_at=timestamp,
+        tarball_path=str(tarball_path)
+    )
+
+    # Update releases.json
+    releases_json_path = _get_releases_json_path(agent_name)
+    if releases_json_path.exists():
+        with open(releases_json_path, "r") as f:
+            releases_data = json.load(f)
+    else:
+        releases_data = {"releases": [], "current": None}
+
+    releases_data["releases"].append(asdict(release_info))
+    releases_data["current"] = {"version": version, "change_number": change_number}
+
+    with open(releases_json_path, "w") as f:
+        json.dump(releases_data, f, indent=2)
+
+    # Update agent.yaml version
+    agent_yaml_path = agent_path / "agent.yaml"
+    if agent_yaml_path.exists():
+        import yaml
+        with open(agent_yaml_path, "r") as f:
+            yaml_data = yaml.safe_load(f) or {}
+        yaml_data["version"] = version
+        with open(agent_yaml_path, "w") as f:
+            yaml.dump(yaml_data, f, default_flow_style=False, sort_keys=False)
+
+    return release_info
+
+
+def extract_release(agent_name: str, version: str, target_dir: Path) -> None:
+    """Extract a release tarball to a directory.
+
+    Args:
+        agent_name: The name of the agent.
+        version: The semantic version to extract.
+        target_dir: The directory to extract to.
+    """
+    release = get_release(agent_name, version)
+    if not release:
+        raise ValueError(f"Release {version} not found for agent '{agent_name}'")
+
+    tarball_path = Path(release.tarball_path)
+    if not tarball_path.exists():
+        raise FileNotFoundError(f"Release tarball not found: {tarball_path}")
+
+    # Clear existing files in target_dir (except .cast, .git)
+    for item in target_dir.iterdir():
+        if item.name not in ('.cast', '.git'):
+            if item.is_dir():
+                shutil.rmtree(item)
+            else:
+                item.unlink()
+
+    # Extract tarball
+    with tarfile.open(tarball_path, "r:gz") as tar:
+        tar.extractall(target_dir)

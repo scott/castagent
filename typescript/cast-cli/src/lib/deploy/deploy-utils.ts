@@ -22,8 +22,56 @@ export interface VolumeConfig {
   config?: Record<string, any>
 }
 
+export interface DeploymentResolution {
+  type: 'sha' | 'single' | 'ambiguous' | 'not_found'
+  deployment?: any
+  deployments?: any[]
+  message?: string
+}
+
+// Check if input matches SHA pattern (6 lowercase alphanumeric chars)
+export function isShaPattern(input: string): boolean {
+  return /^[a-z0-9]{6}$/.test(input)
+}
+
+// Resolve deployment target - tries SHA first, then agent name
+export function resolveDeploymentTarget(input: string): DeploymentResolution {
+  // Try SHA lookup first
+  if (isShaPattern(input)) {
+    const deployment = db.getDeploymentBySha(input)
+    if (deployment) {
+      return { type: 'sha', deployment }
+    }
+    return { type: 'not_found', message: `No deployment found for '${input}'. Use 'cast deploy' to deploy.` }
+  }
+
+  // Try agent name lookup
+  const deployments = db.listDeployments(input)
+  if (deployments.length === 0) {
+    return { type: 'not_found', message: `No deployment found for '${input}'. Use 'cast deploy' to deploy.` }
+  }
+  if (deployments.length === 1) {
+    return { type: 'single', deployment: deployments[0] }
+  }
+
+  // Multiple deployments - return ambiguous with list
+  const shaList = deployments.map(d => d.id).join(', ')
+  return {
+    type: 'ambiguous',
+    deployments,
+    message: `Multiple deployments found for '${input}'. Use SHA: ${shaList}`
+  }
+}
+
 export function generateDeploymentId(): string {
   return crypto.randomUUID()
+}
+
+// Generate deployment SHA (6 chars, lowercase alphanumeric)
+export function generateDeploymentSha(agentName: string): string {
+  const hash = crypto.createHash('sha256')
+  hash.update(agentName + Date.now().toString() + crypto.randomBytes(16).toString('hex'))
+  return hash.digest('hex').substring(0, 6).toLowerCase()
 }
 
 export function getAgentPath(agentName: string): string {
@@ -225,8 +273,19 @@ export function saveDeployment(
   tokenHash: string,
   volumeId?: string,
   volumeConfig?: string,
-): void {
+  deployedVersion?: string,
+): string {
+  // Check if SHA was passed via environment variable (from deploy.ts)
+  const envSha = process.env.CAST_DEPLOYMENT_SHA
+  if (envSha && isShaPattern(envSha)) {
+    db.createDeployment(envSha, agentName, provider, url, tokenHash, volumeId, volumeConfig, deployedVersion)
+    return envSha
+  }
+  // Otherwise, let db.setDeployment auto-generate SHA
   db.setDeployment(agentName, provider, url, tokenHash, volumeId, volumeConfig)
+  // Return the SHA that was generated (query the most recent deployment)
+  const deployment = db.getActiveDeployment(agentName)
+  return deployment?.id || ''
 }
 
 export function getOpenRouterApiKey(): string | undefined {

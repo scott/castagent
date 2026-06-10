@@ -9,7 +9,10 @@ export interface DbApi {
   getAgent(name: string): any | null
   getLocalAgent(name: string): any | null
   getDeployment(name: string): any | null
+  getDeploymentBySha(sha: string): any | null
+  listDeployments(name: string): any[]
   removeLocalAgent(name: string): void
+  listAllReleases(): any[]
 }
 
 let dbInstance: DbApi | null = null
@@ -30,10 +33,20 @@ async function createBunDb(): Promise<DbApi> {
       return db.query('SELECT * FROM local_agents WHERE agent_name = ?').get(name) || null
     },
     getDeployment(name: string) {
-      return db.query('SELECT * FROM deployments WHERE agent_name = ?').get(name) || null
+      // Get most recent non-deleted deployment for agent name
+      return db.query('SELECT * FROM deployments WHERE agent_name = ? AND deleted_at IS NULL ORDER BY deployed_at DESC LIMIT 1').get(name) || null
+    },
+    getDeploymentBySha(sha: string) {
+      return db.query('SELECT * FROM deployments WHERE id = ? AND deleted_at IS NULL').get(sha) || null
+    },
+    listDeployments(name: string) {
+      return db.query('SELECT * FROM deployments WHERE agent_name = ? AND deleted_at IS NULL ORDER BY deployed_at DESC').all(name)
     },
     removeLocalAgent(name: string) {
       db.query('DELETE FROM local_agents WHERE agent_name = ?').run(name)
+    },
+    listAllReleases() {
+      return db.query('SELECT * FROM releases ORDER BY created_at DESC').all()
     },
   }
 }

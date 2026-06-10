@@ -72,15 +72,18 @@ class TestVersioning:
         assert result.message == "Initial version"
         assert result.timestamp is not None
 
-        # Check versions.json was created
-        versions_json_path = temp_agents_dir / test_agent / ".cast" / "versions" / "versions.json"
-        assert versions_json_path.exists()
+        # Check changes.json was created (new canonical location)
+        changes_json_path = temp_agents_dir / test_agent / ".cast" / "changes" / "changes.json"
+        assert changes_json_path.exists()
 
-        with open(versions_json_path) as f:
-            versions_data = json.load(f)
+        with open(changes_json_path) as f:
+            changes_data = json.load(f)
 
-        assert versions_data["current"] == 1
-        assert len(versions_data["versions"]) == 1
+        assert changes_data["current"] == 1
+        assert len(changes_data["versions"]) == 1
+
+        # Backward compat: versions.json is also written if it exists
+        # (it doesn't here, so the file should not be present)
 
     def test_create_multiple_versions(self, test_agent, temp_agents_dir):
         """Test creating multiple versions."""
@@ -96,12 +99,12 @@ class TestVersioning:
         v3 = versioning.create_version(test_agent, source="cli", message="Updated instructions")
         assert v3.id == 3
 
-        # Verify all versions are tracked
+        # Verify all versions are tracked. list_versions returns newest first.
         versions = versioning.list_versions(test_agent)
         assert len(versions) == 3
-        assert versions[0].id == 1
+        assert versions[0].id == 3
         assert versions[1].id == 2
-        assert versions[2].id == 3
+        assert versions[2].id == 1
 
     def test_list_versions_empty(self, temp_agents_dir):
         """Test listing versions for agent that doesn't exist."""
@@ -112,8 +115,8 @@ class TestVersioning:
         """Test that version archive is created."""
         versioning.create_version(test_agent, source="create", message="Initial version")
 
-        # Check archive exists
-        archive_path = temp_agents_dir / test_agent / ".cast" / "versions" / "001.tar.gz"
+        # Check archive exists in canonical changes/ location
+        archive_path = temp_agents_dir / test_agent / ".cast" / "changes" / "001.tar.gz"
         assert archive_path.exists()
         assert archive_path.stat().st_size > 0
 
@@ -136,10 +139,12 @@ class TestVersioning:
         # Should have created a new version (version 3)
         assert revert_result.id == 3
 
-        # Verify we have 3 versions now
+        # Verify we have 3 versions now. list_versions returns newest first,
+        # so the revert entry is at index 0.
         versions = versioning.list_versions(test_agent)
         assert len(versions) == 3
-        assert versions[2].message == "Reverted to v1"
+        assert versions[0].id == 3
+        assert versions[0].message == "Reverted to v1"
 
     def test_revert_restores_files(self, test_agent, temp_agents_dir):
         """Test that reverting actually restores the files."""
@@ -206,8 +211,8 @@ class TestVersioning:
         # Create version
         versioning.create_version(test_agent, source="create", message="With MCP")
 
-        # Check archive contains mcp directory
-        archive_path = temp_agents_dir / test_agent / ".cast" / "versions" / "001.tar.gz"
+        # Check archive contains mcp directory (new canonical location)
+        archive_path = temp_agents_dir / test_agent / ".cast" / "changes" / "001.tar.gz"
         import tarfile
 
         with tarfile.open(archive_path) as tar:
@@ -226,8 +231,8 @@ class TestVersioning:
         # Create version
         versioning.create_version(test_agent, source="create", message="With tools")
 
-        # Check archive contains tools directory
-        archive_path = temp_agents_dir / test_agent / ".cast" / "versions" / "001.tar.gz"
+        # Check archive contains tools directory (new canonical location)
+        archive_path = temp_agents_dir / test_agent / ".cast" / "changes" / "001.tar.gz"
         import tarfile
 
         with tarfile.open(archive_path) as tar:

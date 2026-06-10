@@ -46,11 +46,11 @@ export default class Describe extends Command {
 
     // Get status from database
     const localAgent = db.getLocalAgent(agentName)
-    const deployment = db.getDeployment(agentName)
+    const deployments = db.listDeployments(agentName)
 
     let status = '[local: stopped]'
-    if (deployment?.deployment_url) {
-      status = `[deployed: ${deployment.provider}]`
+    if (deployments.length > 0) {
+      status = `[deployed: ${deployments.length} deployment(s)]`
     } else if (localAgent?.port) {
       status = `[local: running on port ${localAgent.port}]`
     }
@@ -72,6 +72,29 @@ export default class Describe extends Command {
     this.log('🟢 Status')
     this.log('───────────────────────────────────────────────────────────────')
     this.log(`  ${status}`)
+    this.log('')
+
+    // Deployment
+    this.log('🚀 Deployment')
+    this.log('───────────────────────────────────────────────────────────────')
+    if (deployments.length > 0) {
+      this.log(`  SHA       PROVIDER   VERSION   DEPLOYED               URL`)
+      this.log(`  ──────────────────────────────────────────────────────────────────────────────`)
+      for (const deployment of deployments) {
+        const deployedDate = deployment.deployed_at
+          ? new Date(deployment.deployed_at).toLocaleDateString('en-US', {year: 'numeric', month: 'short', day: 'numeric'})
+          : 'unknown'
+        const version = deployment.deployed_version || 'latest'
+        const url = deployment.deployment_url || 'N/A'
+        const provider = (deployment.provider || 'unknown').padEnd(8)
+        this.log(`  ${deployment.id}  ${provider}   ${version.padEnd(8)} ${deployedDate.padEnd(20)} ${url}`)
+      }
+      this.log('')
+      this.log(`  Use 'cast connect <sha>' to connect to a specific deployment`)
+    } else {
+      this.log('  Status: Not deployed')
+      this.log(`  (Run 'cast deploy ${agentName}' to deploy)`)
+    }
     this.log('')
 
     // Model

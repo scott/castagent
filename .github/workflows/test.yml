@@ -1,0 +1,369 @@
+name: Test Coverage
+
+on:
+  push:
+    branches:
+      - main
+      - master
+  pull_request:
+    types:
+      - opened
+      - synchronize
+      - reopened
+  workflow_dispatch:
+
+env:
+  COVERAGE_THRESHOLD: 70
+
+jobs:
+  # ============================================================================
+  # Test and Coverage Job
+  # ============================================================================
+  test-coverage:
+    name: Test & Coverage (Node ${{ matrix.node }}, Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: [18, 20]
+        python: ["3.11", "3.12"]
+
+    steps:
+      # Checkout code
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      # Setup Node.js
+      - name: Setup Node.js ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+          cache: "npm"
+          cache-dependency-path: typescript/**/package-lock.json
+
+      # Setup Python
+      - name: Setup Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+          cache: "pip"
+          cache-dependency-path: python/**/requirements*.txt
+
+      # =========================================================================
+      # TypeScript Tests
+      # =========================================================================
+      - name: Install TypeScript dependencies
+        run: npm install
+
+      - name: Install TypeScript workspace dependencies
+        run: |
+          cd typescript
+          npm install
+
+      - name: TypeScript compilation check
+        run: npx tsc --noEmit
+        working-directory: typescript
+
+      - name: Run TypeScript tests with coverage
+        run: npm test
+        working-directory: typescript
+        env:
+          NODE_OPTIONS: "--coverage"
+          NYC_CONFIG: '{ "report-dir": "coverage/ts", "temp-dir": ".nyc_output" }'
+
+      - name: Upload TypeScript coverage artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: typescript-coverage-node-${{ matrix.node }}
+          path: |
+            typescript/coverage/
+            typescript/.nyc_output/
+          retention-days: 7
+
+      # =========================================================================
+      # Python Tests
+      # =========================================================================
+      - name: Install Python test dependencies
+        run: |
+          pip install --upgrade pip
+          pip install pytest pytest-cov pytest-asyncio pytest-mock httpx
+        working-directory: python
+
+      - name: Run Python tests with coverage
+        run: |
+          python -m pytest tests/python \
+            --cov=cast \
+            --cov-report=xml \
+            --cov-report=html \
+            --cov-report=term-missing \
+            -v
+        working-directory: python
+
+      - name: Upload Python coverage artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: python-coverage-py-${{ matrix.python }}
+          path: |
+            python/coverage/
+            python/.coverage*
+          retention-days: 7
+
+      # =========================================================================
+      # Upload Combined Coverage
+      # =========================================================================
+      - name: Combine coverage reports
+        run: |
+          # Install coverage tools
+          pip install coverage-python-anywhere || true
+
+          # Create a merged coverage file if both exist
+          if [ -f "python/coverage.xml" ] && [ -f "typescript/coverage/lcov.info" ]; then
+            echo "Both TypeScript and Python coverage reports available"
+            ls -la python/coverage/
+            ls -la typescript/coverage/
+          fi
+        working-directory: python
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v5
+        if: github.event_name == 'pull_request'
+        with:
+          files: ./python/coverage.xml
+          fail_ci_if_error: false
+          verbose: true
+
+      - name: Upload test results artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results-node-${{ matrix.node }}-py-${{ matrix.python }}
+          path: |
+            typescript/mochawesome-report/ (if generated)
+            python/test-results/ (if generated)
+          retention-days: 14
+
+  # ============================================================================
+  # Quality Checks Job
+  # ============================================================================
+  quality-checks:
+    name: Quality Checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: typescript/**/package-lock.json
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      # TypeScript linting
+      - name: Install TypeScript dependencies
+        run: |
+          npm install
+          cd typescript && npm install
+
+      - name: Check TypeScript compilation
+        run: npx tsc --noEmit
+        working-directory: typescript
+
+      # Python linting
+      - name: Install Python linting tools
+        run: |
+          pip install ruff flake8 mypy || true
+        working-directory: python
+
+      - name: Run Python linting
+        run: |
+          if command -v ruff &> /dev/null; then
+            ruff check . || true
+          elif command -v flake8 &> /dev/null; then
+            flake8 . --max-line-length=120 || true
+          fi
+        working-directory: python
+
+      - name: Run Python type checking
+        run: |
+          if command -v mypy &> /dev/null; then
+            mypy cast --ignore-missing-imports || true
+          fi
+        working-directory: python
+
+  # ============================================================================
+  # Coverage Summary and PR Comment
+  # ============================================================================
+  coverage-summary:
+    name: Coverage Summary
+    runs-on: ubuntu-latest
+    needs: [test-coverage]
+    if: github.event_name == 'pull_request'
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Download all coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: coverage-reports
+          merge-multiple: true
+
+      - name: Generate coverage summary
+        run: |
+          echo "## Test Coverage Summary" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### TypeScript Coverage" >> $GITHUB_STEP_SUMMARY
+
+          # Check for TypeScript coverage reports
+          if [ -d "coverage-reports" ]; then
+            echo "Coverage reports downloaded:" >> $GITHUB_STEP_SUMMARY
+            ls -la coverage-reports/ >> $GITHUB_STEP_SUMMARY
+
+            # Parse and display coverage if available
+            for dir in coverage-reports/*/; do
+              if [ -f "${dir}coverage/lcov.info" ] || [ -f "${dir}coverage.xml" ]; then
+                echo "- ${dir}" >> $GITHUB_STEP_SUMMARY
+              fi
+            done
+          fi
+
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Detailed Reports" >> $GITHUB_STEP_SUMMARY
+          echo "Artifacts are available in the workflow run." >> $GITHUB_STEP_SUMMARY
+
+      - name: Post coverage comment on PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            // Read coverage reports
+            let coverageInfo = '## Test Coverage Report\n\n';
+            coverageInfo += '| Component | Coverage |\n';
+            coverageInfo += '|-----------|----------|\n';
+
+            const coverageDir = 'coverage-reports';
+            if (fs.existsSync(coverageDir)) {
+              const artifacts = fs.readdirSync(coverageDir);
+
+              // Group by type
+              const tsCoverage = artifacts.filter(a => a.includes('typescript'));
+              const pyCoverage = artifacts.filter(a => a.includes('python'));
+
+              if (tsCoverage.length > 0) {
+                coverageInfo += `| TypeScript | ${tsCoverage.length} node version(s) tested |\n`;
+              }
+              if (pyCoverage.length > 0) {
+                coverageInfo += `| Python | ${pyCoverage.length} Python version(s) tested |\n`;
+              }
+
+              coverageInfo += '\nDetailed coverage reports are attached to the workflow run.\n';
+            } else {
+              coverageInfo += 'No coverage reports available.\n';
+            }
+
+            // Post comment
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.payload.pull_request.number,
+              body: coverageInfo
+            });
+
+  # ============================================================================
+  # Coverage Threshold Check (only on main/master)
+  # ============================================================================
+  coverage-threshold:
+    name: Coverage Threshold Check
+    runs-on: ubuntu-latest
+    needs: [test-coverage]
+    # Only fail on main/master branches unless explicitly requested
+    if: |
+      (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/master') ||
+      contains(github.event.head_commit.message, '[ci enforce-coverage]') ||
+      contains(github.event.pull_request.title, '[enforce-coverage]')
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Download coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: coverage-reports
+
+      - name: Check coverage threshold
+        run: |
+          COVERAGE_THRESHOLD=${{ env.COVERAGE_THRESHOLD }}
+
+          echo "Checking coverage against threshold: ${COVERAGE_THRESHOLD}%"
+
+          # Check Python coverage
+          if [ -f "coverage-reports/python/coverage.xml" ]; then
+            echo "Checking Python coverage..."
+            # Parse XML for total coverage
+            PYTHON_COVERAGE=$(grep -oP 'line-rate="\K[0-9.]+' coverage-reports/python/coverage.xml | head -1)
+            PYTHON_PERCENTAGE=$(echo "$PYTHON_COVERAGE * 100" | bc 2>/dev/null || echo "unknown")
+            echo "Python coverage: ${PYTHON_PERCENTAGE}%"
+
+            if [ "$PYTHON_PERCENTAGE" != "unknown" ]; then
+              IS_PASSING=$(echo "$PYTHON_PERCENTAGE >= $COVERAGE_THRESHOLD" | bc)
+              if [ "$IS_PASSING" -eq 0 ]; then
+                echo "FAIL: Python coverage (${PYTHON_PERCENTAGE}%) is below threshold (${COVERAGE_THRESHOLD}%)"
+                exit 1
+              fi
+            fi
+          fi
+
+          # Check TypeScript coverage
+          if [ -f "coverage-reports/typescript/coverage/lcov.info" ]; then
+            echo "Checking TypeScript coverage..."
+            # Parse lcov.info for total coverage
+            TYPESCRIPT_COVERAGE=$(grep -A 1 "SF:" coverage-reports/typescript/coverage/lcov.info 2>/dev/null | head -20)
+            echo "TypeScript coverage artifacts found"
+          fi
+
+          echo "Coverage threshold check passed!"
+
+  # ============================================================================
+  # Build Verification
+  # ============================================================================
+  build-verification:
+    name: Build Verification
+    runs-on: ubuntu-latest
+    needs: [test-coverage]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Setup Node.js 20.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: typescript/**/package-lock.json
+
+      - name: Install dependencies
+        run: |
+          npm install
+          cd typescript && npm install
+
+      - name: Build TypeScript projects
+        run: |
+          npm run build
+        working-directory: typescript
+
+      - name: Verify build artifacts
+        run: |
+          echo "Checking build artifacts..."
+          [ -d "typescript/cast-cli/dist" ] && echo "✓ cast-cli built" || echo "✗ cast-cli build missing"
+          [ -d "typescript/cast-tui/dist" ] && echo "✓ cast-tui built" || echo "✗ cast-tui build missing"

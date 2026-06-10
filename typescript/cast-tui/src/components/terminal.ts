@@ -6,6 +6,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import clipboardy from 'clipboardy'
 import yaml from 'yaml'
+import Database from 'better-sqlite3'
 
 // Get agent description from agent.yaml
 function getAgentDescription(agentName: string): string {
@@ -24,6 +25,40 @@ function getAgentDescription(agentName: string): string {
     // Ignore errors, return empty string
   }
   return ''
+}
+
+// Get deployed version from SQLite database
+function getDeployedVersion(agentName: string): number | null {
+  try {
+    const dbPath = path.join(os.homedir(), '.cast', 'cast.db')
+    if (!fs.existsSync(dbPath)) {
+      return null
+    }
+    const db = new Database(dbPath, {readonly: true})
+    const stmt = db.prepare('SELECT deployed_version FROM deployments WHERE agent_name = ?')
+    const row = stmt.get(agentName) as any
+    db.close()
+    return row?.deployed_version ?? null
+  } catch {
+    return null
+  }
+}
+
+// Get deployment info from SQLite database
+function getDeploymentInfo(agentName: string): {deployment_url: string, provider: string} | null {
+  try {
+    const dbPath = path.join(os.homedir(), '.cast', 'cast.db')
+    if (!fs.existsSync(dbPath)) {
+      return null
+    }
+    const db = new Database(dbPath, {readonly: true})
+    const stmt = db.prepare('SELECT deployment_url, provider FROM deployments WHERE agent_name = ?')
+    const row = stmt.get(agentName) as any
+    db.close()
+    return row ?? null
+  } catch {
+    return null
+  }
 }
 
 // List available agents from ~/.cast/agents/
@@ -217,21 +252,42 @@ async function showAgentSelection(
     outputScroll.add(headerText)
 
     const sepText = new TextRenderable(renderer, {
-      content: new StyledText([dim('────────────────────────────────')]),
+      content: new StyledText([dim('─────────────────────────────────────────')]),
     })
     outputScroll.add(sepText)
 
-    // Agent list with selection indicator (no numbers)
+    // Column header
+    const colHeaderText = new TextRenderable(renderer, {
+      content: new StyledText([dim('  Agent Name        Version   Status')]),
+    })
+    outputScroll.add(colHeaderText)
+
+    const colSepText = new TextRenderable(renderer, {
+      content: new StyledText([dim('  ─────────────────────────────────────────')]),
+    })
+    outputScroll.add(colSepText)
+
+    // Agent list with selection indicator
     for (let i = 0; i < validAgents.length; i++) {
       const name = validAgents[i]
       const isSelected = i === selectedIndex
       const prefix = isSelected ? cyan('▸ ') : white('  ')
       const nameColor = isSelected ? cyan : white
-      const description = getAgentDescription(name)
-      const descText = description ? dim(` — ${description}`) : dim('')
 
+      // Get deployed version
+      const deployedVersion = getDeployedVersion(name)
+      const versionStr = deployedVersion !== null ? green(`v${deployedVersion}`) : dim('-')
+
+      // Determine status
+      const deployment = getDeploymentInfo(name)
+      const statusStr = deployment?.deployment_url
+        ? green('deployed')
+        : dim('not deployed')
+
+      // Pad columns for alignment
+      const paddedName = name.padEnd(15)
       const lineText = new TextRenderable(renderer, {
-        content: new StyledText([prefix, nameColor(name), descText]),
+        content: new StyledText([prefix, nameColor(paddedName), dim('  '), versionStr, dim('  '), statusStr]),
       })
       outputScroll.add(lineText)
     }
@@ -375,8 +431,9 @@ export async function handleDeployModal(
     return
   }
 
-  // Build the deploy command
-  const args = ['deploy', agentName, '--provider', provider]
+  // Build the deploy command - use --force to avoid interactive prompts
+  // since TUI cannot handle stdin for child processes
+  const args = ['deploy', agentName, '--provider', provider, '--force']
 
   // Create the modal (centered in terminal)
   const modal = createModal(renderer, prevFocused, {

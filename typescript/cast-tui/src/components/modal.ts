@@ -121,6 +121,7 @@ export function createModal(
   }
 
   box.handleKeyPress = function (key: KeyEvent): boolean {
+    // Debug logging for key events
     if (key.name === 'escape') {
       hide()
       return true

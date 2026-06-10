@@ -52,6 +52,13 @@ describe('Deploy Command', () => {
       expect(DeployCommand.flags.port.description).to.be.a('string')
       expect(DeployCommand.flags.port.default).to.equal(8080)
     })
+
+    it('should have force flag with description', () => {
+      expect(DeployCommand.flags.force).to.be.an('object')
+      expect(DeployCommand.flags.force.description).to.be.a('string')
+      expect(DeployCommand.flags.force.description?.length).to.be.greaterThan(0)
+      expect(DeployCommand.flags.force.default).to.equal(false)
+    })
   })
 
   describe('examples', () => {
@@ -126,14 +133,29 @@ describe('Deploy Command - Error Cases', () => {
 describe('Deploy Command - Instance Methods', () => {
   let instance: any
   let sandbox: sinon.SinonSandbox
+  let originalIsTTY: boolean | undefined
 
   beforeEach(() => {
     sandbox = sinon.createSandbox()
     instance = new DeployCommand(['deploy', 'test-agent'], {} as any)
+    // Mock process.stdin to be a TTY for interactive prompt tests
+    // Use Object.defineProperty because isTTY is a getter on the stdin object
+    originalIsTTY = process.stdin.isTTY
+    Object.defineProperty(process.stdin, 'isTTY', {
+      get: () => true,
+      configurable: true,
+    })
   })
 
   afterEach(() => {
     sandbox.restore()
+    // Restore original isTTY value
+    if (originalIsTTY !== undefined) {
+      Object.defineProperty(process.stdin, 'isTTY', {
+        get: () => originalIsTTY,
+        configurable: true,
+      })
+    }
   })
 
   describe('prompt method', () => {
@@ -224,6 +246,15 @@ describe('Deploy Command - Instance Methods', () => {
 
       const result = await instance.confirm('Continue?')
       expect(result).to.equal(false)
+    })
+
+    it('should return true immediately when force is true', async () => {
+      // When force is true, it should skip the prompt
+      const logSpy = sandbox.spy(instance, 'log')
+      const result = await instance.confirm('Continue?', true)
+      expect(result).to.equal(true)
+      // Should log that force is set
+      expect(logSpy.calledWith(sinon.match(/force flag.*set.*assuming yes/i))).to.be.true
     })
   })
 

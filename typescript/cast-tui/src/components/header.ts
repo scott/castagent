@@ -8,12 +8,20 @@ export interface HeaderComponent {
   setMode(mode: Mode): void
   setAgentName(name: string): void
   setUiMode(mode: UiMode): void
+  setDeployedVersion(version: number | null): void
 }
 
-export function createHeader(ctx: any, agentName: string, initialMode: Mode, uiMode: UiMode): HeaderComponent {
+export function createHeader(
+  ctx: any,
+  agentName: string,
+  initialMode: Mode,
+  uiMode: UiMode,
+  deployedVersion?: number | null,
+): HeaderComponent {
   const isProduction = uiMode === 'production'
   const backgroundColor = isProduction ? '#10B981' : '#8B5CF6'
   let currentMode: Mode = initialMode
+  let currentDeployedVersion: number | null = deployedVersion ?? null
 
   const box = new BoxRenderable(ctx, {
     width: '100%',
@@ -28,7 +36,7 @@ export function createHeader(ctx: any, agentName: string, initialMode: Mode, uiM
   })
 
   const nameText = new TextRenderable(ctx, {
-    content: new StyledText([white('\u25cf '), white(agentName)]),
+    content: createNameStyledText(agentName, currentDeployedVersion),
   })
 
   const modeText = new TextRenderable(ctx, {
@@ -44,7 +52,7 @@ export function createHeader(ctx: any, agentName: string, initialMode: Mode, uiM
   }
 
   function setAgentName(name: string) {
-    nameText.content = new StyledText([white('\u25cf '), white(name)])
+    nameText.content = createNameStyledText(name, currentDeployedVersion)
   }
 
   function setUiMode(newUiMode: UiMode) {
@@ -54,7 +62,12 @@ export function createHeader(ctx: any, agentName: string, initialMode: Mode, uiM
     modeText.content = createModeStyledText(currentMode, newIsProduction)
   }
 
-  return {box, setMode, setAgentName, setUiMode}
+  function setDeployedVersion(version: number | null) {
+    currentDeployedVersion = version
+    nameText.content = createNameStyledText(agentName, version)
+  }
+
+  return {box, setMode, setAgentName, setUiMode, setDeployedVersion}
 }
 
 function createModeStyledText(mode: Mode, isProduction: boolean): StyledText {
@@ -67,4 +80,12 @@ function createModeStyledText(mode: Mode, isProduction: boolean): StyledText {
   }
 
   return new StyledText([yellow('[BUILD]')])
+}
+
+function createNameStyledText(agentName: string, deployedVersion: number | null): StyledText {
+  const parts = [white('\u25cf '), white(agentName)]
+  if (deployedVersion !== null) {
+    parts.push(white(` (v${deployedVersion})`))
+  }
+  return new StyledText(parts)
 }

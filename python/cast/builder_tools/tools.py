@@ -507,6 +507,46 @@ def recommend_model(requirements: str) -> str:
 
 
 @tool
+def create_release(name: str, version: str, message: str = "") -> str:
+    """
+    Create a semantic release snapshot for the agent.
+
+    This creates a point-in-time snapshot that can be deployed later.
+    Releases are stored in ~/.cast/agents/<name>/.cast/releases/
+
+    Args:
+        name: The name of the agent to release.
+        version: The semantic version (e.g., '1.0', '1.6', '2.0.0').
+        message: Optional release message (default: "Release {version}").
+
+    Returns:
+        A confirmation message with release details.
+    """
+    from cast.releases import create_release as py_create_release, validate_semver
+
+    # Validate agent exists
+    _ensure_agent_exists(name)
+
+    # Validate semver
+    if not validate_semver(version):
+        return f"Invalid semantic version: '{version}'. Expected format: 1.0, 1.6, 2.0.0"
+
+    try:
+        release_info = py_create_release(name, version, message)
+
+        # Return detailed success message
+        result = f"Release {release_info.version} created successfully!\n"
+        result += f"  Change: v{release_info.change_number}\n"
+        result += f"  Tarball: {release_info.tarball_path}\n"
+        if release_info.changelog:
+            result += f"\nChangelog:\n{release_info.changelog}"
+
+        return result
+    except Exception as e:
+        return f"Failed to create release: {str(e)}"
+
+
+@tool
 def deploy_agent(name: str = "", provider: str = "") -> str:
     """
     Deploy an agent to a hosting provider. Opens a terminal modal to run the deploy command.

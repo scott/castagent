@@ -98,11 +98,12 @@ describe('list command', () => {
         provider: 'fly'
       })
       sandbox.stub(dbModule.db, 'getLocalAgent').returns(null)
+      sandbox.stub(dbModule.db, 'getDeployedVersion').returns(3)
 
       await List.prototype.run.call(instance)
 
       const logCalls = instance.log.getCalls().map((call: any) => String(call.args[0] || ''))
-      const hasDeployedStatus = logCalls.some((log: string) => log.includes('[deployed: fly]'))
+      const hasDeployedStatus = logCalls.some((log: string) => log.includes('[deployed: fly, v3]'))
       expect(hasDeployedStatus).to.be.true
     })
 

@@ -87,6 +87,39 @@ function listAgentsFromDisk(): string[] {
   return agents.sort()
 }
 
+// Helper to get releases for an agent (reads from releases.json)
+async function getReleasesForAgent(agentName: string): Promise<Array<{version: string; message: string; changelog: string; created_at: string}>> {
+  const releasesJsonPath = path.join(os.homedir(), '.cast', 'agents', agentName, '.cast', 'releases', 'releases.json')
+  if (!fs.existsSync(releasesJsonPath)) {
+    return []
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(releasesJsonPath, 'utf8'))
+    return data.releases || []
+  } catch {
+    return []
+  }
+}
+
+// Helper to get changes for an agent
+function getChangesForAgent(agentName: string): Array<{id: number; timestamp: string; source: string; message: string}> {
+  const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+  // Try new path first, fall back to old
+  const newPath = path.join(agentPath, '.cast', 'changes', 'changes.json')
+  const oldPath = path.join(agentPath, '.cast', 'versions', 'versions.json')
+  const changesJsonPath = fs.existsSync(newPath) ? newPath : oldPath
+
+  if (!fs.existsSync(changesJsonPath)) {
+    return []
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(changesJsonPath, 'utf8'))
+    return data.versions || []
+  } catch {
+    return []
+  }
+}
+
 function launchBuilderEditor(ctx: CommandContext, agentName: string): void {
   // Destroy renderer to release terminal
   if (ctx.renderer && !ctx.renderer.isDestroyed) {
@@ -336,6 +369,312 @@ function launchRenameWithName(ctx: CommandContext, currentName: string, newName:
   }
 }
 
+interface DeployedAgent {
+  name: string
+  provider: string
+  version: number | null
+}
+
+function showVersionSelection(ctx: CommandContext, agent: DeployedAgent): void {
+  const agentPath = path.join(os.homedir(), '.cast', 'agents', agent.name)
+  const versionsJsonPath = path.join(agentPath, '.cast', 'versions', 'versions.json')
+
+  const modal = createModal(ctx.renderer, ctx.input, {
+    title: `Select version for ${agent.name}`,
+    overlay: true,
+  })
+
+  if (modal.overlay) {
+    ctx.renderer.root.add(modal.overlay)
+  }
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 0,
+    paddingTop: 2,
+    paddingLeft: 2,
+    paddingRight: 2,
+  })
+
+  // Load versions from file
+  let versions: Array<{id: number; timestamp: string; source: string; message: string}> = []
+  let latestVersion = 0
+
+  if (fs.existsSync(versionsJsonPath)) {
+    try {
+      const versionsData = JSON.parse(fs.readFileSync(versionsJsonPath, 'utf8'))
+      versions = versionsData.versions || []
+      latestVersion = versionsData.current || 0
+    } catch {
+      // Ignore parsing errors
+    }
+  }
+
+  if (versions.length === 0) {
+    const emptyText = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('No versions found.')]),
+    })
+    contentBox.add(emptyText)
+
+    const hint = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('\nCreate a version with: cast version')]),
+    })
+    contentBox.add(hint)
+
+    const footer = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('ESC Back')]),
+    })
+    const footerBox = new BoxRenderable(ctx.renderer, {
+      width: '100%',
+      alignItems: 'center',
+    })
+    footerBox.add(footer)
+    contentBox.add(footerBox)
+
+    modal.setContent(contentBox)
+    ctx.renderer.root.add(modal.box)
+    modal.show()
+
+    const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+    modal.box.handleKeyPress = (key: KeyEvent) => {
+      if (key.name === 'escape') {
+        modal.hide()
+        ctx.input.focus()
+        return true
+      }
+      return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+    }
+    return
+  }
+
+  // Sort versions by id descending (newest first)
+  const sortedVersions = [...versions].sort((a, b) => b.id - a.id)
+  let selectedIndex = 0
+
+  function renderVersionList() {
+    for (const child of contentBox.getChildren()) {
+      contentBox.remove(child.id)
+    }
+
+    for (let i = 0; i < sortedVersions.length; i++) {
+      const v = sortedVersions[i]
+      const isSelected = i === selectedIndex
+      const isDeployed = v.id === agent.version
+      const isLatest = v.id === latestVersion
+
+      const prefix = isSelected ? cyan('▸ ') : dim('  ')
+      let versionLabel = `v${v.id}`
+      if (isDeployed) {
+        versionLabel += dim(' (deployed)')
+      } else if (isLatest) {
+        versionLabel += green(' (latest)')
+      }
+
+      const message = v.message || 'Draft version'
+      const messageTruncated = message.length > 40 ? message.slice(0, 37) + '...' : message
+
+      const versionText = new TextRenderable(ctx.renderer, {
+        content: new StyledText([
+          prefix,
+          white(versionLabel),
+          dim(` - "${messageTruncated}"`),
+        ]),
+      })
+      contentBox.add(versionText)
+    }
+
+    const footer = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('↑↓ Navigate  Enter Select  ESC Back')]),
+    })
+    const footerBox = new BoxRenderable(ctx.renderer, {
+      width: '100%',
+      alignItems: 'center',
+    })
+    footerBox.add(footer)
+    contentBox.add(footerBox)
+  }
+
+  renderVersionList()
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+  modal.box.handleKeyPress = (key: KeyEvent) => {
+    if (key.name === 'up') {
+      selectedIndex = Math.max(0, selectedIndex - 1)
+      renderVersionList()
+      ctx.renderer.render()
+      return true
+    }
+    if (key.name === 'down') {
+      selectedIndex = Math.min(sortedVersions.length - 1, selectedIndex + 1)
+      renderVersionList()
+      ctx.renderer.render()
+      return true
+    }
+    if (key.name === 'return' || key.name === 'enter') {
+      const selectedVersion = sortedVersions[selectedIndex]
+      if (selectedVersion.id === agent.version) {
+        // Already on this version
+        modal.hide()
+        ctx.messages.addAgentMessage(
+          `Agent '${agent.name}' is already at version ${selectedVersion.id}.`,
+          ctx.mode
+        )
+        ctx.input.focus()
+        return true
+      }
+      modal.hide()
+      showUpgradeConfirmation(ctx, agent, selectedVersion.id, latestVersion)
+      return true
+    }
+    if (key.name === 'escape') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+}
+
+function showUpgradeConfirmation(
+  ctx: CommandContext,
+  agent: DeployedAgent,
+  targetVersion: number,
+  latestVersion: number
+): void {
+  const modal = createModal(ctx.renderer, ctx.input, {
+    title: `Upgrade ${agent.name}?`,
+    overlay: true,
+  })
+
+  if (modal.overlay) {
+    ctx.renderer.root.add(modal.overlay)
+  }
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 0,
+    paddingTop: 2,
+    paddingLeft: 2,
+    paddingRight: 2,
+    alignItems: 'center',
+  })
+
+  const currentVer = agent.version || 'unknown'
+  const targetVer = targetVersion
+  const isLatest = targetVersion === latestVersion
+
+  const versionInfo = new TextRenderable(ctx.renderer, {
+    content: new StyledText([
+      dim(`${currentVer} → `),
+      green(`v${targetVer}`),
+      dim(isLatest ? ' (latest)' : ''),
+    ]),
+  })
+  contentBox.add(versionInfo)
+
+  const spacer1 = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim(' ')]),
+  })
+  contentBox.add(spacer1)
+
+  const memoryNote = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim('Agent memory will be preserved.')]),
+  })
+  contentBox.add(memoryNote)
+
+  const spacer2 = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim(' ')]),
+  })
+  contentBox.add(spacer2)
+
+  const footer = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim('Enter Upgrade  ESC Cancel')]),
+  })
+  contentBox.add(footer)
+
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+  modal.box.handleKeyPress = (key: KeyEvent) => {
+    if (key.name === 'return' || key.name === 'enter') {
+      modal.hide()
+      executeUpgrade(ctx, agent, targetVersion)
+      return true
+    }
+    if (key.name === 'escape') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+}
+
+function executeUpgrade(ctx: CommandContext, agent: DeployedAgent, targetVersion: number): void {
+  // Find the cast CLI binary
+  const candidates = [
+    'cast',
+    path.resolve(__dirname, '../../cast-cli/bin/run'),
+    path.resolve(__dirname, '../../../cast-cli/bin/run'),
+    path.resolve(__dirname, '../../../../cast-cli/bin/run'),
+  ]
+
+  let binary: string | null = null
+  for (const candidate of candidates) {
+    try {
+      if (candidate === 'cast') {
+        execFileSync('which', ['cast'], { stdio: 'ignore' })
+        binary = candidate
+        break
+      } else if (fs.existsSync(candidate)) {
+        binary = candidate
+        break
+      }
+    } catch {
+      // try next
+    }
+  }
+
+  if (!binary) {
+    ctx.messages.addAgentMessage(
+      'Could not find cast CLI binary. Please ensure cast is installed.',
+      ctx.mode
+    )
+    return
+  }
+
+  // Destroy renderer to release terminal
+  if (ctx.renderer && !ctx.renderer.isDestroyed) {
+    ctx.renderer.destroy()
+  }
+
+  // Run the upgrade command
+  try {
+    console.log(`\nUpgrading ${agent.name} from v${agent.version || 'unknown'} to v${targetVersion}...\n`)
+    execFileSync(binary, ['upgrade', agent.name, targetVersion.toString()], { stdio: 'inherit' })
+  } catch (err: any) {
+    if (err.signal === 'SIGINT') {
+      // User pressed Ctrl+C
+    } else {
+      console.error(`\nUpgrade failed: ${err.message}`)
+    }
+  }
+
+  // Exit the TUI after upgrade
+  process.exit(0)
+}
+
 const commands: SlashCommand[] = [
   {
     name: 'help',
@@ -532,11 +871,15 @@ const commands: SlashCommand[] = [
 
           if (db) {
             try {
-              const deployment = db.getDeployment(name)
+              const deployments = db.listDeployments(name)
               const localAgent = db.getLocalAgent(name)
 
-              if (deployment?.deployment_url) {
-                statusText = `deployed (${deployment.provider})`
+              if (deployments.length > 0) {
+                const dep = deployments[0] // most recent
+                statusText = `deployed (${dep.provider}, sha:${dep.id})`
+                if (deployments.length > 1) {
+                  statusText += ` +${deployments.length - 1} more`
+                }
                 statusColor = green
               } else if (localAgent?.port) {
                 const running = isProcessAlive(localAgent.pid as number)
@@ -601,7 +944,7 @@ const commands: SlashCommand[] = [
       try {
         const agent = db.getAgent(ctx.agentName)
         const localAgent = db.getLocalAgent(ctx.agentName)
-        const deployment = db.getDeployment(ctx.agentName)
+        const deployments = db.listDeployments(ctx.agentName)
 
         const lines: string[] = []
         lines.push(`Agent: ${ctx.agentName}`)
@@ -633,17 +976,21 @@ const commands: SlashCommand[] = [
           lines.push('')
         }
 
-        if (deployment) {
-          lines.push('Deployment:')
-          lines.push(`  Provider: ${deployment.provider}`)
-          lines.push(`  URL: ${deployment.deployment_url}`)
-          lines.push(`  Deployed: ${deployment.deployed_at}`)
-          if (deployment.last_connected_at) {
-            lines.push(`  Last connected: ${deployment.last_connected_at}`)
+        if (deployments.length > 0) {
+          lines.push('Deployments:')
+          for (const dep of deployments) {
+            lines.push(`  SHA: ${dep.id}`)
+            lines.push(`  Provider: ${dep.provider}`)
+            lines.push(`  URL: ${dep.deployment_url}`)
+            lines.push(`  Version: ${dep.deployed_version || 'latest'}`)
+            lines.push(`  Deployed: ${dep.deployed_at}`)
+            if (dep.last_connected_at) {
+              lines.push(`  Last connected: ${dep.last_connected_at}`)
+            }
+            lines.push('')
           }
-          lines.push('')
         } else {
-          lines.push('Deployment: none')
+          lines.push('Deployments: none')
           lines.push('')
         }
 
@@ -1303,6 +1650,154 @@ const commands: SlashCommand[] = [
   },
 
   {
+    name: 'upgrade',
+    description: 'Upgrade a deployed agent to a new version',
+    category: 'agent',
+    handler: async (ctx) => {
+      const db = await getDb()
+      if (!db) {
+        ctx.messages.addAgentMessage('Unable to access agent database.', ctx.mode)
+        return
+      }
+
+      // Get all agents from disk
+      const allAgents = listAgentsFromDisk()
+
+      // Filter to only agents with deployments
+      const deployedAgents: Array<{name: string; provider: string; version: number | null; sha: string}> = []
+      for (const name of allAgents) {
+        try {
+          const deployments = db.listDeployments(name)
+          if (deployments.length > 0) {
+            const deployment = deployments[0] // most recent
+            deployedAgents.push({
+              name,
+              provider: deployment.provider,
+              version: deployment.deployed_version,
+              sha: deployment.id,
+            })
+          }
+        } catch {
+          // Skip agents we can't get deployment info for
+        }
+      }
+
+      if (deployedAgents.length === 0) {
+        ctx.messages.addAgentMessage(
+          'No deployed agents found.\n\nDeploy an agent first with: cast deploy <agent-name>',
+          ctx.mode
+        )
+        return
+      }
+
+      // Create agent selection modal
+      const modal = createModal(ctx.renderer, ctx.input, {
+        title: 'Select agent to upgrade',
+        overlay: true,
+      })
+
+      if (modal.overlay) {
+        ctx.renderer.root.add(modal.overlay)
+      }
+
+      let selectedIndex = 0
+
+      const contentBox = new BoxRenderable(ctx.renderer, {
+        width: '100%',
+        height: '100%',
+        flexDirection: 'column',
+        gap: 0,
+        paddingTop: 2,
+        paddingLeft: 2,
+        paddingRight: 2,
+      })
+
+      function renderAgentList() {
+        for (const child of contentBox.getChildren()) {
+          contentBox.remove(child.id)
+        }
+
+        const tableData: (TextChunk[] | null)[][] = []
+
+        // Header row
+        tableData.push([
+          [white('')],
+          [white('Agent Name')],
+          [white('Provider')],
+        ])
+
+        // Data rows
+        for (let i = 0; i < deployedAgents.length; i++) {
+          const agent = deployedAgents[i]
+          const isSelected = i === selectedIndex
+          const nameColor = isSelected ? cyan : white
+          const selectionColumn = isSelected ? [cyan('▸ ')] : [dim('  ')]
+
+          const versionLabel = agent.version ? `(${agent.version})` : ''
+          const shaLabel = dim(`[sha:${agent.sha}]`)
+          tableData.push([
+            selectionColumn,
+            [nameColor(agent.name), dim(` ${versionLabel}`), dim(` ${shaLabel}`)],
+            [dim(`[${agent.provider}]`)],
+          ])
+        }
+
+        const table = new TextTableRenderable(ctx.renderer, {
+          content: tableData,
+          columnWidthMode: 'content',
+          showBorders: false,
+          columnGap: 1,
+          cellPadding: 0,
+        })
+        contentBox.add(table)
+
+        const footer = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('↑↓ Navigate  Enter Select  ESC Cancel')]),
+        })
+        const footerBox = new BoxRenderable(ctx.renderer, {
+          width: '100%',
+          alignItems: 'center',
+        })
+        footerBox.add(footer)
+        contentBox.add(footerBox)
+      }
+
+      renderAgentList()
+      modal.setContent(contentBox)
+      ctx.renderer.root.add(modal.box)
+      modal.show()
+
+      const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+      modal.box.handleKeyPress = (key: KeyEvent) => {
+        if (key.name === 'up') {
+          selectedIndex = (selectedIndex - 1 + deployedAgents.length) % deployedAgents.length
+          renderAgentList()
+          ctx.renderer.render()
+          return true
+        }
+        if (key.name === 'down') {
+          selectedIndex = (selectedIndex + 1) % deployedAgents.length
+          renderAgentList()
+          ctx.renderer.render()
+          return true
+        }
+        if (key.name === 'return' || key.name === 'enter') {
+          modal.hide()
+          showVersionSelection(ctx, deployedAgents[selectedIndex])
+          return true
+        }
+        if (key.name === 'escape') {
+          modal.hide()
+          ctx.input.focus()
+          return true
+        }
+        return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+      }
+    },
+  },
+
+  {
     name: 'deploy',
     description: 'Deploy the current agent',
     category: 'agent',
@@ -1314,22 +1809,19 @@ const commands: SlashCommand[] = [
   },
 
   {
-    name: 'versions',
-    description: 'Show version history for current agent',
+    name: 'changes',
+    description: 'Show change history for current agent',
     category: 'session',
-    args: '[version]',
-    handler: async (ctx, args) => {
+    handler: async (ctx) => {
       const agentName = ctx.agentName
-      const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
-      const versionsJsonPath = path.join(agentPath, '.cast', 'versions', 'versions.json')
+      const changes = getChangesForAgent(agentName)
 
       // Build modal content
       const modal = createModal(ctx.renderer, ctx.input, {
-        title: `Versions: ${agentName}`,
+        title: `Changes: ${agentName}`,
         overlay: true,
       })
 
-      // Add overlay to renderer if present
       if (modal.overlay) {
         ctx.renderer.root.add(modal.overlay)
       }
@@ -1344,150 +1836,244 @@ const commands: SlashCommand[] = [
         paddingRight: 2,
       })
 
-      if (!fs.existsSync(versionsJsonPath)) {
+      if (changes.length === 0) {
         const emptyText = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('No versions found.')]),
+          content: new StyledText([dim('No changes found.')]),
         })
         contentBox.add(emptyText)
 
         const hint = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('\nVersions are created when the agent is edited.')]),
+          content: new StyledText([dim('\nChanges are created when the agent is edited.')]),
         })
         contentBox.add(hint)
-
-        // Footer for no versions case
-        const footer = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('ESC Close')]),
-        })
-        const footerBox = new BoxRenderable(ctx.renderer, {
-          width: '100%',
-          alignItems: 'center',
-        })
-        footerBox.add(footer)
-        contentBox.add(footerBox)
       } else {
-        try {
-          const versionsData = JSON.parse(fs.readFileSync(versionsJsonPath, 'utf8'))
-          const versions = versionsData.versions
+        const sortedChanges = [...changes].sort((a, b) => b.id - a.id)
 
-          // Track selected index for keyboard navigation
-          let selectedIndex = versions.length > 0 ? versions.length - 1 : 0
+        let selectedIndex = 0
 
-          // Render function to update the list
-          function renderList() {
-            // Clear existing children
-            for (const child of contentBox.getChildren()) {
-              contentBox.remove(child.id)
-            }
+        function renderList() {
+          for (const child of contentBox.getChildren()) {
+            contentBox.remove(child.id)
+          }
 
-            // Header
-            const headerText = new TextRenderable(ctx.renderer, {
+          const headerText = new TextRenderable(ctx.renderer, {
+            content: new StyledText([
+              white('Change History'),
+              dim(' | '),
+              white(`Current: v${sortedChanges[0]?.id || 0}`),
+            ]),
+          })
+          contentBox.add(headerText)
+
+          const sep = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(sep)
+
+          for (let i = 0; i < sortedChanges.length; i++) {
+            const c = sortedChanges[i]
+            const isSelected = i === selectedIndex
+            const date = new Date(c.timestamp)
+            const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
+            const sourceLabel = c.source === 'create' ? dim('[CREATED]') :
+                               c.source === 'cli' ? cyan('[CLI]') :
+                               green('[BUILDER]')
+
+            const prefix = isSelected ? cyan('▸ ') : dim('  ')
+            const changeColor = isSelected ? white : dim
+
+            const changeText = new TextRenderable(ctx.renderer, {
               content: new StyledText([
-                white('Version History'),
-                dim(' | '),
-                white(`Current: v${versionsData.current}`),
+                prefix,
+                changeColor(`v${c.id}`),
+                dim('  '),
+                sourceLabel,
+                dim('  '),
+                dim(dateStr),
+                dim('\n    '),
+                changeColor(c.message),
               ]),
             })
-            contentBox.add(headerText)
-
-            const sep = new TextRenderable(ctx.renderer, {
-              content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
-            })
-            contentBox.add(sep)
-
-            // Show each version with selection
-            for (let i = 0; i < versions.length; i++) {
-              const v = versions[i]
-              const isSelected = i === selectedIndex
-              const date = new Date(v.timestamp)
-              const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
-              const sourceLabel = v.source === 'create' ? dim('[CREATED]') :
-                                 v.source === 'cli' ? cyan('[CLI]') :
-                                 green('[BUILDER]')
-
-              const prefix = isSelected ? cyan('▸ ') : dim('  ')
-              const versionColor = isSelected ? white : dim
-
-              const versionText = new TextRenderable(ctx.renderer, {
-                content: new StyledText([
-                  prefix,
-                  versionColor(`v${v.id}`),
-                  dim('  '),
-                  sourceLabel,
-                  dim('  '),
-                  dim(dateStr),
-                  dim('\n    '),
-                  versionColor(v.message),
-                ]),
-              })
-              contentBox.add(versionText)
-            }
-
-            const sep2 = new TextRenderable(ctx.renderer, {
-              content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
-            })
-            contentBox.add(sep2)
-
-            // Footer instructions
-            const footer = new TextRenderable(ctx.renderer, {
-              content: new StyledText([dim('↑↓ Navigate  Enter Revert  ESC Close')]),
-            })
-            const footerBox = new BoxRenderable(ctx.renderer, {
-              width: '100%',
-              alignItems: 'center',
-            })
-            footerBox.add(footer)
-            contentBox.add(footerBox)
+            contentBox.add(changeText)
           }
 
-          renderList()
-
-          // Override modal's key handler for custom keyboard navigation
-          const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
-
-          modal.box.handleKeyPress = (key: KeyEvent) => {
-            // Handle up arrow
-            if (key.name === 'up') {
-              selectedIndex = Math.max(0, selectedIndex - 1)
-              renderList()
-              ctx.renderer.render()
-              return true
-            }
-            // Handle down arrow
-            if (key.name === 'down') {
-              selectedIndex = Math.min(versions.length - 1, selectedIndex + 1)
-              renderList()
-              ctx.renderer.render()
-              return true
-            }
-            // Handle Enter to revert
-            if (key.name === 'return' || key.name === 'enter') {
-              const targetVersion = versions[selectedIndex]
-              if (targetVersion) {
-                modal.hide()
-                ctx.input.focus()
-
-                // Show confirmation message
-                ctx.messages.addAgentMessage(
-                  `Revert to v${targetVersion.id}? Use \`cast revert ${agentName} ${targetVersion.id}\` from CLI to confirm.`,
-                  ctx.mode
-                )
-              }
-              return true
-            }
-            // Handle Escape to close
-            if (key.name === 'escape') {
-              modal.hide()
-              ctx.input.focus()
-              return true
-            }
-            return originalHandleKeyPress ? originalHandleKeyPress(key) : false
-          }
-        } catch (err) {
-          const errorText = new TextRenderable(ctx.renderer, {
-            content: new StyledText([red('Failed to load version history.')]),
+          const sep2 = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
           })
-          contentBox.add(errorText)
+          contentBox.add(sep2)
+
+          const footer = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('↑↓ Navigate  ESC Close')]),
+          })
+          const footerBox = new BoxRenderable(ctx.renderer, {
+            width: '100%',
+            alignItems: 'center',
+          })
+          footerBox.add(footer)
+          contentBox.add(footerBox)
+        }
+
+        renderList()
+
+        const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+        modal.box.handleKeyPress = (key: KeyEvent) => {
+          if (key.name === 'up') {
+            selectedIndex = Math.max(0, selectedIndex - 1)
+            renderList()
+            ctx.renderer.render()
+            return true
+          }
+          if (key.name === 'down') {
+            selectedIndex = Math.min(changes.length - 1, selectedIndex + 1)
+            renderList()
+            ctx.renderer.render()
+            return true
+          }
+          if (key.name === 'escape') {
+            modal.hide()
+            ctx.input.focus()
+            return true
+          }
+          return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+        }
+      }
+
+      modal.setContent(contentBox)
+      ctx.renderer.root.add(modal.box)
+      modal.show()
+    },
+  },
+
+  {
+    name: 'versions',
+    description: 'Show releases for current agent',
+    category: 'session',
+    handler: async (ctx) => {
+      const agentName = ctx.agentName
+      const releases = await getReleasesForAgent(agentName)
+
+      // Build modal content
+      const modal = createModal(ctx.renderer, ctx.input, {
+        title: `Releases: ${agentName}`,
+        overlay: true,
+      })
+
+      if (modal.overlay) {
+        ctx.renderer.root.add(modal.overlay)
+      }
+
+      const contentBox = new BoxRenderable(ctx.renderer, {
+        width: '100%',
+        height: '100%',
+        flexDirection: 'column',
+        gap: 0,
+        paddingTop: 2,
+        paddingLeft: 2,
+        paddingRight: 2,
+      })
+
+      if (releases.length === 0) {
+        const emptyText = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('No releases found.')]),
+        })
+        contentBox.add(emptyText)
+
+        const hint = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('\nCreate a release with: /release or cast release')]),
+        })
+        contentBox.add(hint)
+      } else {
+        // Sort by version descending
+        const sortedReleases = [...releases].sort((a, b) => {
+          const parseV = (v: string) => v.split('.').map(Number)
+          const va = parseV(a.version)
+          const vb = parseV(b.version)
+          return vb[0] - va[0] || vb[1] - va[1] || (vb[2] || 0) - (va[2] || 0)
+        })
+
+        let selectedIndex = 0
+
+        function renderList() {
+          for (const child of contentBox.getChildren()) {
+            contentBox.remove(child.id)
+          }
+
+          const headerText = new TextRenderable(ctx.renderer, {
+            content: new StyledText([
+              white('Releases'),
+              dim(' | '),
+              white(`Current: ${sortedReleases[0]?.version || 'none'}`),
+            ]),
+          })
+          contentBox.add(headerText)
+
+          const sep = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(sep)
+
+          for (let i = 0; i < sortedReleases.length; i++) {
+            const r = sortedReleases[i]
+            const isSelected = i === selectedIndex
+            const date = new Date(r.created_at)
+            const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
+
+            const prefix = isSelected ? cyan('▸ ') : dim('  ')
+            const versionColor = isSelected ? white : dim
+
+            const versionText = new TextRenderable(ctx.renderer, {
+              content: new StyledText([
+                prefix,
+                versionColor(r.version),
+                dim('  '),
+                dim(dateStr),
+                dim('\n    '),
+                versionColor(r.message),
+              ]),
+            })
+            contentBox.add(versionText)
+          }
+
+          const sep2 = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(sep2)
+
+          const footer = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('↑↓ Navigate  ESC Close')]),
+          })
+          const footerBox = new BoxRenderable(ctx.renderer, {
+            width: '100%',
+            alignItems: 'center',
+          })
+          footerBox.add(footer)
+          contentBox.add(footerBox)
+        }
+
+        renderList()
+
+        const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+        modal.box.handleKeyPress = (key: KeyEvent) => {
+          if (key.name === 'up') {
+            selectedIndex = Math.max(0, selectedIndex - 1)
+            renderList()
+            ctx.renderer.render()
+            return true
+          }
+          if (key.name === 'down') {
+            selectedIndex = Math.min(releases.length - 1, selectedIndex + 1)
+            renderList()
+            ctx.renderer.render()
+            return true
+          }
+          if (key.name === 'escape') {
+            modal.hide()
+            ctx.input.focus()
+            return true
+          }
+          return originalHandleKeyPress ? originalHandleKeyPress(key) : false
         }
       }
 
@@ -1834,6 +2420,118 @@ cast dev ${agentName}
         `Or use CLI: cast git <command> ${agentName}`,
         ctx.mode
       )
+    },
+  },
+
+  {
+    name: 'release',
+    description: 'Create a semantic release for the current agent',
+    category: 'agent',
+    args: '[version]',
+    handler: async (ctx, args) => {
+      const agentName = ctx.agentName
+      const version = args[0]
+
+      if (version) {
+        // Version provided, show confirmation and create
+        ctx.messages.addAgentMessage(
+          `Create release ${version} for '${agentName}'?\n\nUse: \`cast release ${agentName} ${version}\``,
+          ctx.mode
+        )
+      } else {
+        // No version, show current info and prompt
+        ctx.messages.addAgentMessage(
+          `Create a semantic release for '${agentName}'?\n\n` +
+          `Usage: /release <version>\n` +
+          `Example: /release 1.0, /release 1.6, /release 2.0.0\n\n` +
+          `Use \`cast release ${agentName} <version>\` to create a release.`,
+          ctx.mode
+        )
+      }
+    },
+  },
+
+  {
+    name: 'restore',
+    description: 'Restore agent to a previous change or release',
+    category: 'agent',
+    args: '[--change <num>|--release <version>]',
+    handler: async (ctx, args) => {
+      const agentName = ctx.agentName
+      const changes = getChangesForAgent(agentName)
+      const releases = await getReleasesForAgent(agentName)
+
+      // Parse args for --change or --release
+      let targetChange: number | null = null
+      let targetRelease: string | null = null
+
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--change' && args[i + 1]) {
+          targetChange = parseInt(args[i + 1], 10)
+        }
+        if (args[i] === '--release' && args[i + 1]) {
+          targetRelease = args[i + 1]
+        }
+      }
+
+      if (targetChange || targetRelease) {
+        const target = targetChange ? `v${targetChange}` : targetRelease
+        ctx.messages.addAgentMessage(
+          `Restore '${agentName}' to ${target}?\n\n` +
+          `Use: \`cast restore ${agentName} ${targetChange ? `--change ${targetChange}` : `--release ${targetRelease}`}\``,
+          ctx.mode
+        )
+      } else {
+        ctx.messages.addAgentMessage(
+          `Restore '${agentName}' to a previous state?\n\n` +
+          `Usage:\n` +
+          `  /restore --change <num>   - Restore to a specific change (v1, v2, etc.)\n` +
+          `  /restore --release <ver> - Restore to a specific release (1.0, 1.6, etc.)\n\n` +
+          `Example: /restore --change 5`,
+          ctx.mode
+        )
+      }
+    },
+  },
+
+  {
+    name: 'registry',
+    description: 'List all releases across all agents',
+    category: 'session',
+    handler: async (ctx) => {
+      const db = await getDb()
+      if (!db) {
+        ctx.messages.addAgentMessage('Unable to access agent database.', ctx.mode)
+        return
+      }
+
+      const allReleases = db.listAllReleases()
+
+      if (allReleases.length === 0) {
+        ctx.messages.addAgentMessage('No releases found.\n\nCreate a release with: cast release <agent> <version>', ctx.mode)
+        return
+      }
+
+      const lines: string[] = []
+      lines.push('Local Agent Registry')
+      lines.push('──────────────────────────────────────────────────────────────────────────────')
+
+      for (const release of allReleases) {
+        const date = new Date(release.created_at)
+        const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
+        let status = ''
+        if (release.provider && release.deployment_sha) {
+          status = ` [DEPLOYED on ${release.provider.toUpperCase()}, sha:${release.deployment_sha}]`
+        } else if (release.provider) {
+          status = ` [DEPLOYED on ${release.provider.toUpperCase()}]`
+        }
+        lines.push(`  ${release.agent_name}    ${release.version}   ${dateStr}${status}`)
+      }
+
+      lines.push('──────────────────────────────────────────────────────────────────────────────')
+      lines.push(`\nTotal: ${allReleases.length} release(s)`)
+
+      ctx.messages.addAgentMessage(lines.join('\n'), ctx.mode)
     },
   },
 ]

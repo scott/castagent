@@ -27,7 +27,7 @@ describe('connect command', () => {
     it('should have agent name argument', () => {
       expect(Connect.args).to.exist
       expect(Connect.args.agent).to.exist
-      expect(Connect.args.agent.description).to.equal('Agent name')
+      expect(Connect.args.agent.description).to.equal('Agent name or deployment SHA')
       expect(Connect.args.agent.required).to.be.true
     })
 
