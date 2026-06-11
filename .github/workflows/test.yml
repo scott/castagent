@@ -244,7 +244,6 @@ jobs:
           pattern: typescript-coverage-*
           path: coverage-reports/typescript
           merge-multiple: true
-          if-no-artifacts-found: ignore
 
       - name: Download Python coverage artifacts
         uses: actions/download-artifact@v4
@@ -252,7 +251,6 @@ jobs:
           pattern: python-coverage-*
           path: coverage-reports/python
           merge-multiple: true
-          if-no-artifacts-found: ignore
 
       - name: Generate coverage summary
         if: always()
@@ -356,7 +354,6 @@ jobs:
           pattern: typescript-coverage-*
           path: coverage-reports/typescript
           merge-multiple: true
-          if-no-artifacts-found: ignore
 
       - name: Download Python coverage artifacts
         uses: actions/download-artifact@v4
@@ -364,7 +361,6 @@ jobs:
           pattern: python-coverage-*
           path: coverage-reports/python
           merge-multiple: true
-          if-no-artifacts-found: ignore
 
       - name: Check coverage threshold
         run: |
