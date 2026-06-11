@@ -302,6 +302,22 @@ cast upgrade my-agent --version 1.6
 cast upgrade abc123 --version 1.6
 ```
 
+#### TUI Slash Commands
+
+Slash commands in the TUI use interactive modals for input — no need to remember flag syntax. Every command works with no arguments; if parameters are needed, a modal prompts for them.
+
+| Command | Category | What it does |
+|---------|----------|--------------|
+| `/changes` | session | Shows the automatic change history with per-item Restore (`R`) and Diff (`D`) actions. |
+| `/versions` | session | Shows semantic releases with `C` (Create Release) and `U` (Upgrade, if deployed) shortcuts. |
+| `/release` | agent | Opens a modal to create a new semantic release. Suggests patch/minor/major versions based on the current release. |
+| `/deploy` | agent | Release picker → provider picker → live deploy with SHA shown on success. |
+| `/upgrade` | agent | Operates on the current agent. Modal lists releases to upgrade to. |
+| `/restore` | agent | Source picker (Changes or Releases) → item picker → confirmation. Use `--change N` or `--release V` to skip the picker. |
+| `/diff` | agent | Pick a kind (Changes or Releases) and two items, then see the diff inline. |
+| `/registry` | session | Modal table of all releases across all agents, with deployment status. |
+| `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a SHA directly. |
+
 ### Git Integration
 
 Cast agents include built-in Git support for version control:
