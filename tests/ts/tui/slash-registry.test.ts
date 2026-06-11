@@ -40,7 +40,7 @@
  * ## What needs to happen
  *
  * Re-architect this test so the 9 new PRD-mandated slash commands
- * (`/changes`, `/versions`, `/release`, `/deploy`, `/upgrade`,
+ * (`/changes`, `/releases`, `/release`, `/deploy`, `/upgrade`,
  * `/restore`, `/diff`, `/registry`, `/connect`) get real coverage
  * without a subprocess. Options to consider:
  *

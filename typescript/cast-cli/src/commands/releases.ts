@@ -12,8 +12,15 @@ interface ReleaseInfo {
   tarball_path: string
 }
 
-export default class Versions extends Command {
+export default class Releases extends Command {
   static description = 'List all releases of an agent'
+
+  // `cast versions` is the deprecated predecessor of this command and
+  // remains available for one release cycle as a backward-compatibility
+  // alias. oclif will print a deprecation warning to stderr whenever the
+  // alias is invoked (see #25).
+  static aliases = ['versions']
+  static deprecateAliases = true
 
   static examples = [
     '<%= config.bin %> <%= command.id %> my-agent',
@@ -42,7 +49,7 @@ export default class Versions extends Command {
   }
 
   async run(): Promise<void> {
-    const {args, flags} = await this.parse(Versions)
+    const {args, flags} = await this.parse(Releases)
     const agentName = args.agent
 
     const releases = this.getReleasesFromFile(agentName)
