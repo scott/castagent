@@ -74,6 +74,7 @@ jobs:
         run: npm test
         working-directory: typescript
         env:
+          NODE_OPTIONS: "--coverage"
           NYC_CONFIG: '{ "report-dir": "coverage/ts", "temp-dir": ".nyc_output" }'
 
       - name: Upload TypeScript coverage artifacts
