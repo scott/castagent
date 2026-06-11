@@ -276,7 +276,7 @@ Cast tracks two kinds of versions for your agent:
 cast changes my-agent
 
 # List all releases
-cast versions my-agent
+cast releases my-agent
 
 # Create a new semantic release
 cast release my-agent 1.6
@@ -290,7 +290,7 @@ cast restore my-agent --release 1.0
 cast diff my-agent --change 1 --change 3
 ```
 
-In the TUI, use `/changes` and `/versions` to view the respective histories with keyboard navigation, or `/release`, `/deploy`, `/upgrade`, and `/restore` to manage releases and deployments interactively.
+In the TUI, use `/changes` and `/releases` to view the respective histories with keyboard navigation, or `/release`, `/deploy`, `/upgrade`, and `/restore` to manage releases and deployments interactively.
 
 To upgrade an existing deployment to a new release:
 
@@ -309,7 +309,7 @@ Slash commands in the TUI use interactive modals for input — no need to rememb
 | Command | Category | What it does |
 |---------|----------|--------------|
 | `/changes` | session | Shows the automatic change history with per-item Restore (`R`) and Diff (`D`) actions. |
-| `/versions` | session | Shows semantic releases with `C` (Create Release) and `U` (Upgrade, if deployed) shortcuts. |
+| `/releases` | session | Shows semantic releases with `C` (Create Release) and `U` (Upgrade, if deployed) shortcuts. |
 | `/release` | agent | Opens a modal to create a new semantic release. Suggests patch/minor/major versions based on the current release. |
 | `/deploy` | agent | Release picker → provider picker → live deploy with SHA shown on success. |
 | `/upgrade` | agent | Operates on the current agent. Modal lists releases to upgrade to. |

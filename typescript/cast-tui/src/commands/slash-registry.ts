@@ -3139,7 +3139,7 @@ const commands: SlashCommand[] = [
   },
 
   {
-    name: 'versions',
+    name: 'releases',
     description: 'Show releases for current agent',
     category: 'session',
     handler: async (ctx) => {
