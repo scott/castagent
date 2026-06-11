@@ -225,6 +225,40 @@ async function getReleasesForAgent(agentName: string): Promise<Array<{version: s
   }
 }
 
+/**
+ * Get the current (latest) release version for an agent.
+ *
+ * Reads `data.current.version` from the agent's `releases.json` file. This
+ * is the same field the Python `cast.releases.get_current_release` reads,
+ * and the authoritative source for "what release is the agent currently
+ * at". Falls back to the newest entry in the `releases` array (by semver)
+ * when the `current` field is missing, and to `null` if no releases exist.
+ */
+function getCurrentReleaseVersion(agentName: string): string | null {
+  const releasesJsonPath = path.join(os.homedir(), '.cast', 'agents', agentName, '.cast', 'releases', 'releases.json')
+  if (!fs.existsSync(releasesJsonPath)) {
+    return null
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(releasesJsonPath, 'utf8'))
+    const current = data.current
+    if (current && typeof current.version === 'string' && current.version.length > 0) {
+      return current.version
+    }
+    // Fallback: newest entry by semver, when current is missing
+    const releases: Array<{version: string}> = Array.isArray(data.releases) ? data.releases : []
+    if (releases.length === 0) return null
+    const sorted = [...releases].sort((a, b) => {
+      const pa = a.version.split('.').map((n) => parseInt(n, 10) || 0)
+      const pb = b.version.split('.').map((n) => parseInt(n, 10) || 0)
+      return (pb[0] - pa[0]) || (pb[1] - pa[1]) || ((pb[2] || 0) - (pa[2] || 0))
+    })
+    return sorted[0].version
+  } catch {
+    return null
+  }
+}
+
 // Helper to get changes for an agent
 function getChangesForAgent(agentName: string): Array<{id: number; timestamp: string; source: string; message: string}> {
   const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
@@ -350,7 +384,7 @@ function promptForNewName(ctx: CommandContext, currentName: string): void {
     } else {
       errorText.content = new StyledText([dim(' ')])
     }
-    ctx.renderer.render()
+    ctx.renderer.requestRender?.()
   }
 
   modal.setContent(contentBox)
@@ -404,7 +438,7 @@ function promptForNewName(ctx: CommandContext, currentName: string): void {
   }
 
   updateInputDisplay()
-  ctx.renderer.render()
+  ctx.renderer.requestRender?.()
 }
 
 function launchRenameWithName(ctx: CommandContext, currentName: string, newName: string): void {
@@ -535,7 +569,7 @@ function showUpgradeVersionPicker(
     footerBox.add(footer)
     contentBox.add(footerBox)
 
-    ctx.renderer.render()
+    ctx.renderer.requestRender?.()
   }
 
   const doUpgrade = (version: string): void => {
@@ -737,13 +771,13 @@ function showVersionSelection(ctx: CommandContext, agent: DeployedAgent): void {
     if (key.name === 'up') {
       selectedIndex = Math.max(0, selectedIndex - 1)
       renderVersionList()
-      ctx.renderer.render()
+      ctx.renderer.requestRender?.()
       return true
     }
     if (key.name === 'down') {
       selectedIndex = Math.min(sortedVersions.length - 1, selectedIndex + 1)
       renderVersionList()
-      ctx.renderer.render()
+      ctx.renderer.requestRender?.()
       return true
     }
     if (key.name === 'return' || key.name === 'enter') {
@@ -1076,7 +1110,7 @@ function showRestorePicker(
           content: new StyledText([dim('ESC Back')]),
         })
         contentBox.add(hint)
-        ctx.renderer.render()
+        ctx.renderer.requestRender?.()
         return
       }
       const header = new TextRenderable(ctx.renderer, {
@@ -1121,7 +1155,7 @@ function showRestorePicker(
       contentBox.add(footerBox)
     }
 
-    ctx.renderer.render()
+    ctx.renderer.requestRender?.()
   }
 
   modal.setContent(contentBox)
@@ -1496,7 +1530,7 @@ function showDiffPicker(
       contentBox.add(footerBox)
     }
 
-    ctx.renderer.render()
+    ctx.renderer.requestRender?.()
   }
 
   modal.setContent(contentBox)
@@ -2211,7 +2245,7 @@ const commands: SlashCommand[] = [
             if (shaInput.length > 0) {
               shaInput = shaInput.slice(0, -1)
               renderList()
-              ctx.renderer.render()
+              ctx.renderer.requestRender?.()
             }
             return true
           }
@@ -2239,7 +2273,7 @@ const commands: SlashCommand[] = [
             if (deployments.length > 0) {
               selectedIndex = (selectedIndex - 1 + deployments.length) % deployments.length
               renderList()
-              ctx.renderer.render()
+              ctx.renderer.requestRender?.()
             }
             return true
           }
@@ -2247,7 +2281,7 @@ const commands: SlashCommand[] = [
             if (deployments.length > 0) {
               selectedIndex = (selectedIndex + 1) % deployments.length
               renderList()
-              ctx.renderer.render()
+              ctx.renderer.requestRender?.()
             }
             return true
           }
@@ -2256,7 +2290,7 @@ const commands: SlashCommand[] = [
             if (shaInput.length < MAX_SHA_LEN) {
               shaInput += key.name
               renderList()
-              ctx.renderer.render()
+              ctx.renderer.requestRender?.()
             }
             return true
           }
@@ -2390,13 +2424,13 @@ const commands: SlashCommand[] = [
         if (key.name === 'up') {
           selectedIndex = (selectedIndex - 1 + agents.length) % agents.length
           renderList()
-          ctx.renderer.render()
+          ctx.renderer.requestRender?.()
           return true
         }
         if (key.name === 'down') {
           selectedIndex = (selectedIndex + 1) % agents.length
           renderList()
-          ctx.renderer.render()
+          ctx.renderer.requestRender?.()
           return true
         }
         if (key.name === 'return' || key.name === 'enter') {
@@ -2505,13 +2539,13 @@ const commands: SlashCommand[] = [
           if (key.name === 'up') {
             selectedIndex = (selectedIndex - 1 + agents.length) % agents.length
             renderList()
-            ctx.renderer.render()
+            ctx.renderer.requestRender?.()
             return true
           }
           if (key.name === 'down') {
             selectedIndex = (selectedIndex + 1) % agents.length
             renderList()
-            ctx.renderer.render()
+            ctx.renderer.requestRender?.()
             return true
           }
           if (key.name === 'return' || key.name === 'enter') {
@@ -2844,7 +2878,7 @@ const commands: SlashCommand[] = [
           contentBox.add(footerBox)
         }
 
-        ctx.renderer.render()
+        ctx.renderer.requestRender?.()
       }
 
       const closeModal = (): void => {
@@ -3058,13 +3092,13 @@ const commands: SlashCommand[] = [
           if (key.name === 'up') {
             selectedIndex = Math.max(0, selectedIndex - 1)
             renderList()
-            ctx.renderer.render()
+            ctx.renderer.requestRender?.()
             return true
           }
           if (key.name === 'down') {
             selectedIndex = Math.min(changes.length - 1, selectedIndex + 1)
             renderList()
-            ctx.renderer.render()
+            ctx.renderer.requestRender?.()
             return true
           }
           if (key.name === 'escape') {
@@ -3239,13 +3273,13 @@ const commands: SlashCommand[] = [
           if (key.name === 'up') {
             selectedIndex = Math.max(0, selectedIndex - 1)
             renderList()
-            ctx.renderer.render()
+            ctx.renderer.requestRender?.()
             return true
           }
           if (key.name === 'down') {
             selectedIndex = Math.min(releases.length - 1, selectedIndex + 1)
             renderList()
-            ctx.renderer.render()
+            ctx.renderer.requestRender?.()
             return true
           }
           if (key.name === 'escape') {
@@ -3628,7 +3662,7 @@ cast dev ${agentName}
 
       // Load existing releases to compute the current version + suggestions
       const releases = await getReleasesForAgent(agentName)
-      const currentVersion = releases.length > 0 ? releases[0].version : null
+      const currentVersion = getCurrentReleaseVersion(agentName)
       const suggestions = suggestNextVersions(currentVersion)
 
       // Run a release through createRelease(). Falls back to shelling out
@@ -3769,7 +3803,7 @@ cast dev ${agentName}
         footerBox.add(footer)
         contentBox.add(footerBox)
 
-        ctx.renderer.render()
+        ctx.renderer.requestRender?.()
       }
 
       const closeModal = (): void => {

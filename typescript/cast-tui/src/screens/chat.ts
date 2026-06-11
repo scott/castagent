@@ -36,7 +36,7 @@ export async function showChatScreen(
     let lastAgentMessage: string | undefined
 
     // Get deployed version for initial agent
-    let deployedVersion: number | null = null
+    let deployedVersion: string | null = null
     const db = await getDb()
     if (db) {
       const deployment = db.getDeployment(agentName)

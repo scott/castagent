@@ -8,7 +8,7 @@ export interface HeaderComponent {
   setMode(mode: Mode): void
   setAgentName(name: string): void
   setUiMode(mode: UiMode): void
-  setDeployedVersion(version: number | null): void
+  setDeployedVersion(version: string | null): void
 }
 
 export function createHeader(
@@ -16,12 +16,12 @@ export function createHeader(
   agentName: string,
   initialMode: Mode,
   uiMode: UiMode,
-  deployedVersion?: number | null,
+  deployedVersion?: string | null,
 ): HeaderComponent {
   const isProduction = uiMode === 'production'
   const backgroundColor = isProduction ? '#10B981' : '#8B5CF6'
   let currentMode: Mode = initialMode
-  let currentDeployedVersion: number | null = deployedVersion ?? null
+  let currentDeployedVersion: string | null = deployedVersion ?? null
 
   const box = new BoxRenderable(ctx, {
     width: '100%',
@@ -62,7 +62,7 @@ export function createHeader(
     modeText.content = createModeStyledText(currentMode, newIsProduction)
   }
 
-  function setDeployedVersion(version: number | null) {
+  function setDeployedVersion(version: string | null) {
     currentDeployedVersion = version
     nameText.content = createNameStyledText(agentName, version)
   }
@@ -82,7 +82,7 @@ function createModeStyledText(mode: Mode, isProduction: boolean): StyledText {
   return new StyledText([yellow('[BUILD]')])
 }
 
-function createNameStyledText(agentName: string, deployedVersion: number | null): StyledText {
+function createNameStyledText(agentName: string, deployedVersion: string | null): StyledText {
   const parts = [white('\u25cf '), white(agentName)]
   if (deployedVersion !== null) {
     parts.push(white(` (v${deployedVersion})`))

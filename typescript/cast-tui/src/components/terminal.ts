@@ -28,7 +28,7 @@ function getAgentDescription(agentName: string): string {
 }
 
 // Get deployed version from SQLite database
-function getDeployedVersion(agentName: string): number | null {
+function getDeployedVersion(agentName: string): string | null {
   try {
     const dbPath = path.join(os.homedir(), '.cast', 'cast.db')
     if (!fs.existsSync(dbPath)) {
@@ -665,9 +665,7 @@ export async function handleDeployModal(
 
   // Force focus and render to ensure the modal is properly capturing keyboard events
   modal.box.focus()
-  if (typeof renderer.render === 'function') {
-    renderer.render()
-  }
+  renderer.requestRender?.()
 }
 
 export async function runDeployInTerminal(
