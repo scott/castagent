@@ -59,13 +59,6 @@ jobs:
           cd typescript
           npm install
 
-      # The TypeScript test files import from typescript/cast-cli/dist/...
-      # (compiled output), so cast-cli must be built before tsc --noEmit
-      # runs. Without this, the type check fails with TS2307 ("Cannot find
-      # module ... cast-cli/dist/...").
-      - name: Build cast-cli (provides dist/ for test imports)
-        run: npm run build:cli
-
       - name: TypeScript compilation check
         run: npx tsc --noEmit
         working-directory: typescript
@@ -178,13 +171,6 @@ jobs:
         run: |
           npm install
           cd typescript && npm install
-
-      # The TypeScript test files import from typescript/cast-cli/dist/...
-      # (compiled output), so cast-cli must be built before tsc --noEmit
-      # runs. Without this, the type check fails with TS2307 ("Cannot find
-      # module ... cast-cli/dist/...").
-      - name: Build cast-cli (provides dist/ for test imports)
-        run: npm run build:cli
 
       - name: Check TypeScript compilation
         run: npx tsc --noEmit
