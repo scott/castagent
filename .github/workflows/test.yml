@@ -12,6 +12,11 @@ on:
       - reopened
   workflow_dispatch:
 
+permissions:
+  contents: read
+  pull-requests: write
+  checks: read
+
 env:
   COVERAGE_THRESHOLD: 70
 
@@ -233,34 +238,45 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Download all coverage artifacts
+      - name: Download TypeScript coverage artifacts
         uses: actions/download-artifact@v4
         with:
-          path: coverage-reports
+          pattern: typescript-coverage-*
+          path: coverage-reports/typescript
           merge-multiple: true
+          if-no-artifacts-found: ignore
+
+      - name: Download Python coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: python-coverage-*
+          path: coverage-reports/python
+          merge-multiple: true
+          if-no-artifacts-found: ignore
 
       - name: Generate coverage summary
+        if: always()
         run: |
-          echo "## Test Coverage Summary" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### TypeScript Coverage" >> $GITHUB_STEP_SUMMARY
-
-          # Check for TypeScript coverage reports
-          if [ -d "coverage-reports" ]; then
-            echo "Coverage reports downloaded:" >> $GITHUB_STEP_SUMMARY
-            ls -la coverage-reports/ >> $GITHUB_STEP_SUMMARY
-
-            # Parse and display coverage if available
-            for dir in coverage-reports/*/; do
-              if [ -f "${dir}coverage/lcov.info" ] || [ -f "${dir}coverage.xml" ]; then
-                echo "- ${dir}" >> $GITHUB_STEP_SUMMARY
-              fi
-            done
-          fi
-
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "### Detailed Reports" >> $GITHUB_STEP_SUMMARY
-          echo "Artifacts are available in the workflow run." >> $GITHUB_STEP_SUMMARY
+          {
+            echo "## Coverage Summary"
+            echo ""
+            if [ -d coverage-reports/typescript ] && [ -n "$(ls -A coverage-reports/typescript 2>/dev/null)" ]; then
+              echo "### TypeScript"
+              echo '```'
+              ls -la coverage-reports/typescript
+              echo '```'
+            else
+              echo "_No TypeScript coverage artifacts found._"
+            fi
+            if [ -d coverage-reports/python ] && [ -n "$(ls -A coverage-reports/python 2>/dev/null)" ]; then
+              echo "### Python"
+              echo '```'
+              ls -la coverage-reports/python
+              echo '```'
+            else
+              echo "_No Python coverage artifacts found (Python tests may be skipped or failing)._"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Post coverage comment on PR
         uses: actions/github-script@v7
@@ -269,38 +285,54 @@ jobs:
             const fs = require('fs');
             const path = require('path');
 
-            // Read coverage reports
-            let coverageInfo = '## Test Coverage Report\n\n';
-            coverageInfo += '| Component | Coverage |\n';
-            coverageInfo += '|-----------|----------|\n';
+            const marker = '<!-- coverage-bot -->';
+            let summary = '## Test Coverage Report\n\n';
+            summary += '| Component | Coverage |\n';
+            summary += '|-----------|----------|\n';
 
             const coverageDir = 'coverage-reports';
             if (fs.existsSync(coverageDir)) {
-              const artifacts = fs.readdirSync(coverageDir);
-
-              // Group by type
-              const tsCoverage = artifacts.filter(a => a.includes('typescript'));
-              const pyCoverage = artifacts.filter(a => a.includes('python'));
+              const entries = fs.readdirSync(coverageDir);
+              const tsCoverage = entries.filter(a => a.includes('typescript'));
+              const pyCoverage = entries.filter(a => a.includes('python'));
 
               if (tsCoverage.length > 0) {
-                coverageInfo += `| TypeScript | ${tsCoverage.length} node version(s) tested |\n`;
+                summary += `| TypeScript | ${tsCoverage.length} node version(s) tested |\n`;
               }
               if (pyCoverage.length > 0) {
-                coverageInfo += `| Python | ${pyCoverage.length} Python version(s) tested |\n`;
+                summary += `| Python | ${pyCoverage.length} Python version(s) tested |\n`;
               }
-
-              coverageInfo += '\nDetailed coverage reports are attached to the workflow run.\n';
+              summary += '\nDetailed coverage reports are attached to the workflow run.\n';
             } else {
-              coverageInfo += 'No coverage reports available.\n';
+              summary += 'No coverage reports available.\n';
             }
 
-            // Post comment
-            github.rest.issues.createComment({
+            const body = `${marker}\n${summary}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              issue_number: context.payload.pull_request.number,
-              body: coverageInfo
+              issue_number: context.issue.number,
+              per_page: 100,
             });
+
+            const existing = comments.find(c => c.body && c.body.includes(marker));
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+              core.info(`Updated existing coverage comment ${existing.id}`);
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
 
   # ============================================================================
   # Coverage Threshold Check (only on main/master)
@@ -318,10 +350,21 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Download coverage artifacts
+      - name: Download TypeScript coverage artifacts
         uses: actions/download-artifact@v4
         with:
-          path: coverage-reports
+          pattern: typescript-coverage-*
+          path: coverage-reports/typescript
+          merge-multiple: true
+          if-no-artifacts-found: ignore
+
+      - name: Download Python coverage artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: python-coverage-*
+          path: coverage-reports/python
+          merge-multiple: true
+          if-no-artifacts-found: ignore
 
       - name: Check coverage threshold
         run: |
