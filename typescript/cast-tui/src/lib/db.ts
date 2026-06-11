@@ -9,7 +9,14 @@ export interface DbApi {
   getAgent(name: string): any | null
   getLocalAgent(name: string): any | null
   getDeployment(name: string): any | null
+  getDeploymentBySha(sha: string): any | null
+  getActiveDeployment(name: string): any | null
+  listDeployments(name: string): any[]
+  listAllDeploymentsForAgent(name: string): any[]
   removeLocalAgent(name: string): void
+  listAllReleases(): any[]
+  listAllReleasesForAgent(name: string): any[]
+  listReleases(name: string): any[]
 }
 
 let dbInstance: DbApi | null = null
@@ -30,10 +37,59 @@ async function createBunDb(): Promise<DbApi> {
       return db.query('SELECT * FROM local_agents WHERE agent_name = ?').get(name) || null
     },
     getDeployment(name: string) {
-      return db.query('SELECT * FROM deployments WHERE agent_name = ?').get(name) || null
+      // Get most recent non-deleted deployment for agent name
+      return db.query('SELECT * FROM deployments WHERE agent_name = ? AND deleted_at IS NULL ORDER BY deployed_at DESC LIMIT 1').get(name) || null
+    },
+    getDeploymentBySha(sha: string) {
+      return db.query('SELECT * FROM deployments WHERE id = ? AND deleted_at IS NULL').get(sha) || null
+    },
+    getActiveDeployment(name: string) {
+      return db.query('SELECT * FROM deployments WHERE agent_name = ? AND deleted_at IS NULL ORDER BY deployed_at DESC LIMIT 1').get(name) || null
+    },
+    listDeployments(name: string) {
+      return db.query('SELECT * FROM deployments WHERE agent_name = ? AND deleted_at IS NULL ORDER BY deployed_at DESC').all(name)
+    },
+    listAllDeploymentsForAgent(name: string) {
+      return db.query(`
+        SELECT id as deployment_sha, provider, deployed_version, deployed_at, deployment_url
+        FROM deployments
+        WHERE agent_name = ? AND deleted_at IS NULL
+        ORDER BY deployed_at DESC
+      `).all(name)
     },
     removeLocalAgent(name: string) {
       db.query('DELETE FROM local_agents WHERE agent_name = ?').run(name)
+    },
+    listAllReleases() {
+      // Get all releases with their most recent deployment info
+      return db.query(`
+        SELECT r.*, d.id as deployment_sha, d.provider, d.deployment_url, d.deployed_at as deployment_date
+        FROM releases r
+        LEFT JOIN (
+          SELECT agent_name, deployed_version, id, provider, deployment_url, deployed_at,
+                 ROW_NUMBER() OVER (PARTITION BY agent_name, deployed_version ORDER BY deployed_at DESC) as rn
+          FROM deployments
+          WHERE deleted_at IS NULL
+        ) d ON r.agent_name = d.agent_name AND r.version = d.deployed_version AND d.rn = 1
+        ORDER BY r.created_at DESC
+      `).all()
+    },
+    listAllReleasesForAgent(name: string) {
+      return db.query(`
+        SELECT r.*, d.id as deployment_sha, d.provider, d.deployment_url, d.deployed_at as deployment_date
+        FROM releases r
+        LEFT JOIN (
+          SELECT agent_name, deployed_version, id, provider, deployment_url, deployed_at,
+                 ROW_NUMBER() OVER (PARTITION BY agent_name, deployed_version ORDER BY deployed_at DESC) as rn
+          FROM deployments
+          WHERE deleted_at IS NULL
+        ) d ON r.agent_name = d.agent_name AND r.version = d.deployed_version AND d.rn = 1
+        WHERE r.agent_name = ?
+        ORDER BY r.created_at DESC
+      `).all(name)
+    },
+    listReleases(name: string) {
+      return db.query('SELECT * FROM releases WHERE agent_name = ? ORDER BY created_at DESC').all(name)
     },
   }
 }

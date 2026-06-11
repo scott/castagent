@@ -6,7 +6,7 @@ import {createMessages} from '../components/messages.js'
 import {createInput} from '../components/input.js'
 import {createAutocomplete} from '../components/autocomplete.js'
 import {executeSlashCommand, slashCommands} from '../commands/slash-registry.js'
-const {A2AClient} = await import('../../../cast-cli/dist/lib/a2a/client.js')
+import {getDb} from '../lib/db.js'
 
 export async function showChatScreen(
   renderer: CliRenderer,
@@ -16,7 +16,9 @@ export async function showChatScreen(
   uiMode: UiMode = 'dev',
   initialWelcome?: string,
 ): Promise<void> {
-  return new Promise((resolve) => {
+  const {A2AClient} = await import('../../../cast-cli/dist/lib/a2a/client.js')
+  
+  return new Promise(async (resolve) => {
     // Remove previous screen (e.g. welcome screen)
     for (const child of renderer.root.getChildren()) {
       renderer.root.remove(child.id)
@@ -29,9 +31,19 @@ export async function showChatScreen(
     let mode: Mode = 'plan'
     let currentUiMode: UiMode = uiMode
 
-    // Message tracking for /save and /copy
+// Message tracking for /save and /copy
     let messageHistory: Array<{role: 'user' | 'agent'; text: string}> = []
     let lastAgentMessage: string | undefined
+
+    // Get deployed version for initial agent
+    let deployedVersion: string | null = null
+    const db = await getDb()
+    if (db) {
+      const deployment = db.getDeployment(agentName)
+      if (deployment) {
+        deployedVersion = deployment.deployed_version ?? null
+      }
+    }
 
     // Track if autocomplete just set the value (to avoid re-showing dropdown)
     let autocompleteJustSelected = false
@@ -49,7 +61,7 @@ export async function showChatScreen(
       flexDirection: 'column',
     })
 
-    const header = createHeader(renderer, agentName, mode, currentUiMode)
+    const header = createHeader(renderer, agentName, mode, currentUiMode, deployedVersion)
     layout.add(header.box)
 
     const messages = createMessages(renderer, currentUiMode)
@@ -115,6 +127,16 @@ export async function showChatScreen(
             messageHistory = []
             lastAgentMessage = undefined
             header.setAgentName(agentName)
+
+            // Update deployed version for new agent
+            deployedVersion = null
+            if (db) {
+              const deployment = db.getDeployment(agentName)
+              if (deployment) {
+                deployedVersion = deployment.deployed_version ?? null
+              }
+            }
+            header.setDeployedVersion(deployedVersion)
 
             // Update uiMode if provided, otherwise apply current uiMode to header/messages
             if (newUiMode) {
@@ -227,6 +249,19 @@ export async function showChatScreen(
         if (key.name === 'escape') {
           autocomplete.hide()
           return
+        }
+      }
+
+      // Check for visible modals in renderer root children
+      // Modals are typically added to renderer.root with zIndex >= 100 and visible = true
+      if (key.name === 'escape') {
+        for (const child of renderer.root.getChildren()) {
+          if (child.visible && (child as any).handleKeyPress) {
+            const handled = (child as any).handleKeyPress(key)
+            if (handled) {
+              return
+            }
+          }
         }
       }
 

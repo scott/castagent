@@ -3,12 +3,156 @@ import inspect
 import json
 import os
 import re
+import sqlite3
 import sys
 import traceback
 import yaml
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 from typing import Annotated
+
+AGENTS_DIR = Path.home() / ".cast" / "agents"
+CAST_DB_PATH = Path.home() / ".cast" / "cast.db"
+
+
+def is_agent_deployed(agent_name: str) -> bool:
+    """Check if an agent has a deployment record in the database.
+    
+    Args:
+        agent_name: The name of the agent to check.
+        
+    Returns:
+        True if the agent is deployed (has a deployment record with a URL).
+    """
+    if not CAST_DB_PATH.exists():
+        return False
+    try:
+        conn = sqlite3.connect(str(CAST_DB_PATH))
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT 1 FROM deployments WHERE agent_name = ? AND deployment_url IS NOT NULL",
+            (agent_name,)
+        )
+        result = cursor.fetchone()
+        conn.close()
+        return result is not None
+    except sqlite3.Error:
+        return False
+
+
+def get_deployed_version(agent_name: str) -> Optional[str]:
+    """Get the currently deployed version of an agent.
+    
+    Args:
+        agent_name: The name of the agent.
+        
+    Returns:
+        The deployed version string, or None if not deployed or no version recorded.
+    """
+    if not CAST_DB_PATH.exists():
+        return None
+    try:
+        conn = sqlite3.connect(str(CAST_DB_PATH))
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT deployed_version FROM deployments WHERE agent_name = ? ORDER BY deployed_at DESC LIMIT 1",
+            (agent_name,)
+        )
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else None
+    except sqlite3.Error:
+        return None
+
+
+def get_changes_since_release(agent_name: str) -> int:
+    """Get the number of changes since the last release.
+    
+    Args:
+        agent_name: The name of the agent.
+        
+    Returns:
+        The number of changes since the last release, or the total change count if no releases.
+    """
+    from cast.releases import get_latest_release_change_number
+    from cast.versioning import get_current_version
+    
+    last_release_change = get_latest_release_change_number(agent_name)
+    current_change = get_current_version(agent_name)
+    
+    return max(0, current_change - last_release_change)
+
+
+def check_and_prompt_for_release(agent_name: str) -> Optional[str]:
+    """
+    Check if a release should be created and prompt the user.
+    
+    This function checks if the agent is deployed and has changes since
+    the last release. If so, it displays a prompt with version suggestions.
+    
+    Args:
+        agent_name: The name of the agent.
+        
+    Returns:
+        The version string to release, or None if skipped/no release needed.
+    """
+    # Check if agent is deployed
+    if not is_agent_deployed(agent_name):
+        return None
+    
+    # Check for changes since last release
+    try:
+        changes_since_last = get_changes_since_release(agent_name)
+    except Exception:
+        return None
+    
+    if changes_since_last <= 0:
+        return None
+    
+    # Get version suggestions
+    from cast.releases import suggest_version, get_current_release
+    
+    current = get_current_release(agent_name)
+    suggestions = suggest_version(agent_name)
+    deployed_version = get_deployed_version(agent_name)
+    
+    # Display the release prompt
+    print("", file=sys.stderr)
+    print("╔══════════════════════════════════════════════════════════════╗", file=sys.stderr)
+    print("║  Agent is deployed - consider creating a release             ║", file=sys.stderr)
+    print("╚══════════════════════════════════════════════════════════════╝", file=sys.stderr)
+    print("", file=sys.stderr)
+    print(f"  Changes since last release: {changes_since_last}", file=sys.stderr)
+    print(f"  Last release: {current or 'none'}", file=sys.stderr)
+    print(f"  Currently deployed: {deployed_version or 'unknown'}", file=sys.stderr)
+    print("", file=sys.stderr)
+    print("  Suggested versions:", file=sys.stderr)
+    print(f"    [1] {suggestions['patch']} (patch)", file=sys.stderr)
+    print(f"    [2] {suggestions['minor']} (minor)", file=sys.stderr)
+    print(f"    [3] {suggestions['major']} (major)", file=sys.stderr)
+    print(f"    [4] Custom version", file=sys.stderr)
+    print(f"    [5] Skip (save changes only)", file=sys.stderr)
+    print("", file=sys.stderr)
+    
+    try:
+        choice = input("Select option (1-5): ").strip()
+    except EOFError:
+        return None
+    
+    if choice == '1':
+        return suggestions['patch']
+    elif choice == '2':
+        return suggestions['minor']
+    elif choice == '3':
+        return suggestions['major']
+    elif choice == '4':
+        try:
+            version = input("Enter version (e.g., 1.6): ").strip()
+            return version if version else None
+        except EOFError:
+            return None
+    else:
+        return None
 
 
 def load_global_config() -> dict:
@@ -731,7 +875,11 @@ class BuilderAgent:
             return f"Error processing message: {e}"
 
     async def execute_tool(self, tool_name: str, args: dict) -> Any:
-        """Execute a tool directly by name."""
+        """Execute a tool directly by name.
+        
+        After executing update tools (update_agent_config, update_instructions, install_mcp),
+        checks if the agent is deployed and includes release suggestions in the result.
+        """
         if tool_name not in self.tool_map:
             return f"Tool '{tool_name}' not found"
 
@@ -739,11 +887,55 @@ class BuilderAgent:
         try:
             # Handle both sync and async tools
             if inspect.iscoroutinefunction(tool.ainvoke):
-                return await tool.ainvoke(args)
+                result = await tool.ainvoke(args)
             else:
-                return tool.invoke(args)
+                result = tool.invoke(args)
+            
+            # Check for deployment and release status after update operations
+            update_tools = {"update_agent_config", "update_instructions", "install_mcp"}
+            if tool_name in update_tools and self.agent_name:
+                release_info = self._get_release_check_result(self.agent_name)
+                if release_info:
+                    # Wrap result in a dict with release info if it's a simple string
+                    if isinstance(result, str) and not result.startswith("{"):
+                        return {
+                            "text": result,
+                            "release_prompt": release_info,
+                        }
+                    elif isinstance(result, dict):
+                        result["release_prompt"] = release_info
+            
+            return result
         except Exception as e:
             return f"Error executing tool: {e}"
+    
+    def _get_release_check_result(self, agent_name: str) -> Optional[Dict[str, Any]]:
+        """Get release check information for a deployed agent.
+        
+        Returns None if not deployed or no changes since last release.
+        """
+        if not is_agent_deployed(agent_name):
+            return None
+        
+        try:
+            changes_since = get_changes_since_release(agent_name)
+            if changes_since <= 0:
+                return None
+            
+            from cast.releases import suggest_version, get_current_release, get_latest_release_change_number
+            from cast.versioning import get_current_version
+            
+            return {
+                "should_prompt": True,
+                "changes_since_release": changes_since,
+                "current_release": get_current_release(agent_name),
+                "last_release_change": get_latest_release_change_number(agent_name),
+                "current_change": get_current_version(agent_name),
+                "deployed_version": get_deployed_version(agent_name),
+                "suggestions": suggest_version(agent_name),
+            }
+        except Exception:
+            return None
 
     def get_welcome_message(self) -> str:
         model = get_builder_model()
@@ -791,6 +983,8 @@ class StdioJsonRpcServer:
             "initialize": self.handle_initialize,
             "tool_call": self.handle_tool_call,
             "output": self.handle_output,
+            "check_release": self.handle_check_release,
+            "create_release": self.handle_create_release,
         }
 
     def _make_error_response(self, msg_id: Any, code: int, message: str, data: Any = None) -> Dict[str, Any]:
@@ -869,6 +1063,81 @@ class StdioJsonRpcServer:
         except Exception as e:
             error_msg = f"Error processing message: {str(e)}"
             print(f"Error in handle_output: {error_msg}", file=sys.stderr)
+            traceback.print_exc()
+            return {"error": {"code": JSONRPC_INTERNAL_ERROR, "message": error_msg}}
+
+    async def handle_check_release(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Check if a release should be created for the current agent.
+        
+        Returns deployment status, change count, and version suggestions.
+        The TUI can use this to decide whether to show the release prompt.
+        """
+        agent_name = params.get("agent_name") or self.agent.agent_name
+        
+        if not agent_name:
+            return {"error": {"code": JSONRPC_INVALID_PARAMS, "message": "Missing 'agent_name' parameter"}}
+
+        try:
+            deployed = is_agent_deployed(agent_name)
+            changes_since = get_changes_since_release(agent_name) if deployed else 0
+            
+            result: Dict[str, Any] = {
+                "is_deployed": deployed,
+                "changes_since_release": changes_since,
+                "should_prompt": deployed and changes_since > 0,
+            }
+            
+            if deployed and changes_since > 0:
+                from cast.releases import suggest_version, get_current_release
+                from cast.releases import get_latest_release_change_number
+                from cast.versioning import get_current_version
+                
+                result["current_release"] = get_current_release(agent_name)
+                result["deployed_version"] = get_deployed_version(agent_name)
+                result["last_release_change"] = get_latest_release_change_number(agent_name)
+                result["current_change"] = get_current_version(agent_name)
+                result["suggestions"] = suggest_version(agent_name)
+            
+            return result
+        except Exception as e:
+            error_msg = f"Error checking release status: {str(e)}"
+            print(f"Error in handle_check_release: {error_msg}", file=sys.stderr)
+            traceback.print_exc()
+            return {"error": {"code": JSONRPC_INTERNAL_ERROR, "message": error_msg}}
+
+    async def handle_create_release(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a release for the current agent.
+        
+        Args:
+            version: The semantic version to release (required).
+            message: Optional release message.
+        """
+        agent_name = params.get("agent_name") or self.agent.agent_name
+        version = params.get("version")
+        message = params.get("message", "")
+
+        if not agent_name:
+            return {"error": {"code": JSONRPC_INVALID_PARAMS, "message": "Missing 'agent_name' parameter"}}
+        if not version:
+            return {"error": {"code": JSONRPC_INVALID_PARAMS, "message": "Missing 'version' parameter"}}
+
+        try:
+            from cast.releases import create_release, validate_semver
+            
+            if not validate_semver(version):
+                return {"error": {"code": JSONRPC_INVALID_PARAMS, "message": f"Invalid semantic version: '{version}'"}}
+            
+            release_info = create_release(agent_name, version, message)
+            
+            return {
+                "success": True,
+                "version": release_info.version,
+                "change_number": release_info.change_number,
+                "message": f"Release {version} created successfully",
+            }
+        except Exception as e:
+            error_msg = f"Error creating release: {str(e)}"
+            print(f"Error in handle_create_release: {error_msg}", file=sys.stderr)
             traceback.print_exc()
             return {"error": {"code": JSONRPC_INTERNAL_ERROR, "message": error_msg}}
 

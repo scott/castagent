@@ -493,6 +493,12 @@ export default class Update extends Command {
       fs.writeFileSync(agentYamlPath, yaml.stringify(config), 'utf8')
       db.updateAgent(agentName, {agent_yaml_path: agentYamlPath})
       this.log(`Agent '${agentName}' configuration updated successfully.`)
+
+      // Create a version record for the changes
+      const versionMessage = changes.length > 0
+        ? `Updated: ${changes.join(', ')}`
+        : 'Updated configuration'
+      await createVersion(agentName, 'cli', versionMessage)
     } catch (error: any) {
       this.error(`Failed to save agent configuration: ${error.message}`)
     }

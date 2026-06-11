@@ -56,10 +56,11 @@ export default class List extends Command {
       const dbAgent = dbAgents.find(a => a.name === agentName)
       const deployment = db.getDeployment(agentName)
       const localAgent = db.getLocalAgent(agentName)
+      const deployedVersion = db.getDeployedVersion(agentName)
 
       let status = ''
       if (deployment?.deployment_url) {
-        status = `[deployed: ${deployment.provider}]`
+        status = `[deployed: ${deployment.provider}, v${deployedVersion ?? '?'}]`
       } else if (localAgent?.port) {
         status = `[local: running on port ${localAgent.port}]`
       } else if (dbAgent) {

@@ -106,10 +106,13 @@ result = revert_to_version('${agentName}', ${targetVersion}, '${message}')
 print(f"Reverted to version {result.id}")
 `
 
-        execSync(`${pythonCmd} -c "${script.replace(/\n/g, ';')}"`, {
-          cwd: os.homedir(),
-          stdio: 'inherit',
-        })
+        execSync(
+          `${pythonCmd} -c "${script.replace(/\n/g, ';').replace(/^\s*;/, '').trim()}"`,
+          {
+            cwd: os.homedir(),
+            stdio: 'inherit',
+          },
+        )
 
         this.log('')
         this.log(`Successfully reverted to version ${targetVersion}.`)

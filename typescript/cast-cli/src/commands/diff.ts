@@ -104,10 +104,13 @@ result = diff_versions('${agentName}', ${v1}, ${v2})
 print(json.dumps(result))
 `
 
-      const output = execSync(`${pythonCmd} -c "${script.replace(/\n/g, ';')}"`, {
-        cwd: os.homedir(),
-        encoding: 'utf8',
-      })
+      const output = execSync(
+        `${pythonCmd} -c "${script.replace(/\n/g, ';').replace(/^\s*;/, '').trim()}"`,
+        {
+          cwd: os.homedir(),
+          encoding: 'utf8',
+        },
+      )
 
       const diffResult = JSON.parse(output)
       let hasChanges = false

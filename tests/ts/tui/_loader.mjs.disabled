@@ -1,0 +1,42 @@
+// Stub loader that intercepts the @opentui/core package and a few
+// cast-tui internal modules. The cast-tui is designed to run under
+// Bun; this loader lets us import its modules in a Node test env.
+import { pathToFileURL } from 'node:url'
+
+const STUB_DIR = new URL('./_stubs/', import.meta.url).href
+const STUBS = {
+  '@opentui/core': STUB_DIR + 'opentui-core.mjs',
+  'clipboardy': STUB_DIR + 'clipboardy.mjs',
+  '../lib/db.js': STUB_DIR + 'db.mjs',
+  '../lib/keychain.js': STUB_DIR + 'keychain.mjs',
+  '../lib/transcript.js': STUB_DIR + 'transcript.mjs',
+  '../components/modal.js': STUB_DIR + 'modal.mjs',
+  '../components/terminal.js': STUB_DIR + 'terminal.mjs',
+  // The slash-registry uses `import { execFileSync } from 'child_process'`
+  // (bare specifier). We stub the bare form so the runner and
+  // node:test internals can still use the real `node:child_process`.
+  'child_process': STUB_DIR + 'child_process.mjs',
+  'node:child_process': STUB_DIR + 'child_process.mjs',
+}
+
+export async function resolve(specifier, context, nextResolve) {
+  if (STUBS[specifier]) {
+    return { url: STUBS[specifier], shortCircuit: true, format: 'module' }
+  }
+  if (specifier.endsWith('/lib/db.js')) {
+    return { url: STUBS['../lib/db.js'], shortCircuit: true, format: 'module' }
+  }
+  if (specifier.endsWith('/lib/keychain.js')) {
+    return { url: STUBS['../lib/keychain.js'], shortCircuit: true, format: 'module' }
+  }
+  if (specifier.endsWith('/lib/transcript.js')) {
+    return { url: STUBS['../lib/transcript.js'], shortCircuit: true, format: 'module' }
+  }
+  if (specifier.endsWith('/components/modal.js')) {
+    return { url: STUBS['../components/modal.js'], shortCircuit: true, format: 'module' }
+  }
+  if (specifier.endsWith('/components/terminal.js')) {
+    return { url: STUBS['../components/terminal.js'], shortCircuit: true, format: 'module' }
+  }
+  return nextResolve(specifier, context)
+}

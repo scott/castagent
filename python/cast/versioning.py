@@ -1,15 +1,30 @@
-"""Agent versioning module for creating and managing agent snapshots."""
+"""Agent versioning module for creating and managing agent snapshots.
+
+This module handles automatic version snapshots (changes).
+For semantic releases, use the releases module instead.
+"""
 
 import json
 import os
 import tarfile
 import shutil
+import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
 
 AGENTS_DIR = Path.home() / ".cast" / "agents"
+
+
+# Deprecation warning helper
+def _emit_deprecation_warning(old_name: str, new_name: str) -> None:
+    """Emit a deprecation warning for renamed functions."""
+    warnings.warn(
+        f"'{old_name}' is deprecated. Use '{new_name}' instead.",
+        DeprecationWarning,
+        stacklevel=3
+    )
 
 
 @dataclass
@@ -36,11 +51,28 @@ def _get_versions_json_path(name: str) -> Path:
     return _get_versions_dir(name) / "versions.json"
 
 
+def _get_changes_dir(name: str) -> Path:
+    """Get the changes directory path for an agent (canonical location)."""
+    return AGENTS_DIR / name / ".cast" / "changes"
+
+
+def _get_changes_json_path(name: str) -> Path:
+    """Get the changes.json path for an agent (canonical location)."""
+    return _get_changes_dir(name) / "changes.json"
+
+
 def _ensure_versions_dir(name: str) -> Path:
     """Ensure the versions directory exists."""
     versions_dir = _get_versions_dir(name)
     versions_dir.mkdir(parents=True, exist_ok=True)
     return versions_dir
+
+
+def _ensure_changes_dir(name: str) -> Path:
+    """Ensure the changes directory exists (canonical location)."""
+    changes_dir = _get_changes_dir(name)
+    changes_dir.mkdir(parents=True, exist_ok=True)
+    return changes_dir
 
 
 def _get_version_filename(version_id: int) -> str:
@@ -51,6 +83,13 @@ def _get_version_filename(version_id: int) -> str:
 
 def _get_next_version_id(name: str) -> int:
     """Get the next version ID for a new version."""
+    # Try canonical location first, fall back to old location
+    changes_json = _get_changes_json_path(name)
+    if changes_json.exists():
+        with open(changes_json, "r") as f:
+            data = json.load(f)
+            return data.get("current", 0) + 1
+
     versions_json = _get_versions_json_path(name)
     if versions_json.exists():
         with open(versions_json, "r") as f:
@@ -79,8 +118,9 @@ def create_version(agent_name: str, source: str = "builder", message: str = "", 
     if not agent_path.exists():
         raise VersioningError(f"Agent '{agent_name}' does not exist")
 
-    # Ensure versions directory exists
-    versions_dir = _ensure_versions_dir(agent_name)
+    # Ensure both directories exist (new canonical location + old for migration)
+    changes_dir = _ensure_changes_dir(agent_name)
+    _ensure_versions_dir(agent_name)
 
     # Get next version ID
     version_id = _get_next_version_id(agent_name)
@@ -113,9 +153,9 @@ def create_version(agent_name: str, source: str = "builder", message: str = "", 
     if tools_dir.exists() and any(tools_dir.iterdir()):
         files_to_snapshot.append("tools")
 
-    # Create tar.gz archive
+    # Create tar.gz archive in canonical location (changes/)
     version_filename = _get_version_filename(version_id)
-    version_path = versions_dir / version_filename
+    version_path = changes_dir / version_filename
 
     with tarfile.open(version_path, "w:gz") as tar:
         for file_or_dir in files_to_snapshot:
@@ -124,13 +164,13 @@ def create_version(agent_name: str, source: str = "builder", message: str = "", 
                 # Use arcname to store relative path in archive
                 tar.add(file_path, arcname=file_or_dir)
 
-    # Update versions.json
-    versions_json_path = _get_versions_json_path(agent_name)
-    if versions_json_path.exists():
-        with open(versions_json_path, "r") as f:
-            versions_data = json.load(f)
+    # Update changes.json (canonical location)
+    changes_json_path = _get_changes_json_path(agent_name)
+    if changes_json_path.exists():
+        with open(changes_json_path, "r") as f:
+            changes_data = json.load(f)
     else:
-        versions_data = {"versions": [], "current": 0}
+        changes_data = {"versions": [], "current": 0}
 
     # Add new version to the list
     version_info = VersionInfo(
@@ -139,13 +179,79 @@ def create_version(agent_name: str, source: str = "builder", message: str = "", 
         source=source,
         message=message
     )
-    versions_data["versions"].append(asdict(version_info))
-    versions_data["current"] = version_id
+    changes_data["versions"].append(asdict(version_info))
+    changes_data["current"] = version_id
 
-    with open(versions_json_path, "w") as f:
-        json.dump(versions_data, f, indent=2)
+    with open(changes_json_path, "w") as f:
+        json.dump(changes_data, f, indent=2)
+
+    # Also update versions.json for backward compatibility (migration)
+    # Copy the changes data to versions.json to keep them in sync
+    versions_json_path = _get_versions_json_path(agent_name)
+    if versions_json_path.exists():
+        with open(versions_json_path, "w") as f:
+            json.dump(changes_data, f, indent=2)
 
     return version_info
+
+
+def get_current_version(agent_name: str) -> int:
+    """
+    Get the current (latest) version number for an agent.
+
+    Args:
+        agent_name: The name of the agent.
+
+    Returns:
+        The current version number, or 0 if no versions exist.
+    """
+    # Try canonical location first
+    changes_json_path = _get_changes_json_path(agent_name)
+    if changes_json_path.exists():
+        with open(changes_json_path, "r") as f:
+            changes_data = json.load(f)
+        return changes_data.get("current", 0)
+
+    # Fall back to old versions location
+    versions_json_path = _get_versions_json_path(agent_name)
+    if versions_json_path.exists():
+        with open(versions_json_path, "r") as f:
+            versions_data = json.load(f)
+        return versions_data.get("current", 0)
+
+    return 0
+
+
+def get_version_info(agent_name: str, version: int) -> Optional[VersionInfo]:
+    """
+    Get information about a specific version.
+
+    Args:
+        agent_name: The name of the agent.
+        version: The version number to look up.
+
+    Returns:
+        VersionInfo for the specified version, or None if not found.
+    """
+    # Try canonical location first
+    changes_json_path = _get_changes_json_path(agent_name)
+    if changes_json_path.exists():
+        with open(changes_json_path, "r") as f:
+            changes_data = json.load(f)
+        for v in changes_data.get("versions", []):
+            if v.get("id") == version:
+                return VersionInfo(**v)
+
+    # Fall back to old versions location
+    versions_json_path = _get_versions_json_path(agent_name)
+    if versions_json_path.exists():
+        with open(versions_json_path, "r") as f:
+            versions_data = json.load(f)
+        for v in versions_data.get("versions", []):
+            if v.get("id") == version:
+                return VersionInfo(**v)
+
+    return None
 
 
 def list_versions(agent_name: str) -> List[VersionInfo]:
@@ -156,21 +262,29 @@ def list_versions(agent_name: str) -> List[VersionInfo]:
         agent_name: The name of the agent.
 
     Returns:
-        List of VersionInfo objects, sorted by version ID (newest last).
+        List of VersionInfo objects, sorted by version ID (newest first).
     """
+    # Try canonical location first
+    changes_json_path = _get_changes_json_path(agent_name)
+    if changes_json_path.exists():
+        with open(changes_json_path, "r") as f:
+            changes_data = json.load(f)
+        versions = []
+        for v in changes_data.get("versions", []):
+            versions.append(VersionInfo(**v))
+        return sorted(versions, key=lambda v: v.id, reverse=True)
+
+    # Fall back to old versions location
     versions_json_path = _get_versions_json_path(agent_name)
+    if versions_json_path.exists():
+        with open(versions_json_path, "r") as f:
+            versions_data = json.load(f)
+        versions = []
+        for v in versions_data.get("versions", []):
+            versions.append(VersionInfo(**v))
+        return sorted(versions, key=lambda v: v.id, reverse=True)
 
-    if not versions_json_path.exists():
-        return []
-
-    with open(versions_json_path, "r") as f:
-        versions_data = json.load(f)
-
-    versions = []
-    for v in versions_data.get("versions", []):
-        versions.append(VersionInfo(**v))
-
-    return sorted(versions, key=lambda v: v.id)
+    return []
 
 
 def revert_to_version(agent_name: str, version_id: Optional[int] = None, message: str = "") -> VersionInfo:
@@ -189,12 +303,12 @@ def revert_to_version(agent_name: str, version_id: Optional[int] = None, message
         VersionInfo about the newly created revert version.
     """
     agent_path = AGENTS_DIR / agent_name
-    versions_dir = _get_versions_dir(agent_name)
+    changes_dir = _get_changes_dir(agent_name)
 
     if not agent_path.exists():
         raise VersioningError(f"Agent '{agent_name}' does not exist")
 
-    if not versions_dir.exists():
+    if not changes_dir.exists():
         raise VersioningError(f"No versions found for agent '{agent_name}'")
 
     # Get the target version
@@ -216,11 +330,11 @@ def revert_to_version(agent_name: str, version_id: Optional[int] = None, message
 
     # Extract the target version
     version_filename = _get_version_filename(target_version.id)
-    version_path = versions_dir / version_filename
+    version_path = changes_dir / version_filename
 
     with tarfile.open(version_path, "r:gz") as tar:
         # Extract to a temporary location
-        temp_extract = versions_dir / "_temp_extract"
+        temp_extract = changes_dir / "_temp_extract"
         temp_extract.mkdir(exist_ok=True)
 
         try:
@@ -240,9 +354,10 @@ def revert_to_version(agent_name: str, version_id: Optional[int] = None, message
             if temp_extract.exists():
                 shutil.rmtree(temp_extract)
 
-    # Return info about the new revert version
+    # Return info about the new revert version (newest is first in the
+    # list since list_versions sorts newest-first)
     new_versions = list_versions(agent_name)
-    return new_versions[-1]
+    return new_versions[0]
 
 
 def get_version_details(agent_name: str, version_id: int) -> Optional[Dict[str, Any]]:
@@ -388,3 +503,41 @@ def diff_versions(agent_name: str, version1_id: int, version2_id: int) -> Dict[s
                     result["mcp"] = mcp_changes
 
     return result
+
+
+# ============================================================================
+# Backward Compatibility Aliases (deprecated - for changes/versions migration)
+# ============================================================================
+
+def _get_versions_dir_legacy(name: str) -> Path:
+    """Legacy alias for _get_versions_dir (deprecated)."""
+    _emit_deprecation_warning("_get_versions_dir_legacy", "_get_versions_dir")
+    return _get_versions_dir(name)
+
+
+def _get_versions_json_path_legacy(name: str) -> Path:
+    """Legacy alias for _get_versions_json_path (deprecated)."""
+    _emit_deprecation_warning("_get_versions_json_path_legacy", "_get_versions_json_path")
+    return _get_versions_json_path(name)
+
+
+def _get_changes(name: str) -> Dict[str, Any]:
+    """Get all changes for an agent.
+
+    This function reads from the canonical changes/ location.
+
+    Returns:
+        Dictionary with 'versions' list and 'current' id.
+    """
+    changes_json_path = _get_changes_json_path(name)
+    if changes_json_path.exists():
+        with open(changes_json_path, "r") as f:
+            return json.load(f)
+
+    # Fall back to old versions location for migration
+    versions_json_path = _get_versions_json_path(name)
+    if versions_json_path.exists():
+        with open(versions_json_path, "r") as f:
+            return json.load(f)
+
+    return {"versions": [], "current": 0}

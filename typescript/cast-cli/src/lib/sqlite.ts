@@ -2,9 +2,24 @@ import Database from 'better-sqlite3'
 import * as path from 'path'
 import * as os from 'os'
 import * as fs from 'fs'
+import * as crypto from 'crypto'
 
 const CAST_DIR = path.join(os.homedir(), '.cast')
 const DB_PATH = path.join(CAST_DIR, 'cast.db')
+
+// Generate deployment SHA
+export function generateDeploymentSha(agentName: string): string {
+  const hash = crypto.createHash('sha256')
+  hash.update(agentName + Date.now().toString() + crypto.randomBytes(16).toString('hex'))
+  return hash.digest('hex').substring(0, 6).toLowerCase()
+}
+
+// Generate SHA for existing deployment (used in migration)
+function generateShaFromExistingData(agentName: string, deployedAt: string, provider: string): string {
+  const hash = crypto.createHash('sha256')
+  hash.update(agentName + deployedAt + provider)
+  return hash.digest('hex').substring(0, 6).toLowerCase()
+}
 
 export class CastDatabase {
   private db: Database.Database
@@ -52,15 +67,21 @@ export class CastDatabase {
       );
 
       CREATE TABLE IF NOT EXISTS deployments (
-        agent_name TEXT PRIMARY KEY,
+        id TEXT PRIMARY KEY,
+        agent_name TEXT NOT NULL,
         provider TEXT,
         deployment_url TEXT,
         auth_token_hash TEXT,
         deployed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         last_connected_at DATETIME,
         volume_id TEXT,
-        volume_config TEXT
+        volume_config TEXT,
+        deployed_version TEXT,
+        deleted_at DATETIME,
+        FOREIGN KEY (agent_name) REFERENCES agents(name)
       );
+
+      CREATE INDEX IF NOT EXISTS idx_deployments_agent_name ON deployments(agent_name);
 
       CREATE TABLE IF NOT EXISTS local_agents (
         agent_name TEXT PRIMARY KEY,
@@ -69,7 +90,99 @@ export class CastDatabase {
         started_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         stopped_at DATETIME
       );
+
+      CREATE TABLE IF NOT EXISTS releases (
+        agent_name TEXT,
+        version TEXT,
+        change_number INTEGER,
+        message TEXT,
+        changelog TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        tarball_path TEXT,
+        PRIMARY KEY (agent_name, version)
+      );
     `)
+    this.runMigrations()
+  }
+
+  private runMigrations(): void {
+    // Migration: Check if deployments table uses old schema (agent_name PRIMARY KEY)
+    const stmt = this.db.prepare('PRAGMA table_info(deployments)')
+    const columns = stmt.all() as any[]
+    const hasIdColumn = columns.some((col: any) => col.name === 'id')
+    const hasAgentNamePrimaryKey = columns.some((col: any) => col.name === 'agent_name' && col.pk === 1)
+
+    if (!hasIdColumn && hasAgentNamePrimaryKey) {
+      // Old schema detected - migrate to new schema with SHA-based id
+      this.db.exec(`
+        CREATE TABLE deployments_new (
+          id TEXT PRIMARY KEY,
+          agent_name TEXT NOT NULL,
+          provider TEXT,
+          deployment_url TEXT,
+          auth_token_hash TEXT,
+          deployed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          last_connected_at DATETIME,
+          volume_id TEXT,
+          volume_config TEXT,
+          deployed_version TEXT,
+          deleted_at DATETIME
+        );
+        CREATE INDEX idx_deployments_agent_name ON deployments_new(agent_name);
+      `)
+
+      // Migrate existing data with auto-generated SHA
+      const oldDeployments = this.db.prepare('SELECT * FROM deployments').all() as any[]
+      for (const dep of oldDeployments) {
+        const sha = generateShaFromExistingData(dep.agent_name, dep.deployed_at || '', dep.provider || '')
+        this.db.prepare(`
+          INSERT INTO deployments_new (id, agent_name, provider, deployment_url, auth_token_hash, deployed_at, last_connected_at, volume_id, volume_config, deployed_version)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `).run(sha, dep.agent_name, dep.provider, dep.deployment_url, dep.auth_token_hash, dep.deployed_at, dep.last_connected_at, dep.volume_id, dep.volume_config, dep.deployed_version)
+      }
+
+      // Drop old table and rename new one
+      this.db.exec('DROP TABLE deployments')
+      this.db.exec('ALTER TABLE deployments_new RENAME TO deployments')
+    }
+
+    // Migration: Add deployed_version column to deployments table (idempotent)
+    if (!this.columnExists('deployments', 'deployed_version')) {
+      this.db.exec('ALTER TABLE deployments ADD COLUMN deployed_version TEXT')
+    }
+
+    // Migration: Add deleted_at column (idempotent)
+    if (!this.columnExists('deployments', 'deleted_at')) {
+      this.db.exec('ALTER TABLE deployments ADD COLUMN deleted_at DATETIME')
+    }
+
+    // Migration: Add releases table (idempotent)
+    if (!this.tableExists('releases')) {
+      this.db.exec(`
+        CREATE TABLE releases (
+          agent_name TEXT,
+          version TEXT,
+          change_number INTEGER,
+          message TEXT,
+          changelog TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          tarball_path TEXT,
+          PRIMARY KEY (agent_name, version)
+        )
+      `)
+    }
+  }
+
+  private tableExists(table: string): boolean {
+    const stmt = this.db.prepare(`SELECT name FROM sqlite_master WHERE type='table' AND name=?`)
+    const result = stmt.get(table)
+    return !!result
+  }
+
+  private columnExists(table: string, column: string): boolean {
+    const stmt = this.db.prepare(`PRAGMA table_info(${table})`)
+    const columns = stmt.all() as any[]
+    return columns.some((col: any) => col.name === column)
   }
 
   public getAgent(name: string): any {
@@ -96,10 +209,15 @@ export class CastDatabase {
   }
 
   public deleteAgent(name: string): void {
-    // Clean up related records first
+    // Clean up related records first. All of these are cascade-on-agent
+    // relationships, so leaving any of them dangling would leave the
+    // registry full of stale entries.
     this.db.prepare('DELETE FROM agent_mcp WHERE agent_name = ?').run(name)
     this.db.prepare('DELETE FROM deployments WHERE agent_name = ?').run(name)
     this.db.prepare('DELETE FROM local_agents WHERE agent_name = ?').run(name)
+    // Releases are stored in their own table that wasn't part of the
+    // original schema, so they need to be explicitly deleted here.
+    this.db.prepare('DELETE FROM releases WHERE agent_name = ?').run(name)
     this.db.prepare('DELETE FROM agents WHERE name = ?').run(name)
   }
 
@@ -146,22 +264,74 @@ export class CastDatabase {
   }
 
   public getDeployment(name: string): any {
-    const stmt = this.db.prepare('SELECT * FROM deployments WHERE agent_name = ?')
-    return stmt.get(name)
+    // Backward compat: get most recent non-deleted deployment for agent name
+    return this.getActiveDeployment(name)
+  }
+
+  public getDeploymentBySha(sha: string): any {
+    const stmt = this.db.prepare('SELECT * FROM deployments WHERE id = ? AND deleted_at IS NULL')
+    return stmt.get(sha)
+  }
+
+  public getDeploymentByAgentName(name: string): any {
+    return this.getActiveDeployment(name)
+  }
+
+  public getActiveDeployment(agentName: string): any {
+    const stmt = this.db.prepare('SELECT * FROM deployments WHERE agent_name = ? AND deleted_at IS NULL ORDER BY deployed_at DESC LIMIT 1')
+    return stmt.get(agentName)
+  }
+
+  public listDeployments(agentName: string): any[] {
+    const stmt = this.db.prepare('SELECT * FROM deployments WHERE agent_name = ? AND deleted_at IS NULL ORDER BY deployed_at DESC')
+    return stmt.all(agentName)
+  }
+
+  public createDeployment(id: string, agentName: string, provider: string, url: string, tokenHash: string, volumeId?: string | null, volumeConfig?: string | null, deployedVersion?: string | null): void {
+    const stmt = this.db.prepare(`
+      INSERT INTO deployments
+      (id, agent_name, provider, deployment_url, auth_token_hash, volume_id, volume_config, deployed_version)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    stmt.run(id, agentName, provider, url, tokenHash, volumeId || null, volumeConfig || null, deployedVersion || null)
   }
 
   public removeDeployment(name: string): void {
-    const stmt = this.db.prepare('DELETE FROM deployments WHERE agent_name = ?')
-    stmt.run(name)
+    // For backward compat, treat name as agent name and soft delete most recent
+    const deployment = this.getActiveDeployment(name)
+    if (deployment) {
+      this.removeDeploymentBySha(deployment.id)
+    }
+  }
+
+  public removeDeploymentBySha(sha: string): void {
+    const stmt = this.db.prepare('UPDATE deployments SET deleted_at = CURRENT_TIMESTAMP WHERE id = ?')
+    stmt.run(sha)
   }
 
   public setDeployment(name: string, provider: string, url: string, tokenHash: string, volumeId?: string | null, volumeConfig?: string | null): void {
-    const stmt = this.db.prepare(`
-      INSERT OR REPLACE INTO deployments
-      (agent_name, provider, deployment_url, auth_token_hash, volume_id, volume_config)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `)
-    stmt.run(name, provider, url, tokenHash, volumeId || null, volumeConfig || null)
+    // For backward compat - create new deployment with auto-generated SHA
+    const sha = generateDeploymentSha(name)
+    this.createDeployment(sha, name, provider, url, tokenHash, volumeId, volumeConfig)
+  }
+
+  public getDeployedVersion(agentName: string): string | null {
+    const deployment = this.getActiveDeployment(agentName)
+    return deployment?.deployed_version ?? null
+  }
+
+  public updateDeployedVersion(agentName: string, version: string | number): void {
+    const deployment = this.getActiveDeployment(agentName)
+    if (!deployment) return
+    // Handle both string (semantic) and number (legacy) versions
+    const versionStr = typeof version === 'number' ? `v${version}` : version
+    const stmt = this.db.prepare('UPDATE deployments SET deployed_version = ? WHERE id = ?')
+    stmt.run(versionStr, deployment.id)
+  }
+
+  public updateDeploymentLastConnected(sha: string): void {
+    const stmt = this.db.prepare('UPDATE deployments SET last_connected_at = CURRENT_TIMESTAMP WHERE id = ?')
+    stmt.run(sha)
   }
 
   // Agent MCP methods
@@ -211,6 +381,79 @@ export class CastDatabase {
       VALUES (?, ?)
     `)
     stmt.run(provider, typeof config === 'string' ? config : JSON.stringify(config))
+  }
+
+  // Release methods
+  public createRelease(agentName: string, version: string, changeNumber: number, message: string, changelog: string, tarballPath: string): void {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO releases
+      (agent_name, version, change_number, message, changelog, tarball_path)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `)
+    stmt.run(agentName, version, changeNumber, message, changelog, tarballPath)
+  }
+
+  public listReleases(agentName: string): any[] {
+    const stmt = this.db.prepare('SELECT * FROM releases WHERE agent_name = ? ORDER BY created_at DESC')
+    return stmt.all(agentName)
+  }
+
+  public getRelease(agentName: string, version: string): any {
+    const stmt = this.db.prepare('SELECT * FROM releases WHERE agent_name = ? AND version = ?')
+    return stmt.get(agentName, version)
+  }
+
+  public getCurrentRelease(agentName: string): any {
+    const stmt = this.db.prepare('SELECT * FROM releases WHERE agent_name = ? ORDER BY created_at DESC LIMIT 1')
+    return stmt.get(agentName)
+  }
+
+  public listAllReleases(): any[] {
+    // Get all releases with their most recent deployment info
+    const stmt = this.db.prepare(`
+      SELECT r.*, d.id as deployment_sha, d.provider, d.deployment_url, d.deployed_at as deployment_date
+      FROM releases r
+      LEFT JOIN (
+        SELECT agent_name, deployed_version, id, provider, deployment_url, deployed_at,
+               ROW_NUMBER() OVER (PARTITION BY agent_name, deployed_version ORDER BY deployed_at DESC) as rn
+        FROM deployments
+        WHERE deleted_at IS NULL
+      ) d ON r.agent_name = d.agent_name AND r.version = d.deployed_version AND d.rn = 1
+      ORDER BY r.created_at DESC
+    `)
+    return stmt.all()
+  }
+
+  public listAllReleasesForAgent(agentName: string): any[] {
+    const stmt = this.db.prepare(`
+      SELECT r.*, d.id as deployment_sha, d.provider, d.deployment_url, d.deployed_at as deployment_date
+      FROM releases r
+      LEFT JOIN (
+        SELECT agent_name, deployed_version, id, provider, deployment_url, deployed_at,
+               ROW_NUMBER() OVER (PARTITION BY agent_name, deployed_version ORDER BY deployed_at DESC) as rn
+        FROM deployments
+        WHERE deleted_at IS NULL
+      ) d ON r.agent_name = d.agent_name AND r.version = d.deployed_version AND d.rn = 1
+      WHERE r.agent_name = ?
+      ORDER BY r.created_at DESC
+    `)
+    return stmt.all(agentName)
+  }
+
+  public listAllDeploymentsForAgent(agentName: string): any[] {
+    // For detailed deployments table (cast registry <agent>)
+    const stmt = this.db.prepare(`
+      SELECT id as deployment_sha, provider, deployed_version, deployed_at, deployment_url
+      FROM deployments
+      WHERE agent_name = ? AND deleted_at IS NULL
+      ORDER BY deployed_at DESC
+    `)
+    return stmt.all(agentName)
+  }
+
+  public deleteRelease(agentName: string, version: string): void {
+    const stmt = this.db.prepare('DELETE FROM releases WHERE agent_name = ? AND version = ?')
+    stmt.run(agentName, version)
   }
 }
 

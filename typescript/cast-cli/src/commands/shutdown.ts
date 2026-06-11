@@ -2,6 +2,7 @@ import {Args, Command, Flags} from '@oclif/core'
 import * as readline from 'readline'
 import {db} from '../lib/sqlite'
 import {keychain} from '../lib/keychain'
+import {resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
 import DockerDeploy from '../lib/deploy/docker'
 import FlyDeploy from '../lib/deploy/fly'
 import RailwayDeploy from '../lib/deploy/railway'
@@ -21,6 +22,7 @@ export default class Shutdown extends Command {
 
   static examples = [
     '<%= config.bin %> <%= command.id %> email-agent',
+    '<%= config.bin %> <%= command.id %> abc123  # Shutdown by deployment SHA',
     '<%= config.bin %> <%= command.id %> email-agent --force',
   ]
 
@@ -29,7 +31,7 @@ export default class Shutdown extends Command {
   }
 
   static args = {
-    agent: Args.string({description: 'Agent name', required: true}),
+    agent: Args.string({description: 'Agent name or deployment SHA', required: true}),
   }
 
   private async confirm(message: string): Promise<boolean> {
@@ -48,19 +50,29 @@ export default class Shutdown extends Command {
 
   async run(): Promise<void> {
     const {args, flags} = await this.parse(Shutdown)
-    const agentName = args.agent
+    const target = args.agent
 
-    const deployment = db.getDeployment(agentName)
+    // Resolve target (SHA or agent name)
+    const resolution = resolveDeploymentTarget(target)
 
-    if (!deployment) {
-      this.log(`Agent '${agentName}' is not currently deployed.`)
+    if (resolution.type === 'not_found') {
+      this.log(`No deployment found for '${target}'.`)
       return
     }
+
+    if (resolution.type === 'ambiguous') {
+      this.error(resolution.message!)
+    }
+
+    // resolution.type is 'sha' or 'single'
+    const deployment = resolution.deployment!
+    const agentName = deployment.agent_name
+    const deploymentSha = deployment.id
 
     const provider = deployment.provider
     const url = deployment.deployment_url
 
-    this.log(`Agent '${agentName}' is deployed to ${provider} (${url})`)
+    this.log(`Agent '${agentName}' (deployment: ${deploymentSha}) is deployed to ${provider} (${url})`)
 
     if (!flags.force) {
       const confirmed = await this.confirm(`Are you sure you want to shut down '${agentName}' and destroy all remote resources?`)
@@ -85,12 +97,12 @@ export default class Shutdown extends Command {
       }
     }
 
-    // Remove deployment from database
+    // Soft delete deployment from database (set deleted_at)
     try {
-      db.removeDeployment(agentName)
-      this.log('Removed deployment record from database.')
+      db.removeDeploymentBySha(deploymentSha)
+      this.log('Marked deployment as deleted in database.')
     } catch (error: any) {
-      this.warn('Failed to remove deployment record: ' + error.message)
+      this.warn('Failed to update deployment record: ' + error.message)
     }
 
     // Remove auth token from keychain

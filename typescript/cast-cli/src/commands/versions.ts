@@ -1,22 +1,19 @@
 import {Args, Command, Flags} from '@oclif/core'
+import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
-import * as fs from 'fs'
 
-interface VersionInfo {
-  id: number
-  timestamp: string
-  source: string
+interface ReleaseInfo {
+  version: string
+  change_number: number
   message: string
-}
-
-interface VersionsJson {
-  current: number
-  versions: VersionInfo[]
+  changelog: string
+  created_at: string
+  tarball_path: string
 }
 
 export default class Versions extends Command {
-  static description = 'List all versions of an agent'
+  static description = 'List all releases of an agent'
 
   static examples = [
     '<%= config.bin %> <%= command.id %> my-agent',
@@ -31,46 +28,60 @@ export default class Versions extends Command {
     agent: Args.string({description: 'Agent name', required: true}),
   }
 
+  private getReleasesFromFile(agentName: string): ReleaseInfo[] {
+    const releasesJsonPath = path.join(os.homedir(), '.cast', 'agents', agentName, '.cast', 'releases', 'releases.json')
+    if (!fs.existsSync(releasesJsonPath)) {
+      return []
+    }
+    try {
+      const data = JSON.parse(fs.readFileSync(releasesJsonPath, 'utf8'))
+      return data.releases || []
+    } catch {
+      return []
+    }
+  }
+
   async run(): Promise<void> {
     const {args, flags} = await this.parse(Versions)
     const agentName = args.agent
-    const versionsJsonPath = path.join(os.homedir(), '.cast', 'agents', agentName, '.cast', 'versions', 'versions.json')
 
-    if (!fs.existsSync(versionsJsonPath)) {
-      this.log(`No versions found for agent '${agentName}'.`)
-      this.log('Versions are created when the agent is edited or modified.')
+    const releases = this.getReleasesFromFile(agentName)
+
+    if (flags.json) {
+      console.log(JSON.stringify(releases, null, 2))
       return
     }
 
-    try {
-      const data: VersionsJson = JSON.parse(fs.readFileSync(versionsJsonPath, 'utf8'))
-
-      if (flags.json) {
-        console.log(JSON.stringify(data, null, 2))
-        return
-      }
-
-      this.log('')
-      this.log(`Agent: ${agentName}`)
-      this.log(`Current version: ${data.current}`)
-      this.log('')
-      this.log('Version History:')
-      this.log('──────────────────────────────────────────────────────────────────────────────')
-
-      for (const v of data.versions) {
-        const date = new Date(v.timestamp)
-        const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
-        const sourceLabel = v.source === 'create' ? 'CREATED' : v.source.toUpperCase()
-        this.log(`  v${v.id}  ${dateStr}  [${sourceLabel}]  ${v.message}`)
-      }
-
-      this.log('──────────────────────────────────────────────────────────────────────────────')
-      this.log('')
-      this.log('Commands:')
-      this.log(`  cast revert ${agentName} [version]  - Revert to a specific version`)
-      this.log(`  cast diff ${agentName} [v1] [v2]     - Compare two versions`)
-    } catch (error: any) {
-      this.error(`Failed to read versions: ${error.message}`)
+    if (releases.length === 0) {
+      this.log(`No releases found for agent '${agentName}'.`)
+      this.log('Releases are created with: cast release <agent> <version>')
+      return
     }
+
+    // Get current release (most recent by created_at)
+    const sortedReleases = [...releases].sort((a, b) =>
+      new Date(b.created_at).getTime() - new Date(a.created_at).getTime()
+    )
+    const currentRelease = sortedReleases[0]
+
+    this.log('')
+    this.log(`Agent: ${agentName}`)
+    this.log(`Current release: ${currentRelease?.version || 'none'}`)
+    this.log('')
+    this.log('Releases:')
+    this.log('──────────────────────────────────────────────────────────────────────────────')
+
+    for (const release of sortedReleases) {
+      const date = new Date(release.created_at)
+      const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
+      this.log(`  ${release.version}  ${dateStr}  ${release.message}`)
+    }
+
+    this.log('──────────────────────────────────────────────────────────────────────────────')
+    this.log('')
+    this.log('Commands:')
+    this.log(`  cast release ${agentName} <version>  - Create a new release`)
+    this.log(`  cast deploy ${agentName} --version <ver>  - Deploy a specific release`)
+    this.log(`  cast upgrade ${agentName} --version <ver>  - Upgrade to a release`)
   }
 }

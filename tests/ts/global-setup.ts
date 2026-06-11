@@ -34,6 +34,27 @@ const TEST_AGENT_PREFIXES = [
   'test-commit-',
   'test-push-',
   'test-git-',
+  // Added for the versioning / releases test suite. These match the
+  // unique-per-test-run names created by tests/ts/commands/release.test.ts
+  // and the Releases block of tests/ts/lib/sqlite.test.ts.
+  'release-test-',
+  'release-cmd-test-',
+  'rel-a-',
+  'rel-b-',
+  'rel-x-',
+  'rel-y-',
+  // Other test patterns used across the suite.
+  'restore-test-',
+  'changes-test-',
+  'registry-agent-test-',
+  'shutdown-agent-',
+  'dup-test-',
+  'version-test-',
+  // The SQLite test suite uses per-test-run unique names of the form
+  // "sha-test-<timestamp>-<random>" for SHA-based deployments. The
+  // "sha-" prefix alone is too broad (real SHAs are sha1...), so we
+  // require the "sha-test-" prefix specifically.
+  'sha-test-',
 ]
 
 // Common test agent names (without prefix)
@@ -52,6 +73,26 @@ const TEST_AGENT_NAMES = [
   'yaml-test-agent',
   'test-agent',
   'temp-agent',
+  // Names used by the Releases block in tests/ts/lib/sqlite.test.ts.
+  // These are static names reused across test runs (not per-run unique).
+  'agent-x',
+  'agent-y',
+  'auto-sha-agent',
+  'back-compat-agent',
+  'conn-agent',
+  'current-agent',
+  'del-rel-agent',
+  'deploys-agent',
+  'mixed-deploys',
+  'multi-deploy-agent',
+  'no-version-agent',
+  'release-agent',
+  'semver-agent',
+  'sha-agent',
+  'soft-delete-agent',
+  'specific-agent',
+  'upsert-agent',
+  'versioned-agent',
 ]
 
 export function isTestAgent(agentName: string): boolean {

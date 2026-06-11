@@ -9,7 +9,9 @@ import RailwayDeploy from '../lib/deploy/railway'
 import FlyDeploy from '../lib/deploy/fly'
 import DigitalOceanDeploy from '../lib/deploy/digitalocean'
 import SpritesDeploy from '../lib/deploy/sprites'
-import {checkCli, getProviderToken} from '../lib/deploy/deploy-utils'
+import {checkCli, getProviderToken, generateDeploymentSha} from '../lib/deploy/deploy-utils'
+import {getCurrentRelease} from '../lib/releases'
+import {db} from '../lib/sqlite'
 
 const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'sprites', 'docker', 'local']
 
@@ -82,6 +84,11 @@ export default class Deploy extends Command {
   ]
 
   static flags = {
+    force: Flags.boolean({
+      char: 'f',
+      description: 'Skip all interactive prompts (auto-commit uncommitted changes before deploying)',
+      default: false,
+    }),
     provider: Flags.string({
       description: 'Deployment provider',
       options: VALID_PROVIDERS,
@@ -90,6 +97,10 @@ export default class Deploy extends Command {
       description: 'Port for local deployment',
       default: 8080,
     }),
+    version: Flags.string({
+      description: 'Release version to deploy (defaults to latest/current state)',
+      default: 'latest',
+    }),
   }
 
   static args = {
@@ -97,12 +108,26 @@ export default class Deploy extends Command {
   }
 
   private async prompt(question: string): Promise<string> {
+    // Ensure stdin is in raw mode for proper input handling
+    if (process.stdin.isTTY && !process.stdin.isRaw) {
+      readline.emitKeypressEvents(process.stdin)
+      ;(process.stdin as any).setRawMode?.(true)
+    }
+
     const rl = readline.createInterface({
       input: process.stdin,
       output: process.stdout,
+      terminal: true,
     })
 
-    return new Promise((resolve) => {
+    return new Promise((resolve, reject) => {
+      // Handle non-TTY environments gracefully
+      if (!process.stdin.isTTY) {
+        rl.close()
+        reject(new Error('Cannot prompt in non-interactive mode. Use --force flag to skip prompts.'))
+        return
+      }
+
       rl.question(question, (answer) => {
         rl.close()
         resolve(answer.trim())
@@ -110,9 +135,21 @@ export default class Deploy extends Command {
     })
   }
 
-  private async confirm(message: string): Promise<boolean> {
-    const answer = await this.prompt(`${message} (y/N) `)
-    return answer.toLowerCase() === 'y'
+  private async confirm(message: string, force = false): Promise<boolean> {
+    // Use --force flag in non-interactive mode
+    if (force) {
+      this.log(`${message} (y/N) - force flag set, assuming yes`)
+      return true
+    }
+
+    try {
+      const answer = await this.prompt(`${message} (y/N) `)
+      return answer.toLowerCase() === 'y'
+    } catch (error) {
+      // If prompt fails (non-TTY), default to false
+      this.log(`${message} - prompt failed, defaulting to no`)
+      return false
+    }
   }
 
   private async selectProvider(): Promise<string> {
@@ -140,7 +177,24 @@ export default class Deploy extends Command {
     return providerEntries[index][0]
   }
 
-  private async walkthroughProviderSetup(provider: string): Promise<void> {
+  private async prepareVersionForDeploy(agentName: string, agentPath: string, version: string): Promise<void> {
+    if (version === 'latest') {
+      return // Use current working state
+    }
+
+    // Extract specific release tarball
+    const {getRelease, extractRelease} = await import('../lib/releases')
+    const release = await getRelease(agentName, version)
+    if (!release) {
+      this.error(`Release ${version} not found. Run 'cast release ${agentName} ${version}' first.`)
+    }
+
+    // Extract release to agent directory
+    await extractRelease(agentName, version, agentPath)
+    this.log(`Using release ${version} from ${release.tarball_path}`)
+  }
+
+  private async walkthroughProviderSetup(provider: string, force = false): Promise<void> {
     const info = PROVIDERS[provider]
     if (!info) return
 
@@ -176,7 +230,7 @@ export default class Deploy extends Command {
           this.log('  brew install flyctl')
         }
         this.log('')
-        const ready = await this.confirm('Have you installed the CLI and are ready to continue?')
+        const ready = await this.confirm('Have you installed the CLI and are ready to continue?', force)
         if (!ready) {
           this.log('')
           this.log('Deployment cancelled. Run again when you are ready.')
@@ -196,7 +250,7 @@ export default class Deploy extends Command {
         this.log('Run this command in another terminal:')
         this.log('  ' + info.authCommand)
         this.log('')
-        const ready = await this.confirm('Have you logged in and are ready to continue?')
+        const ready = await this.confirm('Have you logged in and are ready to continue?', force)
         if (!ready) {
           this.log('')
           this.log('Deployment cancelled. Run again when you are authenticated.')
@@ -228,7 +282,7 @@ export default class Deploy extends Command {
           this.log('    digitalocean:')
           this.log('      token: ${DIGITALOCEAN_ACCESS_TOKEN}')
           this.log('')
-          const ready = await this.confirm('Have you set your DigitalOcean API token and are ready to continue?')
+          const ready = await this.confirm('Have you set your DigitalOcean API token and are ready to continue?', force)
           if (!ready) {
             this.log('')
             this.log('Deployment cancelled. Run again when your token is configured.')
@@ -309,7 +363,7 @@ export default class Deploy extends Command {
         this.log('  # Linux:')
         this.log('  curl -fsSL https://get.docker.com | sh')
         this.log('')
-        const ready = await this.confirm('Have you installed Docker and are ready to continue?')
+        const ready = await this.confirm('Have you installed Docker and are ready to continue?', force)
         if (!ready) {
           this.log('')
           this.log('Deployment cancelled. Run again when Docker is installed.')
@@ -327,7 +381,7 @@ export default class Deploy extends Command {
           this.log('  - macOS: Open Docker Desktop')
           this.log('  - Linux: sudo systemctl start docker')
           this.log('')
-          const ready = await this.confirm('Is Docker running now?')
+          const ready = await this.confirm('Is Docker running now?', force)
           if (!ready) {
             this.log('')
             this.log('Deployment cancelled. Start Docker and run again.')
@@ -399,6 +453,7 @@ export default class Deploy extends Command {
     const {args, flags} = await this.parse(Deploy)
     const agentName = args.agent
     let provider = flags.provider
+    const version = flags.version
 
     // Validate agent exists
     const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
@@ -408,6 +463,9 @@ export default class Deploy extends Command {
         `Create the agent first with: cast dev ${agentName} --no-tui`
       )
     }
+
+    // Prepare version for deploy (extract specific release tarball if needed)
+    await this.prepareVersionForDeploy(agentName, agentPath, version)
 
     // Check if agent is a git repo and prompt for commit
     const gitDir = path.join(agentPath, '.git')
@@ -424,7 +482,15 @@ export default class Deploy extends Command {
         this.log('')
         this.log(`'${agentName}' has uncommitted changes.`)
         this.log('')
-        const commitNow = await this.confirm('Commit changes before deploying? (y/N)')
+
+        let commitNow = false
+        if (flags.force) {
+          commitNow = true
+          this.log('Auto-committing (--force flag is set)...')
+        } else {
+          commitNow = await this.confirm('Commit changes before deploying?')
+        }
+
         if (commitNow) {
           const timestamp = new Date().toISOString()
           await git.add('.')
@@ -439,7 +505,7 @@ export default class Deploy extends Command {
     // Interactive provider selection if not specified
     if (!provider) {
       provider = await this.selectProvider()
-      await this.walkthroughProviderSetup(provider)
+      await this.walkthroughProviderSetup(provider, flags.force)
     }
 
     // Validate provider name
@@ -451,6 +517,10 @@ export default class Deploy extends Command {
     }
 
     this.log(`Deploying ${agentName} to ${provider}...`)
+
+    // Generate deployment SHA upfront
+    const deploymentSha = generateDeploymentSha(agentName)
+    process.env.CAST_DEPLOYMENT_SHA = deploymentSha
 
     // Check provider CLI tools before attempting deployment
     await this.checkProviderTools(provider)
@@ -493,6 +563,20 @@ export default class Deploy extends Command {
           this.error(`Unknown provider: ${provider}`)
         }
       }
+
+      // Store deployed version after successful deployment
+      // Now using semantic versions
+      let versionToStore = version
+      if (version === 'latest') {
+        // Get the current release version or use 'latest' for working state
+        const currentRelease = await getCurrentRelease(agentName)
+        versionToStore = currentRelease || 'latest'
+      }
+      db.updateDeployedVersion(agentName, versionToStore)
+
+      this.log('')
+      this.log(`Deployed ${agentName} with deployment SHA: ${deploymentSha}`)
+      this.log(`Connect with: cast connect ${deploymentSha}`)
     } catch (error: any) {
       if (error.oclif && error.oclif.exit !== undefined) {
         // Re-throw oclif errors (already formatted)

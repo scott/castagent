@@ -55,7 +55,7 @@ describe('shutdown command', () => {
 
     it('should have agent name argument', () => {
       expect(Shutdown.args.agent).to.exist
-      expect(Shutdown.args.agent.description).to.equal('Agent name')
+      expect(Shutdown.args.agent.description).to.equal('Agent name or deployment SHA')
       expect(Shutdown.args.agent.required).to.be.true
     })
 
@@ -94,13 +94,14 @@ describe('shutdown command', () => {
         loggedMessage = msg
       }
 
-      // Mock getDeployment to return null
+      // Mock deployments to be empty (new code uses listDeployments / getDeploymentBySha)
       const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
-      sandbox.stub(sqliteModule.db, 'getDeployment').returns(null)
+      sandbox.stub(sqliteModule.db, 'listDeployments').returns([])
+      sandbox.stub(sqliteModule.db, 'getDeploymentBySha').returns(null)
 
       try {
         await instance.run()
-        expect(loggedMessage).to.include('not currently deployed')
+        expect(loggedMessage).to.include('No deployment found')
       } finally {
         sandbox.restore()
       }
@@ -115,19 +116,22 @@ describe('shutdown command', () => {
         loggedMessage += msg + '\n'
       }
 
-      // Mock deployment exists
+      // Mock deployment exists (new resolution: listDeployments returns one row)
       const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
-      sandbox.stub(sqliteModule.db, 'getDeployment').returns({
+      sandbox.stub(sqliteModule.db, 'listDeployments').returns([{
+        id: 'abc123',
+        agent_name: testAgentName,
         deployment_url: 'https://fly.example.com/app',
-        provider: 'fly'
-      })
+        provider: 'fly',
+      }])
+      sandbox.stub(sqliteModule.db, 'getDeploymentBySha').returns(null)
 
       // Mock keychain
       const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
       sandbox.stub(keychainModule.keychain, 'deleteToken').resolves()
 
       // Mock db operations
-      sandbox.stub(sqliteModule.db, 'removeDeployment').callsFake(() => {})
+      sandbox.stub(sqliteModule.db, 'removeDeploymentBySha').callsFake(() => {})
 
       try {
         await instance.run()
@@ -150,17 +154,20 @@ describe('shutdown command', () => {
 
       // Mock deployment with unsupported provider
       const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
-      sandbox.stub(sqliteModule.db, 'getDeployment').returns({
+      sandbox.stub(sqliteModule.db, 'listDeployments').returns([{
+        id: 'abc123',
+        agent_name: testAgentName,
         deployment_url: 'https://custom.example.com',
-        provider: 'unknown-provider'
-      })
+        provider: 'unknown-provider',
+      }])
+      sandbox.stub(sqliteModule.db, 'getDeploymentBySha').returns(null)
 
       // Mock keychain
       const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
       sandbox.stub(keychainModule.keychain, 'deleteToken').resolves()
 
       // Mock db operations
-      sandbox.stub(sqliteModule.db, 'removeDeployment').callsFake(() => {})
+      sandbox.stub(sqliteModule.db, 'removeDeploymentBySha').callsFake(() => {})
 
       try {
         await instance.run()
@@ -176,20 +183,23 @@ describe('shutdown command', () => {
       let dbMessage = ''
 
       instance.log = (msg: string) => {
-        if (msg.includes('Removed deployment')) {
+        if (msg.includes('Marked deployment as deleted')) {
           dbMessage = msg
         }
       }
 
       // Mock deployment
       const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
-      sandbox.stub(sqliteModule.db, 'getDeployment').returns({
+      sandbox.stub(sqliteModule.db, 'listDeployments').returns([{
+        id: 'sha123',
+        agent_name: testAgentName,
         deployment_url: 'https://fly.example.com/app',
-        provider: 'fly'
-      })
+        provider: 'fly',
+      }])
+      sandbox.stub(sqliteModule.db, 'getDeploymentBySha').returns(null)
 
-      // Track removeDeployment call
-      sandbox.stub(sqliteModule.db, 'removeDeployment').callsFake(() => {})
+      // Track removeDeploymentBySha call
+      const removeByShaStub = sandbox.stub(sqliteModule.db, 'removeDeploymentBySha').callsFake(() => {})
 
       // Mock keychain
       const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
@@ -197,8 +207,8 @@ describe('shutdown command', () => {
 
       try {
         await instance.run()
-        expect(sqliteModule.db.removeDeployment.calledOnce).to.be.true
-        expect(dbMessage).to.include('Removed deployment')
+        expect(removeByShaStub.calledOnce).to.be.true
+        expect(dbMessage).to.include('Marked deployment as deleted')
       } finally {
         sandbox.restore()
       }
@@ -217,21 +227,24 @@ describe('shutdown command', () => {
 
       // Mock deployment
       const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
-      sandbox.stub(sqliteModule.db, 'getDeployment').returns({
+      sandbox.stub(sqliteModule.db, 'listDeployments').returns([{
+        id: 'sha123',
+        agent_name: testAgentName,
         deployment_url: 'https://fly.example.com/app',
-        provider: 'fly'
-      })
+        provider: 'fly',
+      }])
+      sandbox.stub(sqliteModule.db, 'getDeploymentBySha').returns(null)
 
       // Track keychain call
       const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
-      sandbox.stub(keychainModule.keychain, 'deleteToken').resolves()
+      const deleteTokenStub = sandbox.stub(keychainModule.keychain, 'deleteToken').resolves()
 
       // Mock db operations
-      sandbox.stub(sqliteModule.db, 'removeDeployment').callsFake(() => {})
+      sandbox.stub(sqliteModule.db, 'removeDeploymentBySha').callsFake(() => {})
 
       try {
         await instance.run()
-        expect(keychainModule.keychain.deleteToken.calledOnce).to.be.true
+        expect(deleteTokenStub.calledOnce).to.be.true
         expect(keychainMessage).to.include('auth token')
       } finally {
         sandbox.restore()
@@ -364,20 +377,24 @@ describe('shutdown command - force flag behavior', () => {
       return false
     }
 
-    // Mock deployment
+    // Mock deployment (new resolution pattern)
     const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
-    const originalGetDeployment = sqliteModule.db.getDeployment
-    sqliteModule.db.getDeployment = () => ({
+    const originalListDeployments = sqliteModule.db.listDeployments
+    const originalGetDeploymentBySha = sqliteModule.db.getDeploymentBySha
+    sqliteModule.db.listDeployments = () => [{
+      id: 'sha123',
+      agent_name: 'test-agent',
       deployment_url: 'https://fly.example.com/app',
-      provider: 'fly'
-    })
+      provider: 'fly',
+    }]
+    sqliteModule.db.getDeploymentBySha = () => null
 
     // Mock keychain
     const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
     keychainModule.keychain.deleteToken = async () => {}
 
     // Mock db operations
-    sqliteModule.db.removeDeployment = () => {}
+    sqliteModule.db.removeDeploymentBySha = () => {}
 
     // Track log messages
     let loggedMessages: string[] = []
@@ -391,7 +408,8 @@ describe('shutdown command - force flag behavior', () => {
     expect(confirmCalled).to.be.false
 
     // Cleanup
-    sqliteModule.db.getDeployment = originalGetDeployment
+    sqliteModule.db.listDeployments = originalListDeployments
+    sqliteModule.db.getDeploymentBySha = originalGetDeploymentBySha
   })
 
   it('should prompt for confirmation when --force is not set', async () => {
@@ -403,20 +421,24 @@ describe('shutdown command - force flag behavior', () => {
       return true
     }
 
-    // Mock deployment
+    // Mock deployment (new resolution pattern)
     const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
-    const originalGetDeployment = sqliteModule.db.getDeployment
-    sqliteModule.db.getDeployment = () => ({
+    const originalListDeployments = sqliteModule.db.listDeployments
+    const originalGetDeploymentBySha = sqliteModule.db.getDeploymentBySha
+    sqliteModule.db.listDeployments = () => [{
+      id: 'sha123',
+      agent_name: 'test-agent',
       deployment_url: 'https://fly.example.com/app',
-      provider: 'fly'
-    })
+      provider: 'fly',
+    }]
+    sqliteModule.db.getDeploymentBySha = () => null
 
     // Mock keychain
     const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
     keychainModule.keychain.deleteToken = async () => {}
 
     // Mock db operations
-    sqliteModule.db.removeDeployment = () => {}
+    sqliteModule.db.removeDeploymentBySha = () => {}
 
     // Track log messages
     instance.log = () => {}
@@ -426,7 +448,8 @@ describe('shutdown command - force flag behavior', () => {
     expect(confirmCalled).to.be.true
 
     // Cleanup
-    sqliteModule.db.getDeployment = originalGetDeployment
+    sqliteModule.db.listDeployments = originalListDeployments
+    sqliteModule.db.getDeploymentBySha = originalGetDeploymentBySha
   })
 
   it('should cancel shutdown when user declines confirmation', async () => {
@@ -440,20 +463,25 @@ describe('shutdown command - force flag behavior', () => {
       }
     }
 
-    // Mock deployment
+    // Mock deployment (new resolution pattern)
     const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
-    const originalGetDeployment = sqliteModule.db.getDeployment
-    sqliteModule.db.getDeployment = () => ({
+    const originalListDeployments = sqliteModule.db.listDeployments
+    const originalGetDeploymentBySha = sqliteModule.db.getDeploymentBySha
+    sqliteModule.db.listDeployments = () => [{
+      id: 'sha123',
+      agent_name: 'test-agent',
       deployment_url: 'https://fly.example.com/app',
-      provider: 'fly'
-    })
+      provider: 'fly',
+    }]
+    sqliteModule.db.getDeploymentBySha = () => null
 
     await instance.run()
 
     expect(cancelled).to.be.true
 
     // Cleanup
-    sqliteModule.db.getDeployment = originalGetDeployment
+    sqliteModule.db.listDeployments = originalListDeployments
+    sqliteModule.db.getDeploymentBySha = originalGetDeploymentBySha
   })
 })
 
@@ -481,31 +509,34 @@ describe('shutdown command - error handling', () => {
       warningMessage = msg
     }
 
-    // Mock deployment
+    // Mock deployment (new resolution pattern)
     const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
-    const originalGetDeployment = sqliteModule.db.getDeployment
-    sqliteModule.db.getDeployment = () => ({
+    const originalListDeployments = sqliteModule.db.listDeployments
+    const originalGetDeploymentBySha = sqliteModule.db.getDeploymentBySha
+    sqliteModule.db.listDeployments = () => [{
+      id: 'sha123',
+      agent_name: 'test-agent',
       deployment_url: 'https://fly.example.com/app',
-      provider: 'fly'
-    })
+      provider: 'fly',
+    }]
+    sqliteModule.db.getDeploymentBySha = () => null
 
     // Mock keychain
     const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
     keychainModule.keychain.deleteToken = async () => {}
 
     // Mock db removal to throw
-    const originalRemoveDeployment = sqliteModule.db.removeDeployment
-    sqliteModule.db.removeDeployment = () => {
+    sqliteModule.db.removeDeploymentBySha = () => {
       throw new Error('Database error')
     }
 
     await instance.run()
 
-    expect(warningMessage).to.include('Failed to remove deployment record')
+    expect(warningMessage).to.include('Failed to update deployment record')
 
     // Cleanup
-    sqliteModule.db.getDeployment = originalGetDeployment
-    sqliteModule.db.removeDeployment = originalRemoveDeployment
+    sqliteModule.db.listDeployments = originalListDeployments
+    sqliteModule.db.getDeploymentBySha = originalGetDeploymentBySha
   })
 
   it('should warn when keychain deletion fails', async () => {
@@ -516,13 +547,17 @@ describe('shutdown command - error handling', () => {
       warningMessage = msg
     }
 
-    // Mock deployment
+    // Mock deployment (new resolution pattern)
     const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
-    const originalGetDeployment = sqliteModule.db.getDeployment
-    sqliteModule.db.getDeployment = () => ({
+    const originalListDeployments = sqliteModule.db.listDeployments
+    const originalGetDeploymentBySha = sqliteModule.db.getDeploymentBySha
+    sqliteModule.db.listDeployments = () => [{
+      id: 'sha123',
+      agent_name: 'test-agent',
       deployment_url: 'https://fly.example.com/app',
-      provider: 'fly'
-    })
+      provider: 'fly',
+    }]
+    sqliteModule.db.getDeploymentBySha = () => null
 
     // Mock keychain to throw
     const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
@@ -532,14 +567,15 @@ describe('shutdown command - error handling', () => {
     }
 
     // Mock db operations
-    sqliteModule.db.removeDeployment = () => {}
+    sqliteModule.db.removeDeploymentBySha = () => {}
 
     await instance.run()
 
     expect(warningMessage).to.include('Failed to remove auth token')
 
     // Cleanup
-    sqliteModule.db.getDeployment = originalGetDeployment
+    sqliteModule.db.listDeployments = originalListDeployments
+    sqliteModule.db.getDeploymentBySha = originalGetDeploymentBySha
     keychainModule.keychain.deleteToken = originalDeleteToken
   })
 
@@ -553,20 +589,24 @@ describe('shutdown command - error handling', () => {
       }
     }
 
-    // Mock deployment
+    // Mock deployment (new resolution pattern)
     const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
-    const originalGetDeployment = sqliteModule.db.getDeployment
-    sqliteModule.db.getDeployment = () => ({
+    const originalListDeployments = sqliteModule.db.listDeployments
+    const originalGetDeploymentBySha = sqliteModule.db.getDeploymentBySha
+    sqliteModule.db.listDeployments = () => [{
+      id: 'sha123',
+      agent_name: 'test-agent',
       deployment_url: 'https://fly.example.com/app',
-      provider: 'fly'
-    })
+      provider: 'fly',
+    }]
+    sqliteModule.db.getDeploymentBySha = () => null
 
     // Mock keychain
     const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
     keychainModule.keychain.deleteToken = async () => {}
 
     // Mock db operations
-    sqliteModule.db.removeDeployment = () => {}
+    sqliteModule.db.removeDeploymentBySha = () => {}
 
     // Mock deploy module to throw
     const deployModule = require('../../../typescript/cast-cli/src/commands/shutdown')
@@ -580,7 +620,8 @@ describe('shutdown command - error handling', () => {
     expect(warningMessage).to.include('Failed to destroy')
 
     // Cleanup
-    sqliteModule.db.getDeployment = originalGetDeployment
+    sqliteModule.db.listDeployments = originalListDeployments
+    sqliteModule.db.getDeploymentBySha = originalGetDeploymentBySha
     deployModule.PROVIDER_DESTROYERS['fly'] = originalDestroyer
   })
 })

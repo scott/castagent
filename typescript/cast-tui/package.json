@@ -13,9 +13,11 @@
   },
   "dependencies": {
     "@opentui/core": "^0.1.0",
+    "better-sqlite3": "^11.0.0",
     "clipboardy": "^4.0.0"
   },
   "devDependencies": {
+    "@types/better-sqlite3": "^7.6.10",
     "@types/node": "^20",
     "ts-node": "^10.9.2",
     "typescript": "^5"

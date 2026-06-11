@@ -66,6 +66,130 @@ function isProcessAlive(pid: number): boolean {
 }
 
 /**
+ * Locate the cast CLI binary by searching common installation paths.
+ * Returns the path to the cast binary, or null if it cannot be found.
+ *
+ * Duplicated from components/terminal.ts so that slash-registry can shell
+ * out to cast commands without depending on the deploy-only internals.
+ */
+function findCastBinary(): string | null {
+  const candidates = [
+    'cast',
+    path.resolve(__dirname, '../../cast-cli/bin/run'),
+    path.resolve(__dirname, '../../../cast-cli/bin/run'),
+    path.resolve(__dirname, '../../../../cast-cli/bin/run'),
+  ]
+
+  for (const candidate of candidates) {
+    try {
+      if (candidate === 'cast') {
+        // Check if cast is in PATH
+        const castPath = execFileSync('which', ['cast'], {encoding: 'utf8', timeout: 5000}).trim()
+        if (castPath && fs.existsSync(castPath)) {
+          return castPath
+        }
+      } else if (fs.existsSync(candidate)) {
+        return candidate
+      }
+    } catch {
+      // try next
+    }
+  }
+
+  return null
+}
+
+/**
+ * Parse a semver string (e.g. "1.2.3") into its numeric parts.
+ * Returns [0, 0, 0] for unparseable input.
+ */
+function parseSemver(version: string): [number, number, number] {
+  const parts = version.split('.').map((p) => parseInt(p, 10))
+  return [
+    Number.isFinite(parts[0]) ? parts[0] : 0,
+    Number.isFinite(parts[1]) ? parts[1] : 0,
+    Number.isFinite(parts[2]) ? parts[2] : 0,
+  ]
+}
+
+/**
+ * Compute suggested next semver versions (patch, minor, major) from a
+ * current version. If currentVersion is null/empty, defaults to "1.0.0".
+ */
+function suggestNextVersions(currentVersion: string | null | undefined): {
+  current: string
+  patch: string
+  minor: string
+  major: string
+} {
+  const current = currentVersion && currentVersion.length > 0 ? currentVersion : '1.0.0'
+  const [maj, min, pat] = parseSemver(current)
+  return {
+    current,
+    patch: `${maj}.${min}.${pat + 1}`,
+    minor: `${maj}.${min + 1}.0`,
+    major: `${maj + 1}.0.0`,
+  }
+}
+
+/**
+ * Show a generic info/success modal with a title, a list of label/value
+ * lines, and a single Close button (or just Enter/ESC).
+ */
+function showInfoModal(
+  ctx: CommandContext,
+  title: string,
+  lines: Array<{label?: string; value: string; color?: typeof white | typeof green | typeof yellow | typeof red | typeof cyan | typeof dim}>,
+  footerText: string = 'Enter/ESC Close',
+  successColor: boolean = false,
+): void {
+  const modal = createModal(ctx.renderer, ctx.input, {title, overlay: true})
+  if (modal.overlay) ctx.renderer.root.add(modal.overlay)
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 0,
+    paddingTop: 3,
+    paddingLeft: 2,
+    paddingRight: 2,
+    alignItems: 'center',
+  })
+
+  for (const line of lines) {
+    const color = line.color || (successColor ? green : white)
+    const text = line.label
+      ? new StyledText([dim(`${line.label}: `), color(line.value)])
+      : new StyledText([color(line.value)])
+    const row = new TextRenderable(ctx.renderer, {content: text})
+    contentBox.add(row)
+  }
+
+  const spacer = new TextRenderable(ctx.renderer, {content: new StyledText([dim(' ')])})
+  contentBox.add(spacer)
+
+  const footer = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim(footerText)]),
+  })
+  contentBox.add(footer)
+
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+  modal.box.handleKeyPress = (key: KeyEvent) => {
+    if (key.name === 'escape' || key.name === 'return' || key.name === 'enter') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+}
+
+/**
  * Scan ~/.cast/agents/ for agent directories (containing agent.yaml).
  * This is the canonical source of agents — the SQLite DB only tracks
  * runtime/deployment state and may be empty for newly-created agents.
@@ -87,37 +211,80 @@ function listAgentsFromDisk(): string[] {
   return agents.sort()
 }
 
+// Helper to get releases for an agent (reads from releases.json)
+async function getReleasesForAgent(agentName: string): Promise<Array<{version: string; message: string; changelog: string; created_at: string}>> {
+  const releasesJsonPath = path.join(os.homedir(), '.cast', 'agents', agentName, '.cast', 'releases', 'releases.json')
+  if (!fs.existsSync(releasesJsonPath)) {
+    return []
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(releasesJsonPath, 'utf8'))
+    return data.releases || []
+  } catch {
+    return []
+  }
+}
+
+/**
+ * Get the current (latest) release version for an agent.
+ *
+ * Reads `data.current.version` from the agent's `releases.json` file. This
+ * is the same field the Python `cast.releases.get_current_release` reads,
+ * and the authoritative source for "what release is the agent currently
+ * at". Falls back to the newest entry in the `releases` array (by semver)
+ * when the `current` field is missing, and to `null` if no releases exist.
+ */
+function getCurrentReleaseVersion(agentName: string): string | null {
+  const releasesJsonPath = path.join(os.homedir(), '.cast', 'agents', agentName, '.cast', 'releases', 'releases.json')
+  if (!fs.existsSync(releasesJsonPath)) {
+    return null
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(releasesJsonPath, 'utf8'))
+    const current = data.current
+    if (current && typeof current.version === 'string' && current.version.length > 0) {
+      return current.version
+    }
+    // Fallback: newest entry by semver, when current is missing
+    const releases: Array<{version: string}> = Array.isArray(data.releases) ? data.releases : []
+    if (releases.length === 0) return null
+    const sorted = [...releases].sort((a, b) => {
+      const pa = a.version.split('.').map((n) => parseInt(n, 10) || 0)
+      const pb = b.version.split('.').map((n) => parseInt(n, 10) || 0)
+      return (pb[0] - pa[0]) || (pb[1] - pa[1]) || ((pb[2] || 0) - (pa[2] || 0))
+    })
+    return sorted[0].version
+  } catch {
+    return null
+  }
+}
+
+// Helper to get changes for an agent
+function getChangesForAgent(agentName: string): Array<{id: number; timestamp: string; source: string; message: string}> {
+  const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+  // Try new path first, fall back to old
+  const newPath = path.join(agentPath, '.cast', 'changes', 'changes.json')
+  const oldPath = path.join(agentPath, '.cast', 'versions', 'versions.json')
+  const changesJsonPath = fs.existsSync(newPath) ? newPath : oldPath
+
+  if (!fs.existsSync(changesJsonPath)) {
+    return []
+  }
+  try {
+    const data = JSON.parse(fs.readFileSync(changesJsonPath, 'utf8'))
+    return data.versions || []
+  } catch {
+    return []
+  }
+}
+
 function launchBuilderEditor(ctx: CommandContext, agentName: string): void {
   // Destroy renderer to release terminal
   if (ctx.renderer && !ctx.renderer.isDestroyed) {
     ctx.renderer.destroy()
   }
 
-  // Try to find the cast CLI binary
-  const candidates = [
-    'cast',
-    path.resolve(__dirname, '../../cast-cli/bin/run'),
-    path.resolve(__dirname, '../../../cast-cli/bin/run'),
-    path.resolve(__dirname, '../../../../cast-cli/bin/run'),
-  ]
-
-  let binary: string | null = null
-  for (const candidate of candidates) {
-    try {
-      if (candidate === 'cast') {
-        // Check if cast is in PATH
-        execFileSync('which', ['cast'], { stdio: 'ignore' })
-        binary = candidate
-        break
-      } else if (fs.existsSync(candidate)) {
-        binary = candidate
-        break
-      }
-    } catch {
-      // try next
-    }
-  }
-
+  const binary = findCastBinary()
   if (!binary) {
     console.error('Could not find cast CLI binary. Please ensure cast is installed.')
     process.exit(1)
@@ -136,44 +303,20 @@ function launchBuilderEditor(ctx: CommandContext, agentName: string): void {
   process.exit(0)
 }
 
-function launchConnect(ctx: CommandContext, agentName: string): void {
+function launchConnect(ctx: CommandContext, agentNameOrSha: string): void {
   // Destroy renderer to release terminal
   if (ctx.renderer && !ctx.renderer.isDestroyed) {
     ctx.renderer.destroy()
   }
 
-  // Try to find the cast CLI binary
-  const candidates = [
-    'cast',
-    path.resolve(__dirname, '../../cast-cli/bin/run'),
-    path.resolve(__dirname, '../../../cast-cli/bin/run'),
-    path.resolve(__dirname, '../../../../cast-cli/bin/run'),
-  ]
-
-  let binary: string | null = null
-  for (const candidate of candidates) {
-    try {
-      if (candidate === 'cast') {
-        // Check if cast is in PATH
-        execFileSync('which', ['cast'], { stdio: 'ignore' })
-        binary = candidate
-        break
-      } else if (fs.existsSync(candidate)) {
-        binary = candidate
-        break
-      }
-    } catch {
-      // try next
-    }
-  }
-
+  const binary = findCastBinary()
   if (!binary) {
     console.error('Could not find cast CLI binary. Please ensure cast is installed.')
     process.exit(1)
   }
 
   try {
-    execFileSync(binary, ['connect', agentName], { stdio: 'inherit' })
+    execFileSync(binary, ['connect', agentNameOrSha], { stdio: 'inherit' })
   } catch (err: any) {
     if (err.signal === 'SIGINT') {
       // User pressed Ctrl+C, exit cleanly
@@ -241,7 +384,7 @@ function promptForNewName(ctx: CommandContext, currentName: string): void {
     } else {
       errorText.content = new StyledText([dim(' ')])
     }
-    ctx.renderer.render()
+    ctx.renderer.requestRender?.()
   }
 
   modal.setContent(contentBox)
@@ -295,33 +438,11 @@ function promptForNewName(ctx: CommandContext, currentName: string): void {
   }
 
   updateInputDisplay()
-  ctx.renderer.render()
+  ctx.renderer.requestRender?.()
 }
 
 function launchRenameWithName(ctx: CommandContext, currentName: string, newName: string): void {
-  const candidates = [
-    'cast',
-    path.resolve(__dirname, '../../cast-cli/bin/run'),
-    path.resolve(__dirname, '../../../cast-cli/bin/run'),
-    path.resolve(__dirname, '../../../../cast-cli/bin/run'),
-  ]
-
-  let binary: string | null = null
-  for (const candidate of candidates) {
-    try {
-      if (candidate === 'cast') {
-        execFileSync('which', ['cast'], { stdio: 'ignore' })
-        binary = candidate
-        break
-      } else if (fs.existsSync(candidate)) {
-        binary = candidate
-        break
-      }
-    } catch {
-      // try next
-    }
-  }
-
+  const binary = findCastBinary()
   if (!binary) {
     ctx.messages.addAgentMessage('Could not find cast CLI binary. Please ensure cast is installed.', ctx.mode)
     return
@@ -333,6 +454,1186 @@ function launchRenameWithName(ctx: CommandContext, currentName: string, newName:
     if (err.signal !== 'SIGINT') {
       ctx.messages.addAgentMessage(`Failed to rename agent: ${err.message}`, ctx.mode)
     }
+  }
+}
+
+interface DeployedAgent {
+  name: string
+  provider: string
+  version: number | null
+}
+
+interface SemverDeployedAgent {
+  name: string
+  provider: string
+  deployedVersion: string | null
+  sha: string
+}
+
+/**
+ * Semver-aware replacement for `showVersionSelection`. Lists the agent's
+ * releases in a modal and, on confirm, shells out to `cast upgrade` with
+ * the chosen version. Built for the new release model.
+ */
+function showUpgradeVersionPicker(
+  ctx: CommandContext,
+  agent: SemverDeployedAgent,
+  releases: Array<{version: string; message: string; changelog: string; created_at: string}>,
+): void {
+  const modal = createModal(ctx.renderer, ctx.input, {
+    title: `Upgrade ${agent.name}`,
+    overlay: true,
+  })
+  if (modal.overlay) ctx.renderer.root.add(modal.overlay)
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 0,
+    paddingTop: 2,
+    paddingLeft: 2,
+    paddingRight: 2,
+  })
+
+  // Build selectable items: each release plus an explicit "latest" option
+  // that points at the current working state of the agent.
+  type Item = {kind: 'release'; version: string; message: string} | {kind: 'latest'; version: 'latest'; message: string}
+  const items: Item[] = []
+  for (const r of releases) {
+    items.push({kind: 'release', version: r.version, message: r.message})
+  }
+  items.push({kind: 'latest', version: 'latest', message: 'Current working state'})
+
+  let selectedIndex = 0
+
+  function renderList(): void {
+    for (const child of contentBox.getChildren()) {
+      contentBox.remove(child.id)
+    }
+
+    const header = new TextRenderable(ctx.renderer, {
+      content: new StyledText([
+        dim('Agent: '),
+        white(agent.name),
+        dim('  sha:'),
+        cyan(agent.sha),
+        dim('  provider:'),
+        white(agent.provider),
+        dim('  current:'),
+        yellow(agent.deployedVersion || 'none'),
+      ]),
+    })
+    contentBox.add(header)
+
+    const sep = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+    })
+    contentBox.add(sep)
+
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i]
+      const isSelected = i === selectedIndex
+      const prefix = isSelected ? cyan('▸ ') : dim('  ')
+      const isCurrent =
+        (item.kind === 'release' && item.version === agent.deployedVersion) ||
+        (item.kind === 'latest' && agent.deployedVersion === 'latest')
+      const isLatest = item.kind === 'latest'
+      let label = item.version
+      if (isCurrent) label += dim(' (deployed)')
+      else if (isLatest) label += green(' (latest)')
+
+      const row = new TextRenderable(ctx.renderer, {
+        content: new StyledText([
+          prefix,
+          isSelected ? white(label) : dim(label),
+          dim('  '),
+          dim(item.message || ''),
+        ]),
+      })
+      contentBox.add(row)
+    }
+
+    const sep2 = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+    })
+    contentBox.add(sep2)
+
+    const footer = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('↑↓ Navigate  Enter Upgrade  ESC Cancel')]),
+    })
+    const footerBox = new BoxRenderable(ctx.renderer, {
+      width: '100%',
+      alignItems: 'center',
+    })
+    footerBox.add(footer)
+    contentBox.add(footerBox)
+
+    ctx.renderer.requestRender?.()
+  }
+
+  const doUpgrade = (version: string): void => {
+    modal.hide()
+
+    const binary = findCastBinary()
+    if (!binary) {
+      ctx.messages.addAgentMessage('Could not find cast CLI binary. Please ensure cast is installed.', ctx.mode)
+      return
+    }
+
+    if (ctx.renderer && !ctx.renderer.isDestroyed) {
+      ctx.renderer.destroy()
+    }
+
+    try {
+      console.log(`\nUpgrading ${agent.name} to ${version}...\n`)
+      execFileSync(binary, ['upgrade', agent.name, '--version', version], {stdio: 'inherit'})
+    } catch (err: any) {
+      if (err.signal === 'SIGINT') {
+        // user cancelled
+      } else {
+        console.error(`\nUpgrade failed: ${err.message}`)
+      }
+    }
+    process.exit(0)
+  }
+
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+  renderList()
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+  modal.box.handleKeyPress = (key: KeyEvent): boolean => {
+    if (key.name === 'up') {
+      selectedIndex = Math.max(0, selectedIndex - 1)
+      renderList()
+      return true
+    }
+    if (key.name === 'down') {
+      selectedIndex = Math.min(items.length - 1, selectedIndex + 1)
+      renderList()
+      return true
+    }
+    if (key.name === 'return' || key.name === 'enter') {
+      const item = items[selectedIndex]
+      const v = item.version
+      if (item.kind === 'release' && v === agent.deployedVersion) {
+        ctx.messages.addAgentMessage(
+          `Agent '${agent.name}' is already at version ${v}.`,
+          ctx.mode,
+        )
+        modal.hide()
+        ctx.input.focus()
+        return true
+      }
+      doUpgrade(v)
+      return true
+    }
+    if (key.name === 'escape') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+}
+
+function showVersionSelection(ctx: CommandContext, agent: DeployedAgent): void {
+  const agentPath = path.join(os.homedir(), '.cast', 'agents', agent.name)
+  const versionsJsonPath = path.join(agentPath, '.cast', 'versions', 'versions.json')
+
+  const modal = createModal(ctx.renderer, ctx.input, {
+    title: `Select version for ${agent.name}`,
+    overlay: true,
+  })
+
+  if (modal.overlay) {
+    ctx.renderer.root.add(modal.overlay)
+  }
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 0,
+    paddingTop: 2,
+    paddingLeft: 2,
+    paddingRight: 2,
+  })
+
+  // Load versions from file
+  let versions: Array<{id: number; timestamp: string; source: string; message: string}> = []
+  let latestVersion = 0
+
+  if (fs.existsSync(versionsJsonPath)) {
+    try {
+      const versionsData = JSON.parse(fs.readFileSync(versionsJsonPath, 'utf8'))
+      versions = versionsData.versions || []
+      latestVersion = versionsData.current || 0
+    } catch {
+      // Ignore parsing errors
+    }
+  }
+
+  if (versions.length === 0) {
+    const emptyText = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('No versions found.')]),
+    })
+    contentBox.add(emptyText)
+
+    const hint = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('\nCreate a version with: cast version')]),
+    })
+    contentBox.add(hint)
+
+    const footer = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('ESC Back')]),
+    })
+    const footerBox = new BoxRenderable(ctx.renderer, {
+      width: '100%',
+      alignItems: 'center',
+    })
+    footerBox.add(footer)
+    contentBox.add(footerBox)
+
+    modal.setContent(contentBox)
+    ctx.renderer.root.add(modal.box)
+    modal.show()
+
+    const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+    modal.box.handleKeyPress = (key: KeyEvent) => {
+      if (key.name === 'escape') {
+        modal.hide()
+        ctx.input.focus()
+        return true
+      }
+      return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+    }
+    return
+  }
+
+  // Sort versions by id descending (newest first)
+  const sortedVersions = [...versions].sort((a, b) => b.id - a.id)
+  let selectedIndex = 0
+
+  function renderVersionList() {
+    for (const child of contentBox.getChildren()) {
+      contentBox.remove(child.id)
+    }
+
+    for (let i = 0; i < sortedVersions.length; i++) {
+      const v = sortedVersions[i]
+      const isSelected = i === selectedIndex
+      const isDeployed = v.id === agent.version
+      const isLatest = v.id === latestVersion
+
+      const prefix = isSelected ? cyan('▸ ') : dim('  ')
+      let versionLabel = `v${v.id}`
+      if (isDeployed) {
+        versionLabel += dim(' (deployed)')
+      } else if (isLatest) {
+        versionLabel += green(' (latest)')
+      }
+
+      const message = v.message || 'Draft version'
+      const messageTruncated = message.length > 40 ? message.slice(0, 37) + '...' : message
+
+      const versionText = new TextRenderable(ctx.renderer, {
+        content: new StyledText([
+          prefix,
+          white(versionLabel),
+          dim(` - "${messageTruncated}"`),
+        ]),
+      })
+      contentBox.add(versionText)
+    }
+
+    const footer = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('↑↓ Navigate  Enter Select  ESC Back')]),
+    })
+    const footerBox = new BoxRenderable(ctx.renderer, {
+      width: '100%',
+      alignItems: 'center',
+    })
+    footerBox.add(footer)
+    contentBox.add(footerBox)
+  }
+
+  renderVersionList()
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+  modal.box.handleKeyPress = (key: KeyEvent) => {
+    if (key.name === 'up') {
+      selectedIndex = Math.max(0, selectedIndex - 1)
+      renderVersionList()
+      ctx.renderer.requestRender?.()
+      return true
+    }
+    if (key.name === 'down') {
+      selectedIndex = Math.min(sortedVersions.length - 1, selectedIndex + 1)
+      renderVersionList()
+      ctx.renderer.requestRender?.()
+      return true
+    }
+    if (key.name === 'return' || key.name === 'enter') {
+      const selectedVersion = sortedVersions[selectedIndex]
+      if (selectedVersion.id === agent.version) {
+        // Already on this version
+        modal.hide()
+        ctx.messages.addAgentMessage(
+          `Agent '${agent.name}' is already at version ${selectedVersion.id}.`,
+          ctx.mode
+        )
+        ctx.input.focus()
+        return true
+      }
+      modal.hide()
+      showUpgradeConfirmation(ctx, agent, selectedVersion.id, latestVersion)
+      return true
+    }
+    if (key.name === 'escape') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+}
+
+function showUpgradeConfirmation(
+  ctx: CommandContext,
+  agent: DeployedAgent,
+  targetVersion: number,
+  latestVersion: number
+): void {
+  const modal = createModal(ctx.renderer, ctx.input, {
+    title: `Upgrade ${agent.name}?`,
+    overlay: true,
+  })
+
+  if (modal.overlay) {
+    ctx.renderer.root.add(modal.overlay)
+  }
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 0,
+    paddingTop: 2,
+    paddingLeft: 2,
+    paddingRight: 2,
+    alignItems: 'center',
+  })
+
+  const currentVer = agent.version || 'unknown'
+  const targetVer = targetVersion
+  const isLatest = targetVersion === latestVersion
+
+  const versionInfo = new TextRenderable(ctx.renderer, {
+    content: new StyledText([
+      dim(`${currentVer} → `),
+      green(`v${targetVer}`),
+      dim(isLatest ? ' (latest)' : ''),
+    ]),
+  })
+  contentBox.add(versionInfo)
+
+  const spacer1 = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim(' ')]),
+  })
+  contentBox.add(spacer1)
+
+  const memoryNote = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim('Agent memory will be preserved.')]),
+  })
+  contentBox.add(memoryNote)
+
+  const spacer2 = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim(' ')]),
+  })
+  contentBox.add(spacer2)
+
+  const footer = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim('Enter Upgrade  ESC Cancel')]),
+  })
+  contentBox.add(footer)
+
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+  modal.box.handleKeyPress = (key: KeyEvent) => {
+    if (key.name === 'return' || key.name === 'enter') {
+      modal.hide()
+      executeUpgrade(ctx, agent, targetVersion)
+      return true
+    }
+    if (key.name === 'escape') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+}
+
+function executeUpgrade(ctx: CommandContext, agent: DeployedAgent, targetVersion: number): void {
+  // Find the cast CLI binary
+  const binary = findCastBinary()
+  if (!binary) {
+    ctx.messages.addAgentMessage(
+      'Could not find cast CLI binary. Please ensure cast is installed.',
+      ctx.mode
+    )
+    return
+  }
+
+  // Destroy renderer to release terminal
+  if (ctx.renderer && !ctx.renderer.isDestroyed) {
+    ctx.renderer.destroy()
+  }
+
+  // Run the upgrade command
+  try {
+    console.log(`\nUpgrading ${agent.name} from v${agent.version || 'unknown'} to v${targetVersion}...\n`)
+    execFileSync(binary, ['upgrade', agent.name, targetVersion.toString()], { stdio: 'inherit' })
+  } catch (err: any) {
+    if (err.signal === 'SIGINT') {
+      // User pressed Ctrl+C
+    } else {
+      console.error(`\nUpgrade failed: ${err.message}`)
+    }
+  }
+
+  // Exit the TUI after upgrade
+  process.exit(0)
+}
+
+/**
+ * Show a restore confirmation modal. The user must confirm before
+ * `onConfirm` is invoked.
+ */
+function showRestoreConfirmation(
+  ctx: CommandContext,
+  agentName: string,
+  kind: 'change' | 'release',
+  value: string | number,
+  onConfirm: (kind: 'change' | 'release', value: string | number) => void,
+): void {
+  const modal = createModal(ctx.renderer, ctx.input, {
+    title: `Restore: ${agentName}`,
+    overlay: true,
+  })
+  if (modal.overlay) ctx.renderer.root.add(modal.overlay)
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 1,
+    paddingTop: 3,
+    paddingLeft: 2,
+    paddingRight: 2,
+    alignItems: 'center',
+  })
+
+  const label = kind === 'change' ? `change v${value}` : `release ${value}`
+  const restoreLine = new TextRenderable(ctx.renderer, {
+    content: new StyledText([
+      dim('Restore from '),
+      cyan(label),
+      dim('?'),
+    ]),
+  })
+  contentBox.add(restoreLine)
+
+  const note = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim('Your current changes will be preserved in the change history.')]),
+  })
+  contentBox.add(note)
+
+  const warning = new TextRenderable(ctx.renderer, {
+    content: new StyledText([yellow('Note: Restore does not deploy. Use /deploy to update the deployment.')]),
+  })
+  contentBox.add(warning)
+
+  const spacer = new TextRenderable(ctx.renderer, {content: new StyledText([dim(' ')])})
+  contentBox.add(spacer)
+
+  const footer = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim('Enter Restore  ESC Cancel')]),
+  })
+  contentBox.add(footer)
+
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+  modal.box.handleKeyPress = (key: KeyEvent): boolean => {
+    if (key.name === 'escape') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    if (key.name === 'return' || key.name === 'enter') {
+      modal.hide()
+      ctx.input.focus()
+      onConfirm(kind, value)
+      return true
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+}
+
+/**
+ * Show the restore picker: pick source (Changes vs Releases), then pick a
+ * specific item, then ask for confirmation.
+ */
+function showRestorePicker(
+  ctx: CommandContext,
+  agentName: string,
+  changes: Array<{id: number; timestamp: string; source: string; message: string}>,
+  releases: Array<{version: string; message: string; changelog: string; created_at: string}>,
+  onConfirm: (kind: 'change' | 'release', value: string | number) => void,
+): void {
+  const modal = createModal(ctx.renderer, ctx.input, {
+    title: `Restore: ${agentName}`,
+    overlay: true,
+  })
+  if (modal.overlay) ctx.renderer.root.add(modal.overlay)
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 0,
+    paddingTop: 2,
+    paddingLeft: 2,
+    paddingRight: 2,
+  })
+
+  type Source = 'change' | 'release'
+  type Stage = 'source' | 'item'
+  type Item =
+    | {kind: 'change'; id: number; label: string; sub: string}
+    | {kind: 'release'; version: string; label: string; sub: string}
+
+  const state = {
+    source: 'change' as Source,
+    stage: 'source' as Stage,
+    selectedIndex: 0,
+  }
+
+  function getItems(): Item[] {
+    if (state.source === 'change') {
+      return changes.map((c) => ({
+        kind: 'change' as const,
+        id: c.id,
+        label: `v${c.id}`,
+        sub: c.message || '',
+      }))
+    }
+    return releases.map((r) => ({
+      kind: 'release' as const,
+      version: r.version,
+      label: r.version,
+      sub: r.message || '',
+    }))
+  }
+
+  function refresh(): void {
+    for (const child of contentBox.getChildren()) {
+      contentBox.remove(child.id)
+    }
+
+    if (state.stage === 'source') {
+      const header = new TextRenderable(ctx.renderer, {
+        content: new StyledText([white(`Restore from:`)]),
+      })
+      contentBox.add(header)
+      const sep = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+      })
+      contentBox.add(sep)
+
+      const sources: Array<{key: Source; label: string; count: number}> = [
+        {key: 'change', label: 'Changes', count: changes.length},
+        {key: 'release', label: 'Releases', count: releases.length},
+      ]
+      for (let i = 0; i < sources.length; i++) {
+        const s = sources[i]
+        const isSelected = i === state.selectedIndex
+        const prefix = isSelected ? cyan('(•) ') : dim('( ) ')
+        const row = new TextRenderable(ctx.renderer, {
+          content: new StyledText([
+            prefix,
+            isSelected ? white(s.label) : dim(s.label),
+            dim(`  (${s.count} available)`),
+          ]),
+        })
+        contentBox.add(row)
+      }
+
+      const sep2 = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+      })
+      contentBox.add(sep2)
+      const note = new TextRenderable(ctx.renderer, {
+        content: new StyledText([yellow('Note: Restore does not deploy. Your current changes will be preserved.')]),
+      })
+      contentBox.add(note)
+
+      const footer = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('↑↓ Navigate  Enter Select  ESC Cancel')]),
+      })
+      const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+      footerBox.add(footer)
+      contentBox.add(footerBox)
+    } else {
+      // 'item' stage: show the list of changes or releases
+      const items = getItems()
+      if (items.length === 0) {
+        const empty = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim(`No ${state.source}s available.`)]),
+        })
+        contentBox.add(empty)
+        const hint = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('ESC Back')]),
+        })
+        contentBox.add(hint)
+        ctx.renderer.requestRender?.()
+        return
+      }
+      const header = new TextRenderable(ctx.renderer, {
+        content: new StyledText([white(`Select ${state.source} to restore from:`)]),
+      })
+      contentBox.add(header)
+      const sep = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+      })
+      contentBox.add(sep)
+
+      for (let i = 0; i < items.length; i++) {
+        const it = items[i]
+        const isSelected = i === state.selectedIndex
+        const prefix = isSelected ? cyan('▸ ') : dim('  ')
+        const sub = it.sub.length > 50 ? it.sub.slice(0, 47) + '...' : it.sub
+        const row = new TextRenderable(ctx.renderer, {
+          content: new StyledText([
+            prefix,
+            isSelected ? white(it.label) : dim(it.label),
+            dim('  '),
+            dim(sub),
+          ]),
+        })
+        contentBox.add(row)
+      }
+
+      const sep2 = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+      })
+      contentBox.add(sep2)
+      const note = new TextRenderable(ctx.renderer, {
+        content: new StyledText([yellow('Your current changes will be preserved in the change history.')]),
+      })
+      contentBox.add(note)
+
+      const footer = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('↑↓ Navigate  Enter Restore  ESC Back')]),
+      })
+      const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+      footerBox.add(footer)
+      contentBox.add(footerBox)
+    }
+
+    ctx.renderer.requestRender?.()
+  }
+
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+  refresh()
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+  modal.box.handleKeyPress = (key: KeyEvent): boolean => {
+    if (key.name === 'escape') {
+      if (state.stage === 'item') {
+        state.stage = 'source'
+        state.selectedIndex = 0
+        refresh()
+        return true
+      }
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    if (state.stage === 'source') {
+      const maxIndex = 1 // 2 sources
+      if (key.name === 'up') {
+        state.selectedIndex = Math.max(0, state.selectedIndex - 1)
+        refresh()
+        return true
+      }
+      if (key.name === 'down') {
+        state.selectedIndex = Math.min(maxIndex, state.selectedIndex + 1)
+        refresh()
+        return true
+      }
+      if (key.name === 'return' || key.name === 'enter') {
+        const sources: Source[] = ['change', 'release']
+        // If only one source has data, jump to it directly
+        if (state.selectedIndex === 0 && changes.length === 0 && releases.length > 0) {
+          state.source = 'release'
+        } else if (state.selectedIndex === 1 && releases.length === 0 && changes.length > 0) {
+          state.source = 'change'
+        } else {
+          state.source = sources[state.selectedIndex]
+        }
+        // If no items of the chosen type, stay on source stage
+        const items = getItems()
+        if (items.length === 0) {
+          refresh()
+          return true
+        }
+        state.stage = 'item'
+        state.selectedIndex = 0
+        refresh()
+        return true
+      }
+    } else {
+      // 'item' stage
+      const items = getItems()
+      if (key.name === 'up') {
+        state.selectedIndex = Math.max(0, state.selectedIndex - 1)
+        refresh()
+        return true
+      }
+      if (key.name === 'down') {
+        state.selectedIndex = Math.min(items.length - 1, state.selectedIndex + 1)
+        refresh()
+        return true
+      }
+      if (key.name === 'return' || key.name === 'enter') {
+        const it = items[state.selectedIndex]
+        modal.hide()
+        ctx.input.focus()
+        if (it.kind === 'change') {
+          showRestoreConfirmation(ctx, agentName, 'change', it.id, onConfirm)
+        } else {
+          showRestoreConfirmation(ctx, agentName, 'release', it.version, onConfirm)
+        }
+        return true
+      }
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+}
+
+/**
+ * Show a diff between two changes or two releases for an agent. The
+ * implementation shells out to `cast diff` for changes (using version IDs)
+ * and displays the result in a modal. For release diffs, falls back to a
+ * summary view since there is no dedicated `cast diff` for releases.
+ */
+function showDiffModal(
+  ctx: CommandContext,
+  agentName: string,
+  kind: 'change' | 'release',
+  v1: string,
+  v2: string,
+): void {
+  const modal = createModal(ctx.renderer, ctx.input, {
+    title: `Diff: ${agentName}`,
+    overlay: true,
+  })
+  if (modal.overlay) ctx.renderer.root.add(modal.overlay)
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 0,
+    paddingTop: 2,
+    paddingLeft: 2,
+    paddingRight: 2,
+  })
+
+  const label1 = kind === 'change' ? `v${v1}` : `${v1}`
+  const label2 = kind === 'change' ? `v${v2}` : `${v2}`
+
+  const header = new TextRenderable(ctx.renderer, {
+    content: new StyledText([
+      dim(`${kind === 'change' ? 'Change' : 'Release'} diff: `),
+      cyan(label1),
+      dim(' → '),
+      cyan(label2),
+    ]),
+  })
+  contentBox.add(header)
+
+  const sep = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+  })
+  contentBox.add(sep)
+
+  // Run the diff
+  const binary = findCastBinary()
+  let output = ''
+  if (!binary) {
+    output = 'Could not find cast CLI binary. Please ensure cast is installed.'
+  } else {
+      try {
+      if (kind === 'change') {
+        // `cast diff <agent> <v1> <v2>` uses integer version IDs
+        output = execFileSync(binary, ['diff', agentName, v1, v2], {encoding: 'utf8', timeout: 30000})
+      } else {
+        // Releases: no dedicated `cast diff`; produce a summary
+        // Show a synchronous message and then compute summary using releases from file.
+        // We use a synchronous fs read here so the modal can be shown without await.
+        const releasesJsonPath = path.join(os.homedir(), '.cast', 'agents', agentName, '.cast', 'releases', 'releases.json')
+        let rels: any[] = []
+        if (fs.existsSync(releasesJsonPath)) {
+          try {
+            const data = JSON.parse(fs.readFileSync(releasesJsonPath, 'utf8'))
+            rels = data.releases || []
+          } catch {
+            rels = []
+          }
+        }
+        const r1 = rels.find((r: any) => r.version === v1)
+        const r2 = rels.find((r: any) => r.version === v2)
+        if (!r1 || !r2) {
+          output = `Could not find release ${!r1 ? v1 : v2} for agent ${agentName}.`
+        } else {
+          output = [
+            `Comparing release ${v1} → ${v2}`,
+            '',
+            `${v1}: ${r1.message || '(no message)'}  — ${r1.created_at}`,
+            `${v2}: ${r2.message || '(no message)'}  — ${r2.created_at}`,
+            '',
+            'No line-level diff available for releases in this build.',
+          ].join('\n')
+        }
+      }
+    } catch (err: any) {
+      if (err.stdout) {
+        output = err.stdout.toString()
+      } else {
+        output = `Failed to run diff: ${err.message || String(err)}`
+      }
+    }
+  }
+
+  // Render output (truncate very long output)
+  const maxLines = 200
+  const lines = output.split('\n').slice(0, maxLines)
+  for (const line of lines) {
+    const displayLine = line.length > 200 ? line.slice(0, 197) + '...' : line
+    const text = new TextRenderable(ctx.renderer, {
+      content: new StyledText([white(displayLine)]),
+    })
+    contentBox.add(text)
+  }
+  if (output.split('\n').length > maxLines) {
+    const more = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim(`... (${output.split('\n').length - maxLines} more lines truncated)`)]),
+    })
+    contentBox.add(more)
+  }
+
+  const sep2 = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+  })
+  contentBox.add(sep2)
+
+  const footer = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim('ESC Close')]),
+  })
+  const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+  footerBox.add(footer)
+  contentBox.add(footerBox)
+
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+  modal.box.handleKeyPress = (key: KeyEvent): boolean => {
+    if (key.name === 'escape' || key.name === 'return' || key.name === 'enter') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+}
+
+/**
+ * Show the /diff flow: pick kind (Changes or Releases), then pick two
+ * items, then show the diff modal.
+ */
+function showDiffPicker(
+  ctx: CommandContext,
+  agentName: string,
+  preselectedFirstChange: number | null,
+  changes: Array<{id: number; timestamp: string; source: string; message: string}>,
+  releases: Array<{version: string; message: string; changelog: string; created_at: string}>,
+): void {
+  const modal = createModal(ctx.renderer, ctx.input, {
+    title: `Diff: ${agentName}`,
+    overlay: true,
+  })
+  if (modal.overlay) ctx.renderer.root.add(modal.overlay)
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 0,
+    paddingTop: 2,
+    paddingLeft: 2,
+    paddingRight: 2,
+  })
+
+  type Kind = 'change' | 'release'
+  type Stage = 'kind' | 'first' | 'second' | 'show'
+  type Item =
+    | {kind: 'change'; id: number; label: string; sub: string}
+    | {kind: 'release'; version: string; label: string; sub: string}
+
+  const state = {
+    kind: (preselectedFirstChange !== null ? 'change' : 'change') as Kind,
+    stage: (preselectedFirstChange !== null ? 'second' : 'kind') as Stage,
+    first: (preselectedFirstChange !== null
+      ? ({kind: 'change', id: preselectedFirstChange, label: `v${preselectedFirstChange}`, sub: ''} as Item)
+      : null) as Item | null,
+    second: null as Item | null,
+    selectedIndex: 0,
+  }
+
+  function getItems(): Item[] {
+    if (state.kind === 'change') {
+      return changes.map((c) => ({
+        kind: 'change' as const,
+        id: c.id,
+        label: `v${c.id}`,
+        sub: c.message || '',
+      }))
+    }
+    return releases.map((r) => ({
+      kind: 'release' as const,
+      version: r.version,
+      label: r.version,
+      sub: r.message || '',
+    }))
+  }
+
+  function refresh(): void {
+    for (const child of contentBox.getChildren()) {
+      contentBox.remove(child.id)
+    }
+
+    if (state.stage === 'kind') {
+      const header = new TextRenderable(ctx.renderer, {
+        content: new StyledText([white('Compare:')]),
+      })
+      contentBox.add(header)
+      const sep = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+      })
+      contentBox.add(sep)
+      const kinds: Array<{key: Kind; label: string}> = [
+        {key: 'change', label: 'Compare Changes'},
+        {key: 'release', label: 'Compare Releases'},
+      ]
+      for (let i = 0; i < kinds.length; i++) {
+        const k = kinds[i]
+        const isSelected = i === state.selectedIndex
+        const prefix = isSelected ? cyan('(•) ') : dim('( ) ')
+        const row = new TextRenderable(ctx.renderer, {
+          content: new StyledText([
+            prefix,
+            isSelected ? white(k.label) : dim(k.label),
+          ]),
+        })
+        contentBox.add(row)
+      }
+      const sep2 = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+      })
+      contentBox.add(sep2)
+      const footer = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('↑↓ Navigate  Enter Select  ESC Cancel')]),
+      })
+      const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+      footerBox.add(footer)
+      contentBox.add(footerBox)
+    } else if (state.stage === 'first' || state.stage === 'second') {
+      const stageLabel = state.stage === 'first' ? 'First' : 'Second'
+      const items = getItems()
+      if (items.length === 0) {
+        const empty = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim(`No ${state.kind}s available.`)]),
+        })
+        contentBox.add(empty)
+      } else {
+        const headerChunks: any[] = [
+          white(`${stageLabel} ${state.kind}:`),
+          dim('  '),
+        ]
+        if (state.first) {
+          headerChunks.push(dim(`(first: ${state.first.label})`))
+        }
+        const header = new TextRenderable(ctx.renderer, {
+          content: new StyledText(headerChunks),
+        })
+        contentBox.add(header)
+        const sep = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+        })
+        contentBox.add(sep)
+
+        for (let i = 0; i < items.length; i++) {
+          const it = items[i]
+          const isSelected = i === state.selectedIndex
+          const prefix = isSelected ? cyan('▸ ') : dim('  ')
+          const sub = it.sub.length > 50 ? it.sub.slice(0, 47) + '...' : it.sub
+          const row = new TextRenderable(ctx.renderer, {
+            content: new StyledText([
+              prefix,
+              isSelected ? white(it.label) : dim(it.label),
+              dim('  '),
+              dim(sub),
+            ]),
+          })
+          contentBox.add(row)
+        }
+      }
+      const sep2 = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+      })
+      contentBox.add(sep2)
+      const footer = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('↑↓ Navigate  Enter Select  ESC Back')]),
+      })
+      const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+      footerBox.add(footer)
+      contentBox.add(footerBox)
+    }
+
+    ctx.renderer.requestRender?.()
+  }
+
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+  refresh()
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+  modal.box.handleKeyPress = (key: KeyEvent): boolean => {
+    if (key.name === 'escape') {
+      if (state.stage === 'kind') {
+        modal.hide()
+        ctx.input.focus()
+        return true
+      }
+      if (state.stage === 'first') {
+        state.stage = 'kind'
+        state.selectedIndex = 0
+        state.kind = 'change'
+        refresh()
+        return true
+      }
+      if (state.stage === 'second') {
+        state.stage = 'first'
+        state.selectedIndex = 0
+        state.first = null
+        refresh()
+        return true
+      }
+    }
+    if (state.stage === 'kind') {
+      if (key.name === 'up') {
+        state.selectedIndex = Math.max(0, state.selectedIndex - 1)
+        refresh()
+        return true
+      }
+      if (key.name === 'down') {
+        state.selectedIndex = Math.min(1, state.selectedIndex + 1)
+        refresh()
+        return true
+      }
+      if (key.name === 'return' || key.name === 'enter') {
+        state.kind = state.selectedIndex === 0 ? 'change' : 'release'
+        // Make sure we have items
+        const items = getItems()
+        if (items.length < 1) {
+          refresh()
+          return true
+        }
+        // For changes, preselect the second-to-last (older) and last (newer) for convenience
+        if (state.kind === 'change' && items.length >= 2) {
+          state.selectedIndex = items.length - 2
+        } else {
+          state.selectedIndex = 0
+        }
+        state.stage = 'first'
+        refresh()
+        return true
+      }
+    } else if (state.stage === 'first') {
+      const items = getItems()
+      if (key.name === 'up') {
+        state.selectedIndex = Math.max(0, state.selectedIndex - 1)
+        refresh()
+        return true
+      }
+      if (key.name === 'down') {
+        state.selectedIndex = Math.min(items.length - 1, state.selectedIndex + 1)
+        refresh()
+        return true
+      }
+      if (key.name === 'return' || key.name === 'enter') {
+        state.first = items[state.selectedIndex]
+        state.selectedIndex = 0
+        state.stage = 'second'
+        refresh()
+        return true
+      }
+    } else if (state.stage === 'second') {
+      const items = getItems()
+      if (key.name === 'up') {
+        state.selectedIndex = Math.max(0, state.selectedIndex - 1)
+        refresh()
+        return true
+      }
+      if (key.name === 'down') {
+        state.selectedIndex = Math.min(items.length - 1, state.selectedIndex + 1)
+        refresh()
+        return true
+      }
+      if (key.name === 'return' || key.name === 'enter') {
+        state.second = items[state.selectedIndex]
+        modal.hide()
+        ctx.input.focus()
+        const first = state.first!
+        const second = state.second!
+        const v1 = first.kind === 'change' ? String(first.id) : first.version
+        const v2 = second.kind === 'change' ? String(second.id) : second.version
+        showDiffModal(ctx, agentName, state.kind, v1, v2)
+        return true
+      }
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
   }
 }
 
@@ -532,11 +1833,15 @@ const commands: SlashCommand[] = [
 
           if (db) {
             try {
-              const deployment = db.getDeployment(name)
+              const deployments = db.listDeployments(name)
               const localAgent = db.getLocalAgent(name)
 
-              if (deployment?.deployment_url) {
-                statusText = `deployed (${deployment.provider})`
+              if (deployments.length > 0) {
+                const dep = deployments[0] // most recent
+                statusText = `deployed (${dep.provider}, sha:${dep.id})`
+                if (deployments.length > 1) {
+                  statusText += ` +${deployments.length - 1} more`
+                }
                 statusColor = green
               } else if (localAgent?.port) {
                 const running = isProcessAlive(localAgent.pid as number)
@@ -601,7 +1906,7 @@ const commands: SlashCommand[] = [
       try {
         const agent = db.getAgent(ctx.agentName)
         const localAgent = db.getLocalAgent(ctx.agentName)
-        const deployment = db.getDeployment(ctx.agentName)
+        const deployments = db.listDeployments(ctx.agentName)
 
         const lines: string[] = []
         lines.push(`Agent: ${ctx.agentName}`)
@@ -633,17 +1938,21 @@ const commands: SlashCommand[] = [
           lines.push('')
         }
 
-        if (deployment) {
-          lines.push('Deployment:')
-          lines.push(`  Provider: ${deployment.provider}`)
-          lines.push(`  URL: ${deployment.deployment_url}`)
-          lines.push(`  Deployed: ${deployment.deployed_at}`)
-          if (deployment.last_connected_at) {
-            lines.push(`  Last connected: ${deployment.last_connected_at}`)
+        if (deployments.length > 0) {
+          lines.push('Deployments:')
+          for (const dep of deployments) {
+            lines.push(`  SHA: ${dep.id}`)
+            lines.push(`  Provider: ${dep.provider}`)
+            lines.push(`  URL: ${dep.deployment_url}`)
+            lines.push(`  Version: ${dep.deployed_version || 'latest'}`)
+            lines.push(`  Deployed: ${dep.deployed_at}`)
+            if (dep.last_connected_at) {
+              lines.push(`  Last connected: ${dep.last_connected_at}`)
+            }
+            lines.push('')
           }
-          lines.push('')
         } else {
-          lines.push('Deployment: none')
+          lines.push('Deployments: none')
           lines.push('')
         }
 
@@ -766,7 +2075,7 @@ const commands: SlashCommand[] = [
     name: 'connect',
     description: 'Connect to a different agent',
     category: 'session',
-    args: '[agent-name]',
+    args: '[agent-name|sha]',
     handler: async (ctx, args) => {
       const db = await getDb()
       const keychain = await getKeychain()
@@ -777,15 +2086,40 @@ const commands: SlashCommand[] = [
       }
 
       if (args.length === 0) {
-        // Show available agents in a modal with keyboard navigation
-        const agents = listAgentsFromDisk()
+        // Build a list of all recent deployments across all agents.
+        const allAgents = listAgentsFromDisk()
+        type DeploymentRow = {
+          agent_name: string
+          deployment_sha: string
+          provider: string
+          deployed_version: string | null
+          deployed_at: string
+        }
+        const deployments: DeploymentRow[] = []
+        for (const name of allAgents) {
+          try {
+            const rows = db.listAllDeploymentsForAgent(name) as DeploymentRow[]
+            for (const r of rows) {
+              deployments.push({
+                agent_name: name,
+                deployment_sha: r.deployment_sha,
+                provider: r.provider,
+                deployed_version: r.deployed_version,
+                deployed_at: r.deployed_at,
+              })
+            }
+          } catch {
+            // skip agent on db error
+          }
+        }
+        // Newest first
+        deployments.sort((a, b) => (b.deployed_at || '').localeCompare(a.deployed_at || ''))
 
         const modal = createModal(ctx.renderer, ctx.input, {
           title: 'Connect to Agent',
           overlay: true,
         })
 
-        // Add overlay to renderer if present
         if (modal.overlay) {
           ctx.renderer.root.add(modal.overlay)
         }
@@ -795,171 +2129,173 @@ const commands: SlashCommand[] = [
           height: '100%',
           flexDirection: 'column',
           gap: 0,
-          paddingTop: 3,
+          paddingTop: 2,
           paddingLeft: 2,
           paddingRight: 2,
         })
 
-        if (agents.length === 0) {
-          const emptyText = new TextRenderable(ctx.renderer, {
-            content: new StyledText([dim('No agents found.')]),
-          })
-          contentBox.add(emptyText)
+        // Header
+        const headerText = new TextRenderable(ctx.renderer, {
+          content: new StyledText([white('Recent deployments:')]),
+        })
+        contentBox.add(headerText)
+        const sep = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+        })
+        contentBox.add(sep)
 
-          const hint = new TextRenderable(ctx.renderer, {
-            content: new StyledText([dim('\nCreate your first agent with: cast new')]),
-          })
-          contentBox.add(hint)
-        } else {
-          // Track selected index for keyboard navigation
-          let selectedIndex = 0
+        let selectedIndex = 0
+        // SHA input state
+        let shaInput = ''
+        const MAX_SHA_LEN = 64
 
-          // Helper to get agent status info
-          function getAgentStatus(name: string): {text: string; color: typeof green} {
-            let statusText = 'stopped'
-            let statusColor = red
-
-            if (db) {
-              try {
-                const deployment = db.getDeployment(name)
-                const localAgent = db.getLocalAgent(name)
-
-                if (deployment?.deployment_url) {
-                  statusText = 'deployed'
-                  statusColor = green
-                } else if (localAgent?.port) {
-                  statusText = 'local'
-                  statusColor = cyan
-                }
-              } catch {
-                // Database lookup failed — show as stopped
-              }
-            }
-            return {text: statusText, color: statusColor}
+        function renderList() {
+          // Don't blow away the SHA input row at the bottom; rebuild the
+          // upper list section only.
+          // Simpler approach: just rebuild everything (we only have a small list)
+          for (const child of contentBox.getChildren()) {
+            contentBox.remove(child.id)
           }
 
-          // Render function to update the list
-          function renderList() {
-            // Clear existing children
-            for (const child of contentBox.getChildren()) {
-              contentBox.remove(child.id)
-            }
+          const h = new TextRenderable(ctx.renderer, {
+            content: new StyledText([white('Recent deployments:')]),
+          })
+          contentBox.add(h)
+          const s = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(s)
 
+          if (deployments.length === 0) {
+            const empty = new TextRenderable(ctx.renderer, {
+              content: new StyledText([dim('No deployments found.')]),
+            })
+            contentBox.add(empty)
+          } else {
             const tableData: (TextChunk[] | null)[][] = []
-
-            // Header row with selection column
             tableData.push([
               [white('')],
-              [white('Agent Name')],
-              [white('Description')],
-              [white('Status')],
+              [white('Agent')],
+              [white('SHA')],
+              [white('Provider')],
+              [white('Version')],
+              [white('Deployed')],
             ])
-
-            // Data rows with selection column
-            for (let i = 0; i < agents.length; i++) {
+            for (let i = 0; i < deployments.length; i++) {
+              const d = deployments[i]
               const isSelected = i === selectedIndex
-              const description = getAgentDescription(agents[i])
-              const {text: statusText, color: statusColor} = getAgentStatus(agents[i])
-              const nameColor = isSelected ? cyan : white
-
-              // Selection column
+              const date = new Date(d.deployed_at)
+              const dateStr = date.toLocaleDateString()
               const selectionColumn = isSelected ? [cyan('▸ ')] : [dim('  ')]
-
+              const shortSha = d.deployment_sha ? d.deployment_sha.slice(0, 7) : '-'
               tableData.push([
                 selectionColumn,
-                [nameColor(agents[i])],
-                description ? [dim(description)] : [dim('-')],
-                [statusColor(statusText)],
+                [white(d.agent_name || '-')],
+                [isSelected ? cyan(shortSha) : dim(shortSha)],
+                [white(d.provider || '-')],
+                [cyan(d.deployed_version || '-')],
+                [dim(dateStr)],
               ])
             }
-
             const table = new TextTableRenderable(ctx.renderer, {
               content: tableData,
               columnWidthMode: 'content',
               showBorders: false,
-              columnGap: 0,
+              columnGap: 1,
               cellPadding: 0,
             })
             contentBox.add(table)
-
-            // Footer with instructions
-            const footer = new TextRenderable(ctx.renderer, {
-              content: new StyledText([
-                white('↑↓  '),
-                dim('Navigate  '),
-                white('Enter  '),
-                dim('Connect  '),
-                white('ESC  '),
-                dim('Close'),
-              ]),
-            })
-            const footerBox = new BoxRenderable(ctx.renderer, {
-              width: '100%',
-              alignItems: 'center',
-            })
-            footerBox.add(footer)
-            contentBox.add(footerBox)
           }
 
-          renderList()
+          const sep2 = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(sep2)
 
-          // Override modal's key handler for custom keyboard navigation
-          const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+          // SHA input row
+          const shaLabel = new TextRenderable(ctx.renderer, {
+            content: new StyledText([
+              dim('Or enter SHA: '),
+              white(`[${shaInput}_]`),
+            ]),
+          })
+          contentBox.add(shaLabel)
 
-          modal.box.handleKeyPress = (key: KeyEvent) => {
-            // Handle up arrow
-            if (key.name === 'up') {
-              selectedIndex = (selectedIndex - 1 + agents.length) % agents.length
-              renderList()
-              ctx.renderer.render()
-              return true
-            }
-            // Handle down arrow
-            if (key.name === 'down') {
-              selectedIndex = (selectedIndex + 1) % agents.length
-              renderList()
-              ctx.renderer.render()
-              return true
-            }
-            // Handle number keys 1-9 for quick selection
-            if (key.name && key.name.length === 1 && key.name >= '1' && key.name <= '9') {
-              const num = parseInt(key.name, 10)
-              if (num <= agents.length) {
-                selectedIndex = num - 1
-                // Connect immediately on number press
-                const targetName = agents[selectedIndex]
-                modal.hide()
-                launchConnect(ctx, targetName)
-                return true
-              }
-            }
-            // Handle Enter to connect
-            if (key.name === 'return' || key.name === 'enter') {
-              const targetName = agents[selectedIndex]
-              modal.hide()
-              launchConnect(ctx, targetName)
-              return true
-            }
-            // Handle Escape to close
-            if (key.name === 'escape') {
-              modal.hide()
-              ctx.input.focus()
-              return true
-            }
-            return originalHandleKeyPress ? originalHandleKeyPress(key) : false
-          }
-
-          modal.setContent(contentBox)
-          ctx.renderer.root.add(modal.box)
-          modal.show()
-          return
+          // Footer
+          const footer = new TextRenderable(ctx.renderer, {
+            content: new StyledText([
+              white('↑↓ '), dim('Select  '),
+              white('Enter '), dim('Connect  '),
+              white('Type '), dim('SHA  '),
+              white('ESC '), dim('Close'),
+            ]),
+          })
+          const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+          footerBox.add(footer)
+          contentBox.add(footerBox)
         }
 
-        // No agents case - just show basic modal
-        const escFooter = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('\nPress ESC to close')]),
-        })
-        contentBox.add(escFooter)
+        renderList()
+
+        const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+        modal.box.handleKeyPress = (key: KeyEvent) => {
+          // Typing into SHA input
+          if (key.name === 'backspace' || (key.ctrl && key.name === 'h')) {
+            if (shaInput.length > 0) {
+              shaInput = shaInput.slice(0, -1)
+              renderList()
+              ctx.renderer.requestRender?.()
+            }
+            return true
+          }
+          if (key.name === 'return' || key.name === 'enter') {
+            // Prefer typed SHA if present
+            if (shaInput.length > 0) {
+              modal.hide()
+              launchConnect(ctx, shaInput)
+              return true
+            }
+            if (deployments.length > 0) {
+              const d = deployments[selectedIndex]
+              modal.hide()
+              launchConnect(ctx, d.deployment_sha)
+              return true
+            }
+            return true
+          }
+          if (key.name === 'escape') {
+            modal.hide()
+            ctx.input.focus()
+            return true
+          }
+          if (key.name === 'up') {
+            if (deployments.length > 0) {
+              selectedIndex = (selectedIndex - 1 + deployments.length) % deployments.length
+              renderList()
+              ctx.renderer.requestRender?.()
+            }
+            return true
+          }
+          if (key.name === 'down') {
+            if (deployments.length > 0) {
+              selectedIndex = (selectedIndex + 1) % deployments.length
+              renderList()
+              ctx.renderer.requestRender?.()
+            }
+            return true
+          }
+          // Printable characters: append to SHA input
+          if (key.name && key.name.length === 1 && !key.ctrl && !key.meta && /^[a-zA-Z0-9]$/.test(key.name)) {
+            if (shaInput.length < MAX_SHA_LEN) {
+              shaInput += key.name
+              renderList()
+              ctx.renderer.requestRender?.()
+            }
+            return true
+          }
+          return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+        }
 
         modal.setContent(contentBox)
         ctx.renderer.root.add(modal.box)
@@ -967,7 +2303,7 @@ const commands: SlashCommand[] = [
         return
       }
 
-      // Handle explicit agent name
+      // Handle explicit agent name or SHA
       const targetName = args[0]
       // Launch CLI connect which handles keychain access in Node.js
       launchConnect(ctx, targetName)
@@ -1088,13 +2424,13 @@ const commands: SlashCommand[] = [
         if (key.name === 'up') {
           selectedIndex = (selectedIndex - 1 + agents.length) % agents.length
           renderList()
-          ctx.renderer.render()
+          ctx.renderer.requestRender?.()
           return true
         }
         if (key.name === 'down') {
           selectedIndex = (selectedIndex + 1) % agents.length
           renderList()
-          ctx.renderer.render()
+          ctx.renderer.requestRender?.()
           return true
         }
         if (key.name === 'return' || key.name === 'enter') {
@@ -1203,13 +2539,13 @@ const commands: SlashCommand[] = [
           if (key.name === 'up') {
             selectedIndex = (selectedIndex - 1 + agents.length) % agents.length
             renderList()
-            ctx.renderer.render()
+            ctx.renderer.requestRender?.()
             return true
           }
           if (key.name === 'down') {
             selectedIndex = (selectedIndex + 1) % agents.length
             renderList()
-            ctx.renderer.render()
+            ctx.renderer.requestRender?.()
             return true
           }
           if (key.name === 'return' || key.name === 'enter') {
@@ -1303,33 +2639,353 @@ const commands: SlashCommand[] = [
   },
 
   {
+    name: 'upgrade',
+    description: 'Upgrade a deployed agent to a new version',
+    category: 'agent',
+    handler: async (ctx) => {
+      const db = await getDb()
+      if (!db) {
+        ctx.messages.addAgentMessage('Unable to access agent database.', ctx.mode)
+        return
+      }
+
+      // The chat is already connected to a specific agent — operate on it
+      // directly. No need for an agent picker.
+      const agentName = ctx.agentName
+      const deployment = db.getActiveDeployment(agentName)
+      const releases = await getReleasesForAgent(agentName)
+
+      if (!deployment && releases.length === 0) {
+        ctx.messages.addAgentMessage(
+          `Agent "${agentName}" is not currently deployed.\n` +
+          `Use /deploy to deploy first.`,
+          ctx.mode,
+        )
+        return
+      }
+
+      if (deployment) {
+        // With the new semver-based release system, the deployed_version
+        // is a string. The legacy showVersionSelection flow expects an
+        // integer ID, so we render a new selector that's semver-aware.
+        showUpgradeVersionPicker(ctx, {
+          name: agentName,
+          provider: deployment.provider,
+          deployedVersion: deployment.deployed_version ?? null,
+          sha: deployment.id,
+        }, releases)
+        return
+      }
+
+      // No deployment record, but releases exist — there is nothing to
+      // upgrade against, so direct the user to deploy first.
+      ctx.messages.addAgentMessage(
+        `Agent "${agentName}" has no active deployment.\n` +
+        `Use /deploy to deploy a release.`,
+        ctx.mode,
+      )
+    },
+  },
+
+  {
     name: 'deploy',
     description: 'Deploy the current agent',
     category: 'agent',
     args: '[provider]',
     handler: async (ctx, args) => {
-      const provider = args[0] || ''
-      await runDeployInTerminal(ctx.renderer, ctx.input, ctx.agentName, provider, ctx.messages)
+      const agentName = ctx.agentName
+      const presetProvider = args[0] || ''
+
+      // If a provider was passed on the command line, skip the modal flow
+      // and run the deploy directly with the default release version.
+      if (presetProvider) {
+        await runDeployInTerminal(ctx.renderer, ctx.input, agentName, presetProvider, ctx.messages)
+        return
+      }
+
+      // Show a release + provider selection modal.
+      const releases = await getReleasesForAgent(agentName)
+
+      const modal = createModal(ctx.renderer, ctx.input, {
+        title: `Deploy: ${agentName}`,
+        overlay: true,
+      })
+      if (modal.overlay) ctx.renderer.root.add(modal.overlay)
+
+      const contentBox = new BoxRenderable(ctx.renderer, {
+        width: '100%',
+        height: '100%',
+        flexDirection: 'column',
+        gap: 1,
+        paddingTop: 2,
+        paddingLeft: 2,
+        paddingRight: 2,
+      })
+
+      type Stage = 'release' | 'provider' | 'running' | 'success'
+      const state = {
+        stage: releases.length > 0 ? 'release' : 'provider' as Stage,
+        releaseIndex: 0, // 0 = latest
+        providerIndex: 0,
+        error: '' as string,
+        resultSha: '' as string,
+        resultProvider: '' as string,
+        resultUrl: '' as string,
+      }
+
+      const providers = [
+        {key: 'railway', name: 'Railway', desc: 'Managed containers with automatic deployments'},
+        {key: 'fly', name: 'Fly.io', desc: 'Distributed containers close to your users'},
+        {key: 'digitalocean', name: 'DigitalOcean', desc: 'Droplet with Docker container hosting'},
+        {key: 'sprites', name: 'Sprites', desc: 'Persistent Firecracker VMs on Fly.io'},
+        {key: 'docker', name: 'Docker (local)', desc: 'Self-hosted Docker container on this machine'},
+        {key: 'local', name: 'Local (no container)', desc: 'Run the agent directly without Docker'},
+      ]
+
+      function refresh(): void {
+        for (const child of contentBox.getChildren()) {
+          contentBox.remove(child.id)
+        }
+
+        if (state.stage === 'release') {
+          const header = new TextRenderable(ctx.renderer, {
+            content: new StyledText([white('Select release to deploy:')]),
+          })
+          contentBox.add(header)
+
+          const sep = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(sep)
+
+          for (let i = 0; i < releases.length; i++) {
+            const r = releases[i]
+            const isSelected = i === state.releaseIndex
+            const prefix = isSelected ? cyan('▸ ') : dim('  ')
+            const label = i === 0 ? `${r.version} (latest)` : r.version
+            const message = r.message || ''
+            const row = new TextRenderable(ctx.renderer, {
+              content: new StyledText([
+                prefix,
+                isSelected ? white(label) : dim(label),
+                dim('  '),
+                dim(message),
+              ]),
+            })
+            contentBox.add(row)
+          }
+
+          const sep2 = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(sep2)
+
+          if (state.error) {
+            const errLine = new TextRenderable(ctx.renderer, {
+              content: new StyledText([red(state.error)]),
+            })
+            contentBox.add(errLine)
+          }
+
+          const footer = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('↑↓ Navigate  Enter Next  ESC Cancel')]),
+          })
+          const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+          footerBox.add(footer)
+          contentBox.add(footerBox)
+        } else if (state.stage === 'provider') {
+          const header = new TextRenderable(ctx.renderer, {
+            content: new StyledText([white('Select deployment provider:')]),
+          })
+          contentBox.add(header)
+
+          const sep = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(sep)
+
+          for (let i = 0; i < providers.length; i++) {
+            const p = providers[i]
+            const isSelected = i === state.providerIndex
+            const prefix = isSelected ? cyan('▸ ') : dim('  ')
+            const row = new TextRenderable(ctx.renderer, {
+              content: new StyledText([
+                prefix,
+                isSelected ? white(p.name) : dim(p.name),
+                dim(` — ${p.desc}`),
+              ]),
+            })
+            contentBox.add(row)
+          }
+
+          const sep2 = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(sep2)
+
+          if (state.error) {
+            const errLine = new TextRenderable(ctx.renderer, {
+              content: new StyledText([red(state.error)]),
+            })
+            contentBox.add(errLine)
+          }
+
+          const footer = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('↑↓ Navigate  Enter Deploy  ESC Cancel')]),
+          })
+          const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+          footerBox.add(footer)
+          contentBox.add(footerBox)
+        } else if (state.stage === 'success') {
+          const header = new TextRenderable(ctx.renderer, {
+            content: new StyledText([green('✓ Deployment Successful!')]),
+          })
+          contentBox.add(header)
+
+          const sep = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(sep)
+
+          contentBox.add(new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('Agent:    '), white(agentName)]),
+          }))
+          contentBox.add(new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('Provider: '), white(state.resultProvider)]),
+          }))
+          contentBox.add(new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('URL:      '), cyan(state.resultUrl || '(none)')]),
+          }))
+          contentBox.add(new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('SHA:      '), yellow(state.resultSha)]),
+          }))
+
+          const sep2 = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(sep2)
+
+          const hint = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim(`Connect with: `), cyan(`/connect ${state.resultSha}`)]),
+          })
+          contentBox.add(hint)
+
+          const footer = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('Enter/ESC Close')]),
+          })
+          const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+          footerBox.add(footer)
+          contentBox.add(footerBox)
+        }
+
+        ctx.renderer.requestRender?.()
+      }
+
+      const closeModal = (): void => {
+        modal.hide()
+        ctx.input.focus()
+      }
+
+      const runDeploy = async (provider: string, version: string): Promise<void> => {
+        // Run the deploy via the existing terminal flow. The terminal
+        // flow builds a modal that streams output and blocks until the
+        // child process exits.
+        await runDeployInTerminal(ctx.renderer, ctx.input, agentName, provider, ctx.messages)
+
+        // Query the database for the new deployment record.
+        const db = await getDb()
+        if (db) {
+          const dep = db.getActiveDeployment(agentName)
+          if (dep) {
+            state.resultSha = dep.id
+            state.resultProvider = dep.provider || provider
+            state.resultUrl = dep.deployment_url || ''
+          }
+        }
+        if (!state.resultSha) {
+          state.resultSha = 'unknown'
+          state.resultProvider = provider
+          state.resultUrl = ''
+        }
+        state.stage = 'success'
+        refresh()
+      }
+
+      modal.setContent(contentBox)
+      ctx.renderer.root.add(modal.box)
+      modal.show()
+      refresh()
+
+      const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+      modal.box.handleKeyPress = (key: KeyEvent): boolean => {
+        if (state.stage === 'success') {
+          if (key.name === 'escape' || key.name === 'return' || key.name === 'enter') {
+            closeModal()
+            return true
+          }
+          return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+        }
+        if (state.stage === 'release') {
+          if (key.name === 'up') {
+            state.releaseIndex = Math.max(0, state.releaseIndex - 1)
+            refresh()
+            return true
+          }
+          if (key.name === 'down') {
+            state.releaseIndex = Math.min(releases.length - 1, state.releaseIndex + 1)
+            refresh()
+            return true
+          }
+          if (key.name === 'escape') {
+            closeModal()
+            return true
+          }
+          if (key.name === 'return' || key.name === 'enter') {
+            state.stage = 'provider'
+            refresh()
+            return true
+          }
+        } else if (state.stage === 'provider') {
+          if (key.name === 'up') {
+            state.providerIndex = Math.max(0, state.providerIndex - 1)
+            refresh()
+            return true
+          }
+          if (key.name === 'down') {
+            state.providerIndex = Math.min(providers.length - 1, state.providerIndex + 1)
+            refresh()
+            return true
+          }
+          if (key.name === 'escape') {
+            closeModal()
+            return true
+          }
+          if (key.name === 'return' || key.name === 'enter') {
+            const provider = providers[state.providerIndex].key
+            const version = releases.length > 0 ? releases[state.releaseIndex].version : 'latest'
+            void runDeploy(provider, version)
+            return true
+          }
+        }
+        return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+      }
     },
   },
 
   {
-    name: 'versions',
-    description: 'Show version history for current agent',
+    name: 'changes',
+    description: 'Show change history for current agent',
     category: 'session',
-    args: '[version]',
-    handler: async (ctx, args) => {
+    handler: async (ctx) => {
       const agentName = ctx.agentName
-      const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
-      const versionsJsonPath = path.join(agentPath, '.cast', 'versions', 'versions.json')
+      const changes = getChangesForAgent(agentName)
 
       // Build modal content
       const modal = createModal(ctx.renderer, ctx.input, {
-        title: `Versions: ${agentName}`,
+        title: `Changes: ${agentName}`,
         overlay: true,
       })
 
-      // Add overlay to renderer if present
       if (modal.overlay) {
         ctx.renderer.root.add(modal.overlay)
       }
@@ -1344,150 +3000,308 @@ const commands: SlashCommand[] = [
         paddingRight: 2,
       })
 
-      if (!fs.existsSync(versionsJsonPath)) {
+      if (changes.length === 0) {
         const emptyText = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('No versions found.')]),
+          content: new StyledText([dim('No changes found.')]),
         })
         contentBox.add(emptyText)
 
         const hint = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('\nVersions are created when the agent is edited.')]),
+          content: new StyledText([dim('\nChanges are created when the agent is edited.')]),
         })
         contentBox.add(hint)
-
-        // Footer for no versions case
-        const footer = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('ESC Close')]),
-        })
-        const footerBox = new BoxRenderable(ctx.renderer, {
-          width: '100%',
-          alignItems: 'center',
-        })
-        footerBox.add(footer)
-        contentBox.add(footerBox)
       } else {
-        try {
-          const versionsData = JSON.parse(fs.readFileSync(versionsJsonPath, 'utf8'))
-          const versions = versionsData.versions
+        const sortedChanges = [...changes].sort((a, b) => b.id - a.id)
 
-          // Track selected index for keyboard navigation
-          let selectedIndex = versions.length > 0 ? versions.length - 1 : 0
+        let selectedIndex = 0
 
-          // Render function to update the list
-          function renderList() {
-            // Clear existing children
-            for (const child of contentBox.getChildren()) {
-              contentBox.remove(child.id)
-            }
+        function renderList() {
+          for (const child of contentBox.getChildren()) {
+            contentBox.remove(child.id)
+          }
 
-            // Header
-            const headerText = new TextRenderable(ctx.renderer, {
+          const headerText = new TextRenderable(ctx.renderer, {
+            content: new StyledText([
+              white('Change History'),
+              dim(' | '),
+              white(`Current: v${sortedChanges[0]?.id || 0}`),
+            ]),
+          })
+          contentBox.add(headerText)
+
+          const sep = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(sep)
+
+          for (let i = 0; i < sortedChanges.length; i++) {
+            const c = sortedChanges[i]
+            const isSelected = i === selectedIndex
+            const date = new Date(c.timestamp)
+            const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
+            const sourceLabel = c.source === 'create' ? dim('[CREATED]') :
+                               c.source === 'cli' ? cyan('[CLI]') :
+                               green('[BUILDER]')
+
+            const prefix = isSelected ? cyan('▸ ') : dim('  ')
+            const changeColor = isSelected ? white : dim
+
+            const changeText = new TextRenderable(ctx.renderer, {
               content: new StyledText([
-                white('Version History'),
-                dim(' | '),
-                white(`Current: v${versionsData.current}`),
+                prefix,
+                changeColor(`v${c.id}`),
+                dim('  '),
+                sourceLabel,
+                dim('  '),
+                dim(dateStr),
+                dim('\n    '),
+                changeColor(c.message),
               ]),
             })
-            contentBox.add(headerText)
-
-            const sep = new TextRenderable(ctx.renderer, {
-              content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
-            })
-            contentBox.add(sep)
-
-            // Show each version with selection
-            for (let i = 0; i < versions.length; i++) {
-              const v = versions[i]
-              const isSelected = i === selectedIndex
-              const date = new Date(v.timestamp)
-              const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
-              const sourceLabel = v.source === 'create' ? dim('[CREATED]') :
-                                 v.source === 'cli' ? cyan('[CLI]') :
-                                 green('[BUILDER]')
-
-              const prefix = isSelected ? cyan('▸ ') : dim('  ')
-              const versionColor = isSelected ? white : dim
-
-              const versionText = new TextRenderable(ctx.renderer, {
-                content: new StyledText([
-                  prefix,
-                  versionColor(`v${v.id}`),
-                  dim('  '),
-                  sourceLabel,
-                  dim('  '),
-                  dim(dateStr),
-                  dim('\n    '),
-                  versionColor(v.message),
-                ]),
-              })
-              contentBox.add(versionText)
-            }
-
-            const sep2 = new TextRenderable(ctx.renderer, {
-              content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
-            })
-            contentBox.add(sep2)
-
-            // Footer instructions
-            const footer = new TextRenderable(ctx.renderer, {
-              content: new StyledText([dim('↑↓ Navigate  Enter Revert  ESC Close')]),
-            })
-            const footerBox = new BoxRenderable(ctx.renderer, {
-              width: '100%',
-              alignItems: 'center',
-            })
-            footerBox.add(footer)
-            contentBox.add(footerBox)
+            contentBox.add(changeText)
           }
 
-          renderList()
+          const sep2 = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(sep2)
 
-          // Override modal's key handler for custom keyboard navigation
-          const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+          // Footer: ↑↓ Navigate  R Restore  D Diff  ESC Close
+          const footerChunks: any[] = [
+            white('↑↓ '), dim('Navigate  '),
+            white('R '), dim('Restore  '),
+            white('D '), dim('Diff  '),
+            white('ESC '), dim('Close'),
+          ]
+          const footer = new TextRenderable(ctx.renderer, {
+            content: new StyledText(footerChunks),
+          })
+          const footerBox = new BoxRenderable(ctx.renderer, {
+            width: '100%',
+            alignItems: 'center',
+          })
+          footerBox.add(footer)
+          contentBox.add(footerBox)
+        }
 
-          modal.box.handleKeyPress = (key: KeyEvent) => {
-            // Handle up arrow
-            if (key.name === 'up') {
-              selectedIndex = Math.max(0, selectedIndex - 1)
-              renderList()
-              ctx.renderer.render()
-              return true
-            }
-            // Handle down arrow
-            if (key.name === 'down') {
-              selectedIndex = Math.min(versions.length - 1, selectedIndex + 1)
-              renderList()
-              ctx.renderer.render()
-              return true
-            }
-            // Handle Enter to revert
-            if (key.name === 'return' || key.name === 'enter') {
-              const targetVersion = versions[selectedIndex]
-              if (targetVersion) {
-                modal.hide()
-                ctx.input.focus()
+        renderList()
 
-                // Show confirmation message
-                ctx.messages.addAgentMessage(
-                  `Revert to v${targetVersion.id}? Use \`cast revert ${agentName} ${targetVersion.id}\` from CLI to confirm.`,
-                  ctx.mode
-                )
-              }
-              return true
-            }
-            // Handle Escape to close
-            if (key.name === 'escape') {
+        const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+        modal.box.handleKeyPress = (key: KeyEvent) => {
+          if (key.name === 'up') {
+            selectedIndex = Math.max(0, selectedIndex - 1)
+            renderList()
+            ctx.renderer.requestRender?.()
+            return true
+          }
+          if (key.name === 'down') {
+            selectedIndex = Math.min(changes.length - 1, selectedIndex + 1)
+            renderList()
+            ctx.renderer.requestRender?.()
+            return true
+          }
+          if (key.name === 'escape') {
+            modal.hide()
+            ctx.input.focus()
+            return true
+          }
+          // R = Restore selected change
+          if (key.name && key.name.length === 1 && key.name.toLowerCase() === 'r' && !key.ctrl && !key.meta) {
+            const c = sortedChanges[selectedIndex]
+            if (c) {
               modal.hide()
               ctx.input.focus()
-              return true
+              void executeSlashCommand('restore', [`--change`, String(c.id)], ctx)
             }
-            return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+            return true
           }
-        } catch (err) {
-          const errorText = new TextRenderable(ctx.renderer, {
-            content: new StyledText([red('Failed to load version history.')]),
+          // D = Diff: start a /diff flow with the selected change as the first version
+          if (key.name && key.name.length === 1 && key.name.toLowerCase() === 'd' && !key.ctrl && !key.meta) {
+            const c = sortedChanges[selectedIndex]
+            if (c) {
+              modal.hide()
+              ctx.input.focus()
+              // Open /diff with the first change pre-populated; the /diff modal
+              // will prompt for the second change.
+              void executeSlashCommand('diff', [`--change`, String(c.id)], ctx)
+            }
+            return true
+          }
+          return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+        }
+      }
+
+      modal.setContent(contentBox)
+      ctx.renderer.root.add(modal.box)
+      modal.show()
+    },
+  },
+
+  {
+    name: 'versions',
+    description: 'Show releases for current agent',
+    category: 'session',
+    handler: async (ctx) => {
+      const agentName = ctx.agentName
+      const releases = await getReleasesForAgent(agentName)
+      const db = await getDb()
+      const activeDep = db ? db.getActiveDeployment(agentName) : null
+      const isDeployed = activeDep !== null
+
+      // Build modal content
+      const modal = createModal(ctx.renderer, ctx.input, {
+        title: `Releases: ${agentName}`,
+        overlay: true,
+      })
+
+      if (modal.overlay) {
+        ctx.renderer.root.add(modal.overlay)
+      }
+
+      const contentBox = new BoxRenderable(ctx.renderer, {
+        width: '100%',
+        height: '100%',
+        flexDirection: 'column',
+        gap: 0,
+        paddingTop: 2,
+        paddingLeft: 2,
+        paddingRight: 2,
+      })
+
+      if (releases.length === 0) {
+        const emptyText = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('No releases found.')]),
+        })
+        contentBox.add(emptyText)
+
+        const hint = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('\nCreate a release with: /release or cast release')]),
+        })
+        contentBox.add(hint)
+      } else {
+        // Sort by version descending
+        const sortedReleases = [...releases].sort((a, b) => {
+          const parseV = (v: string) => v.split('.').map(Number)
+          const va = parseV(a.version)
+          const vb = parseV(b.version)
+          return vb[0] - va[0] || vb[1] - va[1] || (vb[2] || 0) - (va[2] || 0)
+        })
+
+        let selectedIndex = 0
+
+        function renderList() {
+          for (const child of contentBox.getChildren()) {
+            contentBox.remove(child.id)
+          }
+
+          const headerText = new TextRenderable(ctx.renderer, {
+            content: new StyledText([
+              white('Releases'),
+              dim(' | '),
+              white(`Current: ${sortedReleases[0]?.version || 'none'}`),
+            ]),
           })
-          contentBox.add(errorText)
+          contentBox.add(headerText)
+
+          const sep = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(sep)
+
+          for (let i = 0; i < sortedReleases.length; i++) {
+            const r = sortedReleases[i]
+            const isSelected = i === selectedIndex
+            const date = new Date(r.created_at)
+            const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
+
+            const prefix = isSelected ? cyan('▸ ') : dim('  ')
+            const versionColor = isSelected ? white : dim
+
+            const versionText = new TextRenderable(ctx.renderer, {
+              content: new StyledText([
+                prefix,
+                versionColor(r.version),
+                dim('  '),
+                dim(dateStr),
+                dim('\n    '),
+                versionColor(r.message),
+              ]),
+            })
+            contentBox.add(versionText)
+          }
+
+          const sep2 = new TextRenderable(ctx.renderer, {
+            content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
+          })
+          contentBox.add(sep2)
+
+          // Footer: C = Create Release, U = Upgrade (only if deployed)
+          const footerParts: Array<{text: string; color: typeof white | typeof dim | typeof cyan}> = [
+            {text: '↑↓ ', color: white},
+            {text: 'Navigate  ', color: dim},
+            {text: 'C ', color: white},
+            {text: 'Create Release  ', color: dim},
+          ]
+          if (isDeployed) {
+            footerParts.push({text: 'U ', color: white})
+            footerParts.push({text: 'Upgrade  ', color: dim})
+          }
+          footerParts.push({text: 'ESC ', color: white})
+          footerParts.push({text: 'Close', color: dim})
+
+          const footerChunks: any[] = []
+          for (const p of footerParts) {
+            footerChunks.push(p.color(p.text))
+          }
+          const footer = new TextRenderable(ctx.renderer, {
+            content: new StyledText(footerChunks),
+          })
+          const footerBox = new BoxRenderable(ctx.renderer, {
+            width: '100%',
+            alignItems: 'center',
+          })
+          footerBox.add(footer)
+          contentBox.add(footerBox)
+        }
+
+        renderList()
+
+        const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+        modal.box.handleKeyPress = (key: KeyEvent) => {
+          if (key.name === 'up') {
+            selectedIndex = Math.max(0, selectedIndex - 1)
+            renderList()
+            ctx.renderer.requestRender?.()
+            return true
+          }
+          if (key.name === 'down') {
+            selectedIndex = Math.min(releases.length - 1, selectedIndex + 1)
+            renderList()
+            ctx.renderer.requestRender?.()
+            return true
+          }
+          if (key.name === 'escape') {
+            modal.hide()
+            ctx.input.focus()
+            return true
+          }
+          // C = Create Release
+          if (key.name === 'c' || (key.name && key.name.length === 1 && key.name.toLowerCase() === 'c' && !key.ctrl && !key.meta)) {
+            modal.hide()
+            ctx.input.focus()
+            void executeSlashCommand('release', [], ctx)
+            return true
+          }
+          // U = Upgrade (only when deployed)
+          if (isDeployed && (key.name === 'u' || (key.name && key.name.length === 1 && key.name.toLowerCase() === 'u' && !key.ctrl && !key.meta))) {
+            modal.hide()
+            ctx.input.focus()
+            void executeSlashCommand('upgrade', [], ctx)
+            return true
+          }
+          return originalHandleKeyPress ? originalHandleKeyPress(key) : false
         }
       }
 
@@ -1834,6 +3648,550 @@ cast dev ${agentName}
         `Or use CLI: cast git <command> ${agentName}`,
         ctx.mode
       )
+    },
+  },
+
+  {
+    name: 'release',
+    description: 'Create a semantic release for the current agent',
+    category: 'agent',
+    args: '[version]',
+    handler: async (ctx, args) => {
+      const agentName = ctx.agentName
+      const presetVersion = args[0] || ''
+
+      // Load existing releases to compute the current version + suggestions
+      const releases = await getReleasesForAgent(agentName)
+      const currentVersion = getCurrentReleaseVersion(agentName)
+      const suggestions = suggestNextVersions(currentVersion)
+
+      // Run a release through createRelease(). Falls back to shelling out
+      // to `cast release` if the TS wrapper isn't available for any reason.
+      const doCreateRelease = async (version: string, message: string): Promise<{ok: boolean; error?: string}> => {
+        try {
+          // Dynamic import — the releases module lives in cast-cli.
+          // Using a relative path keeps the build portable.
+          const releasesMod = await import('../../../cast-cli/dist/lib/releases.js').catch(() => null)
+          if (releasesMod && typeof (releasesMod as any).createRelease === 'function') {
+            await (releasesMod as any).createRelease(agentName, version, message)
+            return {ok: true}
+          }
+        } catch (err: any) {
+          // Fall through to CLI fallback below
+        }
+
+        // Fallback: shell out to `cast release`
+        const binary = findCastBinary()
+        if (!binary) {
+          return {ok: false, error: 'Could not find cast CLI binary. Please ensure cast is installed.'}
+        }
+        try {
+          const cliArgs = ['release', agentName, version]
+          if (message) cliArgs.push('--message', message)
+          execFileSync(binary, cliArgs, {stdio: 'inherit'})
+          return {ok: true}
+        } catch (err: any) {
+          if (err.signal === 'SIGINT') return {ok: false, error: 'Cancelled'}
+          return {ok: false, error: err.message || String(err)}
+        }
+      }
+
+      // Render the modal. State lives in closures; `renderModal` rebuilds
+      // the content on every change.
+      type FocusField = 'version' | 'message' | 'create' | 'cancel'
+      const state = {
+        version: presetVersion || suggestions.patch,
+        message: '',
+        focus: (presetVersion ? 'message' : 'version') as FocusField,
+        error: '' as string,
+        creating: false,
+      }
+
+      const modal = createModal(ctx.renderer, ctx.input, {
+        title: `Create Release: ${agentName}`,
+        overlay: true,
+      })
+      if (modal.overlay) ctx.renderer.root.add(modal.overlay)
+
+      const contentBox = new BoxRenderable(ctx.renderer, {
+        width: '100%',
+        height: '100%',
+        flexDirection: 'column',
+        gap: 1,
+        paddingTop: 2,
+        paddingLeft: 2,
+        paddingRight: 2,
+      })
+
+      function refresh(): void {
+        for (const child of contentBox.getChildren()) {
+          contentBox.remove(child.id)
+        }
+
+        const header = new TextRenderable(ctx.renderer, {
+          content: new StyledText([
+            white('Agent: '),
+            cyan(agentName),
+            dim('   '),
+            white('Current: '),
+            yellow(currentVersion || 'none'),
+          ]),
+        })
+        contentBox.add(header)
+
+        const suggested = new TextRenderable(ctx.renderer, {
+          content: new StyledText([
+            dim('Suggested: '),
+            green(`patch ${suggestions.patch}`),
+            dim(' / '),
+            green(`minor ${suggestions.minor}`),
+            dim(' / '),
+            green(`major ${suggestions.major}`),
+          ]),
+        })
+        contentBox.add(suggested)
+
+        // Version input
+        const versionLabel = new TextRenderable(ctx.renderer, {
+          content: new StyledText([
+            state.focus === 'version' ? cyan('▸ Version: ') : dim('  Version: '),
+            white(state.version || '_'),
+          ]),
+        })
+        contentBox.add(versionLabel)
+
+        // Message input
+        const messageLabel = new TextRenderable(ctx.renderer, {
+          content: new StyledText([
+            state.focus === 'message' ? cyan('▸ Message: ') : dim('  Message: '),
+            white(state.message || '_'),
+          ]),
+        })
+        contentBox.add(messageLabel)
+
+        if (state.error) {
+          const errLine = new TextRenderable(ctx.renderer, {
+            content: new StyledText([red(state.error)]),
+          })
+          contentBox.add(errLine)
+        }
+
+        const spacer = new TextRenderable(ctx.renderer, {content: new StyledText([dim(' ')])})
+        contentBox.add(spacer)
+
+        // Buttons
+        const createStyle = state.focus === 'create' ? cyan : (state.creating ? dim : white)
+        const cancelStyle = state.focus === 'cancel' ? cyan : dim
+        const buttons = new TextRenderable(ctx.renderer, {
+          content: new StyledText([
+            createStyle('[ Create Release ]'),
+            dim('  '),
+            cancelStyle('[ Cancel ]'),
+          ]),
+        })
+        contentBox.add(buttons)
+
+        const footer = new TextRenderable(ctx.renderer, {
+          content: new StyledText([
+            dim('Tab Switch Field  Enter Confirm  ESC Cancel'),
+          ]),
+        })
+        const footerBox = new BoxRenderable(ctx.renderer, {
+          width: '100%',
+          alignItems: 'center',
+        })
+        footerBox.add(footer)
+        contentBox.add(footerBox)
+
+        ctx.renderer.requestRender?.()
+      }
+
+      const closeModal = (): void => {
+        modal.hide()
+        ctx.input.focus()
+      }
+
+      const submit = async (): Promise<void> => {
+        if (state.creating) return
+        const v = state.version.trim()
+        if (!v) {
+          state.error = 'Version is required'
+          refresh()
+          return
+        }
+        if (!/^\d+(\.\d+){0,2}$/.test(v)) {
+          state.error = `Invalid semver: "${v}"`
+          refresh()
+          return
+        }
+        state.creating = true
+        state.error = ''
+        refresh()
+
+        const result = await doCreateRelease(v, state.message.trim())
+        if (!result.ok) {
+          state.creating = false
+          state.error = result.error || 'Failed to create release'
+          refresh()
+          return
+        }
+
+        // Success — close the form modal and show a confirmation
+        closeModal()
+        showInfoModal(
+          ctx,
+          'Release Created',
+          [
+            {label: 'Agent', value: agentName},
+            {label: 'Version', value: v, color: green},
+          ],
+          'Enter/ESC Close',
+          true,
+        )
+      }
+
+      modal.setContent(contentBox)
+      ctx.renderer.root.add(modal.box)
+      modal.show()
+      refresh()
+
+      const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+      modal.box.handleKeyPress = (key: KeyEvent): boolean => {
+        if (state.creating) {
+          return true
+        }
+        if (key.name === 'escape') {
+          closeModal()
+          return true
+        }
+        if (key.name === 'tab') {
+          const order: FocusField[] = ['version', 'message', 'create', 'cancel']
+          const idx = order.indexOf(state.focus)
+          state.focus = order[(idx + 1) % order.length]
+          refresh()
+          return true
+        }
+        if (key.name === 'return' || key.name === 'enter') {
+          if (state.focus === 'create') {
+            void submit()
+            return true
+          }
+          if (state.focus === 'cancel') {
+            closeModal()
+            return true
+          }
+          // Pressing Enter in a text field advances to the next field
+          const order: FocusField[] = ['version', 'message', 'create', 'cancel']
+          const idx = order.indexOf(state.focus)
+          state.focus = order[(idx + 1) % order.length]
+          refresh()
+          return true
+        }
+        if (key.name === 'up') {
+          const order: FocusField[] = ['version', 'message', 'create', 'cancel']
+          const idx = order.indexOf(state.focus)
+          state.focus = order[(idx - 1 + order.length) % order.length]
+          refresh()
+          return true
+        }
+        if (key.name === 'down') {
+          const order: FocusField[] = ['version', 'message', 'create', 'cancel']
+          const idx = order.indexOf(state.focus)
+          state.focus = order[(idx + 1) % order.length]
+          refresh()
+          return true
+        }
+        if (key.name === 'left' || key.name === 'right') {
+          state.focus = state.focus === 'create' ? 'cancel' : 'create'
+          refresh()
+          return true
+        }
+        if (key.name === 'backspace' || (key.ctrl && key.name === 'h')) {
+          if (state.focus === 'version' && state.version.length > 0) {
+            state.version = state.version.slice(0, -1)
+            refresh()
+          } else if (state.focus === 'message' && state.message.length > 0) {
+            state.message = state.message.slice(0, -1)
+            refresh()
+          }
+          return true
+        }
+        // Printable characters
+        if (key.name && key.name.length === 1 && !key.ctrl && !key.meta) {
+          if (state.focus === 'version' && state.version.length < 32) {
+            state.version += key.name
+            refresh()
+            return true
+          }
+          if (state.focus === 'message' && state.message.length < 200) {
+            state.message += key.name
+            refresh()
+            return true
+          }
+        }
+        return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+      }
+    },
+  },
+
+  {
+    name: 'restore',
+    description: 'Restore agent to a previous change or release',
+    category: 'agent',
+    args: '[--change <num>|--release <version>]',
+    handler: async (ctx, args) => {
+      const agentName = ctx.agentName
+
+      // Parse args for --change or --release
+      let targetChange: number | null = null
+      let targetRelease: string | null = null
+
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--change' && args[i + 1]) {
+          targetChange = parseInt(args[i + 1], 10)
+          if (!Number.isFinite(targetChange)) targetChange = null
+        }
+        if (args[i] === '--release' && args[i + 1]) {
+          targetRelease = args[i + 1]
+        }
+      }
+
+      // Run a restore by shelling out to the cast CLI.
+      const doRestore = (kind: 'change' | 'release', value: string | number): void => {
+        const binary = findCastBinary()
+        if (!binary) {
+          showInfoModal(
+            ctx,
+            'Restore Failed',
+            [{value: 'Could not find cast CLI binary. Please ensure cast is installed.', color: red}],
+            'Enter/ESC Close',
+            false,
+          )
+          return
+        }
+        const cliArgs = ['restore', agentName, kind === 'change' ? '--change' : '--release', String(value)]
+        try {
+          execFileSync(binary, cliArgs, {stdio: 'inherit'})
+          showInfoModal(
+            ctx,
+            'Restore Complete',
+            [
+              {label: 'Agent', value: agentName},
+              {label: 'Restored from', value: kind === 'change' ? `v${value}` : `release ${value}`, color: green},
+              {value: 'Local files updated. Use /deploy to update the deployment.', color: dim},
+            ],
+            'Enter/ESC Close',
+            true,
+          )
+        } catch (err: any) {
+          if (err.signal === 'SIGINT') return
+          showInfoModal(
+            ctx,
+            'Restore Failed',
+            [{value: err.message || String(err), color: red}],
+            'Enter/ESC Close',
+            false,
+          )
+        }
+      }
+
+      // If args provided, skip the picker and go straight to confirmation
+      if (targetChange !== null) {
+        showRestoreConfirmation(ctx, agentName, 'change', targetChange, doRestore)
+        return
+      }
+      if (targetRelease !== null) {
+        showRestoreConfirmation(ctx, agentName, 'release', targetRelease, doRestore)
+        return
+      }
+
+      // No args: open the modal flow
+      const changes = getChangesForAgent(agentName)
+      const releases = await getReleasesForAgent(agentName)
+
+      if (changes.length === 0 && releases.length === 0) {
+        showInfoModal(
+          ctx,
+          'Nothing to Restore',
+          [
+            {value: 'No changes or releases found for this agent.', color: yellow},
+            {value: 'Make a change or create a release first.', color: dim},
+          ],
+          'Enter/ESC Close',
+          false,
+        )
+        return
+      }
+
+      showRestorePicker(ctx, agentName, changes, releases, doRestore)
+    },
+  },
+
+  {
+    name: 'diff',
+    description: 'Compare two changes or releases',
+    category: 'agent',
+    args: '[--change <num> --change <num>|--release <ver> --release <ver>]',
+    handler: async (ctx, args) => {
+      const agentName = ctx.agentName
+      const changes = getChangesForAgent(agentName)
+      const releases = await getReleasesForAgent(agentName)
+
+      // Parse --change/--release pairs
+      const changeFlags: number[] = []
+      const releaseFlags: string[] = []
+      for (let i = 0; i < args.length; i++) {
+        if (args[i] === '--change' && args[i + 1]) {
+          const n = parseInt(args[i + 1], 10)
+          if (Number.isFinite(n)) changeFlags.push(n)
+        }
+        if (args[i] === '--release' && args[i + 1]) {
+          releaseFlags.push(args[i + 1])
+        }
+      }
+
+      if (changeFlags.length === 2) {
+        showDiffModal(ctx, agentName, 'change', String(changeFlags[0]), String(changeFlags[1]))
+        return
+      }
+      if (releaseFlags.length === 2) {
+        showDiffModal(ctx, agentName, 'release', releaseFlags[0], releaseFlags[1])
+        return
+      }
+
+      // No (or partial) args: open the picker
+      if (changes.length === 0 && releases.length === 0) {
+        showInfoModal(
+          ctx,
+          'Nothing to Diff',
+          [
+            {value: 'No changes or releases found for this agent.', color: yellow},
+          ],
+          'Enter/ESC Close',
+          false,
+        )
+        return
+      }
+      // If the first change is preselected (from a D press in /changes), pass it
+      const preselected = changeFlags.length === 1 ? changeFlags[0] : null
+      showDiffPicker(ctx, agentName, preselected, changes, releases)
+    },
+  },
+
+  {
+    name: 'registry',
+    description: 'List all releases across all agents',
+    category: 'session',
+    handler: async (ctx) => {
+      const db = await getDb()
+      if (!db) {
+        showInfoModal(
+          ctx,
+          'Registry',
+          [{value: 'Unable to access agent database.', color: red}],
+          'Enter/ESC Close',
+          false,
+        )
+        return
+      }
+
+      const allReleases = db.listAllReleases() as Array<{
+        agent_name: string
+        version: string
+        created_at: string
+        provider?: string | null
+        deployment_sha?: string | null
+        deployment_url?: string | null
+      }>
+
+      const modal = createModal(ctx.renderer, ctx.input, {
+        title: 'Registry',
+        overlay: true,
+      })
+      if (modal.overlay) ctx.renderer.root.add(modal.overlay)
+
+      const contentBox = new BoxRenderable(ctx.renderer, {
+        width: '100%',
+        height: '100%',
+        flexDirection: 'column',
+        gap: 0,
+        paddingTop: 2,
+        paddingLeft: 2,
+        paddingRight: 2,
+      })
+
+      if (allReleases.length === 0) {
+        const empty = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('No releases found.')]),
+        })
+        contentBox.add(empty)
+        const hint = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim('Create a release with: cast release <agent> <version>')]),
+        })
+        contentBox.add(hint)
+      } else {
+        const tableData: (TextChunk[] | null)[][] = []
+        tableData.push([
+          [white('Agent')],
+          [white('Version')],
+          [white('Date')],
+          [white('Deployed')],
+        ])
+        for (const release of allReleases) {
+          const date = new Date(release.created_at)
+          const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
+          let deployedCell: TextChunk[]
+          if (release.deployment_sha) {
+            deployedCell = [green(`✓ ${release.provider || 'deployed'}`), dim(` (${release.deployment_sha.slice(0, 7)})`)]
+          } else {
+            deployedCell = [dim('-')]
+          }
+          tableData.push([
+            [white(release.agent_name || '-')],
+            [cyan(release.version || '-')],
+            [dim(dateStr)],
+            deployedCell,
+          ])
+        }
+        const table = new TextTableRenderable(ctx.renderer, {
+          content: tableData,
+          columnWidthMode: 'content',
+          showBorders: false,
+          columnGap: 2,
+          cellPadding: 0,
+        })
+        contentBox.add(table)
+        const total = new TextRenderable(ctx.renderer, {
+          content: new StyledText([dim(`\nTotal: ${allReleases.length} release(s)`)]),
+        })
+        contentBox.add(total)
+      }
+
+      const sep = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+      })
+      contentBox.add(sep)
+      const footer = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('ESC Close')]),
+      })
+      const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+      footerBox.add(footer)
+      contentBox.add(footerBox)
+
+      modal.setContent(contentBox)
+      ctx.renderer.root.add(modal.box)
+      modal.show()
+
+      const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+      modal.box.handleKeyPress = (key: KeyEvent): boolean => {
+        if (key.name === 'escape' || key.name === 'return' || key.name === 'enter') {
+          modal.hide()
+          ctx.input.focus()
+          return true
+        }
+        return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+      }
     },
   },
 ]
