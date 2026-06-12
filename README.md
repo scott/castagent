@@ -187,6 +187,39 @@ To shut down and clean up resources:
 cast shutdown demo-agent
 ```
 
+### Chatting On-Host (Docker container shell)
+
+Agents deployed to DigitalOcean include a bundled TUI (`cast-tui`) inside the
+agent's Docker container. Reach the container and type `cast-tui` to open a
+chat session that talks directly to the A2A server on `localhost:8080`:
+
+```bash
+# SSH into the droplet (or use the DO web console)
+ssh -i ~/.ssh/cast_do_key root@<droplet-ip>
+
+# Enter the agent container
+docker exec -it cast-agent bash
+
+# Launch the on-host chat TUI
+cast-tui
+```
+
+The on-host TUI is functionally identical to `cast connect` — streaming
+responses, slash commands, and production-mode chat. No public network
+exposure, no bearer token sent over the wire. The chat runs entirely inside
+the container.
+
+If the TUI bundle is unavailable or a JS runtime is missing, a Python REPL
+fallback is used automatically instead. Run `cast-tui` and it will use
+whichever is available.
+
+> **Security note:** Anyone with the SSH key and droplet IP who can
+> `docker exec` into the container can also run `cast-tui` with the
+> agent's `AUTH_TOKEN` (inherited from the container environment). Keep
+> the key at `~/.ssh/cast_do_key` secured. This matches the existing
+> privilege model — the SSH key already grants full root access to the
+> droplet.
+
 ### Creating a New Agent
 
 The `cast new` command launches an interactive TUI wizard that guides you through creating a new agent:

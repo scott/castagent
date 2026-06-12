@@ -25,7 +25,7 @@ export interface MessagesComponent {
 }
 
 export function createMessages(ctx: any, uiMode: UiMode): MessagesComponent {
-  let isProduction = uiMode === 'production'
+  let isProduction = uiMode === 'production' || uiMode === 'on-host'
 
   const scrollBox = new ScrollBoxRenderable(ctx, {
     width: '100%',
@@ -161,7 +161,7 @@ export function createMessages(ctx: any, uiMode: UiMode): MessagesComponent {
   }
 
   function setUiMode(newUiMode: UiMode) {
-    isProduction = newUiMode === 'production'
+    isProduction = newUiMode === 'production' || newUiMode === 'on-host'
     if (isProduction) {
       showProductionIndicator()
     }

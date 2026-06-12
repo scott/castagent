@@ -1,7 +1,7 @@
 import {BoxRenderable, TextRenderable, StyledText, green, yellow, white} from '@opentui/core'
 
 export type Mode = 'plan' | 'build'
-export type UiMode = 'dev' | 'production'
+export type UiMode = 'dev' | 'production' | 'on-host'
 
 export interface HeaderComponent {
   box: BoxRenderable
@@ -18,7 +18,7 @@ export function createHeader(
   uiMode: UiMode,
   deployedVersion?: string | null,
 ): HeaderComponent {
-  const isProduction = uiMode === 'production'
+  const isProduction = uiMode === 'production' || uiMode === 'on-host'
   const backgroundColor = isProduction ? '#10B981' : '#8B5CF6'
   let currentMode: Mode = initialMode
   let currentDeployedVersion: string | null = deployedVersion ?? null
@@ -56,9 +56,9 @@ export function createHeader(
   }
 
   function setUiMode(newUiMode: UiMode) {
-    const newIsProduction = newUiMode === 'production'
+    const newIsProduction = newUiMode === 'production' || newUiMode === 'on-host'
     // Note: Background color cannot be changed dynamically after creation
-    // The mode text will still update to show [● LIVE] in production
+    // The mode text will still update to show [● LIVE] in production/on-host
     modeText.content = createModeStyledText(currentMode, newIsProduction)
   }
 

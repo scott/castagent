@@ -15,6 +15,7 @@ import {
   execCommandIgnoreError,
   generateDeploymentId,
   getVolumeName,
+  prepareHostTuiBuildContext,
 } from './deploy-utils'
 
 const SSH_KEY_NAME = 'cast-do-key'
@@ -155,6 +156,11 @@ export default class DigitalOceanDeploy extends Command {
     // Setup SSH key
     await this.ensureSshKey()
 
+    // Prepare on-host TUI bundle (cast-tui command inside the container)
+    this.log('Preparing on-host TUI bundle...')
+    const projectRoot = this.findProjectRoot()
+    await prepareHostTuiBuildContext(agentPath, projectRoot)
+
     // Get or create droplet
     const droplet = await this.getOrCreateDroplet(agentName, agentPath, apiToken)
 
@@ -236,11 +242,41 @@ export default class DigitalOceanDeploy extends Command {
     this.log('To view logs:')
     this.log(`  ssh -i ~/.ssh/cast_do_key root@${droplet.ip} "docker logs -f cast-agent"`)
     this.log('')
-    this.log('To connect:')
+    this.log('To connect (from your machine):')
     this.log(`  cast connect ${agentName}`)
+    this.log('')
+    this.log('To chat on-host (SSH into droplet, then inside container):')
+    this.log(`  ssh -i ~/.ssh/cast_do_key root@${droplet.ip}`)
+    this.log(`  docker exec -it cast-agent bash`)
+    this.log(`  cast-tui`)
     this.log('')
     this.log('To destroy:')
     this.log(`  cast shutdown ${agentName}`)
+  }
+
+  /**
+   * Find the project root directory by looking for known marker paths.
+   * Tries several relative paths from the current working directory and
+   * the compiled output directory to locate the agent-cast project root.
+   */
+  private findProjectRoot(): string {
+    const markers = ['python/cast', 'typescript/cast-tui']
+    const candidates = [
+      process.cwd(),
+      path.resolve(__dirname, '..'),          // lib/deploy -> lib
+      path.resolve(__dirname, '../..'),        // lib/deploy -> typescript/cast-cli
+      path.resolve(__dirname, '../../..'),     // lib/deploy -> typescript
+      path.resolve(__dirname, '../../..'),     // lib/deploy -> typescript
+      path.resolve(__dirname, '../../../..'),  // lib/deploy -> project root
+    ]
+    for (const candidate of candidates) {
+      for (const marker of markers) {
+        if (fs.existsSync(path.join(candidate, marker))) {
+          return candidate
+        }
+      }
+    }
+    return process.cwd()
   }
 
   private async ensureSshKey(): Promise<void> {
