@@ -7,8 +7,6 @@ import {createInput} from '../components/input.js'
 import {createAutocomplete} from '../components/autocomplete.js'
 import {executeSlashCommand, getSlashCommands} from '../commands/slash-registry.js'
 import {getDb} from '../lib/db.js'
-import {loadMotd} from '../lib/motd.js'
-import {VERSION} from '../constants.js'
 
 export async function showChatScreen(
   renderer: CliRenderer,
@@ -80,26 +78,44 @@ export async function showChatScreen(
       lastAgentMessage = initialWelcome
     }
 
-    // In on-host mode, try to load and display the Message of the Day
+    // In on-host mode, show a natural-language introduction from the
+    // agent itself (fetched via A2A agent/card) instead of repeating
+    // the technical banner that's already in the SSH MOTD.
     if (currentUiMode === 'on-host') {
-      const motd = loadMotd()
-      if (motd) {
-        const header = [
-          `\u250C\u2500 ${agentName} ${'\u2500'.repeat(Math.max(0, 46 - agentName.length))}\u2510`,
-          `\u2502  cast v${VERSION}`,
-          `\u2502  Connected to ${agentUrl}`,
-          `\u2514${'\u2500'.repeat(50)}\u2518`,
-          '',
-          motd,
-          '',
-          '\u2500'.repeat(52),
-          'Type a message and press Enter to talk to the agent.',
-          'Type /help for available commands.',
-          'Press Ctrl+C to exit.',
-        ].join('\n')
-        messages.addAgentMessage(header, mode)
-        messageHistory.push({role: 'agent', text: `[MOTD shown — ${agentName}]`})
-      }
+      (async () => {
+        try {
+          const card = await client.getAgentCard()
+          const lines: string[] = []
+          lines.push(`Hello!  I'm **${card.name}**.`)
+          if (card.description) {
+            lines.push('')
+            lines.push(card.description)
+          }
+          if (card.skills && card.skills.length > 0) {
+            lines.push('')
+            lines.push('I can help you with:')
+            for (const skill of card.skills) {
+              if (skill.name && skill.description) {
+                lines.push(`  - **${skill.name}**: ${skill.description}`)
+              } else if (skill.name) {
+                lines.push(`  - ${skill.name}`)
+              }
+            }
+          }
+          lines.push('')
+          lines.push('How can I help you today?')
+          const intro = lines.join('\n')
+          messages.addAgentMessage(intro, mode)
+          messageHistory.push({role: 'agent', text: intro})
+          lastAgentMessage = intro
+        } catch {
+          // Agent card unavailable — show a simple welcome instead
+          const fallback = `Hello!  I'm **${agentName}**.  Type a message and press Enter to chat with me.\n\nType /help for available commands or press Ctrl+C to exit.`
+          messages.addAgentMessage(fallback, mode)
+          messageHistory.push({role: 'agent', text: fallback})
+          lastAgentMessage = fallback
+        }
+      })()
     }
 
     // Autocomplete dropdown — filtered by current UI mode
