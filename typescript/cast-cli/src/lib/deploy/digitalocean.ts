@@ -15,7 +15,11 @@ import {
   execCommandIgnoreError,
   generateDeploymentId,
   getVolumeName,
+  prepareHostTuiBuildContext,
 } from './deploy-utils'
+import {buildCloudInitBaselineMotd, buildHostMotd, writeHostMotdOverSsh} from './motd'
+import type {MotdContext} from './motd'
+import {db} from '../sqlite'
 
 const SSH_KEY_NAME = 'cast-do-key'
 const SSH_KEY_PATH = path.join(os.homedir(), '.ssh', 'cast_do_key')
@@ -155,6 +159,11 @@ export default class DigitalOceanDeploy extends Command {
     // Setup SSH key
     await this.ensureSshKey()
 
+    // Prepare on-host TUI bundle (cast-tui command inside the container)
+    this.log('Preparing on-host TUI bundle...')
+    const projectRoot = this.findProjectRoot()
+    await prepareHostTuiBuildContext(agentPath, projectRoot)
+
     // Get or create droplet
     const droplet = await this.getOrCreateDroplet(agentName, agentPath, apiToken)
 
@@ -202,7 +211,21 @@ export default class DigitalOceanDeploy extends Command {
 
     // Deploy on droplet
     this.log('Deploying on droplet...')
-    await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, tarPath, volumeId)
+    const deploymentUrl = `http://${droplet.ip}:8080`
+
+    // Look up the current agent release version so the SSH login MOTD
+    // shows the semantic version (e.g. v1.2.3) instead of a placeholder.
+    let deployedVersion: string | undefined
+    try {
+      const currentRelease = db.getCurrentRelease(agentName)
+      if (currentRelease?.version) {
+        deployedVersion = String(currentRelease.version)
+      }
+    } catch {
+      // DB unavailable — MOTD will fall back to a placeholder
+    }
+
+    await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, tarPath, volumeId, deploymentUrl, deployedVersion)
 
     // Create and attach volume
     this.log(`Creating memory volume: ${volumeId}`)
@@ -216,8 +239,6 @@ export default class DigitalOceanDeploy extends Command {
     if (fs.existsSync(tarPath)) {
       fs.unlinkSync(tarPath)
     }
-
-    const deploymentUrl = `http://${droplet.ip}:8080`
 
     // Save deployment
     const volumeConfig = JSON.stringify({ deploymentId, mountPath: '/app/agent/memory', region: droplet.region })
@@ -236,11 +257,41 @@ export default class DigitalOceanDeploy extends Command {
     this.log('To view logs:')
     this.log(`  ssh -i ~/.ssh/cast_do_key root@${droplet.ip} "docker logs -f cast-agent"`)
     this.log('')
-    this.log('To connect:')
+    this.log('To connect (from your machine):')
     this.log(`  cast connect ${agentName}`)
+    this.log('')
+    this.log('To chat on-host (SSH into droplet, then inside container):')
+    this.log(`  ssh -i ~/.ssh/cast_do_key root@${droplet.ip}`)
+    this.log(`  docker exec -it cast-agent bash`)
+    this.log(`  cast-tui`)
     this.log('')
     this.log('To destroy:')
     this.log(`  cast shutdown ${agentName}`)
+  }
+
+  /**
+   * Find the project root directory by looking for known marker paths.
+   * Tries several relative paths from the current working directory and
+   * the compiled output directory to locate the agent-cast project root.
+   */
+  private findProjectRoot(): string {
+    const markers = ['python/cast', 'typescript/cast-tui']
+    const candidates = [
+      process.cwd(),
+      path.resolve(__dirname, '..'),          // lib/deploy -> lib
+      path.resolve(__dirname, '../..'),        // lib/deploy -> typescript/cast-cli
+      path.resolve(__dirname, '../../..'),     // lib/deploy -> typescript
+      path.resolve(__dirname, '../../..'),     // lib/deploy -> typescript
+      path.resolve(__dirname, '../../../..'),  // lib/deploy -> project root
+    ]
+    for (const candidate of candidates) {
+      for (const marker of markers) {
+        if (fs.existsSync(path.join(candidate, marker))) {
+          return candidate
+        }
+      }
+    }
+    return process.cwd()
   }
 
   private async ensureSshKey(): Promise<void> {
@@ -315,9 +366,32 @@ export default class DigitalOceanDeploy extends Command {
     const keyResult = await execCommand('ssh-keygen', ['-l', '-E', 'md5', '-f', `${SSH_KEY_PATH}.pub`], {silent: true})
     const fingerprint = keyResult.stdout.trim().split(/\s+/)[1].replace(/^MD5:/, '')
 
-    // Write cloud-init to install Docker
+    // Write cloud-init to install Docker and seed a baseline MOTD.
+    // The MOTD is overwritten on every `cast deploy` / `cast upgrade`,
+    // but this ensures the user sees something cast-related on the very
+    // first SSH login (before any deploy has run).
     const cloudInitPath = path.join(agentPath, '.cloud-init.yml')
+    const baselineMotd = buildCloudInitBaselineMotd()
+    // Indent every line of the MOTD by 6 spaces (matches the YAML block
+    // scalar indent) so cloud-init parses it as a single multi-line string.
+    const motdIndented = baselineMotd
+      .split('\n')
+      .map((line) => '      ' + line)
+      .join('\n')
     const cloudInit = `#cloud-config
+write_files:
+  - path: /etc/motd
+    permissions: '0644'
+    owner: root:root
+    content: |
+${motdIndented}
+  - path: /etc/profile.d/cast.sh
+    permissions: '0755'
+    owner: root:root
+    content: |
+      #!/bin/bash
+      # Cast placeholder — will be replaced on first deploy
+      :
 runcmd:
   - curl -fsSL https://get.docker.com | sh
   - systemctl enable docker
@@ -373,6 +447,8 @@ runcmd:
     imageTag: string,
     tarPath: string,
     volumeId: string,
+    deploymentUrl: string,
+    deployedVersion?: string,
   ): Promise<void> {
     // Load image on droplet
     const loadResult = await execSsh(ip, `docker load -i /tmp/${path.basename(tarPath)}`, true)
@@ -400,11 +476,39 @@ runcmd:
       envArgs.push(`-e OPENROUTER_API_KEY=${openrouterKey}`)
     }
 
+    // Build the host MOTD. We pass it base64-encoded so it can be safely
+    // embedded in shell commands without escaping concerns. It's written
+    // to BOTH the host (for SSH login banners) AND the container (as
+    // CAST_MOTD, so the on-host TUI can display the same content in
+    // its first chat message).
+    const motdCtx: MotdContext = {
+      agentName,
+      dropletIp: ip,
+      a2aUrl: deploymentUrl,
+      deployedVersion,
+    }
+    const hostMotd = buildHostMotd(motdCtx)
+    const motdB64 = Buffer.from(hostMotd, 'utf8').toString('base64')
+
+    // Inject the env var so the container can pick it up
+    envArgs.push(`-e CAST_MOTD=${motdB64}`)
+
     // Run container with volume mount
     const runResult = await execSsh(ip, `docker run -d --name cast-agent --restart unless-stopped -p 8080:8080 -v /mnt/${volumeId}:/app/agent/memory ${envArgs.join(' ')} ${imageTag}`, true)
 
     if (runResult.exitCode !== 0) {
       throw new Error(`Failed to start container on droplet: ${runResult.stderr}`)
+    }
+
+    // Write the host MOTD and login-shell snippet. This is independent
+    // of the container — the files live on the host and are shown by
+    // pam_motd (and sourced by login shells) on every subsequent SSH.
+    const {motdStderr, profileStderr} = await writeHostMotdOverSsh(ip, motdCtx)
+    if (motdStderr) {
+      this.warn(`Failed to write /etc/motd on droplet: ${motdStderr}`)
+    }
+    if (profileStderr) {
+      this.warn(`Failed to write /etc/profile.d/cast.sh on droplet: ${profileStderr}`)
     }
 
     // Clean up remote tar file after loading

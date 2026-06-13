@@ -5,8 +5,55 @@ import type {Mode, UiMode} from '../components/header.js'
 import {createMessages} from '../components/messages.js'
 import {createInput} from '../components/input.js'
 import {createAutocomplete} from '../components/autocomplete.js'
-import {executeSlashCommand, slashCommands} from '../commands/slash-registry.js'
+import {executeSlashCommand, getSlashCommands} from '../commands/slash-registry.js'
 import {getDb} from '../lib/db.js'
+import type {A2AClient} from '../../../cast-cli/dist/lib/a2a/client.js'
+
+/**
+ * Fetch the agent's card via A2A and display a natural-language
+ * introduction as the first chat message. Falls back to a simple
+ * welcome if the card is unavailable.
+ */
+async function showAgentIntro(
+  client: A2AClient,
+  agentName: string,
+  messages: any,
+  mode: 'plan' | 'build',
+  messageHistory: Array<{role: 'user' | 'agent'; text: string}>,
+  setLastMessage: (text: string) => void,
+): Promise<void> {
+  try {
+    const card = await client.getAgentCard()
+    const lines: string[] = []
+    lines.push(`Hello!  I'm **${card.name}**.`)
+    if (card.description) {
+      lines.push('')
+      lines.push(card.description)
+    }
+    if (card.skills && card.skills.length > 0) {
+      lines.push('')
+      lines.push('I can help you with:')
+      for (const skill of card.skills) {
+        if (skill.name && skill.description) {
+          lines.push(`  - **${skill.name}**: ${skill.description}`)
+        } else if (skill.name) {
+          lines.push(`  - ${skill.name}`)
+        }
+      }
+    }
+    lines.push('')
+    lines.push('How can I help you today?')
+    const intro = lines.join('\n')
+    messages.addAgentMessage(intro, mode)
+    messageHistory.push({role: 'agent', text: intro})
+    setLastMessage(intro)
+  } catch {
+    const fallback = `Hello!  I'm **${agentName}**.  Type a message and press Enter to chat with me.\n\nType /help for available commands or press Ctrl+C to exit.`
+    messages.addAgentMessage(fallback, mode)
+    messageHistory.push({role: 'agent', text: fallback})
+    setLastMessage(fallback)
+  }
+}
 
 export async function showChatScreen(
   renderer: CliRenderer,
@@ -78,8 +125,15 @@ export async function showChatScreen(
       lastAgentMessage = initialWelcome
     }
 
-    // Autocomplete dropdown
-    const autocompleteOptions = slashCommands.map((cmd) => ({
+    // In on-host mode, show a natural-language introduction from the
+    // agent itself (fetched via A2A agent/card) instead of repeating
+    // the technical banner that's already in the SSH MOTD.
+    if (currentUiMode === 'on-host') {
+      showAgentIntro(client, agentName, messages, mode, messageHistory, (msg) => { lastAgentMessage = msg })
+    }
+
+    // Autocomplete dropdown — filtered by current UI mode
+    const autocompleteOptions = getSlashCommands(currentUiMode).map((cmd) => ({
       name: cmd.name,
       description: cmd.description,
     }))
@@ -112,6 +166,7 @@ export async function showChatScreen(
           agentUrl,
           authToken,
           mode,
+          uiMode: currentUiMode,
           renderer,
           client,
           messages,
@@ -265,8 +320,8 @@ export async function showChatScreen(
         }
       }
 
-      // Tab toggles mode
-      if (key.name === 'tab') {
+      // Tab toggles mode (disabled in on-host mode)
+      if (key.name === 'tab' && currentUiMode !== 'on-host') {
         mode = mode === 'plan' ? 'build' : 'plan'
         header.setMode(mode)
         return

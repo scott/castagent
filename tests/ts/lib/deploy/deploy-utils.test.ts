@@ -13,7 +13,9 @@ import {
   execCommand,
   execCommandIgnoreError,
   ensureDockerfile,
+  prepareHostTuiBuildContext,
 } from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
+import * as deployUtils from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 import * as path from 'path'
 import * as os from 'os'
 import * as sinon from 'sinon'
@@ -312,5 +314,261 @@ describe('ensureDockerfile', () => {
     ensureDockerfile(tempDir)
     const reqPath = path.join(tempDir, 'requirements.txt')
     expect(fs.existsSync(reqPath)).to.be.true
+  })
+})
+
+describe('prepareHostTuiBuildContext', () => {
+  let sandbox: sinon.SinonSandbox
+  const testDir = path.join(os.tmpdir(), 'cast-test-host-tui-' + Date.now())
+  const agentDir = path.join(testDir, 'agent')
+  const projectDir = path.join(testDir, 'project')
+
+  beforeEach(() => {
+    sandbox = sinon.createSandbox()
+    fs.mkdirSync(path.join(agentDir), { recursive: true })
+    fs.mkdirSync(path.join(projectDir, 'typescript', 'cast-tui', 'dist'), { recursive: true })
+    fs.mkdirSync(path.join(projectDir, 'python', 'cast'), { recursive: true })
+    // Create a minimal TUI dist file
+    fs.writeFileSync(path.join(projectDir, 'typescript', 'cast-tui', 'dist', 'index.js'), '// tui bundle')
+    // Create the launcher source
+    fs.writeFileSync(path.join(projectDir, 'python', 'cast', 'host_tui_launcher.py'), '#!/usr/bin/env python3\nprint("launcher")')
+    // Create a default Dockerfile
+    fs.writeFileSync(path.join(agentDir, 'Dockerfile'), 'FROM python:3.11-slim\nCMD ["python", "-m", "cast.runtime"]\n')
+  })
+
+  afterEach(() => {
+    sandbox.restore()
+    if (fs.existsSync(testDir)) {
+      fs.rmSync(testDir, { recursive: true, force: true })
+    }
+  })
+
+  it('should create .cast-tui directory structure', async () => {
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    expect(fs.existsSync(path.join(agentDir, '.cast-tui'))).to.be.true
+    expect(fs.existsSync(path.join(agentDir, '.cast-tui', 'dist'))).to.be.true
+  })
+
+  it('should copy TUI dist files from project', async () => {
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    expect(fs.existsSync(path.join(agentDir, '.cast-tui', 'dist', 'index.js'))).to.be.true
+    const content = fs.readFileSync(path.join(agentDir, '.cast-tui', 'dist', 'index.js'), 'utf-8')
+    expect(content).to.equal('// tui bundle')
+  })
+
+  it('should copy host_tui_launcher.py', async () => {
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    const launcherPath = path.join(agentDir, '.cast-tui', 'host_tui_launcher.py')
+    expect(fs.existsSync(launcherPath)).to.be.true
+    const content = fs.readFileSync(launcherPath, 'utf-8')
+    expect(content).to.include('print("launcher")')
+  })
+
+  it('should create launcher.sh wrapper with executable permissions', async () => {
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    const launcherShPath = path.join(agentDir, '.cast-tui', 'launcher.sh')
+    expect(fs.existsSync(launcherShPath)).to.be.true
+    const content = fs.readFileSync(launcherShPath, 'utf-8')
+    expect(content).to.include('python3 /opt/cast-tui/host_tui_launcher.py')
+    // Check executable bit
+    const stats = fs.statSync(launcherShPath)
+    expect(stats.mode & 0o111).to.not.equal(0)
+  })
+
+  it('should create package.json with runtime dependencies (no better-sqlite3)', async () => {
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    const pkgPath = path.join(agentDir, '.cast-tui', 'package.json')
+    expect(fs.existsSync(pkgPath)).to.be.true
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
+    expect(pkg.name).to.equal('cast-tui-embed')
+    expect(pkg.dependencies).to.have.property('@opentui/core')
+    // @opentui/core-linux-x64 is required at runtime (bundle
+    // dynamically imports it by platform) — it's a direct dep so
+    // it survives --omit=optional and works in the Linux container.
+    expect(pkg.dependencies).to.have.property('@opentui/core-linux-x64')
+    // axios is required by the cast-cli A2A client that the TUI
+    // dynamically imports at runtime.
+    expect(pkg.dependencies).to.have.property('axios')
+    expect(pkg.dependencies).to.have.property('clipboardy')
+    expect(pkg.dependencies).to.have.property('simple-git')
+    expect(pkg.dependencies).to.have.property('yaml')
+    // better-sqlite3 is excluded because it has a native binding
+    // that can't be cross-compiled to the container.
+    expect(pkg.dependencies).to.not.have.property('better-sqlite3')
+  })
+
+  it('should include --omit=dev in the embed package.json deps', async () => {
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    // We verify the function generates a package.json that npm install
+    // can consume (with only the runtime deps). The actual npm install
+    // call is exercised in the real deploy flow.
+    const pkgPath = path.join(agentDir, '.cast-tui', 'package.json')
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf-8'))
+    // Only the deps the container runtime actually needs
+    expect(Object.keys(pkg.dependencies).sort()).to.deep.equal(
+      ['@opentui/core', '@opentui/core-linux-x64', 'axios', 'clipboardy', 'simple-git', 'yaml'],
+    )
+  })
+
+  it('should patch Dockerfile with Host TUI bundle section before CMD', async () => {
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    const dockerfile = fs.readFileSync(path.join(agentDir, 'Dockerfile'), 'utf-8')
+    expect(dockerfile).to.include('# Host TUI bundle')
+    expect(dockerfile).to.include('bun.sh/install')
+    expect(dockerfile).to.include('COPY .cast-tui/dist /opt/cast-tui/dist')
+    expect(dockerfile).to.include('COPY .cast-tui/cast-cli-dist/lib /opt/cast-cli/dist/lib')
+    expect(dockerfile).to.include('COPY .cast-tui/cast-cli-dist/node_modules /opt/cast-cli/node_modules')
+    expect(dockerfile).to.include('COPY .cast-tui/node_modules /opt/cast-tui/node_modules')
+    expect(dockerfile).to.include('ln -sf /opt/cast-tui/launcher.sh /usr/local/bin/cast-tui')
+    expect(dockerfile).to.include('ENV CAST_TUI_DIR=/opt/cast-tui')
+    // Verify CMD is still present
+    expect(dockerfile).to.include('CMD ["python"')
+    // Should NOT have an in-build npm install (deps come pre-resolved)
+    expect(dockerfile).to.not.include('npm install --no-optional')
+  })
+
+  it('should not patch Dockerfile if already patched with current version (idempotent)', async () => {
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    const afterFirst = fs.readFileSync(path.join(agentDir, 'Dockerfile'), 'utf-8')
+    // Call again
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    const afterSecond = fs.readFileSync(path.join(agentDir, 'Dockerfile'), 'utf-8')
+    // After both calls, the Dockerfile should have exactly one Host TUI bundle block
+    // (the strip+re-apply loop terminates when no more blocks are found).
+    const matches = afterSecond.match(/# Host TUI bundle/g)
+    expect(matches).to.have.length(1)
+    // And the new marker should be present
+    expect(afterSecond).to.include('# Host TUI bundle (for on-host chat via `cast-tui`)')
+    // And the new patch should contain node_modules COPY (not npm install)
+    expect(afterSecond).to.include('COPY .cast-tui/node_modules /opt/cast-tui/node_modules')
+    expect(afterSecond).to.not.include('npm install --no-optional --production')
+  })
+
+  it('should not crash when TUI dist is missing from project', async () => {
+    // Remove TUI dist from project
+    fs.rmSync(path.join(projectDir, 'typescript', 'cast-tui', 'dist'), { recursive: true, force: true })
+    // Should not throw
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    // Should still create .cast-tui with launcher
+    expect(fs.existsSync(path.join(agentDir, '.cast-tui', 'launcher.sh'))).to.be.true
+    expect(fs.existsSync(path.join(agentDir, '.cast-tui', 'host_tui_launcher.py'))).to.be.true
+  })
+
+  it('should not crash when Dockerfile does not exist', async () => {
+    fs.rmSync(path.join(agentDir, 'Dockerfile'))
+    // Should not throw
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    // Should still create .cast-tui structure
+    expect(fs.existsSync(path.join(agentDir, '.cast-tui', 'launcher.sh'))).to.be.true
+  })
+
+  it('should not crash when host_tui_launcher.py is missing from project', async () => {
+    fs.rmSync(path.join(projectDir, 'python', 'cast', 'host_tui_launcher.py'))
+    // Should not throw
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    expect(fs.existsSync(path.join(agentDir, '.cast-tui'))).to.be.true
+    expect(fs.existsSync(path.join(agentDir, '.cast-tui', 'launcher.sh'))).to.be.true
+  })
+
+  it('should strip a Dockerfile with BOTH a marker-less old block AND a wrong-content new block', async () => {
+    // This is the exact scenario from the user's real deploy:
+    // a marker-less old block (lines 25-29) followed by a new
+    // block whose contents are from an earlier version of the
+    // code (with `npm install` instead of `node_modules` COPY).
+    // Both blocks must be fully removed and the current patch
+    // applied cleanly.
+    const mixedDockerfile = `FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y gcc git
+
+# Run agent A2A server
+
+COPY .cast-tui/dist /opt/cast-tui/dist
+COPY .cast-tui/host_tui_launcher.py /opt/cast-tui/host_tui_launcher.py
+ENV CAST_TUI_DIR=/opt/cast-tui
+
+
+# Host TUI bundle (for on-host chat via \`cast-tui\`)
+RUN apt-get update && apt-get install -y nodejs && rm -rf /var/lib/apt/lists/*
+COPY .cast-tui/dist /opt/cast-tui/dist
+COPY .cast-tui/package.json /opt/cast-tui/package.json
+COPY .cast-tui/launcher.sh /opt/cast-tui/launcher.sh
+COPY .cast-tui/host_tui_launcher.py /opt/cast-tui/host_tui_launcher.py
+RUN cd /opt/cast-tui && npm install --no-optional --production 2>/dev/null || echo "Warning: npm install failed" && rm -f package.json
+RUN ln -sf /opt/cast-tui/launcher.sh /usr/local/bin/cast-tui
+ENV CAST_TUI_DIR=/opt/cast-tui
+
+CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "8080", "--host", "0.0.0.0"]
+`
+    fs.writeFileSync(path.join(agentDir, 'Dockerfile'), mixedDockerfile)
+
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    const result = fs.readFileSync(path.join(agentDir, 'Dockerfile'), 'utf-8')
+
+    // The new marker should be present (and only once)
+    const markerMatches = result.match(/# Host TUI bundle/g)
+    expect(markerMatches).to.have.length(1)
+    expect(result).to.include('# Host TUI bundle (for on-host chat via `cast-tui`)')
+
+    // All TUI-related content should be gone except the new patch
+    expect(result).to.include('COPY .cast-tui/node_modules /opt/cast-tui/node_modules')
+    expect(result).to.not.include('COPY .cast-tui/package.json')
+    expect(result).to.not.include('npm install --no-optional')
+    expect(result).to.include('bun.sh/install')
+    expect(result).to.include('ln -sf /opt/cast-tui/launcher.sh /usr/local/bin/cast-tui')
+
+    // CMD is still at the end
+    expect(result).to.include('CMD ["python", "-m", "cast.runtime"')
+  })
+
+  it('should replace an old/incomplete patch with the new full patch', async () => {
+    // Write a Dockerfile with the old partial patch (from the abandoned
+    // feature/cast-ssh work) — missing nodejs install, missing launcher.sh
+    // COPY, missing symlink, and still references package.json.
+    const oldDockerfile = `FROM python:3.11-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y gcc git
+
+# Host TUI bundle (for cast ssh on-host chat)
+COPY .cast-tui/dist /opt/cast-tui/dist
+COPY .cast-tui/host_tui_launcher.py /opt/cast-tui/host_tui_launcher.py
+ENV CAST_TUI_DIR=/opt/cast-tui
+
+CMD ["python", "-m", "cast.runtime"]
+`
+    fs.writeFileSync(path.join(agentDir, 'Dockerfile'), oldDockerfile)
+
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    const result = fs.readFileSync(path.join(agentDir, 'Dockerfile'), 'utf-8')
+
+    // The new marker should be present
+    expect(result).to.include('# Host TUI bundle (for on-host chat via `cast-tui`)')
+    // The old marker should be gone
+    expect(result).to.not.include('# Host TUI bundle (for cast ssh on-host chat)')
+    // The new full patch should be present
+    expect(result).to.include('bun.sh/install')
+    expect(result).to.include('COPY .cast-tui/launcher.sh /opt/cast-tui/launcher.sh')
+    expect(result).to.include('COPY .cast-tui/node_modules /opt/cast-tui/node_modules')
+    expect(result).to.include('ln -sf /opt/cast-tui/launcher.sh /usr/local/bin/cast-tui')
+    // CMD should still be present
+    expect(result).to.include('CMD ["python", "-m", "cast.runtime"]')
+    // Only one bundle section, not duplicated
+    const matches = result.match(/# Host TUI bundle/g)
+    expect(matches).to.have.length(1)
+  })
+
+  it('should not duplicate the new patch when called twice', async () => {
+    // First call applies the patch
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+    // Second call should be a no-op for the Dockerfile
+    await prepareHostTuiBuildContext(agentDir, projectDir)
+
+    const result = fs.readFileSync(path.join(agentDir, 'Dockerfile'), 'utf-8')
+    const matches = result.match(/# Host TUI bundle/g)
+    expect(matches).to.have.length(1)
   })
 })

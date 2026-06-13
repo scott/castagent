@@ -6,7 +6,20 @@ import * as fs from 'fs'
 import * as os from 'os'
 import clipboardy from 'clipboardy'
 import yaml from 'yaml'
-import Database from 'better-sqlite3'
+
+// better-sqlite3 is loaded lazily because it has a native binding that
+// may not be available in every environment (e.g. the on-host TUI
+// running inside a Docker container without the better-sqlite3 binary).
+// The functions below return null when the module cannot be loaded,
+// which is the right behavior — the on-host TUI doesn't need the
+// developer's local SQLite database.
+function loadDatabase(): any | null {
+  try {
+    return require('better-sqlite3')
+  } catch {
+    return null
+  }
+}
 
 // Get agent description from agent.yaml
 function getAgentDescription(agentName: string): string {
@@ -30,6 +43,8 @@ function getAgentDescription(agentName: string): string {
 // Get deployed version from SQLite database
 function getDeployedVersion(agentName: string): string | null {
   try {
+    const Database = loadDatabase()
+    if (!Database) return null
     const dbPath = path.join(os.homedir(), '.cast', 'cast.db')
     if (!fs.existsSync(dbPath)) {
       return null
@@ -47,6 +62,8 @@ function getDeployedVersion(agentName: string): string | null {
 // Get deployment info from SQLite database
 function getDeploymentInfo(agentName: string): {deployment_url: string, provider: string} | null {
   try {
+    const Database = loadDatabase()
+    if (!Database) return null
     const dbPath = path.join(os.homedir(), '.cast', 'cast.db')
     if (!fs.existsSync(dbPath)) {
       return null

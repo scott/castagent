@@ -5,6 +5,18 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-06-11
+
+### Added
+
+- **On-Host TUI (`cast-tui`)**: Agents deployed to DigitalOcean now bundle a
+  TUI inside the container. SSH into the droplet, `docker exec -it cast-agent bash`,
+  and type `cast-tui` to open a chat session that talks directly to the agent
+  on `localhost:8080` — identical to `cast connect` but without public network
+  exposure or bearer token transport. Falls back to a Python A2A REPL if the
+  JS runtime or TUI bundle is unavailable.
+  ([#28](https://github.com/scott/agent-cast/issues/28))
+
 ## [1.0.0] - 2026-06-11
 
 ### Added
