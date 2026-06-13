@@ -52,17 +52,27 @@ class MemoryRetriever:
     def format_context(self, highlights: list[MemoryHighlight]) -> str:
         if not highlights:
             return ""
+        return self._format_section("Relevant memories from past interactions", highlights)
 
+    def format_with_recency(self, relevant: list[MemoryHighlight], recent: list[MemoryHighlight]) -> str:
+        parts = []
+        if relevant:
+            parts.append(self._format_section("Relevant memories from past interactions", relevant))
+        if recent:
+            parts.append(self._format_section("Recent memories", recent))
+        return "\n\n".join(parts) if parts else ""
+
+    def _format_section(self, header: str, highlights: list[MemoryHighlight]) -> str:
         by_category = {}
         for h in highlights:
             if h.category not in by_category:
                 by_category[h.category] = []
             by_category[h.category].append(h)
 
-        parts = ["[Relevant memories from past interactions:]"]
+        lines = [f"[{header}:]"]
         for category, items in by_category.items():
-            parts.append(f"\n{category.upper()}:")
+            lines.append(f"\n{category.upper()}:")
             for h in items:
-                parts.append(f"  - {h.content}")
+                lines.append(f"  - {h.content}")
 
-        return "\n".join(parts)
+        return "\n".join(lines)

@@ -61,11 +61,21 @@ class MemoryMiddleware:
             return []
         return self.retriever.retrieve(context, limit=limit)
 
-    def format_memories(self, context: str, limit: int = 5) -> str:
+    def format_memories(self, context: str) -> str:
         if not self.enabled:
             return ""
-        highlights = self.retrieve(context, limit=limit)
-        return self.retriever.format_context(highlights)
+
+        # Get relevance-filtered memories
+        relevant = self.retriever.retrieve(context, limit=self.config.relevance_count)
+
+        # Always include recent memories as a recency fallback
+        recent = self.retriever.retrieve_recent(limit=self.config.recency_count)
+
+        # Deduplicate: remove recent items already in relevant (by id)
+        relevant_ids = {h.id for h in relevant if h.id is not None}
+        unique_recent = [h for h in recent if h.id not in relevant_ids]
+
+        return self.retriever.format_with_recency(relevant, unique_recent)
 
     def _enforce_limits(self, category: str):
         count = self.store.count_by_category(category)
