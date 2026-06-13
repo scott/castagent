@@ -19,6 +19,7 @@ import {
 } from './deploy-utils'
 import {buildCloudInitBaselineMotd, buildHostMotd, writeHostMotdOverSsh} from './motd'
 import type {MotdContext} from './motd'
+import {db} from '../sqlite'
 
 const SSH_KEY_NAME = 'cast-do-key'
 const SSH_KEY_PATH = path.join(os.homedir(), '.ssh', 'cast_do_key')
@@ -211,7 +212,20 @@ export default class DigitalOceanDeploy extends Command {
     // Deploy on droplet
     this.log('Deploying on droplet...')
     const deploymentUrl = `http://${droplet.ip}:8080`
-    await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, tarPath, volumeId, deploymentUrl)
+
+    // Look up the current agent release version so the SSH login MOTD
+    // shows the semantic version (e.g. v1.2.3) instead of a placeholder.
+    let deployedVersion: string | undefined
+    try {
+      const currentRelease = db.getCurrentRelease(agentName)
+      if (currentRelease?.version) {
+        deployedVersion = String(currentRelease.version)
+      }
+    } catch {
+      // DB unavailable — MOTD will fall back to a placeholder
+    }
+
+    await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, tarPath, volumeId, deploymentUrl, deployedVersion)
 
     // Create and attach volume
     this.log(`Creating memory volume: ${volumeId}`)
@@ -434,6 +448,7 @@ runcmd:
     tarPath: string,
     volumeId: string,
     deploymentUrl: string,
+    deployedVersion?: string,
   ): Promise<void> {
     // Load image on droplet
     const loadResult = await execSsh(ip, `docker load -i /tmp/${path.basename(tarPath)}`, true)
@@ -470,6 +485,7 @@ runcmd:
       agentName,
       dropletIp: ip,
       a2aUrl: deploymentUrl,
+      deployedVersion,
     }
     const hostMotd = buildHostMotd(motdCtx)
     const motdB64 = Buffer.from(hostMotd, 'utf8').toString('base64')

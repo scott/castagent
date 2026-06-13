@@ -1,5 +1,4 @@
 import {BoxRenderable, TextRenderable, StyledText, green, yellow, white} from '@opentui/core'
-import {VERSION} from '../constants.js'
 
 export type Mode = 'plan' | 'build'
 export type UiMode = 'dev' | 'production' | 'on-host'
@@ -41,7 +40,7 @@ export function createHeader(
   })
 
   const modeText = new TextRenderable(ctx, {
-    content: createModeStyledText(initialMode, isProduction),
+    content: createModeStyledText(initialMode, isProduction, currentDeployedVersion),
   })
 
   box.add(nameText)
@@ -49,7 +48,7 @@ export function createHeader(
 
   function setMode(mode: Mode) {
     currentMode = mode
-    modeText.content = createModeStyledText(mode, isProduction)
+    modeText.content = createModeStyledText(mode, isProduction, currentDeployedVersion)
   }
 
   function setAgentName(name: string) {
@@ -60,20 +59,25 @@ export function createHeader(
     const newIsProduction = newUiMode === 'production' || newUiMode === 'on-host'
     // Note: Background color cannot be changed dynamically after creation
     // The mode text will still update to show [● LIVE] in production/on-host
-    modeText.content = createModeStyledText(currentMode, newIsProduction)
+    modeText.content = createModeStyledText(currentMode, newIsProduction, currentDeployedVersion)
   }
 
   function setDeployedVersion(version: string | null) {
     currentDeployedVersion = version
     nameText.content = createNameStyledText(agentName, version)
+    // Also refresh the LIVE indicator to show the new version
+    modeText.content = createModeStyledText(currentMode, isProduction, version)
   }
 
   return {box, setMode, setAgentName, setUiMode, setDeployedVersion}
 }
 
-function createModeStyledText(mode: Mode, isProduction: boolean): StyledText {
+function createModeStyledText(mode: Mode, isProduction: boolean, deployedVersion?: string | null): StyledText {
   if (isProduction) {
-    return new StyledText([white(`[\u25cf LIVE  · cast v${VERSION}]`)])
+    if (deployedVersion) {
+      return new StyledText([white(`[\u25cf LIVE  · v${deployedVersion}]`)])
+    }
+    return new StyledText([white('[\u25cf LIVE]')])
   }
 
   if (mode === 'plan') {
