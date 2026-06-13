@@ -8,6 +8,7 @@ on:
 
 permissions:
   contents: write
+  pull-requests: write
 
 jobs:
   release:
@@ -28,12 +29,33 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Create and/or publish Release
+      - name: Create Release Pull Request or Publish
+        id: changesets
         uses: changesets/action@v1
         with:
           version: npx changeset version
           commit: "chore: bump version and update changelog"
           title: "chore: bump version and update changelog"
-          publish: echo "GitHub Release created via changesets"
+          publish: npx changeset tag
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create GitHub Release
+        if: steps.changesets.outputs.published == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Get the new version from package.json
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v${VERSION}"
+
+          echo "Creating GitHub Release for ${TAG}..."
+
+          # Create release from the git tag (created by changeset tag)
+          gh release create "${TAG}" \
+            --title "v${VERSION}" \
+            --notes-start-tag "$(git tag --sort=-v:refname | grep '^v' | sed -n '2p' || echo '')" \
+            --generate-notes \
+            --latest
+
+          echo "GitHub Release v${VERSION} created!"

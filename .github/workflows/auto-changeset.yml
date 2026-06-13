@@ -1,19 +1,31 @@
 name: Auto Create Changeset
 
 on:
-  pull_request:
-    types: [closed]
+  push:
+    branches:
+      - main
+      - master
 
 permissions:
   contents: write
-  pull-requests: write
+  pull-requests: read
 
 jobs:
   create-changeset:
     name: Create Changeset
-    if: github.event.pull_request.merged == true
+    # Only run for merge commits (PR merges to master/main).
+    # Merge commit messages follow the pattern "Merge pull request #N ..."
+    if: startsWith(github.event.head_commit.message, 'Merge pull request #')
     runs-on: ubuntu-latest
     steps:
+      - name: Extract PR number from commit message
+        id: pr-info
+        run: |
+          # Merge commit format: "Merge pull request #N from branch"
+          MSG="${{ github.event.head_commit.message }}"
+          PR_NUM=$(echo "$MSG" | sed -n 's/^Merge pull request #\([0-9]*\).*/\1/p')
+          echo "number=$PR_NUM" >> $GITHUB_OUTPUT
+
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -25,19 +37,34 @@ jobs:
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
 
-      - name: Generate unique changeset ID
-        id: changeset-id
-        run: echo "id=$(openssl rand -hex 8)" >> $GITHUB_OUTPUT
+      - name: Fetch PR metadata from GitHub API
+        id: pr
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          PR_NUM="${{ steps.pr-info.outputs.number }}"
+          echo "Fetching PR #${PR_NUM} metadata..."
+
+          # Fetch PR details via the gh CLI
+          PR_JSON=$(gh pr view "$PR_NUM" --json title,body,labels,author --jq '{title, body, labels: [.labels[].name], author: .author.login}' 2>/dev/null || echo '{}')
+
+          TITLE=$(echo "$PR_JSON" | jq -r '.title // empty')
+          BODY=$(echo "$PR_JSON" | jq -r '.body // empty')
+          AUTHOR=$(echo "$PR_JSON" | jq -r '.author // "unknown"')
+          LABELS=$(echo "$PR_JSON" | jq -r '.labels | join(",") // ""')
+
+          echo "title=$TITLE" >> $GITHUB_OUTPUT
+          echo "body=$BODY" >> $GITHUB_OUTPUT
+          echo "author=$AUTHOR" >> $GITHUB_OUTPUT
+          echo "labels=$LABELS" >> $GITHUB_OUTPUT
 
       - name: Determine version bump
         id: version
         run: |
-          # Default to patch
           VERSION="patch"
-          
-          # Check labels for version bump hints
-          LABELS="${{ join github.event.pull_request.labels.*.name ',' }}"
-          
+          LABELS="${{ steps.pr.outputs.labels }}"
+          TITLE="${{ steps.pr.outputs.title }}"
+
           if echo "$LABELS" | grep -qi "major\|breaking"; then
             VERSION="major"
           elif echo "$LABELS" | grep -qi "minor\|feature\|enhancement"; then
@@ -45,56 +72,61 @@ jobs:
           elif echo "$LABELS" | grep -qi "fix\|bugfix\|hotfix"; then
             VERSION="patch"
           fi
-          
-          # Also check PR title for conventional commits
-          TITLE="${{ github.event.pull_request.title }}"
-          if echo "$TITLE" | grep -qi "^feat\|feat:"; then
+
+          if echo "$TITLE" | grep -qi "^feat\|^feat:"; then
             VERSION="minor"
-          elif echo "$TITLE" | grep -qi "^fix\|fix:"; then
+          elif echo "$TITLE" | grep -qi "^fix\|^fix:"; then
             VERSION="patch"
-          elif echo "$TITLE" | grep -qi "^ BREAKING"; then
+          elif echo "$TITLE" | grep -qi "^BREAKING\|^BREAKING CHANGE"; then
             VERSION="major"
           fi
-          
+
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Version bump determined: $VERSION"
 
       - name: Generate release notes
         id: notes
         run: |
-          # Clean up the PR title for use in changeset
-          TITLE="${{ github.event.pull_request.title }}"
-          TITLE=$(echo "$TITLE" | sed 's/^\[.*\] //' | sed 's/^[a-z]*(\w*): //')
-          
-          # Use PR body if available and useful, otherwise use title
-          BODY="${{ github.event.pull_request.body }}"
+          TITLE="${{ steps.pr.outputs.title }}"
+          BODY="${{ steps.pr.outputs.body }}"
+
+          # Clean prefix from title
+          CLEAN_TITLE=$(echo "$TITLE" | sed 's/^\[.*\] //' | sed 's/^[a-z]*\(.*\): //' 2>/dev/null || echo "$TITLE")
+
           if [ -n "$BODY" ] && [ ${#BODY} -gt 20 ]; then
-            # Take first paragraph of body, up to 200 chars
             NOTES=$(echo "$BODY" | head -5 | tr '\n' ' ' | cut -c1-200)
           else
-            NOTES="$TITLE"
+            NOTES="$CLEAN_TITLE"
           fi
-          
+
           echo "notes=$NOTES" >> $GITHUB_OUTPUT
+
+      - name: Generate unique changeset ID
+        id: changeset-id
+        run: echo "id=$(openssl rand -hex 8)" >> $GITHUB_OUTPUT
 
       - name: Create changeset file
         run: |
-          cat > .changeset/${{ steps.changeset-id.outputs.id }}.md << 'EOF'
----
-"agent-cast": ${{ steps.version.outputs.version }}
----
+          PR_NUM="${{ steps.pr-info.outputs.number }}"
+          AUTHOR="${{ steps.pr.outputs.author }}"
+          VERSION="${{ steps.version.outputs.version }}"
+          NOTES="${{ steps.notes.outputs.notes }}"
 
-${{ steps.notes.outputs.notes }}
+          cat > .changeset/${{ steps.changeset-id.outputs.id }}.md << CHANGESET_EOF
+          ---
+          "agent-cast": $VERSION
+          ---
 
-* PR #${{ github.event.pull_request.number }}: @${{ github.event.pull_request.user.login }}
-EOF
+          $NOTES
+
+          * PR #${PR_NUM}: @${AUTHOR}
+          CHANGESET_EOF
 
       - name: Display changeset content
         run: cat .changeset/${{ steps.changeset-id.outputs.id }}.md
 
       - name: Commit and push changeset
         run: |
-          git checkout ${{ github.event.pull_request.base.ref }}
           git add .changeset/
-          git diff --staged --quiet || git commit -m "chore: add changeset for PR #${{ github.event.pull_request.number }}"
+          git diff --staged --quiet || git commit -m "chore: add changeset for PR #${{ steps.pr-info.outputs.number }}"
           git push
