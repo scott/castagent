@@ -1,4 +1,5 @@
 import {BoxRenderable, TextRenderable, StyledText, green, yellow, white} from '@opentui/core'
+import {VERSION} from '../constants.js'
 
 export type Mode = 'plan' | 'build'
 export type UiMode = 'dev' | 'production' | 'on-host'
@@ -72,7 +73,7 @@ export function createHeader(
 
 function createModeStyledText(mode: Mode, isProduction: boolean): StyledText {
   if (isProduction) {
-    return new StyledText([white('[\u25cf LIVE]')])
+    return new StyledText([white(`[\u25cf LIVE  · cast v${VERSION}]`)])
   }
 
   if (mode === 'plan') {

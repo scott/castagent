@@ -5,8 +5,10 @@ import type {Mode, UiMode} from '../components/header.js'
 import {createMessages} from '../components/messages.js'
 import {createInput} from '../components/input.js'
 import {createAutocomplete} from '../components/autocomplete.js'
-import {executeSlashCommand, slashCommands} from '../commands/slash-registry.js'
+import {executeSlashCommand, getSlashCommands} from '../commands/slash-registry.js'
 import {getDb} from '../lib/db.js'
+import {loadMotd} from '../lib/motd.js'
+import {VERSION} from '../constants.js'
 
 export async function showChatScreen(
   renderer: CliRenderer,
@@ -78,8 +80,30 @@ export async function showChatScreen(
       lastAgentMessage = initialWelcome
     }
 
-    // Autocomplete dropdown
-    const autocompleteOptions = slashCommands.map((cmd) => ({
+    // In on-host mode, try to load and display the Message of the Day
+    if (currentUiMode === 'on-host') {
+      const motd = loadMotd()
+      if (motd) {
+        const header = [
+          `\u250C\u2500 ${agentName} ${'\u2500'.repeat(Math.max(0, 46 - agentName.length))}\u2510`,
+          `\u2502  cast v${VERSION}`,
+          `\u2502  Connected to ${agentUrl}`,
+          `\u2514${'\u2500'.repeat(50)}\u2518`,
+          '',
+          motd,
+          '',
+          '\u2500'.repeat(52),
+          'Type a message and press Enter to talk to the agent.',
+          'Type /help for available commands.',
+          'Press Ctrl+C to exit.',
+        ].join('\n')
+        messages.addAgentMessage(header, mode)
+        messageHistory.push({role: 'agent', text: `[MOTD shown — ${agentName}]`})
+      }
+    }
+
+    // Autocomplete dropdown — filtered by current UI mode
+    const autocompleteOptions = getSlashCommands(currentUiMode).map((cmd) => ({
       name: cmd.name,
       description: cmd.description,
     }))
@@ -112,6 +136,7 @@ export async function showChatScreen(
           agentUrl,
           authToken,
           mode,
+          uiMode: currentUiMode,
           renderer,
           client,
           messages,
@@ -265,8 +290,8 @@ export async function showChatScreen(
         }
       }
 
-      // Tab toggles mode
-      if (key.name === 'tab') {
+      // Tab toggles mode (disabled in on-host mode)
+      if (key.name === 'tab' && currentUiMode !== 'on-host') {
         mode = mode === 'plan' ? 'build' : 'plan'
         header.setMode(mode)
         return

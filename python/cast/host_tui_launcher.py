@@ -27,6 +27,8 @@ import time
 import urllib.error
 import urllib.request
 
+from cast import __version__ as CAST_VERSION
+
 A2A_BASE = os.environ.get("CAST_A2A_URL", "http://localhost:8080")
 AUTH_TOKEN = os.environ.get("AUTH_TOKEN", "")
 AGENT_NAME = os.environ.get("CAST_AGENT_NAME", "unknown")
@@ -118,6 +120,74 @@ def send_message(text: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# MOTD discovery (env var first, then host files)
+# ---------------------------------------------------------------------------
+
+import base64 as _base64
+
+
+def _get_motd_paths() -> list[str]:
+    """Build the list of MOTD file paths, re-reading env vars each call.
+
+    Reading env vars at module-import time would freeze the path list;
+    making this a function means tests (and any future runtime override)
+    see the current value of $CAST_MOTD_FILE.
+    """
+    return [
+        os.environ.get("CAST_MOTD_FILE", ""),
+        os.path.join(os.path.expanduser("~"), ".cast", "motd"),
+        "/etc/cast/motd",
+        "motd",
+    ]
+
+
+def _read_env_motd() -> str | None:
+    """
+    Read CAST_MOTD env var.
+
+    The `cast deploy` / `cast upgrade` path writes it base64-encoded so
+    it survives being passed through `docker run -e` without shell
+    escape issues. Plain-text values are accepted as a fallback.
+    """
+    raw = os.environ.get("CAST_MOTD", "").strip()
+    if not raw:
+        return None
+    # Heuristic: if it looks like base64 (only base64 chars, len % 4 == 0),
+    # try to decode. Otherwise treat as plain text.
+    base64_like = (
+        bool(raw)
+        and len(raw) % 4 == 0
+        and all(c in "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=" for c in raw)
+    )
+    if base64_like:
+        try:
+            decoded = _base64.b64decode(raw, validate=True).decode("utf8").strip()
+            if decoded:
+                return decoded
+        except (ValueError, UnicodeDecodeError):
+            pass
+    return raw
+
+
+def load_motd() -> str | None:
+    """Return the first non-empty MOTD source content, or None."""
+    env_motd = _read_env_motd()
+    if env_motd:
+        return env_motd
+    for path in _get_motd_paths():
+        if not path:
+            continue
+        try:
+            with open(path, "r") as f:
+                content = f.read().strip()
+            if content:
+                return content
+        except (FileNotFoundError, PermissionError, OSError):
+            continue
+    return None
+
+
+# ---------------------------------------------------------------------------
 # Fallback Python REPL chat
 # ---------------------------------------------------------------------------
 
@@ -126,9 +196,16 @@ def run_python_repl():
     import readline  # noqa: F401 — enables line editing
 
     print(f"\n╔══════════════════════════════════════════════════════════════╗")
-    print(f"║         On-Host Chat — {AGENT_NAME:<35} ║")
+    print(f"║  On-Host Chat — {AGENT_NAME:<20}  cast v{CAST_VERSION:<10} ║")
     print(f"╚══════════════════════════════════════════════════════════════╝")
     print(f"Connected to {A2A_BASE}")
+
+    motd = load_motd()
+    if motd:
+        print("")
+        print(motd)
+        print("")
+
     print("Type /help for commands, Ctrl+C or /exit to quit.\n")
 
     while True:

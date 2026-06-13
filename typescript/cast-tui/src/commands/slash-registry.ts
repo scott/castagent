@@ -12,6 +12,7 @@ import {getDb} from '../lib/db.js'
 import {getKeychain} from '../lib/keychain.js'
 import {createModal} from '../components/modal.js'
 import {runDeployInTerminal} from '../components/terminal.js'
+import type {UiMode} from '../components/header.js'
 
 // Get agent description from agent.yaml
 function getAgentDescription(agentName: string): string {
@@ -37,6 +38,8 @@ export interface SlashCommand {
   description: string
   category: 'chat' | 'agent' | 'session' | 'git'
   args?: string
+  /** If set, the command is only available in these UI modes. If unset, available in all modes. */
+  modes?: UiMode[]
   handler: (ctx: CommandContext, args: string[]) => Promise<void>
 }
 
@@ -45,6 +48,7 @@ export interface CommandContext {
   agentUrl: string
   authToken?: string
   mode: 'plan' | 'build'
+  uiMode?: UiMode
   renderer: any
   client: any
   messages: any
@@ -1643,6 +1647,22 @@ const commands: SlashCommand[] = [
     description: 'Show all available slash commands',
     category: 'chat',
     handler: async (ctx) => {
+      if (ctx.uiMode === 'on-host') {
+        ctx.messages.addAgentMessage(
+          'On-host commands:\n' +
+          '  /clear  - Clear all messages from the chat\n' +
+          '  /copy   - Copy the last agent response to clipboard\n' +
+          '  /quit   - Exit the TUI\n' +
+          '  /exit   - Exit the TUI\n' +
+          '  /help   - Show this help\n' +
+          '\n' +
+          'Type a message and press Enter to talk to the agent.\n' +
+          'Press Ctrl+C to exit at any time.',
+          ctx.mode,
+        )
+        return
+      }
+
       const lines: string[] = []
       lines.push('Available commands:')
       lines.push('')
@@ -1687,6 +1707,7 @@ const commands: SlashCommand[] = [
     name: 'mode',
     description: 'Toggle or set plan/build mode',
     category: 'chat',
+    modes: ['dev', 'production'],
     args: '[plan|build]',
     handler: async (ctx, args) => {
       let newMode: 'plan' | 'build'
@@ -1710,6 +1731,7 @@ const commands: SlashCommand[] = [
     name: 'mode?',
     description: 'Show current mode',
     category: 'chat',
+    modes: ['dev', 'production'],
     handler: async (ctx) => {
       ctx.messages.addAgentMessage(`Current mode: ${ctx.mode.toUpperCase()}`, ctx.mode)
     },
@@ -1719,6 +1741,7 @@ const commands: SlashCommand[] = [
     name: 'save',
     description: 'Save conversation transcript to file',
     category: 'session',
+    modes: ['dev', 'production'],
     args: '[filename]',
     handler: async (ctx, args) => {
       if (ctx.messageHistory.length === 0) {
@@ -1764,6 +1787,7 @@ const commands: SlashCommand[] = [
     name: 'reset',
     description: 'Clear messages and reset context',
     category: 'session',
+    modes: ['dev', 'production'],
     handler: async (ctx) => {
       for (const child of ctx.messages.scrollBox.getChildren()) {
         ctx.messages.scrollBox.remove(child.id)
@@ -1778,6 +1802,7 @@ const commands: SlashCommand[] = [
     name: 'list',
     description: 'List all agents with their status',
     category: 'agent',
+    modes: ['dev', 'production'],
     handler: async (ctx) => {
       const db = await getDb()
       const agents = listAgentsFromDisk()
@@ -1896,6 +1921,7 @@ const commands: SlashCommand[] = [
     name: 'describe',
     description: 'Show details for the current agent',
     category: 'agent',
+    modes: ['dev', 'production'],
     handler: async (ctx) => {
       const db = await getDb()
       if (!db) {
@@ -2019,6 +2045,7 @@ const commands: SlashCommand[] = [
     name: 'stop',
     description: 'Stop the current local agent',
     category: 'agent',
+    modes: ['dev', 'production'],
     handler: async (ctx) => {
       const db = await getDb()
       if (!db) {
@@ -2075,6 +2102,7 @@ const commands: SlashCommand[] = [
     name: 'connect',
     description: 'Connect to a different agent',
     category: 'session',
+    modes: ['dev', 'production'],
     args: '[agent-name|sha]',
     handler: async (ctx, args) => {
       const db = await getDb()
@@ -2315,6 +2343,7 @@ const commands: SlashCommand[] = [
     name: 'edit',
     description: 'Load an existing agent into the builder for editing',
     category: 'agent',
+    modes: ['dev', 'production'],
     args: '[agent-name]',
     handler: async (ctx, args) => {
       if (args.length > 0) {
@@ -2452,6 +2481,7 @@ const commands: SlashCommand[] = [
     name: 'rename',
     description: 'Rename an existing agent',
     category: 'agent',
+    modes: ['dev', 'production'],
     args: '[current-name] [new-name]',
     handler: async (ctx, args) => {
       const agents = listAgentsFromDisk()
@@ -2633,6 +2663,7 @@ const commands: SlashCommand[] = [
     name: 'update',
     description: 'Update the current agent',
     category: 'agent',
+    modes: ['dev', 'production'],
     handler: async (ctx) => {
       ctx.messages.addAgentMessage(`Use \`cast update ${ctx.agentName}\` from the CLI for now.`, ctx.mode)
     },
@@ -2642,6 +2673,7 @@ const commands: SlashCommand[] = [
     name: 'upgrade',
     description: 'Upgrade a deployed agent to a new version',
     category: 'agent',
+    modes: ['dev', 'production'],
     handler: async (ctx) => {
       const db = await getDb()
       if (!db) {
@@ -2691,6 +2723,7 @@ const commands: SlashCommand[] = [
     name: 'deploy',
     description: 'Deploy the current agent',
     category: 'agent',
+    modes: ['dev', 'production'],
     args: '[provider]',
     handler: async (ctx, args) => {
       const agentName = ctx.agentName
@@ -2976,6 +3009,7 @@ const commands: SlashCommand[] = [
     name: 'changes',
     description: 'Show change history for current agent',
     category: 'session',
+    modes: ['dev', 'production'],
     handler: async (ctx) => {
       const agentName = ctx.agentName
       const changes = getChangesForAgent(agentName)
@@ -3142,6 +3176,7 @@ const commands: SlashCommand[] = [
     name: 'releases',
     description: 'Show releases for current agent',
     category: 'session',
+    modes: ['dev', 'production'],
     handler: async (ctx) => {
       const agentName = ctx.agentName
       const releases = await getReleasesForAgent(agentName)
@@ -3315,6 +3350,7 @@ const commands: SlashCommand[] = [
     name: 'git',
     description: 'Git operations for the current agent',
     category: 'git',
+    modes: ['dev', 'production'],
     args: '[init|status|add|commit|push|log|diff]',
     handler: async (ctx, args) => {
       const agentName = ctx.agentName
@@ -3655,6 +3691,7 @@ cast dev ${agentName}
     name: 'release',
     description: 'Create a semantic release for the current agent',
     category: 'agent',
+    modes: ['dev', 'production'],
     args: '[version]',
     handler: async (ctx, args) => {
       const agentName = ctx.agentName
@@ -3939,6 +3976,7 @@ cast dev ${agentName}
     name: 'restore',
     description: 'Restore agent to a previous change or release',
     category: 'agent',
+    modes: ['dev', 'production'],
     args: '[--change <num>|--release <version>]',
     handler: async (ctx, args) => {
       const agentName = ctx.agentName
@@ -4032,6 +4070,7 @@ cast dev ${agentName}
     name: 'diff',
     description: 'Compare two changes or releases',
     category: 'agent',
+    modes: ['dev', 'production'],
     args: '[--change <num> --change <num>|--release <ver> --release <ver>]',
     handler: async (ctx, args) => {
       const agentName = ctx.agentName
@@ -4083,6 +4122,7 @@ cast dev ${agentName}
     name: 'registry',
     description: 'List all releases across all agents',
     category: 'session',
+    modes: ['dev', 'production'],
     handler: async (ctx) => {
       const db = await getDb()
       if (!db) {
@@ -4196,10 +4236,16 @@ cast dev ${agentName}
   },
 ]
 
-export const slashCommands: SlashCommand[] = commands
+export function getSlashCommands(mode: UiMode): SlashCommand[] {
+  return commands.filter((cmd) => {
+    if (!cmd.modes) return true // no restriction = available in all modes
+    return cmd.modes.includes(mode)
+  })
+}
 
 export async function executeSlashCommand(name: string, args: string[], ctx: CommandContext): Promise<boolean> {
-  const cmd = slashCommands.find((c) => c.name === name)
+  const availableCommands = getSlashCommands(ctx.uiMode ?? 'dev')
+  const cmd = availableCommands.find((c) => c.name === name)
   if (!cmd) {
     return false
   }
@@ -4216,7 +4262,10 @@ export async function executeSlashCommand(name: string, args: string[], ctx: Com
   return true
 }
 
-export function getCommandSuggestions(prefix: string): SlashCommand[] {
+export function getCommandSuggestions(prefix: string, mode: UiMode = 'dev'): SlashCommand[] {
   const lowerPrefix = prefix.toLowerCase()
-  return slashCommands.filter((c) => c.name.startsWith(lowerPrefix))
+  return getSlashCommands(mode).filter((c) => c.name.startsWith(lowerPrefix))
 }
+
+// Re-export the full commands list for consumers that need the unfiltered set
+export { commands as allCommands }

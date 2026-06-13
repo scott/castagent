@@ -33,7 +33,9 @@ export async function startTui(options: TuiOptions): Promise<void> {
       renderer.start()
     }
 
-    await showWelcomeScreen(renderer, options.agent)
+    if (options.mode !== 'on-host') {
+      await showWelcomeScreen(renderer, options.agent)
+    }
     await showChatScreen(renderer, options.agent, options.url, options.token, options.mode, options.welcome)
   } catch (err) {
     logCrash('TUI error', err)

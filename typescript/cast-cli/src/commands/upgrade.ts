@@ -11,6 +11,7 @@ import SpritesDeploy from '../lib/deploy/sprites'
 import {getRelease, getCurrentRelease, listReleases, validateSemver} from '../lib/releases'
 import {db} from '../lib/sqlite'
 import {resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
+import {writeHostMotdOverSsh} from '../lib/deploy/motd'
 
 const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'sprites', 'docker', 'local']
 
@@ -564,6 +565,26 @@ export default class Upgrade extends Command {
 
     // Get droplet IP from deployment
     const deploymentUrl = deployment?.deployment_url
+    const dropletIp = deploymentUrl ? new URL(deploymentUrl).hostname : null
+
+    // Refresh the SSH login MOTD so the new version appears in the banner
+    if (dropletIp) {
+      this.log('Refreshing SSH login MOTD...')
+      const {motdStderr, profileStderr} = await writeHostMotdOverSsh(dropletIp, {
+        agentName,
+        dropletIp,
+        a2aUrl: deploymentUrl ?? undefined,
+        deployedVersion: version,
+      })
+      if (motdStderr) {
+        this.warn(`Failed to refresh /etc/motd: ${motdStderr}`)
+      }
+      if (profileStderr) {
+        this.warn(`Failed to refresh /etc/profile.d/cast.sh: ${profileStderr}`)
+      }
+    } else {
+      this.warn('Could not determine droplet IP; skipping MOTD refresh')
+    }
 
     this.log('')
     this.log(`Upgraded to version ${version} on DigitalOcean.`)
