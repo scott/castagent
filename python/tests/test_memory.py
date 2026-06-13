@@ -311,3 +311,227 @@ memory:
         assert stats["enabled"] is True
         assert "total" in stats
         assert "by_category" in stats
+
+
+class TestMemoryMiddlewareEndToEnd:
+    """End-to-end tests for MemoryMiddleware memory retrieval with recency fallback.
+
+    These tests verify AC1 from issue #17: format_memories always includes
+    recent highlights even when the relevance threshold is not met, so that
+    the dedicated memory feature works for follow-up questions with zero
+    keyword overlap.
+    """
+
+    def test_recency_fallback_with_zero_keyword_overlap(self, temp_dir):
+        """AC1: format_memories returns recent highlights when relevance score is 0."""
+        config_path = temp_dir / "memory" / "config.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text("""\
+memory:
+  enabled: true
+  categories:
+    - preference
+  max_per_category: 100
+  relevance_threshold: 0.7
+  recency_count: 3
+  relevance_count: 3
+""")
+
+        # Insert a highlight directly (no reflection/LLM needed)
+        store = MemoryStore(temp_dir, warn_on_new=False)
+        highlight = MemoryHighlight(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            category="preference",
+            content="User Alex prefers dark mode in all tools and apps.",
+            source="test",
+            tags=["preference", "dark-mode"]
+        )
+        store.append(highlight)
+
+        # Construct a real MemoryMiddleware (no API key needed; ReflectionAgent
+        # gracefully handles missing keys by setting self.llm = None)
+        middleware = MemoryMiddleware(temp_dir)
+
+        # Query with zero keyword overlap with the stored memory
+        result = middleware.format_memories(
+            "What theme should I use for my dashboard?"
+        )
+
+        # Must be non-empty and contain the stored preference
+        assert result != "", "format_memories should not be empty with stored memories"
+        assert "dark mode" in result.lower(), (
+            "Dark mode preference should be included via recency fallback"
+        )
+        assert "[Recent memories:]" in result, (
+            "Output should contain a 'Recent memories' section"
+        )
+
+    def test_recency_fallback_multiple_highlights(self, temp_dir):
+        """AC1: recent section includes multiple highlights, relevant section is absent."""
+        config_path = temp_dir / "memory" / "config.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text("""\
+memory:
+  enabled: true
+  categories:
+    - preference
+    - learned
+  max_per_category: 100
+  relevance_threshold: 0.7
+  recency_count: 2
+  relevance_count: 3
+""")
+
+        store = MemoryStore(temp_dir, warn_on_new=False)
+        store.append(MemoryHighlight(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            category="preference",
+            content="User prefers dark mode in all tools.",
+            source="test",
+            tags=["preference"]
+        ))
+        store.append(MemoryHighlight(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            category="learned",
+            content="Learned that the API rate limit is 100 req/min.",
+            source="test",
+            tags=["api"]
+        ))
+
+        middleware = MemoryMiddleware(temp_dir)
+        result = middleware.format_memories("What theme should I pick?")
+
+        assert result != ""
+        assert "[Recent memories:]" in result
+        assert "[Relevant memories from past interactions:]" not in result, (
+            "No relevant section expected — query has zero keyword overlap"
+        )
+        assert "dark mode" in result.lower()
+        assert "rate limit" in result.lower()
+
+    def test_relevant_and_recent_both_present(self, temp_dir):
+        """AC1: when relevance threshold is met, both sections appear."""
+        config_path = temp_dir / "memory" / "config.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text("""\
+memory:
+  enabled: true
+  categories:
+    - preference
+    - learned
+  max_per_category: 100
+  relevance_threshold: 0.3
+  recency_count: 2
+  relevance_count: 3
+""")
+
+        store = MemoryStore(temp_dir, warn_on_new=False)
+        store.append(MemoryHighlight(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            category="learned",
+            content="Learned that the API rate limit is 100 req/min.",
+            source="test",
+            tags=["api", "rate-limit"]
+        ))
+        store.append(MemoryHighlight(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            category="preference",
+            content="User prefers dark mode for UI.",
+            source="test",
+            tags=["preference"]
+        ))
+
+        middleware = MemoryMiddleware(temp_dir)
+        # "rate limit" partially overlaps with "rate-limit" tag
+        result = middleware.format_memories("What is the rate limit?")
+
+        assert result != ""
+        assert "[Recent memories:]" in result
+        assert "[Relevant memories from past interactions:]" in result
+        assert "rate limit" in result.lower()
+
+    def test_disabled_memory_returns_empty(self, temp_dir):
+        """format_memories returns empty when memory is disabled."""
+        config_path = temp_dir / "memory" / "config.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text("""\
+memory:
+  enabled: false
+""")
+
+        store = MemoryStore(temp_dir, warn_on_new=False)
+        store.append(MemoryHighlight(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            category="preference",
+            content="User prefers dark mode.",
+            source="test",
+            tags=[]
+        ))
+
+        middleware = MemoryMiddleware(temp_dir)
+        result = middleware.format_memories("What theme should I use?")
+
+        assert result == ""
+
+    def test_empty_store_returns_empty(self, temp_dir):
+        """format_memories returns empty when no memories exist."""
+        config_path = temp_dir / "memory" / "config.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text("""\
+memory:
+  enabled: true
+  categories:
+    - preference
+  max_per_category: 100
+  relevance_threshold: 0.7
+  recency_count: 3
+  relevance_count: 3
+""")
+
+        middleware = MemoryMiddleware(temp_dir)
+        result = middleware.format_memories("What theme should I use?")
+
+        assert result == ""
+
+    def test_deduplication_relevant_and_recent(self, temp_dir):
+        """AC1: highlights appearing in both sections are not duplicated."""
+        config_path = temp_dir / "memory" / "config.yaml"
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text("""\
+memory:
+  enabled: true
+  categories:
+    - preference
+  max_per_category: 100
+  relevance_threshold: 0.3
+  recency_count: 5
+  relevance_count: 5
+""")
+
+        store = MemoryStore(temp_dir, warn_on_new=False)
+        store.append(MemoryHighlight(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            category="preference",
+            content="User prefers dark mode in all tools.",
+            source="test",
+            tags=["preference", "dark"]
+        ))
+
+        middleware = MemoryMiddleware(temp_dir)
+        # "dark" keyword overlaps with the "dark" tag — relevance threshold met
+        result = middleware.format_memories("What dark theme should I use?")
+
+        # The highlight should appear in BOTH sections if not deduplicated.
+        # We expect it only in the relevant section (recency section deduped).
+        # Check that "dark mode" appears exactly once (or at least the count is
+        # reasonable — with dedup it appears in relevant section only, but the
+        # text may mention it in the relevant section header line).
+        count = result.lower().count("dark mode")
+        assert count >= 1, "Dark mode should appear at least once"
+        # It should not appear more than once in the main content (it's deduped
+        # from the recent section). The only line with "dark mode" should be in
+        # the relevant section.
+        lines_with_dark_mode = [l for l in result.split("\n") if "dark mode" in l.lower()]
+        assert len(lines_with_dark_mode) == 1, (
+            "Dark mode should not be duplicated across sections"
+        )

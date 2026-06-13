@@ -14,6 +14,8 @@ class MemoryConfig:
     ])
     max_per_category: int = 100
     relevance_threshold: float = 0.7
+    recency_count: int = 3
+    relevance_count: int = 3
     reflection_model: Optional[str] = None
 
     @classmethod
@@ -28,6 +30,8 @@ class MemoryConfig:
             categories=memory_config.get("categories", cls().categories),
             max_per_category=memory_config.get("max_per_category", 100),
             relevance_threshold=memory_config.get("relevance_threshold", 0.7),
+            recency_count=memory_config.get("recency_count", 3),
+            relevance_count=memory_config.get("relevance_count", 3),
             reflection_model=memory_config.get("reflection_model"),
         )
 
@@ -38,6 +42,8 @@ class MemoryConfig:
                 "categories": self.categories,
                 "max_per_category": self.max_per_category,
                 "relevance_threshold": self.relevance_threshold,
+                "recency_count": self.recency_count,
+                "relevance_count": self.relevance_count,
                 "reflection_model": self.reflection_model,
             }
         }
