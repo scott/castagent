@@ -54,7 +54,20 @@ export function resolveDeploymentTarget(input: string): DeploymentResolution {
     return { type: 'single', deployment: deployments[0] }
   }
 
-  // Multiple deployments - return ambiguous with list
+  // Check if all deployments target the same (provider, deployment_url) tuple.
+  // If so, they are just historical re-deploys of the same logical target
+  // (e.g. re-deploying the same agent on the same droplet). Collapse to the
+  // most recent row — listDeployments already orders by deployed_at DESC.
+  // Only return 'ambiguous' when there are genuinely distinct live targets
+  // (different providers or different deployment URLs).
+  const uniqueTargets = new Set(
+    deployments.map(d => `${d.provider}|${d.deployment_url}`)
+  )
+  if (uniqueTargets.size === 1) {
+    return { type: 'single', deployment: deployments[0] }
+  }
+
+  // Multiple distinct targets — genuinely ambiguous
   const shaList = deployments.map(d => d.id).join(', ')
   return {
     type: 'ambiguous',

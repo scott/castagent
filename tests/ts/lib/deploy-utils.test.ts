@@ -172,6 +172,53 @@ describe('resolveDeploymentTarget', () => {
     db.deleteAgent(agentName)
   })
 
+  it('returns single when same agent has multiple deployments to same target', () => {
+    const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
+    const agentName = `collapse-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    db.createAgent(agentName, '/tmp/agent.yaml')
+    // Two deployments with identical provider and URL — historical re-deploys
+    db.createDeployment(`col1${Math.random().toString(16).slice(2, 4)}`, agentName, 'digitalocean', 'http://142.93.75.156:8080', 'h')
+    db.createDeployment(`col2${Math.random().toString(16).slice(2, 4)}`, agentName, 'digitalocean', 'http://142.93.75.156:8080', 'h')
+
+    const result = resolveDeploymentTarget(agentName)
+    expect(result.type).to.equal('single')
+    expect(result.deployment).to.exist
+    expect(result.deployment.agent_name).to.equal(agentName)
+
+    db.deleteAgent(agentName)
+  })
+
+  it('returns ambiguous when deployments have same provider but different URLs', () => {
+    const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
+    const agentName = `url-ambig-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    db.createAgent(agentName, '/tmp/agent.yaml')
+    db.createDeployment(`url1${Math.random().toString(16).slice(2, 4)}`, agentName, 'fly', 'http://app-a.fly.dev', 'h')
+    db.createDeployment(`url2${Math.random().toString(16).slice(2, 4)}`, agentName, 'fly', 'http://app-b.fly.dev', 'h')
+
+    const result = resolveDeploymentTarget(agentName)
+    expect(result.type).to.equal('ambiguous')
+    expect(result.deployments).to.have.length(2)
+
+    db.deleteAgent(agentName)
+  })
+
+  it('returns ambiguous with mix of same-target and distinct deployments', () => {
+    const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
+    const agentName = `mix-ambig-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    db.createAgent(agentName, '/tmp/agent.yaml')
+    // Two re-deploys to the same target
+    db.createDeployment(`mix1${Math.random().toString(16).slice(2, 4)}`, agentName, 'digitalocean', 'http://142.93.75.156:8080', 'h')
+    db.createDeployment(`mix2${Math.random().toString(16).slice(2, 4)}`, agentName, 'digitalocean', 'http://142.93.75.156:8080', 'h')
+    // One deployment to a distinct target
+    db.createDeployment(`mix3${Math.random().toString(16).slice(2, 4)}`, agentName, 'fly', 'http://app.fly.dev', 'h')
+
+    const result = resolveDeploymentTarget(agentName)
+    expect(result.type).to.equal('ambiguous')
+    expect(result.deployments).to.have.length(3)
+
+    db.deleteAgent(agentName)
+  })
+
   it('returns not_found for nonexistent agent name', () => {
     const result = resolveDeploymentTarget(`nonexistent-agent-${Date.now()}`)
     expect(result.type).to.equal('not_found')
