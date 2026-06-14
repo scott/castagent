@@ -131,7 +131,7 @@ describe('shutdown command', () => {
       sandbox.stub(keychainModule.keychain, 'deleteToken').resolves()
 
       // Mock db operations
-      sandbox.stub(sqliteModule.db, 'removeDeploymentBySha').callsFake(() => {})
+      sandbox.stub(sqliteModule.db, 'removeAllDeployments').callsFake(() => {})
 
       try {
         await instance.run()
@@ -167,7 +167,7 @@ describe('shutdown command', () => {
       sandbox.stub(keychainModule.keychain, 'deleteToken').resolves()
 
       // Mock db operations
-      sandbox.stub(sqliteModule.db, 'removeDeploymentBySha').callsFake(() => {})
+      sandbox.stub(sqliteModule.db, 'removeAllDeployments').callsFake(() => {})
 
       try {
         await instance.run()
@@ -183,7 +183,7 @@ describe('shutdown command', () => {
       let dbMessage = ''
 
       instance.log = (msg: string) => {
-        if (msg.includes('Marked deployment as deleted')) {
+        if (msg.includes('Marked all deployments as deleted')) {
           dbMessage = msg
         }
       }
@@ -198,8 +198,8 @@ describe('shutdown command', () => {
       }])
       sandbox.stub(sqliteModule.db, 'getDeploymentBySha').returns(null)
 
-      // Track removeDeploymentBySha call
-      const removeByShaStub = sandbox.stub(sqliteModule.db, 'removeDeploymentBySha').callsFake(() => {})
+      // Track removeAllDeployments call
+      const removeAllStub = sandbox.stub(sqliteModule.db, 'removeAllDeployments').callsFake(() => {})
 
       // Mock keychain
       const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
@@ -207,8 +207,9 @@ describe('shutdown command', () => {
 
       try {
         await instance.run()
-        expect(removeByShaStub.calledOnce).to.be.true
-        expect(dbMessage).to.include('Marked deployment as deleted')
+        expect(removeAllStub.calledOnce).to.be.true
+        expect(removeAllStub.calledWith(testAgentName)).to.be.true
+        expect(dbMessage).to.include('Marked all deployments as deleted')
       } finally {
         sandbox.restore()
       }
@@ -240,7 +241,7 @@ describe('shutdown command', () => {
       const deleteTokenStub = sandbox.stub(keychainModule.keychain, 'deleteToken').resolves()
 
       // Mock db operations
-      sandbox.stub(sqliteModule.db, 'removeDeploymentBySha').callsFake(() => {})
+      sandbox.stub(sqliteModule.db, 'removeAllDeployments').callsFake(() => {})
 
       try {
         await instance.run()
@@ -394,7 +395,7 @@ describe('shutdown command - force flag behavior', () => {
     keychainModule.keychain.deleteToken = async () => {}
 
     // Mock db operations
-    sqliteModule.db.removeDeploymentBySha = () => {}
+    sqliteModule.db.removeAllDeployments = () => {}
 
     // Track log messages
     let loggedMessages: string[] = []
@@ -438,7 +439,7 @@ describe('shutdown command - force flag behavior', () => {
     keychainModule.keychain.deleteToken = async () => {}
 
     // Mock db operations
-    sqliteModule.db.removeDeploymentBySha = () => {}
+    sqliteModule.db.removeAllDeployments = () => {}
 
     // Track log messages
     instance.log = () => {}
@@ -526,13 +527,13 @@ describe('shutdown command - error handling', () => {
     keychainModule.keychain.deleteToken = async () => {}
 
     // Mock db removal to throw
-    sqliteModule.db.removeDeploymentBySha = () => {
+    sqliteModule.db.removeAllDeployments = () => {
       throw new Error('Database error')
     }
 
     await instance.run()
 
-    expect(warningMessage).to.include('Failed to update deployment record')
+    expect(warningMessage).to.include('Failed to update deployment records')
 
     // Cleanup
     sqliteModule.db.listDeployments = originalListDeployments
@@ -567,7 +568,7 @@ describe('shutdown command - error handling', () => {
     }
 
     // Mock db operations
-    sqliteModule.db.removeDeploymentBySha = () => {}
+    sqliteModule.db.removeAllDeployments = () => {}
 
     await instance.run()
 
@@ -606,7 +607,7 @@ describe('shutdown command - error handling', () => {
     keychainModule.keychain.deleteToken = async () => {}
 
     // Mock db operations
-    sqliteModule.db.removeDeploymentBySha = () => {}
+    sqliteModule.db.removeAllDeployments = () => {}
 
     // Mock deploy module to throw
     const deployModule = require('../../../typescript/cast-cli/src/commands/shutdown')
