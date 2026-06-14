@@ -97,12 +97,18 @@ export default class Shutdown extends Command {
       }
     }
 
-    // Soft delete deployment from database (set deleted_at)
+    // Soft delete all deployment records for this agent (set deleted_at)
+    //
+    // When an agent has been deployed multiple times, only the most recent
+    // row was previously removed, leaving older records undeleted. This
+    // caused `cast list` to still show the agent as deployed (it finds the
+    // next most recent undeleted row). Remove all records so the agent
+    // correctly shows as shut down.
     try {
-      db.removeDeploymentBySha(deploymentSha)
-      this.log('Marked deployment as deleted in database.')
+      db.removeAllDeployments(agentName)
+      this.log('Marked all deployments as deleted in database.')
     } catch (error: any) {
-      this.warn('Failed to update deployment record: ' + error.message)
+      this.warn('Failed to update deployment records: ' + error.message)
     }
 
     // Remove auth token from keychain

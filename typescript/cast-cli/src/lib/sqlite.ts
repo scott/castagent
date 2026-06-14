@@ -309,6 +309,13 @@ export class CastDatabase {
     stmt.run(sha)
   }
 
+  public removeAllDeployments(agentName: string): void {
+    const stmt = this.db.prepare(
+      'UPDATE deployments SET deleted_at = CURRENT_TIMESTAMP WHERE agent_name = ? AND deleted_at IS NULL'
+    )
+    stmt.run(agentName)
+  }
+
   public setDeployment(name: string, provider: string, url: string, tokenHash: string, volumeId?: string | null, volumeConfig?: string | null): void {
     // For backward compat - create new deployment with auto-generated SHA
     const sha = generateDeploymentSha(name)

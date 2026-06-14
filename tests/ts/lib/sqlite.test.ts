@@ -206,6 +206,53 @@ describe('SQLite - SHA-based deployments', () => {
     expect(list).to.have.length(0)
   })
 
+  it('removeAllDeployments soft-deletes all undeleted deployments for an agent', () => {
+    db.createAgent(agentName, '/path/to/agent.yaml')
+    const sha1 = `x1a${Math.random().toString(16).slice(2, 5)}`
+    const sha2 = `x2b${Math.random().toString(16).slice(2, 5)}`
+    const sha3 = `x3c${Math.random().toString(16).slice(2, 5)}`
+    db.createDeployment(sha1, agentName, 'docker', 'http://docker', 'h1')
+    db.createDeployment(sha2, agentName, 'fly', 'http://fly', 'h2')
+    db.createDeployment(sha3, agentName, 'railway', 'http://railway', 'h3')
+
+    // All three should be present before cleanup
+    expect(db.listDeployments(agentName)).to.have.length(3)
+
+    db.removeAllDeployments(agentName)
+
+    // All should be soft-deleted
+    expect(db.listDeployments(agentName)).to.have.length(0)
+
+    // Verify individual SHAs also return nothing
+    expect(db.getDeploymentBySha(sha1)).to.not.exist
+    expect(db.getDeploymentBySha(sha2)).to.not.exist
+    expect(db.getDeploymentBySha(sha3)).to.not.exist
+  })
+
+  it('removeAllDeployments does not affect deployments of other agents', () => {
+    const otherAgent = `other-agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    db.createAgent(agentName, '/path/to/agent.yaml')
+    db.createAgent(otherAgent, '/path/to/other.yaml')
+    const sha1 = `oa1${Math.random().toString(16).slice(2, 5)}`
+    const sha2 = `oa2${Math.random().toString(16).slice(2, 5)}`
+    db.createDeployment(sha1, agentName, 'docker', 'http://a', 'h1')
+    db.createDeployment(sha2, otherAgent, 'fly', 'http://b', 'h2')
+
+    db.removeAllDeployments(agentName)
+
+    // Our agent's deployments should be gone
+    expect(db.listDeployments(agentName)).to.have.length(0)
+    // Other agent's deployments should remain untouched
+    expect(db.listDeployments(otherAgent)).to.have.length(1)
+  })
+
+  it('removeAllDeployments is a no-op when no deployments exist', () => {
+    // Should not throw even if agent has no deployments
+    expect(() => {
+      db.removeAllDeployments(`never-deployed-${Date.now()}`)
+    }).to.not.throw()
+  })
+
   it('updateDeploymentLastConnected updates the timestamp', () => {
     db.createAgent(agentName, '/path/to/agent.yaml')
     const sha = `cn${Math.random().toString(16).slice(2, 5)}`
