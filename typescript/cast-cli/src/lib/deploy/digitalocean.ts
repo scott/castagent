@@ -672,18 +672,38 @@ export default class DigitalOceanDeploy extends Command {
    * avoiding any intermediate disk write on the local machine.
    *
    * Runs: docker save <imageTag> | ssh <options> root@<ip> docker load
+   *
+   * Safeguards (matching every other SSH call in this file):
+   *   - SSH keepalive (`ServerAliveInterval=5`, `ServerAliveCountMax=1`)
+   *     so a half-open TCP connection eventually exits instead of
+   *     hanging the deploy forever.
+   *   - Wall-clock timeout (default 10 min) that SIGKILLs both children.
+   *     Mirrors the pattern in `execCommand` in deploy-utils.ts.
+   *   - `save.on('close')` handler: if `docker save` exits non-zero,
+   *     error out immediately rather than waiting for `docker load` to
+   *     eventually time out waiting for bytes that will never come.
+   *   - Pipe error handlers on `load.stdin` and `save.stdout` so EPIPE
+   *     on the writable side is not silently swallowed.
+   *   - Progress logging every ~10 MB so future hangs are diagnosable
+   *     from the deploy log alone.
+   *
+   * @param ip - The droplet's public IPv4 address.
+   * @param imageTag - The local Docker image tag to stream.
+   * @param timeoutMs - Wall-clock timeout in ms (default 600_000 = 10 min).
    */
-  private async streamImageToDroplet(ip: string, imageTag: string): Promise<void> {
+  private async streamImageToDroplet(
+    ip: string,
+    imageTag: string,
+    timeoutMs = 600_000,
+  ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      const sshArgs = [
-        '-i', SSH_KEY_PATH,
-        '-o', 'StrictHostKeyChecking=no',
-        '-o', 'UserKnownHostsFile=/dev/null',
-        '-o', 'BatchMode=yes',
-        '-o', 'ConnectTimeout=30',
-        `root@${ip}`,
-        'docker load',
-      ]
+      // Reuse the shared SSH base options so the streaming SSH gets
+      // ServerAliveInterval / ServerAliveCountMax / ConnectTimeout / etc.
+      // exactly like every other SSH call in this file. Without
+      // keepalive, a half-open TCP connection (e.g. NAT timeout, droplet
+      // suspend) would make this hang indefinitely — which is the bug
+      // that motivated this rewrite.
+      const sshArgs = [...getSshBaseOptions(), `root@${ip}`, 'docker load']
 
       const save = spawn('docker', ['save', imageTag], {
         stdio: ['ignore', 'pipe', 'inherit'],
@@ -695,20 +715,112 @@ export default class DigitalOceanDeploy extends Command {
       save.stdout.pipe(load.stdin)
 
       let done = false
+      let timeoutHandle: NodeJS.Timeout | undefined
+
       const finish = (err?: Error) => {
         if (done) return
         done = true
-        save.kill()
-        load.kill()
+        if (timeoutHandle) clearTimeout(timeoutHandle)
+        // SIGKILL is the only reliable way to stop children that are
+        // blocked on I/O (a stuck `ssh` won't respond to SIGTERM).
+        // Wrap in try/catch — the process may have exited between
+        // the timeout firing and the kill() call.
+        try { save.kill('SIGKILL') } catch { /* may already be dead */ }
+        try { load.kill('SIGKILL') } catch { /* may already be dead */ }
         if (err) reject(err)
         else resolve()
       }
 
-      load.on('close', (code) => {
-        if (code === 0) finish()
-        else finish(new Error(`Streaming image to droplet failed (exit ${code})`))
+      // Hard wall-clock timeout. Without this, a hung child (e.g. SSH
+      // to an overloaded droplet) blocks the caller forever, which is
+      // exactly the bug we're fixing.
+      timeoutHandle = setTimeout(() => {
+        finish(new Error(`Image streaming timed out after ${timeoutMs}ms`))
+      }, timeoutMs)
+
+      // EPIPE on the writable side must not be silently swallowed.
+      // If the remote `docker load` dies mid-stream, `load.stdin` will
+      // emit EPIPE. Surface non-EPIPE errors immediately; EPIPE just
+      // means load closed early — the close handler will report the
+      // real exit code.
+      load.stdin.on('error', (err) => {
+        if ((err as NodeJS.ErrnoException).code !== 'EPIPE') {
+          finish(err)
+        }
       })
-      save.on('error', (err) => finish(err))
+      save.stdout.on('error', (err) => {
+        finish(err)
+      })
+
+      // Progress logging — every ~10 MB, log how much has been streamed
+      // to the droplet. Makes future hangs diagnosable from the deploy
+      // log (you can see "stuck at N MB after T minutes").
+      let bytes = 0
+      let lastLoggedMb = 0
+      save.stdout.on('data', (chunk: Buffer) => {
+        bytes += chunk.length
+        const mb = Math.floor(bytes / (10 * 1024 * 1024))
+        if (mb > lastLoggedMb) {
+          lastLoggedMb = mb
+          this.log(`Streamed ${mb * 10} MB to droplet...`)
+        }
+      })
+
+      // Track exit codes from both children. We need both to close
+      // before we can declare success — but if either fails, we should
+      // error out as soon as we know.
+      let saveCode: number | null = null
+      let loadCode: number | null = null
+
+      const tryFinishFromCodes = (): void => {
+        if (saveCode === null || loadCode === null) return
+        if (saveCode === 0 && loadCode === 0) {
+          finish()
+        } else {
+          finish(new Error(
+            `Image streaming failed: docker save exited ${saveCode}, ` +
+            `docker load (ssh) exited ${loadCode}`,
+          ))
+        }
+      }
+
+      // `docker save` exiting early is a failure mode the original code
+      // missed: if save dies but load is still running, we'd wait for
+      // load's close event with no way to know save had failed.
+      save.on('close', (code) => {
+        saveCode = code ?? 0
+        // If save died non-zero, error out immediately — don't wait
+        // for load, which may be blocked on a read for bytes that
+        // will never arrive.
+        if (saveCode !== 0) {
+          finish(new Error(`docker save exited with code ${saveCode}`))
+          return
+        }
+        // Save exited cleanly — end load.stdin so load gets EOF and
+        // can finish consuming whatever's already in the pipe.
+        if (load.exitCode === null && load.killed === false) {
+          try { load.stdin.end() } catch { /* ignore */ }
+        }
+        tryFinishFromCodes()
+      })
+
+      load.on('close', (code) => {
+        loadCode = code ?? 0
+        // Symmetric: if load dies first, unpipe save.stdout so save's
+        // writer can exit cleanly instead of getting EPIPE.
+        if (save.exitCode === null && save.killed === false) {
+          try { save.stdout.unpipe(load.stdin) } catch { /* ignore */ }
+        }
+        tryFinishFromCodes()
+      })
+
+      save.on('error', (err) => {
+        // If save fails before it's written any data, load will be
+        // waiting for input that never arrives. Make sure load gets
+        // EOF on stdin so it doesn't hang on a read.
+        try { load.stdin.end() } catch { /* ignore */ }
+        finish(err)
+      })
       load.on('error', (err) => finish(err))
     })
   }

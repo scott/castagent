@@ -31,3 +31,6 @@ Changes:
 - On timeout, the error now includes the droplet's own `cloud-init status`
   and `docker info` output so users can diagnose without an extra SSH.
 - 10-minute wait budget (up from 5) to accommodate slow installs.
+- Fix DigitalOcean deploys hanging indefinitely during image streaming by
+  adding SSH keepalive and a wall-clock timeout to the
+  `docker save | ssh docker load` transfer
