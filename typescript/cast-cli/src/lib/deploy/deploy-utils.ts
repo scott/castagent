@@ -248,26 +248,6 @@ python-dotenv>=1.0.0
 const EMBED_BUDGET_MB = 100
 
 /**
- * Recursively copy a directory. Used to bring the host-resolved
- * node_modules into the Docker build context.
- */
-function copyDirRecursive(src: string, dest: string): void {
-  fs.mkdirSync(dest, { recursive: true })
-  for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
-    const srcPath = path.join(src, entry.name)
-    const destPath = path.join(dest, entry.name)
-    if (entry.isDirectory()) {
-      copyDirRecursive(srcPath, destPath)
-    } else if (entry.isSymbolicLink()) {
-      const linkTarget = fs.readlinkSync(srcPath)
-      fs.symlinkSync(linkTarget, destPath)
-    } else {
-      fs.copyFileSync(srcPath, destPath)
-    }
-  }
-}
-
-/**
  * Prepare the build context for the on-host TUI bundle.
  *
  * Steps:
@@ -423,9 +403,7 @@ exec python3 /opt/cast-tui/host_tui_launcher.py "$@"
   // os=linux / cpu=x64 in its package.json and would be rejected by
   // npm when installing from a macOS host. --force bypasses this
   // platform check (the package is never used on the build host, only
-  // inside the Linux container).
-  const nodeModulesSrc = path.join(hostTuiDir, 'node_modules')
-  const hostTuiNmDest = path.join(hostTuiDir, 'node_modules')
+  //   inside the Linux container).
   if (fs.existsSync(pkgPath)) {
     try {
       console.log('Installing on-host TUI dependencies (this may take a minute)...')
@@ -437,13 +415,9 @@ exec python3 /opt/cast-tui/host_tui_launcher.py "$@"
       if (installResult.exitCode !== 0) {
         console.warn('Warning: npm install for on-host TUI failed. The TUI will fall back to the Python REPL.')
         console.warn(installResult.stderr || installResult.stdout)
-      } else if (fs.existsSync(nodeModulesSrc)) {
-        // Copy the resolved node_modules into the build context.
-        // This is the most reliable way to get a working TUI in
-        // the image without runtime `npm install`.
-        console.log('Copying resolved node_modules to build context...')
-        copyDirRecursive(nodeModulesSrc, hostTuiNmDest)
       }
+      // No need to copy node_modules — npm install with cwd: hostTuiDir
+      // already writes directly to hostTuiDir/node_modules.
     } catch (err: any) {
       console.warn(`Warning: Failed to install on-host TUI dependencies: ${err.message}`)
       console.warn('The TUI will fall back to the Python REPL.')
@@ -566,7 +540,7 @@ ENV CAST_TUI_DIR=/opt/cast-tui
 export async function execCommand(
   command: string,
   args: string[],
-  options?: { cwd?: string; env?: NodeJS.ProcessEnv; silent?: boolean; input?: string; shell?: boolean },
+  options?: { cwd?: string; env?: NodeJS.ProcessEnv; silent?: boolean; input?: string; shell?: boolean; timeoutMs?: number },
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return new Promise((resolve, reject) => {
     const proc = spawn(command, args, {
@@ -576,6 +550,7 @@ export async function execCommand(
     })
     let stdout = ''
     let stderr = ''
+    let killed = false
 
     if (!options?.silent) {
       proc.stdout?.pipe(process.stdout)
@@ -594,8 +569,36 @@ export async function execCommand(
       proc.stdin.end()
     }
 
-    proc.on('error', (err) => reject(err))
+    // Hard wall-clock timeout. Without this, a hung child process
+    // (e.g. SSH to an overloaded droplet) would block the caller
+    // forever, which is how `waitForDocker` previously appeared
+    // "stuck" for 10+ minutes inside a single probe.
+    let timeoutHandle: NodeJS.Timeout | undefined
+    if (options?.timeoutMs && options.timeoutMs > 0) {
+      timeoutHandle = setTimeout(() => {
+        killed = true
+        try {
+          // SIGKILL is the only reliable way to stop a stuck child
+          // that isn't responding to SIGTERM (which Node sends by
+          // default on `proc.kill()`).
+          proc.kill('SIGKILL')
+        } catch {
+          // ignore — process may have exited between the timeout
+          // firing and the kill() call
+        }
+        reject(new Error(`Command "${command}" timed out after ${options.timeoutMs}ms`))
+      }, options.timeoutMs)
+    }
+
+    proc.on('error', (err) => {
+      if (timeoutHandle) clearTimeout(timeoutHandle)
+      reject(err)
+    })
     proc.on('exit', (code) => {
+      if (timeoutHandle) clearTimeout(timeoutHandle)
+      // If we killed the process via timeout, the timeout's reject
+      // has already been called — don't double-resolve.
+      if (killed) return
       resolve({ stdout, stderr, exitCode: code || 0 })
     })
   })

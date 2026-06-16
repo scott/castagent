@@ -3,13 +3,22 @@ import {CastDatabase} from '../../../typescript/cast-cli/src/lib/sqlite'
 
 describe('SQLite', () => {
   let db: CastDatabase
+  const createdAgents: string[] = []
 
   beforeEach(() => {
     db = new CastDatabase()
+    createdAgents.length = 0
+  })
+
+  afterEach(() => {
+    for (const name of createdAgents) {
+      try { db.deleteAgent(name) } catch {}
+    }
   })
 
   it('should create and retrieve an agent', () => {
     db.createAgent('test-agent', '/path/to/agent.yaml')
+    createdAgents.push('test-agent')
     const agent = db.getAgent('test-agent')
     expect(agent).to.exist
     expect(agent.name).to.equal('test-agent')
@@ -46,6 +55,7 @@ describe('SQLite', () => {
 
   it('should return null from getDeployedVersion when deployment has no version', () => {
     db.createAgent('no-version-agent', '/path/to/agent.yaml')
+    createdAgents.push('no-version-agent')
     db.setDeployment('no-version-agent', 'docker', 'http://localhost:8080', 'token123')
     const version = db.getDeployedVersion('no-version-agent')
     expect(version).to.equal(null)
@@ -53,6 +63,7 @@ describe('SQLite', () => {
 
   it('should return version from getDeployedVersion when version is set', () => {
     db.createAgent('versioned-agent', '/path/to/agent.yaml')
+    createdAgents.push('versioned-agent')
     db.setDeployment('versioned-agent', 'docker', 'http://localhost:8080', 'token123')
     db.updateDeployedVersion('versioned-agent', 42)
     const version = db.getDeployedVersion('versioned-agent')
@@ -63,6 +74,7 @@ describe('SQLite', () => {
 
   it('should return semantic version from getDeployedVersion when version is a string', () => {
     db.createAgent('semver-agent', '/path/to/agent.yaml')
+    createdAgents.push('semver-agent')
     db.setDeployment('semver-agent', 'docker', 'http://localhost:8080', 'token123')
     db.updateDeployedVersion('semver-agent', '1.6')
     const version = db.getDeployedVersion('semver-agent')
@@ -72,6 +84,7 @@ describe('SQLite', () => {
 
   it('should update deployed version for an existing deployment', () => {
     db.createAgent('update-test-agent', '/path/to/agent.yaml')
+    createdAgents.push('update-test-agent')
     db.setDeployment('update-test-agent', 'aws', 'https://aws.example.com', 'tokenabc')
 
     // Initial version should be null
@@ -128,10 +141,20 @@ describe('SQLite - SHA-based deployments', () => {
   let db: CastDatabase
   // Unique agent name per test to avoid collisions in the shared DB
   let agentName: string
+  const extraAgents: string[] = []
 
   beforeEach(() => {
     db = new CastDatabase()
     agentName = `sha-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    extraAgents.length = 0
+  })
+
+  afterEach(() => {
+    // Clean up all agents created during this test
+    const allAgents = [agentName, ...extraAgents]
+    for (const name of allAgents) {
+      try { db.deleteAgent(name) } catch {}
+    }
   })
 
   it('createDeployment stores the SHA as the primary key', () => {
@@ -231,6 +254,7 @@ describe('SQLite - SHA-based deployments', () => {
 
   it('removeAllDeployments does not affect deployments of other agents', () => {
     const otherAgent = `other-agent-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    extraAgents.push(otherAgent)
     db.createAgent(agentName, '/path/to/agent.yaml')
     db.createAgent(otherAgent, '/path/to/other.yaml')
     const sha1 = `oa1${Math.random().toString(16).slice(2, 5)}`
@@ -266,10 +290,19 @@ describe('SQLite - SHA-based deployments', () => {
 describe('SQLite - Releases table', () => {
   let db: CastDatabase
   let agentName: string
+  const extraAgents: string[] = []
 
   beforeEach(() => {
     db = new CastDatabase()
     agentName = `release-test-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    extraAgents.length = 0
+  })
+
+  afterEach(() => {
+    const allAgents = [agentName, ...extraAgents]
+    for (const name of allAgents) {
+      try { db.deleteAgent(name) } catch {}
+    }
   })
 
   it('createRelease stores a release and listReleases returns it', () => {
@@ -322,6 +355,7 @@ describe('SQLite - Releases table', () => {
   it('listAllReleases returns releases across agents joined with deployments', () => {
     const agentA = `rel-a-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     const agentB = `rel-b-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    extraAgents.push(agentA, agentB)
     db.createAgent(agentA, '/path/to/a.yaml')
     db.createAgent(agentB, '/path/to/b.yaml')
     db.createRelease(agentA, '1.0', 1, 'A1', '', '/tmp/a-1.0.tar.gz')
@@ -336,6 +370,7 @@ describe('SQLite - Releases table', () => {
   it('listAllReleasesForAgent filters by agent', () => {
     const agentX = `rel-x-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     const agentY = `rel-y-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    extraAgents.push(agentX, agentY)
     db.createAgent(agentX, '/path/to/x.yaml')
     db.createAgent(agentY, '/path/to/y.yaml')
     db.createRelease(agentX, '1.0', 1, 'X', '', '/tmp/x.tar.gz')

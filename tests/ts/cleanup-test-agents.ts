@@ -54,6 +54,9 @@ const TEST_AGENT_PREFIXES = [
   // "sha-" prefix alone is too broad (real SHAs are sha1...), so we
   // require the "sha-test-" prefix specifically.
   'sha-test-',
+  // The SQLite test suite creates other-agent-* names when verifying
+  // that removeAllDeployments does not affect unrelated deployments.
+  'other-agent-',
 ]
 
 // Common test agent names (without prefix)

@@ -1,5 +1,5 @@
 import {Args, Command} from '@oclif/core'
-import {execSync} from 'child_process'
+import {execSync, spawn} from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -43,10 +43,16 @@ function buildSshArgs(ip: string, remoteCmd: string): string[] {
   return [...getSshBaseOptions(), `root@${ip}`, remoteCmd]
 }
 
-// Execute SSH command with shell: false to prevent shell from interfering with options
-async function execSsh(ip: string, remoteCmd: string, silent = false): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  const { execCommand } = await import('./deploy-utils')
-  return execCommand('ssh', buildSshArgs(ip, remoteCmd), { silent, shell: false })
+// Execute SSH command with shell: false to prevent shell from interfering with options.
+// A 30s default timeout is applied so a hung SSH probe can't block
+// callers (notably `waitForDocker`'s retry loop) for many minutes.
+async function execSsh(
+  ip: string,
+  remoteCmd: string,
+  silent = false,
+  timeoutMs = 30_000,
+): Promise<{ stdout: string; stderr: string; exitCode: number }> {
+  return execCommand('ssh', buildSshArgs(ip, remoteCmd), { silent, shell: false, timeoutMs })
 }
 
 export default class DigitalOceanDeploy extends Command {
@@ -171,6 +177,14 @@ export default class DigitalOceanDeploy extends Command {
     this.log('Waiting for SSH to be available...')
     await this.waitForSsh(droplet.ip)
 
+    // Cloud-init's runcmd (which installs Docker) runs asynchronously and
+    // SSH comes up before that completes. If we try to `docker load` over
+    // SSH right after `waitForSsh`, we'll hit "docker: command not found"
+    // on fresh droplets. Poll for a working Docker daemon before
+    // streaming the image.
+    this.log('Waiting for Docker to be ready on droplet...')
+    await this.waitForDocker(droplet.ip)
+
     // Build Docker image locally for AMD64 target (DO droplets are x86_64)
     const imageTag = `cast-${agentName}:latest`
     this.log('Building Docker image for linux/amd64...')
@@ -186,28 +200,9 @@ export default class DigitalOceanDeploy extends Command {
       this.error(`Docker build failed: ${buildResult.stderr}`)
     }
 
-    // Save image to tar
-    const tarPath = path.join(agentPath, `${agentName}.tar`)
-    this.log('Saving Docker image...')
-    const saveResult = await execCommand('docker', ['save', '-o', tarPath, imageTag])
-    if (saveResult.exitCode !== 0) {
-      this.error(`Failed to save Docker image: ${saveResult.stderr}`)
-    }
-
-    // Copy image to droplet
-    this.log('Copying image to droplet...')
-    const scpResult = await execCommand('scp', [
-      '-i', SSH_KEY_PATH,
-      '-o', 'StrictHostKeyChecking=no',
-      '-o', 'UserKnownHostsFile=/dev/null',
-      '-o', 'BatchMode=yes',
-      '-o', 'ConnectTimeout=10',
-      tarPath,
-      `root@${droplet.ip}:/tmp/${agentName}.tar`,
-    ], {silent: true, shell: false})
-    if (scpResult.exitCode !== 0) {
-      this.error(`Failed to copy image to droplet: ${scpResult.stderr}`)
-    }
+    // Stream image directly to droplet (no intermediate disk write)
+    this.log('Streaming Docker image to droplet...')
+    await this.streamImageToDroplet(droplet.ip, imageTag)
 
     // Deploy on droplet
     this.log('Deploying on droplet...')
@@ -225,19 +220,13 @@ export default class DigitalOceanDeploy extends Command {
       // DB unavailable — MOTD will fall back to a placeholder
     }
 
-    await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, tarPath, volumeId, deploymentUrl, deployedVersion)
+    await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, volumeId, deploymentUrl, deployedVersion)
 
     // Create and attach volume
     this.log(`Creating memory volume: ${volumeId}`)
     const volumeResult = await this.createAndAttachVolume(apiToken, droplet.id, volumeId, droplet.region)
     if (volumeResult) {
       this.log(`Volume attached at ${volumeResult}`)
-    }
-
-    // Clean up local tar file after transfer
-    this.log('Cleaning up local artifacts...')
-    if (fs.existsSync(tarPath)) {
-      fs.unlinkSync(tarPath)
     }
 
     // Save deployment
@@ -278,11 +267,12 @@ export default class DigitalOceanDeploy extends Command {
     const markers = ['python/cast', 'typescript/cast-tui']
     const candidates = [
       process.cwd(),
-      path.resolve(__dirname, '..'),          // lib/deploy -> lib
-      path.resolve(__dirname, '../..'),        // lib/deploy -> typescript/cast-cli
-      path.resolve(__dirname, '../../..'),     // lib/deploy -> typescript
-      path.resolve(__dirname, '../../..'),     // lib/deploy -> typescript
-      path.resolve(__dirname, '../../../..'),  // lib/deploy -> project root
+      // __dirname at runtime: typescript/cast-cli/dist/lib/deploy/
+      path.resolve(__dirname, '..'),             // dist/lib
+      path.resolve(__dirname, '../..'),           // dist
+      path.resolve(__dirname, '../../..'),        // cast-cli
+      path.resolve(__dirname, '../../../..'),     // typescript
+      path.resolve(__dirname, '../../../../..'),  // project root
     ]
     for (const candidate of candidates) {
       for (const marker of markers) {
@@ -367,36 +357,102 @@ export default class DigitalOceanDeploy extends Command {
     const fingerprint = keyResult.stdout.trim().split(/\s+/)[1].replace(/^MD5:/, '')
 
     // Write cloud-init to install Docker and seed a baseline MOTD.
-    // The MOTD is overwritten on every `cast deploy` / `cast upgrade`,
-    // but this ensures the user sees something cast-related on the very
-    // first SSH login (before any deploy has run).
+    //
+    // IMPORTANT: this cloud-init goes through DigitalOcean's user-data
+    // pipeline, which is then validated by cloud-init's STRICT schema
+    // validator. Anything that parses as YAML but doesn't match the
+    // schema gets rejected with `SCHEMA_ERROR: part-001` and runcmd
+    // silently never runs. We keep the cloud-config minimal:
+    //   - write_files only (no in-yaml block scalars with shell logic)
+    //   - runcmd is a flat list of single-line strings
+    //   - no comments between runcmd items (those have tripped the
+    //     schema validator in past iterations)
+    // The install script itself is written to disk by write_files and
+    // invoked from runcmd — this also makes it inspectable in
+    // /var/log/cast-docker-install.log after the fact.
     const cloudInitPath = path.join(agentPath, '.cloud-init.yml')
     const baselineMotd = buildCloudInitBaselineMotd()
-    // Indent every line of the MOTD by 6 spaces (matches the YAML block
-    // scalar indent) so cloud-init parses it as a single multi-line string.
+
+    // Install script: tries the official Docker apt repo first
+    // (more reliable than get.docker.com which has been observed to
+    // fail silently on some DO regions), then falls back to
+    // get.docker.com. All output is logged. The script is
+    // intentionally tolerant — it always exits 0 so cloud-init
+    // continues to the sentinel touch below.
+    const installScript = [
+      '#!/bin/bash',
+      'set +e',
+      'LOG=/var/log/cast-docker-install.log',
+      'echo "[cast] docker install started at $(date -Iseconds)" > $LOG',
+      'export DEBIAN_FRONTEND=noninteractive',
+      'apt-get update >> $LOG 2>&1',
+      'apt-get install -y ca-certificates curl >> $LOG 2>&1',
+      'install -m 0755 -d /etc/apt/keyrings >> $LOG 2>&1',
+      'if curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc >> $LOG 2>&1; then',
+      '  chmod a+r /etc/apt/keyrings/docker.asc >> $LOG 2>&1',
+      '  ARCH=$(dpkg --print-architecture)',
+      '  CODENAME=$(. /etc/os-release && echo $VERSION_CODENAME)',
+      '  echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $CODENAME stable" > /etc/apt/sources.list.d/docker.list',
+      '  apt-get update >> $LOG 2>&1',
+      '  apt-get install -y docker-ce docker-ce-cli containerd.io >> $LOG 2>&1',
+      'else',
+      '  echo "[cast] apt-repo fetch failed, falling back to get.docker.com" >> $LOG',
+      '  curl -fsSL https://get.docker.com | sh >> $LOG 2>&1',
+      'fi',
+      'if command -v docker >/dev/null 2>&1; then',
+      '  systemctl enable docker >> $LOG 2>&1',
+      '  systemctl start docker >> $LOG 2>&1',
+      '  echo "[cast] docker install finished: $(docker --version 2>&1)" >> $LOG',
+      'else',
+      '  echo "[cast] FAILED: docker not on PATH after install" >> $LOG',
+      'fi',
+      'exit 0',
+      '',
+    ].join('\n')
+
+    // Indent every line of the MOTD and install script by 10 spaces
+    // (matches the YAML block scalar indent under `content: |`).
     const motdIndented = baselineMotd
       .split('\n')
-      .map((line) => '      ' + line)
+      .map((line) => line.length > 0 ? '          ' + line : '')
       .join('\n')
-    const cloudInit = `#cloud-config
-write_files:
-  - path: /etc/motd
-    permissions: '0644'
-    owner: root:root
-    content: |
-${motdIndented}
-  - path: /etc/profile.d/cast.sh
-    permissions: '0755'
-    owner: root:root
-    content: |
-      #!/bin/bash
-      # Cast placeholder — will be replaced on first deploy
-      :
-runcmd:
-  - curl -fsSL https://get.docker.com | sh
-  - systemctl enable docker
-  - systemctl start docker
-`
+    const scriptIndented = installScript
+      .split('\n')
+      .map((line) => '          ' + line)
+      .join('\n')
+
+    // Build the cloud-init YAML. Keep the runcmd list as a flat list
+    // of single-line strings — no inline block scalars, no comments
+    // between items. cloud-init's strict schema validator has
+    // rejected previous versions that used those constructs.
+    const cloudInit = [
+      '#cloud-config',
+      'write_files:',
+      '  - path: /etc/motd',
+      '    permissions: "0644"',
+      '    owner: root',
+      '    group: root',
+      '    content: |',
+      motdIndented,
+      '  - path: /etc/profile.d/cast.sh',
+      '    permissions: "0755"',
+      '    owner: root',
+      '    group: root',
+      '    content: |',
+      '      #!/bin/bash',
+      '      : # cast placeholder',
+      '  - path: /usr/local/bin/cast-install-docker.sh',
+      '    permissions: "0755"',
+      '    owner: root',
+      '    group: root',
+      '    content: |',
+      scriptIndented,
+      'runcmd:',
+      '  - /usr/local/bin/cast-install-docker.sh',
+      '  - mkdir -p /var/lib/cast',
+      '  - touch /var/lib/cast/docker-ready',
+      '',
+    ].join('\n')
     fs.writeFileSync(cloudInitPath, cloudInit)
 
     const createResult = await execCommand('doctl', [
@@ -440,24 +496,122 @@ runcmd:
     throw new Error('Timed out waiting for SSH on droplet')
   }
 
+  /**
+   * Wait until Docker is installed AND the daemon is responsive on the
+   * droplet.
+   *
+   * Two signal sources are checked:
+   *   1. Sentinel file at `/var/lib/cast/docker-ready`. New droplets
+   *      write this in the LAST line of cloud-init's runcmd, so its
+   *      presence means the install completed (successfully or not —
+   *      see step 2 for the success check).
+   *   2. `docker info`. Confirms the daemon is actually responsive.
+   *      Required because `docker load` / `docker run` need the
+   *      daemon, not just the CLI on PATH.
+   *
+   * For older droplets that pre-date the sentinel, the function falls
+   * back to polling `docker info` directly, so it remains compatible.
+   *
+   * Background: cloud-init's `runcmd` runs asynchronously and the SSH
+   * server comes up before it finishes. The very first deploy flow
+   * only waited for SSH, so the first `docker load` over SSH would
+   * fail with "bash: line 1: docker: command not found" (exit 127).
+   */
+  private async waitForDocker(ip: string): Promise<void> {
+    const maxAttempts = 60    // 60 × 5s = 5 min between *attempts* (not wall-clock)
+    const delayMs = 5000
+    // 15s per-call SSH timeout — tight enough that a hung probe
+    // can't make a single iteration last minutes. The cloud-init
+    // install itself can run for several minutes, so the loop needs
+    // many attempts; we just need each one to fail fast.
+    const sshTimeoutMs = 15_000
+
+    for (let i = 0; i < maxAttempts; i++) {
+      // Heartbeat every ~30s so the user can see the loop is alive.
+      // This is what the deploy log was missing before — without
+      // it, a user can't tell "stuck" from "polling slowly".
+      if (i > 0 && i % 6 === 0) {
+        const elapsedSec = i * delayMs / 1000
+        this.log(`  ...still waiting (${elapsedSec}s elapsed)`)
+      }
+
+      // Probe the sentinel written by cloud-init's last runcmd step.
+      // If it exists, install is fully done and we just need to wait
+      // for the daemon. If it doesn't, either install is still
+      // running OR this is an older droplet without the sentinel —
+      // either way, `docker info` is the source of truth.
+      let sentinelExists = false
+      try {
+        const sentinel = await execSsh(ip, 'test -f /var/lib/cast/docker-ready', true, sshTimeoutMs)
+        sentinelExists = sentinel.exitCode === 0
+      } catch {
+        // ignore — transient SSH error or timeout, retry next iteration
+      }
+
+      try {
+        const info = await execSsh(ip, 'docker info >/dev/null 2>&1', true, sshTimeoutMs)
+        if (info.exitCode === 0) {
+          return
+        }
+        // Otherwise fall through and keep polling. If sentinelExists
+        // is true the daemon is just slow to come up; if false, the
+        // install is probably still in progress.
+      } catch {
+        // ignore
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, delayMs))
+    }
+
+    // Timed out — gather diagnostics from the droplet so the user has
+    // something actionable in the error message. Use a longer
+    // per-call timeout here so the diagnostic collection itself
+    // doesn't time out on a sluggish SSH connection.
+    const diagnostics = await this.collectDropletDiagnostics(ip)
+
+    throw new Error(
+      'Timed out waiting for Docker to become ready on droplet. ' +
+      diagnostics +
+      ' SSH in and run `journalctl -u cloud-init-main --no-pager` for full logs.',
+    )
+  }
+
+  /**
+   * Best-effort collection of cloud-init / docker state from the
+   * droplet for inclusion in a timeout error message. Never throws.
+   */
+  private async collectDropletDiagnostics(ip: string): Promise<string> {
+    const parts: string[] = []
+
+    const probe = async (label: string, cmd: string): Promise<void> => {
+      try {
+        const r = await execSsh(ip, cmd, true)
+        const out = (r.stdout || r.stderr || '').trim()
+        if (out) {
+          parts.push(`${label}: ${out.split('\n').slice(0, 5).join(' | ')}`)
+        }
+      } catch {
+        // ignore
+      }
+    }
+
+    await probe('cloud-init', 'cloud-init status 2>&1')
+    await probe('sentinel', 'ls -la /var/lib/cast/docker-ready 2>&1')
+    await probe('docker', 'docker info 2>&1 | head -20')
+
+    return parts.length > 0 ? parts.join('; ') + '.' : ''
+  }
+
   private async deployOnDroplet(
     ip: string,
     agentName: string,
     authToken: string,
     imageTag: string,
-    tarPath: string,
     volumeId: string,
     deploymentUrl: string,
     deployedVersion?: string,
   ): Promise<void> {
-    // Load image on droplet
-    const loadResult = await execSsh(ip, `docker load -i /tmp/${path.basename(tarPath)}`, true)
-
-    if (loadResult.exitCode !== 0) {
-      throw new Error(`Failed to load image on droplet: ${loadResult.stderr}`)
-    }
-
-    // Stop old container
+    // Image is already loaded via streamImageToDroplet; stop old container
     await execSsh(ip, 'docker stop cast-agent && docker rm cast-agent', true)
 
     // Open UFW port
@@ -511,8 +665,52 @@ runcmd:
       this.warn(`Failed to write /etc/profile.d/cast.sh on droplet: ${profileStderr}`)
     }
 
-    // Clean up remote tar file after loading
-    await execSsh(ip, `rm -f /tmp/${path.basename(tarPath)}`, true)
+  }
+
+  /**
+   * Stream a Docker image directly to the droplet via SSH pipe,
+   * avoiding any intermediate disk write on the local machine.
+   *
+   * Runs: docker save <imageTag> | ssh <options> root@<ip> docker load
+   */
+  private async streamImageToDroplet(ip: string, imageTag: string): Promise<void> {
+    return new Promise<void>((resolve, reject) => {
+      const sshArgs = [
+        '-i', SSH_KEY_PATH,
+        '-o', 'StrictHostKeyChecking=no',
+        '-o', 'UserKnownHostsFile=/dev/null',
+        '-o', 'BatchMode=yes',
+        '-o', 'ConnectTimeout=30',
+        `root@${ip}`,
+        'docker load',
+      ]
+
+      const save = spawn('docker', ['save', imageTag], {
+        stdio: ['ignore', 'pipe', 'inherit'],
+      })
+      const load = spawn('ssh', sshArgs, {
+        stdio: ['pipe', 'inherit', 'inherit'],
+      })
+
+      save.stdout.pipe(load.stdin)
+
+      let done = false
+      const finish = (err?: Error) => {
+        if (done) return
+        done = true
+        save.kill()
+        load.kill()
+        if (err) reject(err)
+        else resolve()
+      }
+
+      load.on('close', (code) => {
+        if (code === 0) finish()
+        else finish(new Error(`Streaming image to droplet failed (exit ${code})`))
+      })
+      save.on('error', (err) => finish(err))
+      load.on('error', (err) => finish(err))
+    })
   }
 
   private async createAndAttachVolume(apiToken: string, dropletId: string, volumeName: string, region: string): Promise<string | null> {
