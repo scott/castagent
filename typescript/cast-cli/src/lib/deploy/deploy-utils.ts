@@ -718,3 +718,37 @@ export async function deleteMemoryVolume(volumeConfig: VolumeConfig, agentName: 
       break
   }
 }
+
+/**
+ * Creates a comprehensive .dockerignore file in the agent directory to
+ * exclude non-runtime files from the Docker build context. This
+ * significantly reduces image size by excluding .git, archives,
+ * __pycache__, logs, .env files, and other build artifacts.
+ *
+ * Note: .cast-runtime/ is deliberately NOT excluded — it contains
+ * the runtime needed at runtime.
+ */
+export function createDockerignore(agentPath: string): void {
+  const content = `.git
+.gitignore
+*.tar
+*.tar.gz
+*.zip
+__pycache__/
+*.py[cod]
+*.pyc
+.DS_Store
+.AppleDouble
+.LSOverride
+*.log
+.env
+.env.*
+cast.db
+cast.db-*
+.cast/
+.castignore
+.cloud-init.yml
+.dockerignore
+`
+  fs.writeFileSync(path.join(agentPath, '.dockerignore'), content)
+}

@@ -10,7 +10,7 @@ import DigitalOceanDeploy from '../lib/deploy/digitalocean'
 import SpritesDeploy from '../lib/deploy/sprites'
 import {getRelease, getCurrentRelease, listReleases, validateSemver} from '../lib/releases'
 import {db} from '../lib/sqlite'
-import {resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
+import {resolveDeploymentTarget, createDockerignore} from '../lib/deploy/deploy-utils'
 import {writeHostMotdOverSsh} from '../lib/deploy/motd'
 
 const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'sprites', 'docker', 'local']
@@ -679,10 +679,7 @@ CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "80
   }
 
   private createDockerignore(agentPath: string): void {
-    const content = `Dockerfile
-docker-compose.yml
-`
-    fs.writeFileSync(path.join(agentPath, '.dockerignore'), content)
+    createDockerignore(agentPath)
   }
 
   private createRequirementsTxt(projectRoot: string, agentPath: string): void {

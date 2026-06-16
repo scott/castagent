@@ -16,6 +16,7 @@ import {
   generateDeploymentId,
   getVolumeName,
   prepareHostTuiBuildContext,
+  createDockerignore,
 } from './deploy-utils'
 import {buildCloudInitBaselineMotd, buildHostMotd, writeHostMotdOverSsh} from './motd'
 import type {MotdContext} from './motd'
@@ -150,6 +151,22 @@ export default class DigitalOceanDeploy extends Command {
 
     // Ensure Docker packaging
     ensureDockerfile(agentPath)
+    createDockerignore(agentPath)
+
+    // Resolve project root for locating cast runtime
+    const projectRoot = this.findProjectRoot()
+
+    // Copy the cast runtime into the agent's .cast-runtime/ directory
+    // This is required for the Dockerfile's COPY .cast-runtime/cast step
+    const castRuntimeDir = path.join(agentPath, '.cast-runtime', 'cast')
+    fs.mkdirSync(path.dirname(castRuntimeDir), { recursive: true })
+    const castRuntimeSrc = path.join(projectRoot, 'python', 'cast')
+    if (fs.existsSync(castRuntimeSrc)) {
+      if (fs.existsSync(castRuntimeDir)) {
+        fs.rmSync(castRuntimeDir, { recursive: true })
+      }
+      fs.cpSync(castRuntimeSrc, castRuntimeDir, { recursive: true })
+    }
 
     // Generate auth token and deployment ID
     const { authToken, tokenHash } = await generateAuthToken(agentName)
@@ -167,7 +184,6 @@ export default class DigitalOceanDeploy extends Command {
 
     // Prepare on-host TUI bundle (cast-tui command inside the container)
     this.log('Preparing on-host TUI bundle...')
-    const projectRoot = this.findProjectRoot()
     await prepareHostTuiBuildContext(agentPath, projectRoot)
 
     // Get or create droplet

@@ -34,3 +34,7 @@ Changes:
 - Fix DigitalOcean deploys hanging indefinitely during image streaming by
   adding SSH keepalive and a wall-clock timeout to the
   `docker save | ssh docker load` transfer
+- Reduce Docker image size by adding comprehensive .dockerignore that excludes
+  .git, archives, __pycache__, logs, .env files, and other non-runtime artifacts
+- Fix DigitalOcean fresh deploys by adding missing .cast-runtime/ directory
+  creation before docker build

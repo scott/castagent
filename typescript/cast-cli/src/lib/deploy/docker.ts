@@ -7,7 +7,7 @@ import * as path from 'path'
 
 import {keychain} from '../keychain'
 import {db} from '../sqlite'
-import {execCommand, getOpenRouterApiKey, generateDeploymentId, getVolumeName, createMemoryVolume, deleteMemoryVolume} from './deploy-utils'
+import {execCommand, getOpenRouterApiKey, generateDeploymentId, getVolumeName, createMemoryVolume, deleteMemoryVolume, createDockerignore} from './deploy-utils'
 
 // Helper to run a shell command and return its exit code
 function runCommand(command: string, args: string[], options?: {stdio?: any; cwd?: string; silent?: boolean}): Promise<number> {
@@ -250,10 +250,7 @@ CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "80
   }
 
   private createDockerignore(agentPath: string): void {
-    const content = `Dockerfile
-docker-compose.yml
-`
-    fs.writeFileSync(path.join(agentPath, '.dockerignore'), content)
+    createDockerignore(agentPath)
   }
 
   private createRequirementsTxt(projectRoot: string, agentPath: string): void {
