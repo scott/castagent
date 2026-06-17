@@ -1,6 +1,6 @@
 ---
-"agent-cast": patch
 "cast-cli": patch
+"cast-tui": patch
 ---
 
 fix(deploy): mitigate DigitalOcean image streaming timeouts

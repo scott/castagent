@@ -1,5 +1,4 @@
 ---
-"agent-cast": patch
 "cast-cli": patch
 "cast-tui": patch
 ---

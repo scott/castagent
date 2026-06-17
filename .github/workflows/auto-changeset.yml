@@ -114,7 +114,8 @@ jobs:
 
           cat > .changeset/${{ steps.changeset-id.outputs.id }}.md << CHANGESET_EOF
           ---
-          "agent-cast": $VERSION
+          "cast-cli": $VERSION
+          "cast-tui": $VERSION
           ---
 
           $NOTES
