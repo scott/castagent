@@ -31,3 +31,13 @@ Changes:
 - On timeout, the error now includes the droplet's own `cloud-init status`
   and `docker info` output so users can diagnose without an extra SSH.
 - 10-minute wait budget (up from 5) to accommodate slow installs.
+- Fix DigitalOcean deploys hanging indefinitely during image streaming by
+  adding SSH keepalive and a wall-clock timeout to the
+  `docker save | ssh docker load` transfer
+- Reduce Docker image size by adding comprehensive .dockerignore that excludes
+  .git, archives, __pycache__, logs, .env files, and other non-runtime artifacts
+- Fix DigitalOcean fresh deploys by adding missing .cast-runtime/ directory
+  creation before docker build
+- Switch to multi-stage Docker build to exclude gcc/git toolchain from final
+  image (~250-300 MB saved)
+- Use python:3.11-slim-bookworm base image for better compression (~50-70 MB saved)

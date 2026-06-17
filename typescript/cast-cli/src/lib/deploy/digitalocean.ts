@@ -1,4 +1,4 @@
-import {Args, Command} from '@oclif/core'
+import {Args, Command, Flags} from '@oclif/core'
 import {execSync, spawn} from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -16,6 +16,7 @@ import {
   generateDeploymentId,
   getVolumeName,
   prepareHostTuiBuildContext,
+  createDockerignore,
 } from './deploy-utils'
 import {buildCloudInitBaselineMotd, buildHostMotd, writeHostMotdOverSsh} from './motd'
 import type {MotdContext} from './motd'
@@ -60,6 +61,23 @@ export default class DigitalOceanDeploy extends Command {
 
   static args = {
     agent: Args.string({description: 'Agent name', required: true}),
+  }
+
+  static flags = {
+    'with-tui': Flags.boolean({
+      description:
+        'Bundle the on-host TUI (cast-tui command) into the image. ' +
+        'Off by default to keep images small and streaming fast; ' +
+        'pass --with-tui if you want SSH-in chat via `cast-tui`.',
+      default: false,
+    }),
+    size: Flags.string({
+      description:
+        'Droplet size slug. Default: s-2vcpu-2gb (bumped from s-1vcpu-1gb ' +
+        'to give `docker load` more CPU headroom). Only affects new droplets; ' +
+        'existing droplets keep their original size.',
+      default: 's-2vcpu-2gb',
+    }),
   }
 
   static async destroy(agentName: string): Promise<void> {
@@ -124,8 +142,10 @@ export default class DigitalOceanDeploy extends Command {
   }
 
   async run(): Promise<void> {
-    const { args } = await this.parse(DigitalOceanDeploy)
+    const { args, flags } = await this.parse(DigitalOceanDeploy)
     const agentName = args.agent as string
+    const withTui = flags['with-tui'] as boolean
+    const dropletSize = flags.size as string
     const agentPath = getAgentPath(agentName)
 
     if (!fs.existsSync(agentPath)) {
@@ -133,6 +153,8 @@ export default class DigitalOceanDeploy extends Command {
     }
 
     this.log(`Deploying ${agentName} to DigitalOcean Droplet...`)
+    this.log(`On-host TUI: ${withTui ? 'enabled (--with-tui)' : 'disabled (use --with-tui to enable)'}`)
+    this.log(`Droplet size: ${dropletSize}${dropletSize === 's-1vcpu-1gb' ? ' (note: smaller than the new default — docker load may time out)' : ''}`)
 
     // Check doctl
     try {
@@ -150,6 +172,22 @@ export default class DigitalOceanDeploy extends Command {
 
     // Ensure Docker packaging
     ensureDockerfile(agentPath)
+    createDockerignore(agentPath)
+
+    // Resolve project root for locating cast runtime
+    const projectRoot = this.findProjectRoot()
+
+    // Copy the cast runtime into the agent's .cast-runtime/ directory
+    // This is required for the Dockerfile's COPY .cast-runtime/cast step
+    const castRuntimeDir = path.join(agentPath, '.cast-runtime', 'cast')
+    fs.mkdirSync(path.dirname(castRuntimeDir), { recursive: true })
+    const castRuntimeSrc = path.join(projectRoot, 'python', 'cast')
+    if (fs.existsSync(castRuntimeSrc)) {
+      if (fs.existsSync(castRuntimeDir)) {
+        fs.rmSync(castRuntimeDir, { recursive: true })
+      }
+      fs.cpSync(castRuntimeSrc, castRuntimeDir, { recursive: true })
+    }
 
     // Generate auth token and deployment ID
     const { authToken, tokenHash } = await generateAuthToken(agentName)
@@ -165,13 +203,16 @@ export default class DigitalOceanDeploy extends Command {
     // Setup SSH key
     await this.ensureSshKey()
 
-    // Prepare on-host TUI bundle (cast-tui command inside the container)
-    this.log('Preparing on-host TUI bundle...')
-    const projectRoot = this.findProjectRoot()
-    await prepareHostTuiBuildContext(agentPath, projectRoot)
+    // Prepare on-host TUI bundle (cast-tui command inside the container).
+    // Skipped entirely when --with-tui is not set, which keeps the image
+    // ~100MB smaller and substantially reduces streaming time.
+    if (withTui) {
+      this.log('Preparing on-host TUI bundle...')
+    }
+    await prepareHostTuiBuildContext(agentPath, projectRoot, { enabled: withTui })
 
     // Get or create droplet
-    const droplet = await this.getOrCreateDroplet(agentName, agentPath, apiToken)
+    const droplet = await this.getOrCreateDroplet(agentName, agentPath, apiToken, dropletSize)
 
     this.log(`Droplet IP: ${droplet.ip}`)
     this.log('Waiting for SSH to be available...')
@@ -220,7 +261,7 @@ export default class DigitalOceanDeploy extends Command {
       // DB unavailable — MOTD will fall back to a placeholder
     }
 
-    await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, volumeId, deploymentUrl, deployedVersion)
+    await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, volumeId, deploymentUrl, deployedVersion, withTui)
 
     // Create and attach volume
     this.log(`Creating memory volume: ${volumeId}`)
@@ -249,11 +290,20 @@ export default class DigitalOceanDeploy extends Command {
     this.log('To connect (from your machine):')
     this.log(`  cast connect ${agentName}`)
     this.log('')
-    this.log('To chat on-host (SSH into droplet, then inside container):')
-    this.log(`  ssh -i ~/.ssh/cast_do_key root@${droplet.ip}`)
-    this.log(`  docker exec -it cast-agent bash`)
-    this.log(`  cast-tui`)
-    this.log('')
+    if (withTui) {
+      // TUI is bundled — show the on-host chat path.
+      this.log('To chat on-host (SSH into droplet, then inside container):')
+      this.log(`  ssh -i ~/.ssh/cast_do_key root@${droplet.ip}`)
+      this.log(`  docker exec -it cast-agent bash`)
+      this.log(`  cast-tui`)
+      this.log('')
+    } else {
+      // TUI is not bundled — only the A2A API is available for
+      // talking to the agent. The MOTD on the droplet says the
+      // same.
+      this.log(`Talk to this agent via the A2A API at: ${deploymentUrl}`)
+      this.log('')
+    }
     this.log('To destroy:')
     this.log(`  cast shutdown ${agentName}`)
   }
@@ -334,7 +384,7 @@ export default class DigitalOceanDeploy extends Command {
     })
   }
 
-  private async getOrCreateDroplet(agentName: string, agentPath: string, apiToken?: string): Promise<{id: string; name: string; ip: string; region: string}> {
+  private async getOrCreateDroplet(agentName: string, agentPath: string, apiToken?: string, size: string = 's-2vcpu-2gb'): Promise<{id: string; name: string; ip: string; region: string}> {
     const dropletName = `cast-${agentName}`
     const region = 'nyc3'
 
@@ -459,7 +509,7 @@ export default class DigitalOceanDeploy extends Command {
       'compute', 'droplet', 'create',
       dropletName,
       '--region', region,
-      '--size', 's-1vcpu-1gb',
+      '--size', size,
       '--image', 'ubuntu-24-04-x64',
       '--ssh-keys', fingerprint,
       '--user-data-file', cloudInitPath,
@@ -610,6 +660,7 @@ export default class DigitalOceanDeploy extends Command {
     volumeId: string,
     deploymentUrl: string,
     deployedVersion?: string,
+    withTui: boolean = false,
   ): Promise<void> {
     // Image is already loaded via streamImageToDroplet; stop old container
     await execSsh(ip, 'docker stop cast-agent && docker rm cast-agent', true)
@@ -635,11 +686,18 @@ export default class DigitalOceanDeploy extends Command {
     // to BOTH the host (for SSH login banners) AND the container (as
     // CAST_MOTD, so the on-host TUI can display the same content in
     // its first chat message).
+    //
+    // onHostTui is the source of truth for whether the MOTD mentions
+    // `cast-tui` — when false (the default), the banner points users
+    // at the A2A URL only, since the TUI command isn't in the
+    // container and we'd be telling them to run something that
+    // doesn't exist.
     const motdCtx: MotdContext = {
       agentName,
       dropletIp: ip,
       a2aUrl: deploymentUrl,
       deployedVersion,
+      onHostTui: withTui,
     }
     const hostMotd = buildHostMotd(motdCtx)
     const motdB64 = Buffer.from(hostMotd, 'utf8').toString('base64')
@@ -671,44 +729,213 @@ export default class DigitalOceanDeploy extends Command {
    * Stream a Docker image directly to the droplet via SSH pipe,
    * avoiding any intermediate disk write on the local machine.
    *
-   * Runs: docker save <imageTag> | ssh <options> root@<ip> docker load
+   * Runs: docker save <imageTag> | gzip -6 | ssh <options> root@<ip> 'gunzip | docker load'
+   *
+   * The gzip wrapper is the key throughput win. `docker save` emits
+   * an uncompressed tar, so a 400MB compressed image becomes a
+   * ~1.2-1.5GB on-the-wire tar. Compressing in the middle:
+   *   1. Shifts the CPU cost of decompression from the 1-vCPU
+   *      droplet (s-1vcpu-1gb / s-2vcpu-2gb) to the build host
+   *      (a multi-core Mac/Linux laptop), which is much faster.
+   *   2. Cuts network payload to roughly ⅓ of the raw tar size.
+   *   3. Reduces disk I/O on both ends (less to write to overlay2
+   *      on the droplet, less to read from /var/lib/docker on
+   *      the host).
+   *
+   * Safeguards (matching every other SSH call in this file):
+   *   - SSH keepalive (`ServerAliveInterval=5`, `ServerAliveCountMax=1`)
+   *     so a half-open TCP connection eventually exits instead of
+   *     hanging the deploy forever.
+   *   - Wall-clock timeout (default 15 min) that SIGKILLs all three
+   *     children. Mirrors the pattern in `execCommand` in
+   *     deploy-utils.ts.
+   *   - `save.on('close')` / `gzip.on('close')` handlers: if either
+   *     upstream child exits non-zero, error out immediately rather
+   *     than waiting for `docker load` to time out waiting for bytes
+   *     that will never come.
+   *   - Pipe error handlers on every writable side so EPIPE is not
+   *     silently swallowed.
+   *   - Progress logging every ~10 MB of *compressed* bytes so
+   *     future hangs are diagnosable from the deploy log alone
+   *     (you can see "stuck at N MB after T minutes").
+   *
+   * @param ip - The droplet's public IPv4 address.
+   * @param imageTag - The local Docker image tag to stream.
+   * @param timeoutMs - Wall-clock timeout in ms (default 900_000 = 15 min).
    */
-  private async streamImageToDroplet(ip: string, imageTag: string): Promise<void> {
+  private async streamImageToDroplet(
+    ip: string,
+    imageTag: string,
+    timeoutMs = 900_000,
+  ): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      const sshArgs = [
-        '-i', SSH_KEY_PATH,
-        '-o', 'StrictHostKeyChecking=no',
-        '-o', 'UserKnownHostsFile=/dev/null',
-        '-o', 'BatchMode=yes',
-        '-o', 'ConnectTimeout=30',
-        `root@${ip}`,
-        'docker load',
-      ]
+      // Reuse the shared SSH base options so the streaming SSH gets
+      // ServerAliveInterval / ServerAliveCountMax / ConnectTimeout / etc.
+      // exactly like every other SSH call in this file. Without
+      // keepalive, a half-open TCP connection (e.g. NAT timeout, droplet
+      // suspend) would make this hang indefinitely — which is the bug
+      // that motivated this rewrite.
+      //
+      // The remote command is `gunzip | docker load` so the
+      // receiving end (the droplet's docker daemon) doesn't have to
+      // decompress layers — that's gzip's job, which now runs on
+      // the build host. `gunzip` is provided by the `gzip` package,
+      // which is a hard dep of `apt` on Ubuntu and present in the
+      // base image.
+      const sshArgs = [...getSshBaseOptions(), `root@${ip}`, 'gunzip | docker load']
 
       const save = spawn('docker', ['save', imageTag], {
         stdio: ['ignore', 'pipe', 'inherit'],
+      })
+      // `-6` is a good speed/ratio balance for layer content
+      // (mostly already-compressible JSON and binary blobs).
+      const gzip = spawn('gzip', ['-6', '-c'], {
+        stdio: ['pipe', 'pipe', 'inherit'],
       })
       const load = spawn('ssh', sshArgs, {
         stdio: ['pipe', 'inherit', 'inherit'],
       })
 
-      save.stdout.pipe(load.stdin)
+      save.stdout.pipe(gzip.stdin)
+      gzip.stdout.pipe(load.stdin)
 
       let done = false
+      let timeoutHandle: NodeJS.Timeout | undefined
+
       const finish = (err?: Error) => {
         if (done) return
         done = true
-        save.kill()
-        load.kill()
+        if (timeoutHandle) clearTimeout(timeoutHandle)
+        // SIGKILL is the only reliable way to stop children that are
+        // blocked on I/O (a stuck `ssh` won't respond to SIGTERM).
+        // Wrap in try/catch — the process may have exited between
+        // the timeout firing and the kill() call.
+        try { save.kill('SIGKILL') } catch { /* may already be dead */ }
+        try { gzip.kill('SIGKILL') } catch { /* may already be dead */ }
+        try { load.kill('SIGKILL') } catch { /* may already be dead */ }
         if (err) reject(err)
         else resolve()
       }
 
-      load.on('close', (code) => {
-        if (code === 0) finish()
-        else finish(new Error(`Streaming image to droplet failed (exit ${code})`))
+      // Hard wall-clock timeout. Bumped from 10 to 15 min to give
+      // first-deploy headroom (the first deploy is the slowest since
+      // the droplet's overlay2 cache is cold). With gzip in place,
+      // typical deploys finish in 1-2 min.
+      timeoutHandle = setTimeout(() => {
+        finish(new Error(`Image streaming timed out after ${timeoutMs}ms`))
+      }, timeoutMs)
+
+      // EPIPE on any writable side must not be silently swallowed.
+      // `docker load` dying mid-stream → EPIPE on load.stdin
+      // `gzip` dying mid-stream → EPIPE on gzip.stdin
+      // The close handlers will report the real exit codes.
+      load.stdin.on('error', (err) => {
+        if ((err as NodeJS.ErrnoException).code !== 'EPIPE') {
+          finish(err)
+        }
       })
-      save.on('error', (err) => finish(err))
+      gzip.stdin.on('error', (err) => {
+        if ((err as NodeJS.ErrnoException).code !== 'EPIPE') {
+          finish(err)
+        }
+      })
+      save.stdout.on('error', (err) => finish(err))
+      gzip.stdout.on('error', (err) => finish(err))
+
+      // Progress logging — every ~10 MB of *compressed* bytes, log
+      // how much has been streamed to the droplet. Reading from
+      // gzip.stdout (not save.stdout) gives us the network-visible
+      // throughput, which is what we care about for hang diagnosis
+      // (not the uncompressed docker-save rate).
+      let bytes = 0
+      let lastLoggedMb = 0
+      gzip.stdout.on('data', (chunk: Buffer) => {
+        bytes += chunk.length
+        const mb = Math.floor(bytes / (10 * 1024 * 1024))
+        if (mb > lastLoggedMb) {
+          lastLoggedMb = mb
+          this.log(`Streamed ${mb * 10} MB (compressed) to droplet...`)
+        }
+      })
+
+      // Track exit codes from all three children. We need all three
+      // to close before we can declare success — but if any fails,
+      // we should error out as soon as we know.
+      let saveCode: number | null = null
+      let gzipCode: number | null = null
+      let loadCode: number | null = null
+
+      const tryFinishFromCodes = (): void => {
+        if (saveCode === null || gzipCode === null || loadCode === null) return
+        if (saveCode === 0 && gzipCode === 0 && loadCode === 0) {
+          finish()
+        } else {
+          finish(new Error(
+            `Image streaming failed: docker save exited ${saveCode}, ` +
+            `gzip exited ${gzipCode}, docker load (ssh) exited ${loadCode}`,
+          ))
+        }
+      }
+
+      // `docker save` exiting early is a failure mode the original
+      // code missed: if save dies but load is still running, we'd
+      // wait for load's close event with no way to know save had
+      // failed.
+      save.on('close', (code) => {
+        saveCode = code ?? 0
+        // If save died non-zero, error out immediately — don't wait
+        // for load, which may be blocked on a read for bytes that
+        // will never arrive.
+        if (saveCode !== 0) {
+          finish(new Error(`docker save exited with code ${saveCode}`))
+          return
+        }
+        // Save exited cleanly — end gzip.stdin so gzip gets EOF and
+        // can flush its final compressed bytes to load.
+        if (gzip.exitCode === null && gzip.killed === false) {
+          try { gzip.stdin.end() } catch { /* ignore */ }
+        }
+        tryFinishFromCodes()
+      })
+
+      // gzip exiting: if it dies (e.g. SIGPIPE because load closed
+      // early), the pipeline is broken. Treat non-zero as fatal.
+      gzip.on('close', (code) => {
+        gzipCode = code ?? 0
+        if (gzipCode !== 0) {
+          finish(new Error(`gzip exited with code ${gzipCode}`))
+          return
+        }
+        // gzip exited cleanly — end load.stdin so load gets EOF
+        // and can finish consuming whatever's already in the pipe.
+        if (load.exitCode === null && load.killed === false) {
+          try { load.stdin.end() } catch { /* ignore */ }
+        }
+        tryFinishFromCodes()
+      })
+
+      load.on('close', (code) => {
+        loadCode = code ?? 0
+        // Symmetric: if load dies first, unpipe save.stdout so save
+        // and gzip can exit cleanly instead of getting EPIPE.
+        if (save.exitCode === null && save.killed === false) {
+          try { save.stdout.unpipe(gzip.stdin) } catch { /* ignore */ }
+        }
+        tryFinishFromCodes()
+      })
+
+      save.on('error', (err) => {
+        // If save fails before it's written any data, gzip and load
+        // will be waiting for input that never arrives. Make sure
+        // they get EOF on stdin so they don't hang on a read.
+        try { gzip.stdin.end() } catch { /* ignore */ }
+        try { load.stdin.end() } catch { /* ignore */ }
+        finish(err)
+      })
+      gzip.on('error', (err) => {
+        try { load.stdin.end() } catch { /* ignore */ }
+        finish(err)
+      })
       load.on('error', (err) => finish(err))
     })
   }

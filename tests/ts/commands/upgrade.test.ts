@@ -2,6 +2,7 @@ import {expect} from 'chai'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import sinon from 'sinon'
 
 // Import the upgrade command to test its structure
 import UpgradeCommand from '../../../typescript/cast-cli/src/commands/upgrade'
@@ -114,6 +115,66 @@ describe('Upgrade Command', () => {
 
     it('should have getOpenRouterApiKey method', () => {
       expect(typeof instance.getOpenRouterApiKey).to.equal('function')
+    })
+
+    it('should have detectOnHostTui method', () => {
+      expect(typeof instance.detectOnHostTui).to.equal('function')
+    })
+  })
+
+  describe('detectOnHostTui', () => {
+    let instance: any
+
+    beforeEach(() => {
+      instance = new UpgradeCommand(['upgrade', 'test'], {} as any)
+    })
+
+    it('should return true when docker exec test -e exits 0', async () => {
+      const deployUtils = await import('../../../typescript/cast-cli/src/lib/deploy/deploy-utils')
+      const execStub = sinon.stub(deployUtils, 'execCommand').resolves({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+      })
+      try {
+        const result = await instance.detectOnHostTui('203.0.113.1')
+        expect(result).to.be.true
+        // The SSH command must include the test -e on the cast-tui
+        // symlink, which is the last step of the TUI patch.
+        const args = execStub.firstCall.args[1] as string[]
+        expect(args.join(' ')).to.include('docker exec cast-agent test -e /usr/local/bin/cast-tui')
+      } finally {
+        execStub.restore()
+      }
+    })
+
+    it('should return false when docker exec test -e exits non-zero', async () => {
+      const deployUtils = await import('../../../typescript/cast-cli/src/lib/deploy/deploy-utils')
+      const execStub = sinon.stub(deployUtils, 'execCommand').resolves({
+        stdout: '',
+        stderr: 'no such file',
+        exitCode: 1,
+      })
+      try {
+        const result = await instance.detectOnHostTui('203.0.113.1')
+        expect(result).to.be.false
+      } finally {
+        execStub.restore()
+      }
+    })
+
+    it('should return false (safe default) when execCommand throws', async () => {
+      // If SSH is unreachable or the container isn't running, we
+      // can't know whether the TUI is bundled. Default to false —
+      // it's better to omit the TUI hint than to lie.
+      const deployUtils = await import('../../../typescript/cast-cli/src/lib/deploy/deploy-utils')
+      const execStub = sinon.stub(deployUtils, 'execCommand').rejects(new Error('ssh: connect refused'))
+      try {
+        const result = await instance.detectOnHostTui('203.0.113.1')
+        expect(result).to.be.false
+      } finally {
+        execStub.restore()
+      }
     })
   })
 

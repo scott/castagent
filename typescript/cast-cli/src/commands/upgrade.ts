@@ -10,7 +10,7 @@ import DigitalOceanDeploy from '../lib/deploy/digitalocean'
 import SpritesDeploy from '../lib/deploy/sprites'
 import {getRelease, getCurrentRelease, listReleases, validateSemver} from '../lib/releases'
 import {db} from '../lib/sqlite'
-import {resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
+import {resolveDeploymentTarget, createDockerignore, execCommand} from '../lib/deploy/deploy-utils'
 import {writeHostMotdOverSsh} from '../lib/deploy/motd'
 
 const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'sprites', 'docker', 'local']
@@ -570,11 +570,20 @@ export default class Upgrade extends Command {
     // Refresh the SSH login MOTD so the new version appears in the banner
     if (dropletIp) {
       this.log('Refreshing SSH login MOTD...')
+      // Detect whether the on-host TUI is bundled in the just-upgraded
+      // image. The TUI patch in deploy-utils creates a symlink at
+      // /usr/local/bin/cast-tui as its last step, so a successful
+      // `test -e` on that path means the TUI is present. The MOTD
+      // only advertises the TUI when this is true — otherwise the
+      // banner would tell users to run a command that doesn't exist
+      // in the container.
+      const onHostTui = await this.detectOnHostTui(dropletIp)
       const {motdStderr, profileStderr} = await writeHostMotdOverSsh(dropletIp, {
         agentName,
         dropletIp,
         a2aUrl: deploymentUrl ?? undefined,
         deployedVersion: version,
+        onHostTui,
       })
       if (motdStderr) {
         this.warn(`Failed to refresh /etc/motd: ${motdStderr}`)
@@ -679,10 +688,7 @@ CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "80
   }
 
   private createDockerignore(agentPath: string): void {
-    const content = `Dockerfile
-docker-compose.yml
-`
-    fs.writeFileSync(path.join(agentPath, '.dockerignore'), content)
+    createDockerignore(agentPath)
   }
 
   private createRequirementsTxt(projectRoot: string, agentPath: string): void {
@@ -763,5 +769,37 @@ xxhash>=3.7.0
       }
     }
     return process.env.OPENROUTER_API_KEY
+  }
+
+  /**
+   * Detect whether the on-host TUI is bundled in the agent container
+   * running on the given droplet. The TUI patch in deploy-utils
+   * creates a symlink at /usr/local/bin/cast-tui as its last step, so
+   * a successful `test -e` on that path is a reliable signal that
+   * the TUI is present in the image.
+   *
+   * Returns false on any error (SSH failure, container not running,
+   * `docker exec` unavailable) — false is the safe default because
+   * it causes the MOTD to omit the TUI hint, which is preferable to
+   * telling users to run a command that doesn't exist.
+   */
+  private async detectOnHostTui(dropletIp: string): Promise<boolean> {
+    const sshKey = path.join(os.homedir(), '.ssh', 'cast_do_key')
+    const sshArgs = [
+      '-i', sshKey,
+      '-o', 'StrictHostKeyChecking=no',
+      '-o', 'UserKnownHostsFile=/dev/null',
+      '-o', 'BatchMode=yes',
+      '-o', 'ConnectTimeout=10',
+      '-o', 'LogLevel=ERROR',
+      `root@${dropletIp}`,
+      'docker exec cast-agent test -e /usr/local/bin/cast-tui',
+    ]
+    try {
+      const result = await execCommand('ssh', sshArgs, {silent: true, shell: false})
+      return result.exitCode === 0
+    } catch {
+      return false
+    }
   }
 }

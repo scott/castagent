@@ -44,12 +44,14 @@ describe('DigitalOcean Deploy Provider', () => {
       expect(DigitalOceanDeploy.args.agent.description).to.equal('Agent name')
     })
 
-    it('should not have --no-build flag', () => {
-      expect(DigitalOceanDeploy.flags).to.be.undefined
+    it('should default --with-tui to false (keep images small)', () => {
+      expect(DigitalOceanDeploy.flags).to.have.property('with-tui')
+      expect(DigitalOceanDeploy.flags['with-tui'].default).to.be.false
     })
 
-    it('should not have --port flag', () => {
-      expect(DigitalOceanDeploy.flags).to.be.undefined
+    it('should default --size to s-2vcpu-2gb', () => {
+      expect(DigitalOceanDeploy.flags).to.have.property('size')
+      expect(DigitalOceanDeploy.flags.size.default).to.equal('s-2vcpu-2gb')
     })
   })
 
@@ -307,6 +309,43 @@ describe('DigitalOcean Deploy Provider', () => {
       } catch (e: any) {
         expect(e.message).to.include('Failed to start container')
       }
+    })
+
+    it('should pass onHostTui=true to the MOTD context when withTui is true', async () => {
+      const {motdStub} = stubDeployHelpers()
+      await instance.deployOnDroplet(
+        defaultArgs.ip, defaultArgs.agentName, defaultArgs.authToken,
+        defaultArgs.imageTag, defaultArgs.volumeId,
+        defaultArgs.deploymentUrl, defaultArgs.deployedVersion,
+        true, // withTui
+      )
+      expect(motdStub.calledOnce).to.be.true
+      const ctx = motdStub.firstCall.args[1] as {onHostTui?: boolean}
+      expect(ctx.onHostTui).to.be.true
+    })
+
+    it('should pass onHostTui=false to the MOTD context when withTui is false', async () => {
+      const {motdStub} = stubDeployHelpers()
+      await instance.deployOnDroplet(
+        defaultArgs.ip, defaultArgs.agentName, defaultArgs.authToken,
+        defaultArgs.imageTag, defaultArgs.volumeId,
+        defaultArgs.deploymentUrl, defaultArgs.deployedVersion,
+        false, // withTui
+      )
+      const ctx = motdStub.firstCall.args[1] as {onHostTui?: boolean}
+      expect(ctx.onHostTui).to.be.false
+    })
+
+    it('should default onHostTui to false when withTui is omitted (backwards compat)', async () => {
+      const {motdStub} = stubDeployHelpers()
+      // No 8th arg — should default to false.
+      await instance.deployOnDroplet(
+        defaultArgs.ip, defaultArgs.agentName, defaultArgs.authToken,
+        defaultArgs.imageTag, defaultArgs.volumeId,
+        defaultArgs.deploymentUrl, defaultArgs.deployedVersion,
+      )
+      const ctx = motdStub.firstCall.args[1] as {onHostTui?: boolean}
+      expect(ctx.onHostTui).to.be.false
     })
   })
 
@@ -623,6 +662,295 @@ describe('DigitalOcean Deploy Provider', () => {
       } finally {
         fs.rmSync(tempDir, {recursive: true, force: true})
       }
+    })
+  })
+
+  // -----------------------------------------------------------------------
+  // streamImageToDroplet
+  //
+  // Regression coverage for the bug where `docker save | ssh docker load`
+  // could hang forever: the streaming SSH had no keepalive, no wall-clock
+  // timeout, and no `save.on('close')` handler. We test through the
+  // private method via the `instance as any` cast (matching how
+  // `findProjectRoot` etc. are tested).
+  // -----------------------------------------------------------------------
+
+  describe('streamImageToDroplet', () => {
+    /**
+     * Build a mock child-process handle for one side of the
+     * `docker save | ssh docker load` pipe.
+     *
+     * The function under test registers handlers on `.on(event, cb)` for
+     * the process itself, on `.stdout` for `data` / `error`, and on
+     * `.stdin` for `error`. Tests call the returned `emit*` helpers to
+     * trigger those events and observe what the function does.
+     */
+    function makeMockProcess(): {
+      proc: any
+      stdout: any
+      stdin: any
+      emit: (event: string, ...args: any[]) => void
+      emitStdout: (event: string, ...args: any[]) => void
+      emitStdin: (event: string, ...args: any[]) => void
+    } {
+      const procHandlers: Record<string, Array<(...args: any[]) => void>> = {}
+      const stdoutHandlers: Record<string, Array<(...args: any[]) => void>> = {}
+      const stdinHandlers: Record<string, Array<(...args: any[]) => void>> = {}
+
+      const proc: any = {
+        exitCode: null,
+        killed: false,
+        on(event: string, cb: (...args: any[]) => void) {
+          (procHandlers[event] ||= []).push(cb)
+          return proc
+        },
+        kill: sandbox.stub().callsFake(() => {
+          proc.killed = true
+          return true
+        }),
+      }
+
+      const stdout: any = {
+        on(event: string, cb: (...args: any[]) => void) {
+          (stdoutHandlers[event] ||= []).push(cb)
+          return stdout
+        },
+        pipe: sandbox.stub(),
+        unpipe: sandbox.stub(),
+      }
+
+      const stdin: any = {
+        on(event: string, cb: (...args: any[]) => void) {
+          (stdinHandlers[event] ||= []).push(cb)
+          return stdin
+        },
+        end: sandbox.stub(),
+      }
+
+      proc.stdout = stdout
+      proc.stdin = stdin
+
+      return {
+        proc,
+        stdout,
+        stdin,
+        emit(event: string, ...args: any[]) {
+          ;(procHandlers[event] || []).forEach((cb) => cb(...args))
+        },
+        emitStdout(event: string, ...args: any[]) {
+          ;(stdoutHandlers[event] || []).forEach((cb) => cb(...args))
+        },
+        emitStdin(event: string, ...args: any[]) {
+          ;(stdinHandlers[event] || []).forEach((cb) => cb(...args))
+        },
+      }
+    }
+
+    /** Stub child_process.spawn so `docker save` → saveMock, `gzip` → gzipMock, `ssh` → loadMock. */
+    function stubSpawn(saveMock: any, loadMock: any, gzipMock?: any): sinon.SinonStub {
+      const gzip = gzipMock || makeMockProcess()
+      return stubFn(sandbox.stub(require('child_process'), 'spawn') as any)
+        .onFirstCall().returns(saveMock.proc)
+        .onSecondCall().returns(gzip.proc)
+        .onThirdCall().returns(loadMock.proc)
+    }
+
+    it('should resolve when save, gzip, and load all exit 0', async () => {
+      const saveMock = makeMockProcess()
+      const gzipMock = makeMockProcess()
+      const loadMock = makeMockProcess()
+      stubSpawn(saveMock, loadMock, gzipMock)
+
+      // Suppress progress logs from polluting the test output.
+      sandbox.stub(instance, 'log').returns(undefined)
+
+      const promise = instance.streamImageToDroplet('203.0.113.1', 'cast-test:latest', 5000)
+
+      // Trigger all three clean exits.
+      saveMock.emit('close', 0)
+      gzipMock.emit('close', 0)
+      loadMock.emit('close', 0)
+
+      await promise
+      // All children should have been killed by the finish() cleanup
+      // (they're already dead, but kill() is still called defensively).
+      expect(saveMock.proc.kill.called).to.be.true
+      expect(gzipMock.proc.kill.called).to.be.true
+      expect(loadMock.proc.kill.called).to.be.true
+    })
+
+    it('should reject with a timeout error when streaming never completes', async () => {
+      // Use fake timers so the 500ms timeout fires instantly in test time.
+      const clock = sandbox.useFakeTimers()
+      const saveMock = makeMockProcess()
+      const gzipMock = makeMockProcess()
+      const loadMock = makeMockProcess()
+      stubSpawn(saveMock, loadMock, gzipMock)
+
+      // Neither side emits anything — this simulates a hung SSH pipe.
+      const promise = instance.streamImageToDroplet(
+        '203.0.113.1', 'cast-test:latest', 500, // 500ms timeout
+      )
+
+      // Capture the unhandled rejection so the test doesn't warn
+      // (we attach .catch after the tick).
+      const guarded = promise.catch((e: Error) => e)
+
+      await clock.tickAsync(600)
+      const err = await guarded as Error
+      expect(err).to.be.instanceOf(Error)
+      expect(err.message).to.include('timed out')
+      expect(err.message).to.include('500')
+
+      // All three children should have been SIGKILL'd.
+      expect(saveMock.proc.kill.calledWith('SIGKILL')).to.be.true
+      expect(gzipMock.proc.kill.calledWith('SIGKILL')).to.be.true
+      expect(loadMock.proc.kill.calledWith('SIGKILL')).to.be.true
+    })
+
+    it('should reject when docker save emits an error event', async () => {
+      const saveMock = makeMockProcess()
+      const gzipMock = makeMockProcess()
+      const loadMock = makeMockProcess()
+      stubSpawn(saveMock, loadMock, gzipMock)
+      sandbox.stub(instance, 'log').returns(undefined)
+
+      const promise = instance.streamImageToDroplet('203.0.113.1', 'cast-test:latest', 5000)
+
+      const boom = new Error('docker: not found')
+      saveMock.emit('error', boom)
+
+      try {
+        await promise
+        expect.fail('should have rejected')
+      } catch (e: any) {
+        expect(e.message).to.equal('docker: not found')
+      }
+    })
+
+    it('should reject when docker save exits non-zero, even if load is still open', async () => {
+      // Regression for the original bug: only `load.on('close')` could
+      // resolve the promise, so a save failure (e.g. wrong image tag)
+      // would either be hidden or only surface when load eventually
+      // timed out. Now save's close handler errors out immediately.
+      const saveMock = makeMockProcess()
+      const gzipMock = makeMockProcess()
+      const loadMock = makeMockProcess()
+      stubSpawn(saveMock, loadMock, gzipMock)
+      sandbox.stub(instance, 'log').returns(undefined)
+
+      const promise = instance.streamImageToDroplet('203.0.113.1', 'cast-test:latest', 5000)
+
+      saveMock.emit('close', 1) // save dies with code 1
+      // Don't emit close on gzip or load — simulate them still running.
+
+      try {
+        await promise
+        expect.fail('should have rejected')
+      } catch (e: any) {
+        expect(e.message).to.include('docker save')
+        expect(e.message).to.include('1')
+      }
+    })
+
+    it('should pass SSH args that include keepalive (ServerAliveInterval=5, ServerAliveCountMax=1)', async () => {
+      const saveMock = makeMockProcess()
+      const gzipMock = makeMockProcess()
+      const loadMock = makeMockProcess()
+      const spawnStub = stubSpawn(saveMock, loadMock, gzipMock)
+      sandbox.stub(instance, 'log').returns(undefined)
+
+      const promise = instance.streamImageToDroplet('203.0.113.1', 'cast-test:latest', 5000)
+      saveMock.emit('close', 0)
+      gzipMock.emit('close', 0)
+      loadMock.emit('close', 0)
+      await promise
+
+      // Find the ssh spawn call (3rd call: spawn('ssh', ...))
+      const sshCall: any = spawnStub.getCalls().find(
+        (c: any) => c.args[0] === 'ssh',
+      )
+      expect(sshCall, 'ssh child should have been spawned').to.exist
+      const sshArgs: string[] = sshCall.args[1]
+
+      // Keepalive options must be present (this is the bug fix).
+      expect(sshArgs, 'should include ServerAliveInterval=5').to.include('ServerAliveInterval=5')
+      expect(sshArgs, 'should include ServerAliveCountMax=1').to.include('ServerAliveCountMax=1')
+
+      // The remote command and target host should still be there.
+      expect(sshArgs, 'should target root@<ip>').to.include('root@203.0.113.1')
+      // gzip wrapper: remote command is now `gunzip | docker load`
+      expect(sshArgs, 'should invoke gunzip | docker load remotely').to.include('gunzip | docker load')
+
+      // Forbid interactive prompts (consistent with the rest of the file).
+      expect(sshArgs, 'should disable StrictHostKeyChecking').to.include('StrictHostKeyChecking=no')
+      expect(sshArgs, 'should set BatchMode=yes').to.include('BatchMode=yes')
+
+      // gzip is spawned with -6 -c (compress level 6 to stdout)
+      const gzipCall: any = spawnStub.getCalls().find(
+        (c: any) => c.args[0] === 'gzip',
+      )
+      expect(gzipCall, 'gzip child should have been spawned').to.exist
+      expect(gzipCall.args[1], 'gzip should be invoked with -6 -c').to.deep.equal(['-6', '-c'])
+    })
+
+    it('should surface pipe errors from load.stdin (e.g. EPIPE-equivalent errors)', async () => {
+      // EPIPE itself is normal (load closes → save's writer gets EPIPE)
+      // and is intentionally swallowed. But any other error on
+      // load.stdin should reject the promise.
+      const saveMock = makeMockProcess()
+      const gzipMock = makeMockProcess()
+      const loadMock = makeMockProcess()
+      stubSpawn(saveMock, loadMock, gzipMock)
+      sandbox.stub(instance, 'log').returns(undefined)
+
+      const promise = instance.streamImageToDroplet('203.0.113.1', 'cast-test:latest', 5000)
+
+      const epipe: any = new Error('write EPIPE')
+      epipe.code = 'EPIPE'
+      loadMock.emitStdin('error', epipe)
+
+      // EPIPE is suppressed — promise should NOT have rejected.
+      // Now trigger all three to close normally and the promise should resolve.
+      loadMock.emit('close', 0)
+      gzipMock.emit('close', 0)
+      saveMock.emit('close', 0)
+
+      // Attach a catch so a potential rejection doesn't surface as
+      // an unhandled rejection warning during the test.
+      const guarded = promise.catch((e: Error) => e)
+      // Resolved with undefined (no error):
+      const result = await guarded
+      expect(result, 'EPIPE on load.stdin should not reject the promise').to.be.undefined
+    })
+
+    it('should clear the timeout when streaming finishes before timeout', async () => {
+      // Regression: if the timeout is not cleared on success, the
+      // node event loop keeps the timer active and the process may
+      // not exit cleanly between tests. We use sinon's fake clock
+      // and tick well past the timeout — if the timer wasn't cleared,
+      // the (already-resolved) promise would still get a stray call.
+      const clock = sandbox.useFakeTimers()
+      const saveMock = makeMockProcess()
+      const gzipMock = makeMockProcess()
+      const loadMock = makeMockProcess()
+      stubSpawn(saveMock, loadMock, gzipMock)
+      sandbox.stub(instance, 'log').returns(undefined)
+
+      const promise = instance.streamImageToDroplet('203.0.113.1', 'cast-test:latest', 5000)
+      saveMock.emit('close', 0)
+      gzipMock.emit('close', 0)
+      loadMock.emit('close', 0)
+      await promise
+
+      // Now tick far past the timeout. If the timer wasn't cleared,
+      // the finish() call would try to resolve/reject an already-settled
+      // promise. We just assert the promise is still resolved (not
+      // rejected) and the children were killed exactly once.
+      await clock.tickAsync(10_000)
+      expect(saveMock.proc.kill.callCount).to.equal(1)
+      expect(gzipMock.proc.kill.callCount).to.equal(1)
+      expect(loadMock.proc.kill.callCount).to.equal(1)
     })
   })
 
