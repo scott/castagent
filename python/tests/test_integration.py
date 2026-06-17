@@ -2,15 +2,15 @@
 Integration test for Runtime Agent with and without OPENROUTER_API_KEY.
 
 Run this test manually:
-    cd /Users/scott/Workspace/agent-cast/python
+    cd /Users/scott/Workspace/castagent/python
     source .venv/bin/activate
     
     # Without API key (echo mode)
-    PYTHONPATH=/Users/scott/Workspace/agent-cast/python pytest tests/test_integration.py -v -k echo
+    PYTHONPATH=/Users/scott/Workspace/castagent/python pytest tests/test_integration.py -v -k echo
     
     # With API key (LLM mode) - requires valid OPENROUTER_API_KEY
     export OPENROUTER_API_KEY="your-key"
-    PYTHONPATH=/Users/scott/Workspace/agent-cast/python pytest tests/test_integration.py -v -k llm
+    PYTHONPATH=/Users/scott/Workspace/castagent/python pytest tests/test_integration.py -v -k llm
 """
 import os
 import pytest

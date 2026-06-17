@@ -251,7 +251,7 @@ class TestReadEnvMotd:
 
     def test_decodes_base64(self, mod):
         import base64
-        plain = "Welcome to agent-cast!"
+        plain = "Welcome to castagent!"
         encoded = base64.b64encode(plain.encode()).decode()
         with patch.dict(os.environ, {"CAST_MOTD": encoded}, clear=False):
             importlib.reload(mod)

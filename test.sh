@@ -5,7 +5,7 @@
 
 set -e
 
-PROJECT_DIR="/Users/scott/Workspace/agent-cast"
+PROJECT_DIR="/Users/scott/Workspace/castagent"
 DEMO_AGENT="demo-agent"
 TEST_PORT="10030"
 

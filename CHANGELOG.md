@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on `localhost:8080` — identical to `cast connect` but without public network
   exposure or bearer token transport. Falls back to a Python A2A REPL if the
   JS runtime or TUI bundle is unavailable.
-  ([#28](https://github.com/scott/agent-cast/issues/28))
+  ([#28](https://github.com/scott/castagent/issues/28))
 
 ## [1.0.0] - 2026-06-11
 
@@ -33,7 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Deprecated
 
-- `cast versions` command renamed to `cast releases`. The old command still works for one release cycle via a deprecated alias but prints a warning to stderr. Use `cast releases` instead. ([#25](https://github.com/agent-cast/cast/pull/26))
+- `cast versions` command renamed to `cast releases`. The old command still works for one release cycle via a deprecated alias but prints a warning to stderr. Use `cast releases` instead. ([#25](https://github.com/scott/castagent/pull/26))
 
 ### Changed
 

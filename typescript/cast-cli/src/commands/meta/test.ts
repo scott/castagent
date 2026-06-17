@@ -60,12 +60,12 @@ export default class MetaTest extends Command {
     }
 
     // Find Python executable
-    let venvPython = '/Users/scott/Workspace/agent-cast/python/.venv/bin/python3'
+    let venvPython = '/Users/scott/Workspace/castagent/python/.venv/bin/python3'
     if (!fs.existsSync(venvPython)) {
       venvPython = 'python3'
     }
 
-    const pythonPath = process.env.PYTHONPATH || '/Users/scott/Workspace/agent-cast/python'
+    const pythonPath = process.env.PYTHONPATH || '/Users/scott/Workspace/castagent/python'
     const bridge = new StdioJsonRpcBridge(venvPython, ['-m', 'cast', 'builder'], {
       env: {
         ...process.env,

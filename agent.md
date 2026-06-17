@@ -38,7 +38,7 @@ When reviewing a PR that requires a version bump:
    - Add new version section at top
    - Include date (YYYY-MM-DD format)
    - Group changes by type: Added, Fixed, Changed, Deprecated, Removed, Security
-   - Include PR link: `([#PR_NUMBER](https://github.com/agent-cast/cast/pull/PR_NUMBER))`
+   - Include PR link: `([#PR_NUMBER](https://github.com/scott/castagent/pull/PR_NUMBER))`
 
 4. **Create git tag** after merge (handled by GitHub Actions):
    - Tag format: `v<version>` (e.g., `v0.2.0`)
@@ -49,10 +49,10 @@ When reviewing a PR that requires a version bump:
 ## [0.2.0] - 2026-06-15
 
 ### Added
-- New deployment provider ([#42](https://github.com/agent-cast/cast/pull/42))
+- New deployment provider ([#42](https://github.com/scott/castagent/pull/42))
 
 ### Fixed
-- Memory leak in agent runtime ([#43](https://github.com/agent-cast/cast/pull/43))
+- Memory leak in agent runtime ([#43](https://github.com/scott/castagent/pull/43))
 ```
 
 ### Branch Protection

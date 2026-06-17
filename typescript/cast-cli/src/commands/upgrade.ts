@@ -750,7 +750,7 @@ xxhash>=3.7.0
       .split('\n')
       .filter(line => {
         const trimmed = line.trim().toLowerCase()
-        return !/^cast\b/.test(trimmed) && !trimmed.includes('agent-cast')
+        return !/^cast\b/.test(trimmed) && !trimmed.includes('castagent')
       })
       .join('\n')
 

@@ -22,7 +22,7 @@ if (!globalThis.__testConfig.execFileSyncCalls) globalThis.__testConfig.execFile
 // to the slash-registry source location so the relative path lookups
 // in findCastBinary don't throw.
 if (!globalThis.__dirname) {
-  globalThis.__dirname = '/Users/scott/Workspace/agent-cast/typescript/cast-tui/dist/commands'
+  globalThis.__dirname = '/Users/scott/Workspace/castagent/typescript/cast-tui/dist/commands'
 }
 
 export function execFileSync(file, args, options) {

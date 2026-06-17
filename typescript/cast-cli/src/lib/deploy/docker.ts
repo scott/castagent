@@ -313,8 +313,8 @@ xxhash>=3.7.0
       .split('\n')
       .filter(line => {
         const trimmed = line.trim().toLowerCase()
-        // Remove exact 'cast' package (editable, VCS, or normal install) and agent-cast repo refs
-        return !/^cast\b/.test(trimmed) && !trimmed.includes('agent-cast')
+        // Remove exact 'cast' package (editable, VCS, or normal install) and castagent repo refs
+        return !/^cast\b/.test(trimmed) && !trimmed.includes('castagent')
       })
       .join('\n')
 

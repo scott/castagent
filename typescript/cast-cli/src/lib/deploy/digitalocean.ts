@@ -311,7 +311,7 @@ export default class DigitalOceanDeploy extends Command {
   /**
    * Find the project root directory by looking for known marker paths.
    * Tries several relative paths from the current working directory and
-   * the compiled output directory to locate the agent-cast project root.
+   * the compiled output directory to locate the castagent project root.
    */
   private findProjectRoot(): string {
     const markers = ['python/cast', 'typescript/cast-tui']
