@@ -1,0 +1,38 @@
+---
+/**
+ * SlashRef — renders one TUI slash command from data/slash.json.
+ * Shows: command, description, category, available modes, notes.
+ */
+import type { SlashCommand } from '../lib/types.ts'
+
+interface Props {
+  command: SlashCommand
+}
+
+const { command } = Astro.props
+const anchor = command.name.replace(/[^a-z0-9]/gi, '-')
+---
+
+<section id={anchor} class="command-ref">
+  <h2><code>/{command.name}</code></h2>
+  <p style="color:var(--color-fg-muted);margin:0.25rem 0 0.5rem;">{command.description}</p>
+
+  <p>
+    <span class="badge accent">category: {command.category}</span>
+    {command.modes && command.modes.length > 0 && (
+      command.modes.map((m) => <span class="badge">{m}</span>)
+    )}
+    {command.args && <span class="badge">args: <code style="background:transparent;border:0;padding:0;">{command.args}</code></span>}
+  </p>
+
+  {command.notes && (
+    <>
+      <h3>Notes</h3>
+      <p>{command.notes}</p>
+    </>
+  )}
+
+  <p style="color:var(--color-fg-muted);font-size:0.85rem;">
+    Source: <a href={`https://github.com/scott/agent-cast/blob/master/${command.source}`}><code>{command.source}</code></a>
+  </p>
+</section>

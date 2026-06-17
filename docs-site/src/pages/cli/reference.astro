@@ -1,0 +1,68 @@
+---
+import Docs from '../../layouts/Docs.astro'
+import CommandRef from '../../components/CommandRef.astro'
+import { getCliCommands } from '../../lib/manifest.ts'
+
+const commands = getCliCommands().sort((a, b) => a.full.localeCompare(b.full))
+
+// Group by topic (first segment of the command path)
+const groups = new Map<string, typeof commands>()
+for (const c of commands) {
+  const topic = c.topic === c.id ? 'core' : c.topic
+  const list = groups.get(topic) ?? []
+  list.push(c)
+  groups.set(topic, list)
+}
+
+const topicOrder = ['core', 'git', 'meta']
+const sortedTopics = [...groups.keys()].sort((a, b) => {
+  const ai = topicOrder.indexOf(a)
+  const bi = topicOrder.indexOf(b)
+  if (ai === -1 && bi === -1) return a.localeCompare(b)
+  if (ai === -1) return 1
+  if (bi === -1) return -1
+  return ai - bi
+})
+---
+
+<Docs title="CLI reference" description="Every cast command, auto-extracted from source.">
+  <h1>CLI reference</h1>
+  <p>
+    Auto-generated from <code>typescript/cast-cli/src/commands/</code> on every build.
+    If a command is missing or its description looks wrong, that file is the source of truth.
+  </p>
+
+  <h2 id="contents">Contents</h2>
+  <ul>
+    {sortedTopics.map((topic) => (
+      <li>
+        <strong>{topic === 'core' ? 'Core' : topic}</strong>
+        <ul>
+          {(groups.get(topic) ?? []).map((c) => (
+            <li><a href={`#${c.full.replace(/^cast /, '').replace(/\s+/g, '-')}`}><code>{c.full}</code></a> — {c.description}</li>
+          ))}
+        </ul>
+      </li>
+    ))}
+  </ul>
+
+  <hr />
+
+  {sortedTopics.map((topic) => (
+    <>
+      <h2 id={`topic-${topic}`}>{topic === 'core' ? 'Core commands' : `${topic} commands`}</h2>
+      {(groups.get(topic) ?? []).map((c) => <CommandRef command={c} />)}
+    </>
+  ))}
+
+  <h2 id="known-models">Known models</h2>
+  <p>
+    The <code>cast update</code> command's <code>--model</code> flag accepts any valid
+    OpenRouter model ID. The list below is a curated subset; the source of truth is
+    <code>KNOWN_MODELS</code> in <code>typescript/cast-cli/src/commands/update.ts</code>.
+  </p>
+  <p>
+    See the <a href="/cli/reference#cast-update"><code>cast update</code></a> reference
+    for the full flag list.
+  </p>
+</Docs>

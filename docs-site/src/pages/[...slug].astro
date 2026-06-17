@@ -1,0 +1,31 @@
+---
+/**
+ * [...slug].astro — render any prose markdown page from content/<section>/<slug>.md.
+ *
+ * The content collection's loader assigns ids of the form `<section>/<slug>`,
+ * which we split to produce the URL path. The page reuses the standard
+ * Docs layout, then renders the markdown body.
+ *
+ * Slug mapping example:
+ *   content/getting-started/install.md    -> /getting-started/install
+ *   content/agents/anatomy.md             -> /agents/anatomy
+ */
+import { getCollection, render } from 'astro:content'
+import Docs from '../layouts/Docs.astro'
+
+export async function getStaticPaths() {
+  const prose = await getCollection('prose')
+  return prose.map((entry) => ({
+    params: { slug: entry.id },
+    props: { entry },
+  }))
+}
+
+const { entry } = Astro.props
+const { Content } = await render(entry)
+---
+
+<Docs title={entry.data.title} description={entry.data.description}>
+  <h1>{entry.data.title}</h1>
+  <Content />
+</Docs>

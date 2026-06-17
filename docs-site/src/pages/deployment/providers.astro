@@ -1,0 +1,40 @@
+---
+import Docs from '../../layouts/Docs.astro'
+import ProviderCard from '../../components/ProviderCard.astro'
+import { getProviders } from '../../lib/manifest.ts'
+
+const providers = getProviders().sort((a, b) => a.name.localeCompare(b.name))
+---
+
+<Docs title="Deployment providers" description="Every host Cast can deploy to.">
+  <h1>Deployment providers</h1>
+  <p>
+    Use <code>cast deploy &lt;agent&gt; --provider &lt;key&gt;</code> to deploy to a specific
+    platform. If you omit <code>--provider</code>, Cast prompts interactively.
+    Auto-generated from <code>PROVIDERS</code> in
+    <code>typescript/cast-cli/src/commands/deploy.ts</code>.
+  </p>
+
+  <table>
+    <thead>
+      <tr><th>Provider</th><th>Description</th><th>On-host TUI</th></tr>
+    </thead>
+    <tbody>
+      {providers.map((p) => (
+        <tr>
+          <td><a href={`#${p.key}`}>{p.name}</a> <code style="color:var(--color-fg-muted);">--provider {p.key}</code></td>
+          <td>{p.description}</td>
+          <td>
+            {p.supportsWithTui
+              ? <span class="badge pro">supported</span>
+              : <span style="color:var(--color-fg-muted)">no</span>}
+          </td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+
+  <hr />
+
+  {providers.map((p) => <ProviderCard provider={p} />)}
+</Docs>

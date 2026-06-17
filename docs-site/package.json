@@ -1,0 +1,35 @@
+{
+  "name": "cast-docs",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Static documentation site for Cast (CLI + TUI). Auto-generates CLI command, TUI slash-command, and provider reference from source.",
+  "scripts": {
+    "prebuild": "npm run extract",
+    "predev": "npm run extract",
+    "extract": "tsx scripts/extract-cli.ts && tsx scripts/extract-slash.ts && tsx scripts/extract-providers.ts && tsx scripts/extract-changelog.ts && tsx scripts/snapshot-manifest.ts",
+    "snapshot": "tsx scripts/snapshot-manifest.ts",
+    "validate": "tsx scripts/validate-manifest.ts",
+    "check": "npm run validate",
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "astro": "astro"
+  },
+  "dependencies": {
+    "astro": "^5.0.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "^0.9.0",
+    "@astrojs/mdx": "^4.0.0",
+    "@types/node": "^20",
+    "gray-matter": "^4.0.3",
+    "markdown-link-check": "^3.13.7",
+    "ts-morph": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.7.0"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}
