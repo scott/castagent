@@ -197,26 +197,36 @@ export async function generateAuthToken(
 export function ensureDockerfile(agentPath: string): void {
   const dockerfilePath = path.join(agentPath, 'Dockerfile')
   if (!fs.existsSync(dockerfilePath)) {
-    const dockerfile = `FROM python:3.11-slim
+    // Multi-stage Docker build for smaller image size:
+    // - Stage 1 (builder): Compiles any Python packages with C extensions
+    // - Stage 2 (runtime): Contains only the installed packages, no build tools
+    //
+    // Size savings vs single-stage with gcc/git:
+    //   gcc: ~250 MB, git: ~60 MB
+    const dockerfile = `FROM python:3.11-slim-bookworm AS builder
+
+WORKDIR /build
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/* \\
+    && pip install --no-cache-dir -r requirements.txt
+
+# Runtime stage — no build tools, just Python and installed packages
+FROM python:3.11-slim-bookworm
 
 WORKDIR /app
 
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy Python runtime
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy installed Python packages from builder stage
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
 
 # Copy agent files
 COPY . /app/agent/
 
 # Set environment variables
 ENV CAST_AGENT_PATH=/app/agent
-ENV PYTHONPATH=/app
+ENV PYTHONPATH=/usr/local
 
 # Expose port
 EXPOSE 8080
@@ -247,6 +257,71 @@ python-dotenv>=1.0.0
 // Bump this if you add new TUI dependencies.
 const EMBED_BUDGET_MB = 100
 
+// Pattern that matches any line referencing the on-host TUI bundle.
+// Used to strip stale TUI patches from the agent's Dockerfile (e.g. when
+// a user re-deploys with --with-tui=false after a prior --with-tui=true
+// deploy left a TUI patch in place).
+const TUI_BUNDLE_PATTERN =
+  /(\.cast-tui\/|\/opt\/cast-tui\/|\/opt\/cast-cli\/|CAST_TUI_DIR|Host TUI bundle|apt-get install -y (nodejs|curl unzip)|bun\.sh\/install|npm install.*--no-optional|npm install.*--production|ln -sf \/opt\/cast-tui)/
+
+/**
+ * Strip any/all Host TUI bundle content from a Dockerfile string. A
+ * "TUI block" is any contiguous run of lines that reference the TUI
+ * bundle — by marker comment, by `.cast-tui/...` paths, by
+ * `/opt/cast-tui/...` paths, by `CAST_TUI_DIR` env var, or by RUN
+ * commands that install /opt/cast-tui (apt-get for curl+unzip inside
+ * the bundle, bun.sh/install, npm install inside the bundle, ln -sf
+ * pointing at the launcher). We detect blocks by walking the file
+ * line by line: any line that mentions the TUI bundle (or is a
+ * blank/comment line that follows one) gets stripped. Loops until no
+ * more blocks are found, because a Dockerfile can have multiple stale
+ * blocks from successive deploys.
+ */
+function stripDockerfileTuiBlocks(input: string): string {
+  let result = input
+  while (true) {
+    const lines = result.split('\n')
+    const cleaned: string[] = []
+    let skippingBlock = false
+    let foundBlock = false
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i]
+      if (TUI_BUNDLE_PATTERN.test(line)) {
+        skippingBlock = true
+        foundBlock = true
+        continue
+      }
+      if (skippingBlock) {
+        // Continue skipping blank lines and comments that
+        // immediately follow TUI bundle content. Stop at the
+        // first real instruction.
+        if (line.trim() === '' || line.trim().startsWith('#')) {
+          continue
+        }
+        skippingBlock = false
+      }
+      cleaned.push(line)
+    }
+    if (!foundBlock) {
+      return result
+    }
+    result = cleaned.join('\n')
+  }
+}
+
+/**
+ * Options for `prepareHostTuiBuildContext`.
+ */
+export interface HostTuiBuildContextOptions {
+  /**
+   * Whether to embed the on-host TUI bundle (cast-tui command) in the
+   * agent image. Defaults to `true` to preserve prior behavior; the
+   * `cast deploy` command for DigitalOcean passes `false` by default
+   * to keep the image small, with `--with-tui` to opt back in.
+   */
+  enabled: boolean
+}
+
 /**
  * Prepare the build context for the on-host TUI bundle.
  *
@@ -263,10 +338,36 @@ const EMBED_BUDGET_MB = 100
  *      /opt/cast-tui/, and create the /usr/local/bin/cast-tui
  *      symlink
  *
+ * When `options.enabled === false`, the function is a near no-op: it
+ * only strips any existing TUI patch from the agent's Dockerfile (in
+ * case a prior deploy was `--with-tui=true`) and logs a skip message.
+ *
  * @param agentPath - Path to the agent's directory (Docker build context)
  * @param projectRoot - Root of the agent-cast project (to locate TUI dist)
+ * @param options - { enabled: boolean }. Defaults to { enabled: true }
+ *                  for backwards compatibility.
  */
-export async function prepareHostTuiBuildContext(agentPath: string, projectRoot: string): Promise<void> {
+export async function prepareHostTuiBuildContext(
+  agentPath: string,
+  projectRoot: string,
+  options: HostTuiBuildContextOptions = { enabled: true },
+): Promise<void> {
+  if (!options.enabled) {
+    console.log('On-host TUI bundle: skipped (use --with-tui to enable).')
+    // If a previous deploy patched the Dockerfile with a TUI bundle,
+    // strip it now so the agent deploys with the lean image.
+    const dockerfilePath = path.join(agentPath, 'Dockerfile')
+    if (fs.existsSync(dockerfilePath)) {
+      const original = fs.readFileSync(dockerfilePath, 'utf-8')
+      const stripped = stripDockerfileTuiBlocks(original)
+      if (stripped !== original) {
+        fs.writeFileSync(dockerfilePath, stripped)
+        console.log('Stripped existing TUI bundle from Dockerfile.')
+      }
+    }
+    return
+  }
+
   const hostTuiDir = path.join(agentPath, '.cast-tui')
   const hostTuiDistDir = path.join(hostTuiDir, 'dist')
 
@@ -457,53 +558,9 @@ ENV CAST_TUI_DIR=/opt/cast-tui
   if (fs.existsSync(dockerfilePath)) {
     let dockerfile = fs.readFileSync(dockerfilePath, 'utf-8')
 
-    // Strip ALL existing Host TUI bundle content. A "TUI block" is
-    // any contiguous run of lines that reference the TUI bundle —
-    // by marker comment, by `.cast-tui/...` paths, by
-    // `/opt/cast-tui/...` paths, by `CAST_TUI_DIR` env var, or by
-    // RUN commands that install /opt/cast-tui (apt-get for nodejs
-    // inside the bundle, npm install inside the bundle, ln -sf
-    // pointing at the launcher). We detect blocks by walking the
-    // file line by line: any line that mentions the TUI bundle
-    // (or is a blank/comment line that follows one) gets stripped.
-    // Loop until no more blocks are found, because a Dockerfile
-    // can have multiple stale blocks from successive deploys.
-    const TUI_BUNDLE_PATTERN =
-      /(\.cast-tui\/|\/opt\/cast-tui\/|\/opt\/cast-cli\/|CAST_TUI_DIR|Host TUI bundle|apt-get install -y (nodejs|curl unzip)|bun\.sh\/install|npm install.*--no-optional|npm install.*--production|ln -sf \/opt\/cast-tui)/
-
-    function stripBlocks(input: string): string {
-      let result = input
-      while (true) {
-        const lines = result.split('\n')
-        const cleaned: string[] = []
-        let skippingBlock = false
-        let foundBlock = false
-        for (let i = 0; i < lines.length; i++) {
-          const line = lines[i]
-          if (TUI_BUNDLE_PATTERN.test(line)) {
-            skippingBlock = true
-            foundBlock = true
-            continue
-          }
-          if (skippingBlock) {
-            // Continue skipping blank lines and comments that
-            // immediately follow TUI bundle content. Stop at the
-            // first real instruction.
-            if (line.trim() === '' || line.trim().startsWith('#')) {
-              continue
-            }
-            skippingBlock = false
-          }
-          cleaned.push(line)
-        }
-        if (!foundBlock) {
-          return result
-        }
-        result = cleaned.join('\n')
-      }
-    }
-
-    dockerfile = stripBlocks(dockerfile)
+    // Strip ALL existing Host TUI bundle content (see
+    // stripDockerfileTuiBlocks above for the full rationale).
+    dockerfile = stripDockerfileTuiBlocks(dockerfile)
 
     // Apply the new patch before the CMD line.
     dockerfile = dockerfile.replace(/^CMD /m, `${patch}CMD `)

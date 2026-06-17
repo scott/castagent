@@ -38,3 +38,6 @@ Changes:
   .git, archives, __pycache__, logs, .env files, and other non-runtime artifacts
 - Fix DigitalOcean fresh deploys by adding missing .cast-runtime/ directory
   creation before docker build
+- Switch to multi-stage Docker build to exclude gcc/git toolchain from final
+  image (~250-300 MB saved)
+- Use python:3.11-slim-bookworm base image for better compression (~50-70 MB saved)

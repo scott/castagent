@@ -189,9 +189,18 @@ cast shutdown demo-agent
 
 ### Chatting On-Host (Docker container shell)
 
-Agents deployed to DigitalOcean include a bundled TUI (`cast-tui`) inside the
-agent's Docker container. Reach the container and type `cast-tui` to open a
-chat session that talks directly to the A2A server on `localhost:8080`:
+By default, DigitalOcean-deployed agents are **lean** — the image only
+contains what's needed to run the A2A server, not the on-host TUI. To
+get the bundled `cast-tui` command in the container, deploy with
+`--with-tui`:
+
+```bash
+cast deploy demo-agent --provider digitalocean --with-tui
+```
+
+With the TUI bundled, you can reach the container and run `cast-tui`
+to open a chat session that talks directly to the A2A server on
+`localhost:8080`:
 
 ```bash
 # SSH into the droplet (or use the DO web console)

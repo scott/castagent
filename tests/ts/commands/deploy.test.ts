@@ -59,6 +59,17 @@ describe('Deploy Command', () => {
       expect(DeployCommand.flags.force.description?.length).to.be.greaterThan(0)
       expect(DeployCommand.flags.force.default).to.equal(false)
     })
+
+    it('should default --with-tui to false (keep images small by default)', () => {
+      expect(DeployCommand.flags).to.have.property('with-tui')
+      expect(DeployCommand.flags['with-tui'].default).to.be.false
+    })
+
+    it('should have a --with-tui flag with a description', () => {
+      const flag = DeployCommand.flags['with-tui']
+      expect(flag.description).to.be.a('string')
+      expect(flag.description?.length).to.be.greaterThan(0)
+    })
   })
 
   describe('examples', () => {

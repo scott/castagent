@@ -101,6 +101,13 @@ export default class Deploy extends Command {
       description: 'Release version to deploy (defaults to latest/current state)',
       default: 'latest',
     }),
+    'with-tui': Flags.boolean({
+      description:
+        'Bundle the on-host TUI (cast-tui command) into the image. ' +
+        'Off by default to keep images small and streaming fast. ' +
+        'Only the DigitalOcean provider currently supports the on-host TUI.',
+      default: false,
+    }),
   }
 
   static args = {
@@ -454,6 +461,7 @@ export default class Deploy extends Command {
     const agentName = args.agent
     let provider = flags.provider
     const version = flags.version
+    const withTui = flags['with-tui'] as boolean
 
     // Validate agent exists
     const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
@@ -550,7 +558,12 @@ export default class Deploy extends Command {
         }
 
         case 'digitalocean': {
-          await DigitalOceanDeploy.run([agentName])
+          // Forward --with-tui to the digitalocean subcommand so the
+          // TUI bundle (or its absence) is reflected in the image
+          // and the resulting MOTD. Other providers ignore this
+          // flag for now.
+          const doArgs = withTui ? [agentName, '--with-tui'] : [agentName]
+          await DigitalOceanDeploy.run(doArgs)
           break
         }
 

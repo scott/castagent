@@ -571,4 +571,52 @@ CMD ["python", "-m", "cast.runtime"]
     const matches = result.match(/# Host TUI bundle/g)
     expect(matches).to.have.length(1)
   })
+
+  describe('with enabled: false (TUI disabled)', () => {
+    it('should not create .cast-tui directory when disabled', async () => {
+      await prepareHostTuiBuildContext(agentDir, projectDir, {enabled: false})
+      expect(fs.existsSync(path.join(agentDir, '.cast-tui'))).to.be.false
+    })
+
+    it('should not patch the Dockerfile when disabled', async () => {
+      const before = fs.readFileSync(path.join(agentDir, 'Dockerfile'), 'utf-8')
+      await prepareHostTuiBuildContext(agentDir, projectDir, {enabled: false})
+      const after = fs.readFileSync(path.join(agentDir, 'Dockerfile'), 'utf-8')
+      expect(after).to.equal(before)
+    })
+
+    it('should not call npm install when disabled', async () => {
+      // Spy on execCommand — if npm install were called, we'd see it.
+      const execStub = sandbox.stub(deployUtils, 'execCommand')
+      execStub.callThrough() // allow other calls (e.g. gunzip not relevant here)
+      await prepareHostTuiBuildContext(agentDir, projectDir, {enabled: false})
+      const npmCalls = execStub.getCalls().filter((c: any) =>
+        c.args[0] === 'npm' && Array.isArray(c.args[1]) && c.args[1][0] === 'install',
+      )
+      expect(npmCalls).to.have.length(0)
+    })
+
+    it('should strip an existing TUI bundle from the Dockerfile when disabled', async () => {
+      // First, build with TUI enabled (applies the patch)
+      await prepareHostTuiBuildContext(agentDir, projectDir)
+      const withPatch = fs.readFileSync(path.join(agentDir, 'Dockerfile'), 'utf-8')
+      expect(withPatch).to.include('# Host TUI bundle')
+
+      // Now simulate a downgrade: re-run with TUI disabled
+      await prepareHostTuiBuildContext(agentDir, projectDir, {enabled: false})
+      const stripped = fs.readFileSync(path.join(agentDir, 'Dockerfile'), 'utf-8')
+      expect(stripped).to.not.include('# Host TUI bundle')
+      expect(stripped).to.not.include('/opt/cast-tui/')
+      expect(stripped).to.not.include('bun.sh/install')
+      // CMD should still be present
+      expect(stripped).to.include('CMD ["python"')
+    })
+
+    it('should not crash when Dockerfile does not exist and TUI is disabled', async () => {
+      fs.rmSync(path.join(agentDir, 'Dockerfile'))
+      // Should not throw
+      await prepareHostTuiBuildContext(agentDir, projectDir, {enabled: false})
+      expect(fs.existsSync(path.join(agentDir, '.cast-tui'))).to.be.false
+    })
+  })
 })
