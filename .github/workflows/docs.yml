@@ -60,6 +60,7 @@ jobs:
         with:
           header: docs-manifest
           path: ${{ github.step_summary }}
+          ignore_empty: true
 
   build:
     name: Build

@@ -87,6 +87,13 @@ if (summary.length > 0) {
   const md = `## Docs manifest diff\n\n${summary.join('\n')}`
   console.log(md)
   if (HEAD) writeFileSync(HEAD, md + '\n', { flag: 'a' })
+} else {
+  // Always emit *something* to the step summary / stdout so the
+  // sticky-comment step has a non-empty file to post on PRs with no
+  // manifest changes.
+  const md = '## Docs manifest diff\n\n_No changes to CLI commands, TUI slash commands, providers, models, or releases._'
+  console.log(md)
+  if (HEAD) writeFileSync(HEAD, md + '\n', { flag: 'a' })
 }
 
 // --- ref-tag validation ---
