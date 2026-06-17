@@ -481,12 +481,32 @@ export DO_API_TOKEN="your-token"  # DigitalOcean
 
 We use [changesets](https://github.com/changesets/changesets) for automated version management. All packages in the monorepo share a unified version.
 
+### Workspace Packages
+
+The monorepo is a private root `agent-cast` workspace. The versioned, published packages are:
+
+- `cast-cli` — `typescript/cast-cli/`
+- `cast-tui` — `typescript/cast-tui/`
+
+Both are bumped together in lockstep (changesets `fixed: [["*"]]` config) and share a single version line.
+
 ### Making a Change
+
+You do **not** need to hand-author a changeset. When a PR is merged to `master` (or `main`), the `Auto Create Changeset` workflow automatically generates a changeset file from:
+
+- The PR's labels (`major` / `breaking`, `minor` / `feature` / `enhancement`, `fix` / `bugfix` / `hotfix`) and/or
+- Conventional commit prefixes in the PR title (`feat:`, `fix:`, `BREAKING CHANGE:`)
+
+The generated changeset targets both `cast-cli` and `cast-tui` at the determined bump level.
+
+If you prefer to author a changeset by hand, you can still do so:
 
 1. Make your changes in a feature branch
 2. Run `npx changeset` to describe your change
 3. Commit the changeset file along with your code
 4. Open a PR with your changeset
+
+When writing a changeset by hand, use the workspace package names (`cast-cli`, `cast-tui`), not the root `agent-cast` workspace name — the root package is private and not a changeset target.
 
 ### Changeset Prompt Guide
 
@@ -502,7 +522,8 @@ When running `npx changeset`:
 
 1. PR with changeset merged to `main`/`master`
 2. GitHub Actions workflow automatically:
-   - Bumps version in all package.json files
+   - Bumps version in all package.json files (`cast-cli`, `cast-tui`)
+   - Updates `CHANGELOG.md` files
    - Creates a git tag (e.g., `v0.2.0`)
    - Creates a GitHub Release
 3. No manual version bumping required
