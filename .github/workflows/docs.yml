@@ -1,0 +1,86 @@
+name: Docs
+
+on:
+  pull_request:
+    paths:
+      - 'docs-site/**'
+      - 'typescript/cast-cli/src/commands/**'
+      - 'typescript/cast-tui/src/commands/**'
+      - 'typescript/cast-cli/src/commands/deploy.ts'
+      - 'typescript/cast-cli/src/commands/update.ts'
+      - 'CHANGELOG.md'
+  push:
+    branches: [master]
+    paths:
+      - 'docs-site/**'
+      - 'typescript/**'
+      - 'CHANGELOG.md'
+
+# Required for deploy-pages
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Avoid concurrent deploys; cancel in-progress PR runs on new push.
+concurrency:
+  group: docs-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Extract & validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - name: Install root dependencies
+        run: npm ci
+
+      - name: Install docs-site dependencies
+        run: npm --prefix docs-site ci
+
+      - name: Extract reference data
+        run: npm --prefix docs-site run extract
+
+      - name: Validate manifest + ref tags
+        id: validate
+        run: npm --prefix docs-site run validate
+        env:
+          GITHUB_STEP_SUMMARY: ${{ github.step_summary }}
+
+      - name: Comment manifest diff on PR
+        if: github.event_name == 'pull_request' && steps.validate.outcome == 'success'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: docs-manifest
+          path: ${{ github.step_summary }}
+          ignore_empty: true
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    needs: check
+    if: github.event_name == 'push' && github.ref == 'refs/heads/master'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm --prefix docs-site ci
+      - run: npm --prefix docs-site run build
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs-site/dist
+      - id: deploy
+        uses: actions/deploy-pages@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,52 @@
+---
+import Docs from '../../layouts/Docs.astro'
+import SlashRef from '../../components/SlashRef.astro'
+import { getSlashCommands } from '../../lib/manifest.ts'
+
+const commands = getSlashCommands()
+const byCategory = new Map<string, typeof commands>()
+for (const c of commands) {
+  const list = byCategory.get(c.category) ?? []
+  list.push(c)
+  byCategory.set(c.category, list)
+}
+
+const categoryOrder = ['chat', 'agent', 'session', 'git']
+const sortedCategories = [...byCategory.keys()].sort(
+  (a, b) => categoryOrder.indexOf(a) - categoryOrder.indexOf(b),
+)
+---
+
+<Docs title="TUI slash commands" description="Every /command available in the Cast TUI.">
+  <h1>TUI slash commands</h1>
+  <p>
+    Slash commands are typed into the chat input. They all work without arguments;
+    when a parameter is needed, a modal prompts for it.
+    Auto-generated from <code>typescript/cast-tui/src/commands/slash-registry.ts</code>.
+  </p>
+
+  <h2 id="contents">Contents</h2>
+  <ul>
+    {sortedCategories.map((cat) => (
+      <li>
+        <strong>{cat}</strong>
+        <ul>
+          {(byCategory.get(cat) ?? []).map((c) => (
+            <li><a href={`#${c.name.replace(/[^a-z0-9]/gi, '-')}`}><code>/{c.name}</code></a> — {c.description}</li>
+          ))}
+        </ul>
+      </li>
+    ))}
+  </ul>
+
+  <hr />
+
+  {sortedCategories.map((cat) => (
+    <>
+      <h2 id={`category-${cat}`}>{cat} commands</h2>
+      {(byCategory.get(cat) ?? [])
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .map((c) => <SlashRef command={c} />)}
+    </>
+  ))}
+</Docs>

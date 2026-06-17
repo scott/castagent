@@ -1,0 +1,499 @@
+{
+  "generatedAt": "2026-06-17T22:18:41Z",
+  "cli": [
+    {
+      "id": "changes",
+      "full": "cast changes",
+      "description": "List all changes of an agent"
+    },
+    {
+      "id": "clone",
+      "full": "cast clone",
+      "description": "Clone an agent from a Git repository"
+    },
+    {
+      "id": "connect",
+      "full": "cast connect",
+      "description": "Connect to deployed agent"
+    },
+    {
+      "id": "delete",
+      "full": "cast delete",
+      "description": "Delete agent"
+    },
+    {
+      "id": "deploy",
+      "full": "cast deploy",
+      "description": "Deploy agent to hosting provider"
+    },
+    {
+      "id": "describe",
+      "full": "cast describe",
+      "description": "Show agent description and details"
+    },
+    {
+      "id": "dev",
+      "full": "cast dev",
+      "description": "Start agent in development mode"
+    },
+    {
+      "id": "diff",
+      "full": "cast diff",
+      "description": "Compare two versions of an agent"
+    },
+    {
+      "id": "edit",
+      "full": "cast edit",
+      "description": "Edit an existing agent through an interactive TUI wizard"
+    },
+    {
+      "id": "commit",
+      "full": "cast git commit",
+      "description": "Commit changes to an agent repository"
+    },
+    {
+      "id": "diff",
+      "full": "cast git diff",
+      "description": "Show changes between commits or working tree"
+    },
+    {
+      "id": "init",
+      "full": "cast git init",
+      "description": "Initialize a Git repository for an agent"
+    },
+    {
+      "id": "log",
+      "full": "cast git log",
+      "description": "Show commit history for an agent"
+    },
+    {
+      "id": "push",
+      "full": "cast git push",
+      "description": "Push commits to the remote repository"
+    },
+    {
+      "id": "remote",
+      "full": "cast git remote",
+      "description": "Manage Git remotes for an agent"
+    },
+    {
+      "id": "status",
+      "full": "cast git status",
+      "description": "Show the working tree status of an agent"
+    },
+    {
+      "id": "list",
+      "full": "cast list",
+      "description": "List all agents"
+    },
+    {
+      "id": "logs",
+      "full": "cast logs",
+      "description": "View runtime logs"
+    },
+    {
+      "id": "test",
+      "full": "cast meta test",
+      "description": "Run meta-builder tests"
+    },
+    {
+      "id": "migrate",
+      "full": "cast migrate",
+      "description": "Migrate to the new versioning system"
+    },
+    {
+      "id": "new",
+      "full": "cast new",
+      "description": "Create a new agent through an interactive TUI wizard"
+    },
+    {
+      "id": "registry",
+      "full": "cast registry",
+      "description": "List all releases across all agents (or for a specific agent)"
+    },
+    {
+      "id": "release",
+      "full": "cast release",
+      "description": "Create a semantic release for an agent"
+    },
+    {
+      "id": "releases",
+      "full": "cast releases",
+      "description": "List all releases of an agent"
+    },
+    {
+      "id": "rename",
+      "full": "cast rename",
+      "description": "Rename an existing agent"
+    },
+    {
+      "id": "restore",
+      "full": "cast restore",
+      "description": "Restore agent to a previous change or release"
+    },
+    {
+      "id": "revert",
+      "full": "cast revert",
+      "description": "Revert an agent to a previous version"
+    },
+    {
+      "id": "shutdown",
+      "full": "cast shutdown",
+      "description": "Shut down a deployed agent (destroy remote resources)"
+    },
+    {
+      "id": "stop",
+      "full": "cast stop",
+      "description": "Stop a running agent"
+    },
+    {
+      "id": "update",
+      "full": "cast update",
+      "description": "Update agent configuration"
+    },
+    {
+      "id": "upgrade",
+      "full": "cast upgrade",
+      "description": "Upgrade a deployed agent to a new version"
+    },
+    {
+      "id": "version",
+      "full": "cast version",
+      "description": "Show the version of the cast CLI"
+    }
+  ],
+  "slash": [
+    {
+      "name": "changes",
+      "category": "session",
+      "description": "Show change history for current agent"
+    },
+    {
+      "name": "clear",
+      "category": "chat",
+      "description": "Clear all messages from the chat"
+    },
+    {
+      "name": "connect",
+      "category": "session",
+      "description": "Connect to a different agent"
+    },
+    {
+      "name": "copy",
+      "category": "chat",
+      "description": "Copy the last agent response to clipboard"
+    },
+    {
+      "name": "deploy",
+      "category": "agent",
+      "description": "Deploy the current agent"
+    },
+    {
+      "name": "describe",
+      "category": "agent",
+      "description": "Show details for the current agent"
+    },
+    {
+      "name": "diff",
+      "category": "agent",
+      "description": "Compare two changes or releases"
+    },
+    {
+      "name": "edit",
+      "category": "agent",
+      "description": "Load an existing agent into the builder for editing"
+    },
+    {
+      "name": "exit",
+      "category": "session",
+      "description": "Exit the TUI"
+    },
+    {
+      "name": "git",
+      "category": "git",
+      "description": "Git operations for the current agent"
+    },
+    {
+      "name": "help",
+      "category": "chat",
+      "description": "Show all available slash commands"
+    },
+    {
+      "name": "list",
+      "category": "agent",
+      "description": "List all agents with their status"
+    },
+    {
+      "name": "mode",
+      "category": "chat",
+      "description": "Toggle or set plan/build mode"
+    },
+    {
+      "name": "mode?",
+      "category": "chat",
+      "description": "Show current mode"
+    },
+    {
+      "name": "quit",
+      "category": "session",
+      "description": "Exit the TUI"
+    },
+    {
+      "name": "registry",
+      "category": "session",
+      "description": "List all releases across all agents"
+    },
+    {
+      "name": "release",
+      "category": "agent",
+      "description": "Create a semantic release for the current agent"
+    },
+    {
+      "name": "releases",
+      "category": "session",
+      "description": "Show releases for current agent"
+    },
+    {
+      "name": "rename",
+      "category": "agent",
+      "description": "Rename an existing agent"
+    },
+    {
+      "name": "reset",
+      "category": "session",
+      "description": "Clear messages and reset context"
+    },
+    {
+      "name": "restore",
+      "category": "agent",
+      "description": "Restore agent to a previous change or release"
+    },
+    {
+      "name": "save",
+      "category": "session",
+      "description": "Save conversation transcript to file"
+    },
+    {
+      "name": "stop",
+      "category": "agent",
+      "description": "Stop the current local agent"
+    },
+    {
+      "name": "update",
+      "category": "agent",
+      "description": "Update the current agent"
+    },
+    {
+      "name": "upgrade",
+      "category": "agent",
+      "description": "Upgrade a deployed agent to a new version"
+    }
+  ],
+  "providers": [
+    {
+      "key": "digitalocean",
+      "name": "DigitalOcean"
+    },
+    {
+      "key": "docker",
+      "name": "Docker (local)"
+    },
+    {
+      "key": "fly",
+      "name": "Fly.io"
+    },
+    {
+      "key": "local",
+      "name": "Local (no container)"
+    },
+    {
+      "key": "railway",
+      "name": "Railway"
+    },
+    {
+      "key": "sprites",
+      "name": "Sprites"
+    }
+  ],
+  "models": [
+    {
+      "id": "anthropic/claude-3-haiku"
+    },
+    {
+      "id": "anthropic/claude-3-opus"
+    },
+    {
+      "id": "anthropic/claude-3-sonnet"
+    },
+    {
+      "id": "anthropic/claude-3.5-haiku"
+    },
+    {
+      "id": "anthropic/claude-3.5-sonnet"
+    },
+    {
+      "id": "anthropic/claude-3.7-sonnet"
+    },
+    {
+      "id": "anthropic/claude-3.7-sonnet:thinking"
+    },
+    {
+      "id": "anthropic/claude-haiku-4"
+    },
+    {
+      "id": "anthropic/claude-opus-4.5"
+    },
+    {
+      "id": "anthropic/claude-sonnet-4.6"
+    },
+    {
+      "id": "cohere/command-r"
+    },
+    {
+      "id": "cohere/command-r-plus"
+    },
+    {
+      "id": "cohere/command-r-plus-08-2024"
+    },
+    {
+      "id": "cohere/command-r7b-12-2024"
+    },
+    {
+      "id": "deepseek/deepseek-chat"
+    },
+    {
+      "id": "deepseek/deepseek-chat-v3-0324"
+    },
+    {
+      "id": "deepseek/deepseek-coder"
+    },
+    {
+      "id": "google/gemini-1.5-flash"
+    },
+    {
+      "id": "google/gemini-1.5-flash-8b"
+    },
+    {
+      "id": "google/gemini-1.5-pro"
+    },
+    {
+      "id": "google/gemini-2.0-flash"
+    },
+    {
+      "id": "google/gemini-2.5-flash"
+    },
+    {
+      "id": "google/gemini-2.5-pro"
+    },
+    {
+      "id": "kimi/k2"
+    },
+    {
+      "id": "kimi/k2.5"
+    },
+    {
+      "id": "kimi/kimi-2"
+    },
+    {
+      "id": "kimi/kimi-2.5"
+    },
+    {
+      "id": "meta-llama/llama-3.1-405b-instruct"
+    },
+    {
+      "id": "meta-llama/llama-3.1-70b-instruct"
+    },
+    {
+      "id": "meta-llama/llama-3.1-8b-instruct"
+    },
+    {
+      "id": "meta-llama/llama-3.2-11b-vision-instruct"
+    },
+    {
+      "id": "meta-llama/llama-3.2-90b-vision-instruct"
+    },
+    {
+      "id": "meta-llama/llama-3.3-70b-instruct"
+    },
+    {
+      "id": "meta-llama/llama-4-17b-16e-instruct"
+    },
+    {
+      "id": "meta-llama/llama-4-maverick"
+    },
+    {
+      "id": "meta-llama/llama-4-scout"
+    },
+    {
+      "id": "minimax/minimax-m2"
+    },
+    {
+      "id": "minimax/minimax-m2.5"
+    },
+    {
+      "id": "minimax/minimax-m4"
+    },
+    {
+      "id": "mistralai/mistral-large"
+    },
+    {
+      "id": "mistralai/mistral-medium"
+    },
+    {
+      "id": "mistralai/mistral-nemo"
+    },
+    {
+      "id": "mistralai/mistral-small"
+    },
+    {
+      "id": "openai/gpt-4"
+    },
+    {
+      "id": "openai/gpt-4-turbo"
+    },
+    {
+      "id": "openai/gpt-4.5-turbo"
+    },
+    {
+      "id": "openai/gpt-4o"
+    },
+    {
+      "id": "openai/gpt-4o-mini"
+    },
+    {
+      "id": "openai/gpt-4o-mini-search"
+    },
+    {
+      "id": "openai/gpt-4o-search-preview"
+    },
+    {
+      "id": "perplexity/llama-3.1-sonar-huge-128k-online"
+    },
+    {
+      "id": "perplexity/llama-3.1-sonar-large-128k-online"
+    },
+    {
+      "id": "x-ai/grok-2"
+    },
+    {
+      "id": "x-ai/grok-2-mini"
+    },
+    {
+      "id": "x-ai/grok-beta"
+    }
+  ],
+  "changelog": [
+    {
+      "version": "1.1.0",
+      "date": "2026-06-11"
+    },
+    {
+      "version": "1.0.0",
+      "date": "2026-06-11"
+    },
+    {
+      "version": "0.1.0",
+      "date": "2026-06-07"
+    }
+  ]
+}

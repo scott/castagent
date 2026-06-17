@@ -1,0 +1,97 @@
+---
+import Docs from '../layouts/Docs.astro'
+import { getManifest, getCliCommands, getSlashCommands } from '../lib/manifest.ts'
+import { getCollection } from 'astro:content'
+
+const manifest = getManifest()
+const cli = getCliCommands()
+const slash = getSlashCommands()
+
+// Coverage: for each command, see if any prose page mentions it (by id).
+const prose = await getCollection('prose')
+const proseText = prose
+  .map((p) => `${p.id}\n${p.body ?? ''}`)
+  .join('\n\n')
+  .toLowerCase()
+
+function covered(name: string): boolean {
+  return proseText.includes(name.toLowerCase())
+}
+
+const cliCoverage = cli.map((c) => ({
+  id: c.id,
+  full: c.full,
+  description: c.description,
+  covered: covered(c.id) || covered(c.full.replace(/^cast /, '')),
+}))
+
+const slashCoverage = slash.map((c) => ({
+  name: c.name,
+  description: c.description,
+  covered: covered(c.name),
+}))
+
+const totalRefs   = cli.length + slash.length
+const totalCovered= cliCoverage.filter(c => c.covered).length + slashCoverage.filter(c => c.covered).length
+const coveragePct = totalRefs === 0 ? 0 : Math.round((totalCovered / totalRefs) * 100)
+---
+
+<Docs title="Status" description="Auto-extraction status and documentation coverage.">
+  <h1>Status</h1>
+  <p>
+    When the docs site builds, it re-extracts the CLI command set, TUI slash-command set,
+    deployment providers, and changelog from the source tree. This page reports what was
+    found and how much of it is covered by prose pages.
+  </p>
+
+  <table>
+    <tbody>
+      <tr><th>Manifest generated</th><td><code>{manifest.generatedAt}</code></td></tr>
+      <tr><th>CLI commands</th>      <td>{cli.length}</td></tr>
+      <tr><th>TUI slash commands</th><td>{slash.length}</td></tr>
+      <tr><th>Deployment providers</th><td>{manifest.providers.length}</td></tr>
+      <tr><th>Known models</th>     <td>{manifest.models.length}</td></tr>
+      <tr><th>Releases documented</th><td>{manifest.changelog.length}</td></tr>
+      <tr>
+        <th>Prose coverage</th>
+        <td>
+          <span class={coveragePct >= 80 ? 'badge pro' : coveragePct >= 50 ? 'badge warn' : 'badge danger'}>
+            {totalCovered}/{totalRefs} ({coveragePct}%)
+          </span>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  <h2>CLI command coverage</h2>
+  <table>
+    <thead><tr><th>Command</th><th>Description</th><th>Prose page</th></tr></thead>
+    <tbody>
+      {cliCoverage.map((c) => (
+        <tr>
+          <td><code>{c.full}</code></td>
+          <td>{c.description}</td>
+          <td>{c.covered
+            ? <span class="badge pro">mentioned</span>
+            : <span class="badge warn">none</span>}</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+
+  <h2>TUI slash command coverage</h2>
+  <table>
+    <thead><tr><th>Command</th><th>Description</th><th>Prose page</th></tr></thead>
+    <tbody>
+      {slashCoverage.map((c) => (
+        <tr>
+          <td><code>/{c.name}</code></td>
+          <td>{c.description}</td>
+          <td>{c.covered
+            ? <span class="badge pro">mentioned</span>
+            : <span class="badge warn">none</span>}</td>
+        </tr>
+      ))}
+    </tbody>
+  </table>
+</Docs>

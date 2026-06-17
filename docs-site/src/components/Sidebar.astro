@@ -1,0 +1,112 @@
+---
+/**
+ * Sidebar — the global navigation.
+ *
+ * Sections are sourced from the content collection schema. Within each
+ * section, pages are listed in the order declared by their `order`
+ * frontmatter (ascending). Auto-generated pages (/cli/reference,
+ * /tui/slash-commands, /deployment/providers, /changelog) are appended
+ * to their respective sections.
+ */
+import { getCollection } from 'astro:content'
+
+interface NavItem {
+  title: string
+  href: string
+  isCurrent: boolean
+  isGenerated?: boolean
+}
+
+interface NavSection {
+  id: string
+  title: string
+  items: NavItem[]
+}
+
+const SECTIONS: Array<{ id: string; title: string; generated?: { title: string; href: string }[] }> = [
+  { id: 'getting-started', title: 'Getting Started' },
+  { id: 'agents',          title: 'Agents' },
+  { id: 'versioning',      title: 'Versioning' },
+  { id: 'deployment',      title: 'Deployment', generated: [
+    { title: 'Providers',     href: '/deployment/providers' },
+  ] },
+  { id: 'tui',             title: 'TUI', generated: [
+    { title: 'Slash commands', href: '/tui/slash-commands' },
+  ] },
+  { id: 'configuration',   title: 'Configuration' },
+  { id: 'cli',             title: 'CLI', generated: [
+    { title: 'Command reference', href: '/cli/reference' },
+  ] },
+  { id: 'development',     title: 'Development' },
+  { id: 'guides',          title: 'Guides' },
+]
+
+const pathname = Astro.url.pathname.replace(/\/$/, '') || '/'
+
+const prose = await getCollection('prose')
+const proseBySection = new Map<string, typeof prose>()
+for (const entry of prose) {
+  const list = proseBySection.get(entry.data.section) ?? []
+  list.push(entry)
+  proseBySection.set(entry.data.section, list)
+}
+
+const sections: NavSection[] = SECTIONS.map((s) => {
+  const items: NavItem[] = []
+  for (const entry of (proseBySection.get(s.id) ?? []).sort(
+    (a, b) => a.data.order - b.data.order,
+  )) {
+    const href = `/${entry.id}`
+    items.push({
+      title: entry.data.title,
+      href,
+      isCurrent: pathname === href,
+    })
+  }
+  for (const gen of s.generated ?? []) {
+    items.push({
+      title: gen.title,
+      href: gen.href,
+      isCurrent: pathname === gen.href,
+      isGenerated: true,
+    })
+  }
+  return { id: s.id, title: s.title, items }
+})
+---
+
+<aside class="sidebar">
+  <a href="/" class="brand">
+    <img src="/logo.svg" alt="" width="22" height="22" />
+    <span>Cast</span>
+  </a>
+
+  <nav>
+    <ul style="list-style:none;padding:0;margin:0;">
+      <li>
+        <a href="/" class={pathname === '/' ? 'active' : ''}>Overview</a>
+      </li>
+      {sections.map((section) => (
+        <li>
+          <h5>{section.title}</h5>
+          <ul>
+            {section.items.map((item) => (
+              <li>
+                <a href={item.href} class={item.isCurrent ? 'active' : ''}>
+                  {item.title}
+                  {item.isGenerated && <span class="badge" style="margin-left:0.4em;font-size:0.65em;">auto</span>}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </li>
+      ))}
+    </ul>
+
+    <h5>Meta</h5>
+    <ul>
+      <li><a href="/changelog" class={pathname === '/changelog' ? 'active' : ''}>Changelog</a></li>
+      <li><a href="/status"    class={pathname === '/status'    ? 'active' : ''}>Status</a></li>
+    </ul>
+  </nav>
+</aside>

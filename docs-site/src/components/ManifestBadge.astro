@@ -1,0 +1,38 @@
+---
+/**
+ * ManifestBadge — small inline badge showing counts sourced from data/manifest.json.
+ */
+import { getManifest } from '../lib/manifest.ts'
+
+interface Props {
+  /** Which counter to display. Default = all. */
+  kind?: 'cli' | 'slash' | 'providers' | 'models' | 'all'
+}
+
+const { kind = 'all' } = Astro.props
+const m = getManifest()
+
+const items: { label: string; count: number; href?: string }[] =
+  kind === 'all'
+    ? [
+        { label: 'CLI commands', count: m.cli.length,        href: '/cli/reference' },
+        { label: 'TUI slash',     count: m.slash.length,      href: '/tui/slash-commands' },
+        { label: 'Providers',     count: m.providers.length,  href: '/deployment/providers' },
+        { label: 'Models',        count: m.models.length,     href: '/cli/reference#known-models' },
+      ]
+    : kind === 'cli'      ? [{ label: 'CLI commands', count: m.cli.length,        href: '/cli/reference' }]
+    : kind === 'slash'    ? [{ label: 'TUI slash',    count: m.slash.length,      href: '/tui/slash-commands' }]
+    : kind === 'providers'? [{ label: 'Providers',    count: m.providers.length,  href: '/deployment/providers' }]
+    : [{ label: 'Models',      count: m.models.length,     href: '/cli/reference#known-models' }]
+---
+
+<p style="margin:0.5rem 0 1rem;">
+  {items.map((it) => (
+    <a href={it.href} class="badge accent" style="margin-right:0.4rem;">
+      {it.count} {it.label}
+    </a>
+  ))}
+  <span class="badge" title="When this manifest was generated">
+    extracted {m.generatedAt}
+  </span>
+</p>

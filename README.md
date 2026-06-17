@@ -64,14 +64,14 @@ Describe what you want, and Cast builds the complete agent scaffold with instruc
 
 **One-liner** (when repository is public):
 ```bash
-curl -sL https://raw.githubusercontent.com/scott/agent-cast/main/install.sh | bash
+curl -sL https://raw.githubusercontent.com/scott/castagent/main/install.sh | bash
 ```
 
 **Full installation** (recommended for first-time setup):
 ```bash
 # Clone the repository
-git clone https://github.com/scott/agent-cast.git
-cd agent-cast
+git clone https://github.com/scott/castagent.git
+cd castagent
 
 # Run the full installation script (installs deps, builds, creates config)
 ./install.sh
@@ -394,7 +394,7 @@ cast git remote my-agent list
 ### Project Structure
 
 ```
-agent-cast/
+castagent/
 ├── typescript/
 │   ├── cast-cli/          # oclif CLI (commands, deploy, MCP, OAuth)
 │   └── cast-tui/          # OpenTUI terminal interface
@@ -404,7 +404,8 @@ agent-cast/
 │   ├── ts/                # TypeScript tests
 │   └── python/            # Python tests
 ├── docs/
-│   └── SPEC.md            # Full specification
+│   ├── SPEC.md            # Full specification
+│   └── site/              # Documentation site (Astro, auto-generated)
 ├── cast                   # Bash wrapper script (entry point)
 ├── setup.sh               # Quick setup (creates symlink only)
 ├── install.sh             # Full install (deps, build, config)
@@ -476,6 +477,31 @@ export RAILWAY_API_TOKEN="your-token"
 export FLY_API_TOKEN="your-token"
 export DO_API_TOKEN="your-token"  # DigitalOcean
 ```
+
+## Documentation
+
+The full user documentation lives in `docs/site/` and is built with
+[Astro](https://astro.build). The CLI command reference, TUI slash-command
+reference, deployment provider pages, and changelog are **auto-extracted
+from source on every build**, so the docs cannot drift from the code.
+
+```bash
+# Install + dev server (auto-extracts reference data on every reload)
+npm --prefix docs-site install
+npm --prefix docs-site run dev
+
+# Production build (writes docs-site/dist/)
+npm run docs:build
+
+# CI check: diff the regenerated manifest against the committed baseline
+# and fail on any unresolved {% ref %} targets
+npm run docs:check
+```
+
+A pull request that adds, removes, or renames a CLI command, TUI slash
+command, deployment provider, or known model surfaces a manifest diff as
+a PR comment via `.github/workflows/docs.yml`. The `master` branch builds
+and deploys the site to GitHub Pages.
 
 ## Versioning
 

@@ -1,0 +1,20 @@
+# Astro
+.astro/
+dist/
+
+# Generated docs data (manifest.json is committed; rest is regenerated on build)
+data/cli.json
+data/slash.json
+data/providers.json
+data/models.json
+data/changelog.json
+data/manifest.next.json
+
+# Node
+node_modules/
+*.log
+.DS_Store
+
+# Env
+.env
+.env.local

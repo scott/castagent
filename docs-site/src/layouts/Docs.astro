@@ -1,0 +1,43 @@
+---
+/**
+ * Docs layout — sidebar + content + footer.
+ * Renders the global <head>, injects global.css, and wraps slot content.
+ */
+import '../styles/global.css'
+import Sidebar from '../components/Sidebar.astro'
+
+interface Props {
+  title: string
+  description?: string
+}
+
+const { title, description = 'Cast — Build, test, and deploy AI agents.' } = Astro.props
+const fullTitle = title === 'Cast' ? title : `${title} · Cast`
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    <link rel="icon" type="image/svg+xml" href="/logo.svg" />
+    <meta property="og:title"       content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type"        content="website" />
+  </head>
+  <body>
+    <div class="layout">
+      <Sidebar />
+      <main class="content">
+        <slot />
+        <hr />
+        <footer style="color:var(--color-fg-muted);font-size:0.85rem;">
+          <a href="https://github.com/scott/castagent">castagent</a> · docs
+          auto-generated from source.
+        </footer>
+      </main>
+    </div>
+  </body>
+</html>

@@ -19,7 +19,12 @@
     "coverage": "nyc report --reporter=text-lcov > coverage/lcov.info",
     "changeset": "changeset",
     "version": "changeset version",
-    "release": "changeset publish"
+    "release": "changeset publish",
+    "docs:install": "npm --prefix docs-site install",
+    "docs:dev": "npm --prefix docs-site run dev",
+    "docs:build": "npm --prefix docs-site run build",
+    "docs:check": "npm --prefix docs-site run check",
+    "docs:extract": "npm --prefix docs-site run extract"
   },
   "devDependencies": {
     "@changesets/cli": "^2.31.0",

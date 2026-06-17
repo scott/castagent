@@ -1,0 +1,65 @@
+---
+/**
+ * ProviderCard — one deployment provider.
+ */
+import type { ProviderInfo } from '../lib/types.ts'
+
+interface Props {
+  provider: ProviderInfo
+}
+
+const { provider } = Astro.props
+---
+
+<section id={provider.key} class="command-ref">
+  <h2>
+    {provider.name}
+    <span class="badge" style="font-family:var(--font-mono);font-size:0.55em;vertical-align:middle;margin-left:0.4em;">--provider {provider.key}</span>
+  </h2>
+  <p style="color:var(--color-fg-muted);margin:0.25rem 0 0.5rem;">{provider.description}</p>
+
+  <table>
+    <tbody>
+      {provider.cliCommand && (
+        <tr>
+          <th style="width:30%;">Required CLI</th>
+          <td>
+            <code>{provider.cliCommand}</code>
+            {provider.cliInstallUrl && (
+              <span style="margin-left:0.5em;">
+                <a href={provider.cliInstallUrl}>installation guide</a>
+              </span>
+            )}
+          </td>
+        </tr>
+      )}
+      {provider.authCommand && (
+        <tr>
+          <th>Authenticate with</th>
+          <td><code>{provider.authCommand}</code></td>
+        </tr>
+      )}
+      {provider.authEnvVar && (
+        <tr>
+          <th>Token env var</th>
+          <td><code>{provider.authEnvVar}</code></td>
+        </tr>
+      )}
+      <tr>
+        <th>Bundles on-host TUI</th>
+        <td>
+          {provider.supportsWithTui
+            ? <span class="badge pro">yes — use <code style="background:transparent;border:0;padding:0;">--with-tui</code></span>
+            : <span style="color:var(--color-fg-muted)">no</span>}
+        </td>
+      </tr>
+    </tbody>
+  </table>
+
+  {provider.cliCommand && (
+    <details>
+      <summary>Example: deploy an agent</summary>
+      <pre><code>cast deploy &lt;agent-name&gt; --provider {provider.key}</code></pre>
+    </details>
+  )}
+</section>

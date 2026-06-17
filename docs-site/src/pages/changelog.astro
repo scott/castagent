@@ -1,0 +1,54 @@
+---
+import Docs from '../layouts/Docs.astro'
+import { getChangelog } from '../lib/manifest.ts'
+
+const entries = getChangelog()
+
+function renderMarkdown(md: string): string {
+  return md
+    .replace(/^###\s+(.+)$/gm, '<h3>$1</h3>')
+    .replace(/^##\s+(.+)$/gm,  '<h3>$1</h3>')
+    .replace(/^-\s+(.+)$/gm,   '<li>$1</li>')
+    .replace(/(<li>[^]*?<\/li>\n?)+/g, (m) => `<ul>${m}</ul>`)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/\n\n/g, '</p><p>')
+    .replace(/^([^<].*)$/gm, '<p>$1</p>')
+}
+
+function entryToSections(entry: typeof entries[number]) {
+  return [
+    { kind: 'Added',      lines: entry.added },
+    { kind: 'Fixed',      lines: entry.fixed },
+    { kind: 'Changed',    lines: entry.changed },
+    { kind: 'Deprecated', lines: entry.deprecated },
+    { kind: 'Removed',    lines: entry.removed },
+    { kind: 'Security',   lines: entry.security },
+  ].filter(s => s.lines.length > 0)
+}
+---
+
+<Docs title="Changelog" description="Cast release history.">
+  <h1>Changelog</h1>
+  <p>
+    Auto-rendered from <code>CHANGELOG.md</code> on every build.
+    New releases land here automatically; no separate edit needed.
+  </p>
+
+  {entries.map((entry) => (
+    <section id={`v${entry.version}`} class="command-ref">
+      <h2>v{entry.version} <small style="color:var(--color-fg-muted);font-weight:400;">— {entry.date}</small></h2>
+      {entryToSections(entry).map((s) => (
+        <>
+          <h3>{s.kind}</h3>
+          <ul>{s.lines.map((l) => <li set:html={renderMarkdown(l)} />)}</ul>
+        </>
+      ))}
+      {entry.pr && (
+        <p>
+          <a href={`https://github.com/scott/castagent/pull/${entry.pr}`}>PR #{entry.pr}</a>
+        </p>
+      )}
+    </section>
+  ))}
+</Docs>
