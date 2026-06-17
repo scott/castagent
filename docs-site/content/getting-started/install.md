@@ -26,7 +26,7 @@ one at [openrouter.ai](https://openrouter.ai).
 When the repository is public, the fastest path is:
 
 ```bash
-curl -sL https://raw.githubusercontent.com/scott/agent-cast/main/install.sh | bash
+curl -sL https://raw.githubusercontent.com/scott/castagent/main/install.sh | bash
 ```
 
 This clones the repo, installs dependencies, builds the CLI and TUI, and
@@ -38,8 +38,8 @@ If you prefer to see what is running, clone the repo and use the bundled
 install script:
 
 ```bash
-git clone https://github.com/scott/agent-cast.git
-cd agent-cast
+git clone https://github.com/scott/castagent.git
+cd castagent
 ./install.sh
 ```
 
@@ -81,7 +81,7 @@ If you see the version banner and an empty list, you're ready for the
 ## Updating
 
 ```bash
-cd agent-cast
+cd castagent
 git pull
 ./install.sh
 ```

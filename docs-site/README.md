@@ -1,6 +1,6 @@
 # cast-docs
 
-Static documentation site for [Cast](https://github.com/scott/agent-cast).
+Static documentation site for [Cast](https://github.com/scott/castagent).
 Built with [Astro](https://astro.build), deployed to GitHub Pages.
 
 ## What this site is

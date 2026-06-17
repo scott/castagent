@@ -10,7 +10,7 @@ ref: ['']
 
 Cast is a monorepo with three runtime components and a small set of
 supporting services. This page is the 10-minute tour; the full SPEC lives
-at [`docs/SPEC.md`](https://github.com/scott/agent-cast/blob/master/docs/SPEC.md).
+at [`docs/SPEC.md`](https://github.com/scott/castagent/blob/master/docs/SPEC.md).
 
 ```
 ┌────────────────────────────────────────────────────────────────────────────┐
@@ -54,7 +54,7 @@ at [`docs/SPEC.md`](https://github.com/scott/agent-cast/blob/master/docs/SPEC.md
 ## Repo layout
 
 ```
-agent-cast/
+castagent/
 ├── typescript/
 │   ├── cast-cli/             # oclif CLI
 │   │   ├── src/commands/     # one .ts per command (or per topic)
@@ -126,7 +126,7 @@ runtime:
 ```
 
 The full schema is in
-[SPEC.md](https://github.com/scott/agent-cast/blob/master/docs/SPEC.md#agent-yaml-reference);
+[SPEC.md](https://github.com/scott/castagent/blob/master/docs/SPEC.md#agent-yaml-reference);
 a more user-friendly version is in [agent anatomy](/agents/anatomy).
 
 ## The data model

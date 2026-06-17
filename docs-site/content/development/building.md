@@ -102,5 +102,5 @@ npx changeset
 # write a summary
 ```
 
-See [the contributing guide](https://github.com/scott/agent-cast/blob/master/CONTRIBUTING.md)
+See [the contributing guide](https://github.com/scott/castagent/blob/master/CONTRIBUTING.md)
 for the full workflow.
