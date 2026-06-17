@@ -105,7 +105,7 @@ Cast is a CLI+TUI application that helps developers create, test, and deploy AI 
     └── .cast/                     # Agent-specific overrides
         └── provider.yaml          # Agent-specific LLM override
 
-agent-cast/                        # Project repo
+castagent/                        # Project repo
 ├── typescript/                    # TypeScript CLI/TUI
 │   ├── cast-cli/                  # oclif CLI
 │   │   ├── src/
@@ -1402,7 +1402,7 @@ Apache License 2.0 - See LICENSE file
 | Decision | Choice |
 |----------|--------|
 | Name | cast |
-| Project Directory | agent-cast |
+| Project Directory | castagent |
 | CLI Language | TypeScript (oclif) |
 | TUI Framework | OpenTUI |
 | Agent Language | Python (LangChain) |

@@ -6,10 +6,10 @@
   "bin": {
     "cast": "./bin/run"
   },
-  "homepage": "https://github.com/agent-cast/cast",
+  "homepage": "https://github.com/scott/castagent",
   "license": "Apache-2.0",
   "main": "dist/index.js",
-  "repository": "agent-cast/cast",
+  "repository": "scott/castagent",
   "files": [
     "/bin",
     "/dist",

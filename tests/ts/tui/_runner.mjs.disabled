@@ -57,7 +57,7 @@ function __resetTestState() {
 // --------------------------------------------------------------------------
 
 const reg = await import(
-  '/Users/scott/Workspace/agent-cast/typescript/cast-tui/dist/commands/slash-registry.js'
+  '/Users/scott/Workspace/castagent/typescript/cast-tui/dist/commands/slash-registry.js'
 )
 
 // --------------------------------------------------------------------------

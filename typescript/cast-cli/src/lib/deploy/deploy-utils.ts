@@ -343,7 +343,7 @@ export interface HostTuiBuildContextOptions {
  * case a prior deploy was `--with-tui=true`) and logs a skip message.
  *
  * @param agentPath - Path to the agent's directory (Docker build context)
- * @param projectRoot - Root of the agent-cast project (to locate TUI dist)
+ * @param projectRoot - Root of the castagent project (to locate TUI dist)
  * @param options - { enabled: boolean }. Defaults to { enabled: true }
  *                  for backwards compatibility.
  */

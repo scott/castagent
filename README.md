@@ -509,7 +509,7 @@ We use [changesets](https://github.com/changesets/changesets) for automated vers
 
 ### Workspace Packages
 
-The monorepo is a private root `agent-cast` workspace. The versioned, published packages are:
+The monorepo is a private root `castagent` workspace. The versioned, published packages are:
 
 - `cast-cli` — `typescript/cast-cli/`
 - `cast-tui` — `typescript/cast-tui/`
@@ -532,7 +532,7 @@ If you prefer to author a changeset by hand, you can still do so:
 3. Commit the changeset file along with your code
 4. Open a PR with your changeset
 
-When writing a changeset by hand, use the workspace package names (`cast-cli`, `cast-tui`), not the root `agent-cast` workspace name — the root package is private and not a changeset target.
+When writing a changeset by hand, use the workspace package names (`cast-cli`, `cast-tui`), not the root `castagent` workspace name — the root package is private and not a changeset target.
 
 ### Changeset Prompt Guide
 

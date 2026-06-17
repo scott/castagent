@@ -6,7 +6,7 @@
  * =============================================================================
  *
  * GitHub issue tracking the rework: #18
- * https://github.com/scott/agent-cast/issues/18
+ * https://github.com/scott/castagent/issues/18
  *
  * The previous version of this file (now disabled at
  * `slash-registry.test.ts.disabled`) attempted to test the slash command
