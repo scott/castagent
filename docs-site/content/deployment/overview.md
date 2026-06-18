@@ -31,7 +31,7 @@ later.
 
 ## Providers
 
-See the [providers page](/deployment/providers) for the full list. The
+See the [providers page](deployment/providers) for the full list. The
 short version:
 
 | Provider | Best for | Container | On-host TUI |

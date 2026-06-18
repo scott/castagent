@@ -15,15 +15,15 @@ const m = getManifest()
 const items: { label: string; count: number; href?: string }[] =
   kind === 'all'
     ? [
-        { label: 'CLI commands', count: m.cli.length,        href: '/cli/reference' },
-        { label: 'TUI slash',     count: m.slash.length,      href: '/tui/slash-commands' },
-        { label: 'Providers',     count: m.providers.length,  href: '/deployment/providers' },
-        { label: 'Models',        count: m.models.length,     href: '/cli/reference#known-models' },
+        { label: 'CLI commands', count: m.cli.length,        href: 'cli/reference' },
+        { label: 'TUI slash',     count: m.slash.length,      href: 'tui/slash-commands' },
+        { label: 'Providers',     count: m.providers.length,  href: 'deployment/providers' },
+        { label: 'Models',        count: m.models.length,     href: 'cli/reference#known-models' },
       ]
-    : kind === 'cli'      ? [{ label: 'CLI commands', count: m.cli.length,        href: '/cli/reference' }]
-    : kind === 'slash'    ? [{ label: 'TUI slash',    count: m.slash.length,      href: '/tui/slash-commands' }]
-    : kind === 'providers'? [{ label: 'Providers',    count: m.providers.length,  href: '/deployment/providers' }]
-    : [{ label: 'Models',      count: m.models.length,     href: '/cli/reference#known-models' }]
+    : kind === 'cli'      ? [{ label: 'CLI commands', count: m.cli.length,        href: 'cli/reference' }]
+    : kind === 'slash'    ? [{ label: 'TUI slash',    count: m.slash.length,      href: 'tui/slash-commands' }]
+    : kind === 'providers'? [{ label: 'Providers',    count: m.providers.length,  href: 'deployment/providers' }]
+    : [{ label: 'Models',      count: m.models.length,     href: 'cli/reference#known-models' }]
 ---
 
 <p style="margin:0.5rem 0 1rem;">

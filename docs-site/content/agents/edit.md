@@ -26,7 +26,7 @@ cast edit email-assistant
 
 Inside the TUI, the Builder loads the current `agent.yaml` and welcomes
 you with a summary of what's there. Every save writes a new
-[change](/versioning/changes) to `~/.cast/agents/<name>/.cast/changes/`,
+[change](versioning/changes) to `~/.cast/agents/<name>/.cast/changes/`,
 so the conversation is fully recoverable.
 
 `/edit` is also a slash command — use it inside any TUI session (during
@@ -60,7 +60,7 @@ cast update email-assistant --add-requirement requests
 cast update email-assistant --model openrouter/openai/gpt-4o --dry-run
 ```
 
-Every `cast update` call writes a new [change](/versioning/changes) to
+Every `cast update` call writes a new [change](versioning/changes) to
 the agent's history with a "Updated: …" message describing what changed.
 You can see the change list with `cast changes <name>`.
 
@@ -85,9 +85,9 @@ python3 -c "import yaml; yaml.safe_load(open('agent.yaml'))"
 
 ## When the Builder prompts for a release
 
-If the agent is [deployed](/deployment/overview) and the Builder detects
+If the agent is [deployed](deployment/overview) and the Builder detects
 that your edit materially changes the agent (model, instructions, tools,
-permissions), it will offer to create a [release](/versioning/releases)
+permissions), it will offer to create a [release](versioning/releases)
 after the save. That's the recommended path if you intend to deploy
 the new state.
 
