@@ -37,19 +37,19 @@ function resolveOne(anchor: string): string | null {
       const cmd = findCliCommand(target)
       if (!cmd) return null
       const slug = cmd.full.replace(/^cast /, '').replace(/\s+/g, '-')
-      return `/cli/reference#${slug}`
+      return `cli/reference#${slug}`
     }
     case 'slash': {
       const cmd = findSlashCommand(target)
       if (!cmd) return null
-      return `/tui/slash-commands#${cmd.name.replace(/[^a-z0-9]/gi, '-')}`
+      return `tui/slash-commands#${cmd.name.replace(/[^a-z0-9]/gi, '-')}`
     }
     case 'provider': {
       if (!findProvider(target)) return null
-      return `/deployment/providers#${target}`
+      return `deployment/providers#${target}`
     }
     case 'page': {
-      return `/${target.replace(/^\/+/, '')}`
+      return target.replace(/^\/+/, '')
     }
     default:
       return null

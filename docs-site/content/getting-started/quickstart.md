@@ -82,7 +82,7 @@ cast deploy email-assistant --provider digitalocean
 cast deploy email-assistant --provider docker
 ```
 
-Each provider has its own prerequisites; see the [deployment overview](/deployment/overview)
+Each provider has its own prerequisites; see the [deployment overview](deployment/overview)
 or the per-provider pages.
 
 ## 6. Connect to the running deploy
@@ -98,10 +98,10 @@ cast connect abc123        # by deployment SHA
 
 ## What's next
 
-- [Concepts](/getting-started/concepts) — the Builder / Runtime model, A2A,
+- [Concepts](getting-started/concepts) — the Builder / Runtime model, A2A,
   changes vs. releases.
-- [Configuration](/getting-started/configuration) — `~/.cast/config.yaml`,
+- [Configuration](getting-started/configuration) — `~/.cast/config.yaml`,
   env vars, secrets.
-- [Versioning](/versioning/overview) — why there are two version tracks and
+- [Versioning](versioning/overview) — why there are two version tracks and
   when to use which.
-- [Deployment](/deployment/overview) — multi-deployment, SHAs, providers.
+- [Deployment](deployment/overview) — multi-deployment, SHAs, providers.

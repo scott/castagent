@@ -54,7 +54,7 @@ deployed version.
 ## on-host
 
 Triggered by running `cast-tui` inside a DigitalOcean container
-(see [on-host TUI](/tui/on-host-tui)). The header is also green, but
+(see [on-host TUI](tui/on-host-tui)). The header is also green, but
 **no version badge** appears because the TUI is talking to a local A2A
 server inside the same container.
 

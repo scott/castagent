@@ -68,7 +68,7 @@ interpolation falls through to the environment if not set in YAML.
 Every agent's config is a single file at
 `~/.cast/agents/<name>/agent.yaml`. The Builder Agent creates this when you
 run `cast new`, and `cast update` mutates it. The full schema lives in the
-[configuration](/configuration/schema) reference (TODO: link once written),
+[configuration](configuration/schema) reference (TODO: link once written),
 but the high-level shape is:
 
 ```yaml
@@ -107,5 +107,5 @@ runtime:
     - beautifulsoup4
 ```
 
-See the [agent anatomy](/agents/anatomy) page for a tour of the
+See the [agent anatomy](agents/anatomy) page for a tour of the
 surrounding directory.

@@ -41,6 +41,35 @@ npm run build
 
 The `prebuild` script runs all `extract-*` scripts first, then the snapshot script writes `data/manifest.json` and validates the previous manifest.
 
+### Deploying to a sub-path (GitHub Pages, etc.)
+
+When the site is served from a sub-path — e.g. a GitHub Pages *project* site at
+`https://<owner>.github.io/<repo>/` — every URL in the built site must be
+prefixed with that sub-path. The build does this via two env vars:
+
+| Env var             | Default              | Purpose                                                                |
+|---------------------|----------------------|------------------------------------------------------------------------|
+| `PUBLIC_SITE_URL`   | `https://cast.dev`   | The full site origin. Used for canonical / og: URLs.                   |
+| `PUBLIC_SITE_BASE`  | `/`                  | The URL sub-path the site is served from. Sets Astro's `base` config.  |
+
+The `docs` workflow in `.github/workflows/docs.yml` derives both from the
+GitHub context:
+
+```yaml
+env:
+  PUBLIC_SITE_BASE: /${{ github.event.repository.name }}/
+  PUBLIC_SITE_URL:  https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+```
+
+so the build "just works" on any GitHub repo without code changes.
+
+The layout (`src/layouts/Docs.astro`) emits a `<base href={BASE_URL}>` tag and
+all internal links are written as **base-relative** paths (e.g.
+`href="getting-started/install"`, not `href="/getting-started/install"`).
+The browser then resolves them against `<base>`, which is what lets one
+source tree work for both `astro dev` (base `/`) and the deployed site
+(base `/<repo>/`). Keep new links base-relative.
+
 ## CI sync
 
 `scripts/validate-manifest.ts` exits non-zero when:

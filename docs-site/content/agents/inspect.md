@@ -88,7 +88,7 @@ cast delete <name>
 ## What "deleted" means in Cast
 
 Cast does not currently support a soft-delete for agents (only for
-deployments — see [deployment overview](/deployment/overview)). When you
+deployments — see [deployment overview](deployment/overview)). When you
 `cast delete`, the agent is gone. The release tarballs under
 `~/.cast/agents/<name>/.cast/releases/` go with it, since they live inside
 the agent directory.

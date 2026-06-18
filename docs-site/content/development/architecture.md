@@ -127,7 +127,7 @@ runtime:
 
 The full schema is in
 [SPEC.md](https://github.com/scott/castagent/blob/master/docs/SPEC.md#agent-yaml-reference);
-a more user-friendly version is in [agent anatomy](/agents/anatomy).
+a more user-friendly version is in [agent anatomy](agents/anatomy).
 
 ## The data model
 

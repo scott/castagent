@@ -76,7 +76,7 @@ cast list       # No agents yet — that's expected
 ```
 
 If you see the version banner and an empty list, you're ready for the
-[quick start](/getting-started/quickstart).
+[quick start](getting-started/quickstart).
 
 ## Updating
 

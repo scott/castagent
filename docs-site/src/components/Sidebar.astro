@@ -28,20 +28,35 @@ const SECTIONS: Array<{ id: string; title: string; generated?: { title: string; 
   { id: 'agents',          title: 'Agents' },
   { id: 'versioning',      title: 'Versioning' },
   { id: 'deployment',      title: 'Deployment', generated: [
-    { title: 'Providers',     href: '/deployment/providers' },
+    { title: 'Providers',     href: 'deployment/providers' },
   ] },
   { id: 'tui',             title: 'TUI', generated: [
-    { title: 'Slash commands', href: '/tui/slash-commands' },
+    { title: 'Slash commands', href: 'tui/slash-commands' },
   ] },
   { id: 'configuration',   title: 'Configuration' },
   { id: 'cli',             title: 'CLI', generated: [
-    { title: 'Command reference', href: '/cli/reference' },
+    { title: 'Command reference', href: 'cli/reference' },
   ] },
   { id: 'development',     title: 'Development' },
   { id: 'guides',          title: 'Guides' },
 ]
 
-const pathname = Astro.url.pathname.replace(/\/$/, '') || '/'
+// Build a base-aware path from a base-relative href like "cli/reference".
+// Resulting URLs are what the browser sees after <base> rewrites them.
+const BASE = import.meta.env.BASE_URL // "/" in dev, "/castagent/" on Pages
+function fullPath(href: string): string {
+  if (!href) return BASE === '/' ? '/' : BASE
+  return BASE + href
+}
+
+// Current page path, with optional trailing slash. Astro.url.pathname is
+// the URL the browser actually requested, so it already includes the base.
+const currentPath = Astro.url.pathname
+function isCurrent(href: string): boolean {
+  const target = fullPath(href)
+  return currentPath === target || currentPath === target + '/' || currentPath === target.replace(/\/$/, '')
+}
+const isHome = isCurrent('')
 
 const prose = await getCollection('prose')
 const proseBySection = new Map<string, typeof prose>()
@@ -56,18 +71,18 @@ const sections: NavSection[] = SECTIONS.map((s) => {
   for (const entry of (proseBySection.get(s.id) ?? []).sort(
     (a, b) => a.data.order - b.data.order,
   )) {
-    const href = `/${entry.id}`
+    const href = entry.id
     items.push({
       title: entry.data.title,
       href,
-      isCurrent: pathname === href,
+      isCurrent: isCurrent(href),
     })
   }
   for (const gen of s.generated ?? []) {
     items.push({
       title: gen.title,
       href: gen.href,
-      isCurrent: pathname === gen.href,
+      isCurrent: isCurrent(gen.href),
       isGenerated: true,
     })
   }
@@ -76,15 +91,15 @@ const sections: NavSection[] = SECTIONS.map((s) => {
 ---
 
 <aside class="sidebar">
-  <a href="/" class="brand">
-    <img src="/logo.svg" alt="" width="22" height="22" />
+  <a href="" class="brand">
+    <img src="logo.svg" alt="" width="22" height="22" />
     <span>Cast</span>
   </a>
 
   <nav>
     <ul style="list-style:none;padding:0;margin:0;">
       <li>
-        <a href="/" class={pathname === '/' ? 'active' : ''}>Overview</a>
+        <a href="" class={isHome ? 'active' : ''}>Overview</a>
       </li>
       {sections.map((section) => (
         <li>
@@ -105,8 +120,8 @@ const sections: NavSection[] = SECTIONS.map((s) => {
 
     <h5>Meta</h5>
     <ul>
-      <li><a href="/changelog" class={pathname === '/changelog' ? 'active' : ''}>Changelog</a></li>
-      <li><a href="/status"    class={pathname === '/status'    ? 'active' : ''}>Status</a></li>
+      <li><a href="changelog" class={isCurrent('changelog') ? 'active' : ''}>Changelog</a></li>
+      <li><a href="status"    class={isCurrent('status')    ? 'active' : ''}>Status</a></li>
     </ul>
   </nav>
 </aside>

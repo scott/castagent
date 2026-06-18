@@ -77,7 +77,7 @@ important concept to internalise.
   semantic version. Releases are the *deployment artifact* — when you
   `cast deploy`, you're shipping a release.
 
-The full data model is in the [versioning overview](/versioning/overview).
+The full data model is in the [versioning overview](versioning/overview).
 
 ## Multi-deployment and the deployment SHA
 
