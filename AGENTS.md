@@ -83,6 +83,16 @@ Always update `README.md` when notable changes are made. This includes:
 
 Keep documentation aligned with the code to avoid misleading users.
 
+### Docs Site Updates
+
+When building new features or modifying existing ones, the docs site (`docs-site/`) must be updated in the same PR to reflect the changes. This includes:
+- New features, commands, or configuration options
+- Changed behavior, renamed flags, or breaking changes
+- New deployment providers or integration points
+- Updated examples, tutorials, or conceptual explanations
+
+A PR that changes user-facing behavior without corresponding docs-site changes is incomplete. Keep the docs site (`docs-site/content/**`) in sync with the code on every PR.
+
 ### Release Process
 
 1. Developer creates PR with changes
