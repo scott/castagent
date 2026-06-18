@@ -22,7 +22,7 @@ export OPENROUTER_API_KEY=sk-or-...
 
 ## 2. Create an agent
 
-The `{% ref 'cli:new" %}` command launches an interactive wizard that talks to
+The `{% ref "cli:new" %}` command launches an interactive wizard that talks to
 the Builder Agent. Describe what you want in plain language and the wizard
 scaffolds a complete agent.
 
@@ -41,7 +41,7 @@ The wizard will:
 
 ## 3. Run it locally
 
-`{% ref 'cli:dev" %}` boots the agent as an A2A server on a local port and
+`{% ref "cli:dev" %}` boots the agent as an A2A server on a local port and
 attaches the TUI chat. Without arguments, this is the same as `cast new` for a
 freshly created agent.
 
@@ -61,8 +61,8 @@ cast dev email-assistant --no-tui
 
 ## 4. List and inspect
 
-`{% ref 'cli:list" %}` shows every agent on this machine along with whether
-it is running locally or deployed. `{% ref 'cli:describe" %}` shows the full
+`{% ref "cli:list" %}` shows every agent on this machine along with whether
+it is running locally or deployed. `{% ref "cli:describe" %}` shows the full
 configuration of a single agent.
 
 ```bash
@@ -72,7 +72,7 @@ cast describe email-assistant
 
 ## 5. Deploy
 
-Pick a provider and `{% ref 'cli:deploy" %}` does the rest — build, ship, and
+Pick a provider and `{% ref "cli:deploy" %}` does the rest — build, ship, and
 record a unique deployment SHA you can target with later commands.
 
 ```bash
@@ -87,7 +87,7 @@ or the per-provider pages.
 
 ## 6. Connect to the running deploy
 
-`{% ref 'cli:connect" %}` opens a TUI chat session against the deployed
+`{% ref "cli:connect" %}` opens a TUI chat session against the deployed
 agent. Pass a deployment SHA to disambiguate when an agent has been deployed
 to multiple places.
 

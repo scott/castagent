@@ -480,7 +480,7 @@ export DO_API_TOKEN="your-token"  # DigitalOcean
 
 ## Documentation
 
-The full user documentation lives in `docs/site/` and is built with
+The full user documentation lives in `docs-site/` and is built with
 [Astro](https://astro.build). The CLI command reference, TUI slash-command
 reference, deployment provider pages, and changelog are **auto-extracted
 from source on every build**, so the docs cannot drift from the code.

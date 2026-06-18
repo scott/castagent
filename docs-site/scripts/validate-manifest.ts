@@ -101,7 +101,10 @@ if (summary.length > 0) {
 if (existsSync(CONTENT)) {
   const files = walk(CONTENT)
   const missing: string[] = []
-  const RE = /\{%\s*ref\s+"([^"]+)"\s*%\}/g
+  // Match both single- and double-quoted anchors so prose pages stay
+  // valid even if an author types `{% ref 'cli:edit' %}` instead of
+  // the canonical double-quoted form.
+  const RE = /\{%\s*ref\s+["']([^"']+)["']\s*%\}/g
   for (const f of files) {
     if (!f.endsWith('.md') && !f.endsWith('.mdx')) continue
     const text = readFileSync(f, 'utf8')

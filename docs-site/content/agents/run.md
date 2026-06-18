@@ -8,7 +8,7 @@ ref: ['cli:dev', 'cli:stop', 'cli:logs', 'cli:connect']
 
 # Run an agent locally
 
-`{% ref 'cli:dev" %}` is the local-day-to-day command. It boots the runtime
+`{% ref "cli:dev" %}` is the local-day-to-day command. It boots the runtime
 agent as an A2A server on a local port, registers the local run in
 `~/.cast/cast.db`, and (by default) attaches the TUI.
 
@@ -58,12 +58,12 @@ The runtime fails with a clear error if the port is in use.
 cast stop email-assistant
 ```
 
-`{% ref 'cli:stop" %}` sends SIGTERM to the recorded PID and removes the
+`{% ref "cli:stop" %}` sends SIGTERM to the recorded PID and removes the
 local-agent row from the database. Use `cast list` to confirm.
 
 ## Logs
 
-`{% ref 'cli:logs" %}` tails the runtime's stdout/stderr. It works for
+`{% ref "cli:logs" %}` tails the runtime's stdout/stderr. It works for
 both local runs and (where the provider supports it) for deployed agents.
 
 ```bash
@@ -82,7 +82,7 @@ When you launch with the TUI:
 5. When the TUI exits, Cast tears down the runtime and you land back at
    the shell.
 
-Inside the TUI, `{% ref 'slash:stop" %}` does the same thing as
+Inside the TUI, `{% ref "slash:stop" %}` does the same thing as
 `cast stop` from the CLI — it tears down the runtime and exits.
 
 ## When the agent doesn't exist yet

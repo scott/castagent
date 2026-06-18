@@ -18,7 +18,7 @@ users.
 | **Identified by** | sequential integer (`v3`, `v4`, `v5`…) | semantic version (`1.0`, `1.6`, `2.0`) |
 | **Stored in** | `~/.cast/agents/<name>/.cast/changes/` | `~/.cast/agents/<name>/.cast/releases/` |
 | **Purpose** | debugging, diff, rollback during development | production deploys, external API |
-| **Visible via** | `cast changes <name>`, `{% ref 'slash:changes" %}` | `cast releases <name>`, `{% ref 'slash:releases" %}` |
+| **Visible via** | `cast changes <name>`, `{% ref "slash:changes" %}` | `cast releases <name>`, `{% ref "slash:releases" %}` |
 | **Deletable** | no — append-only | no — releases are permanent |
 
 ## The mental model
@@ -65,7 +65,7 @@ changes are commits, releases are tags.
 
 ## How `cast deploy` chooses a version
 
-`{% ref 'cli:deploy" %}` without `--version` deploys the *current working
+`{% ref "cli:deploy" %}` without `--version` deploys the *current working
 state* — literally the files in `~/.cast/agents/<name>/` right now, whether
 or not they correspond to a release. This is recorded as `deployed_version:
 "latest"` in the database.
@@ -92,7 +92,7 @@ A release is overkill for:
 
 If you have agents from before 1.0, you may have a `versions/` directory
 instead of `changes/`, and a `cast versions` alias that prints releases.
-`{% ref 'cli:migrate" %}` converts the old format in place. The
+`{% ref "cli:migrate" %}` converts the old format in place. The
 `cast versions` alias still works but prints a deprecation warning — use
 `cast changes` for automatic history and `cast releases` for semantic
 versions.

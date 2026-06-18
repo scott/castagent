@@ -9,6 +9,12 @@
  * Slug mapping example:
  *   content/getting-started/install.md    -> /getting-started/install
  *   content/agents/anatomy.md             -> /agents/anatomy
+ *
+ * The page title is rendered by the markdown body itself (the first line
+ * of every prose page is `# <title>`), so the layout does not need to
+ * emit its own <h1>. This keeps the markdown the single source of truth
+ * for the visible heading and avoids the "Install / Install" double-h1
+ * that previously appeared on every page.
  */
 import { getCollection, render } from 'astro:content'
 import Docs from '../layouts/Docs.astro'
@@ -26,6 +32,5 @@ const { Content } = await render(entry)
 ---
 
 <Docs title={entry.data.title} description={entry.data.description}>
-  <h1>{entry.data.title}</h1>
   <Content />
 </Docs>

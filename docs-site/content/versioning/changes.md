@@ -51,11 +51,11 @@ The `[SOURCE]` column tells you *who* created the change:
 cast diff email-assistant --change 3 --change 5
 ```
 
-`{% ref 'cli:diff" %}` shows the file-level difference between two changes.
+`{% ref "cli:diff" %}` shows the file-level difference between two changes.
 This is the fastest way to answer "what did I actually change between
 yesterday and today?".
 
-In the TUI, `{% ref 'slash:diff" %}` opens a modal that walks you through
+In the TUI, `{% ref "slash:diff" %}` opens a modal that walks you through
 the kind (Changes or Releases), then the two items, then renders the diff
 inline.
 
@@ -66,7 +66,7 @@ cast restore email-assistant --change 5
 cast restore email-assistant --release 1.4
 ```
 
-`{% ref 'cli:restore" %}` extracts the tarball over the working tree.
+`{% ref "cli:restore" %}` extracts the tarball over the working tree.
 **Your current state is preserved first** — Cast snapshots the working
 tree as a new change before doing anything, so a `restore` is always
 reversible by restoring again.
@@ -75,7 +75,7 @@ reversible by restoring again.
 > updated but the deployed version is still whatever's running. Run
 > `cast deploy` or `cast upgrade` to push the restored state.
 
-In the TUI, `{% ref 'slash:restore" %}` opens a picker (Changes vs
+In the TUI, `{% ref "slash:restore" %}` opens a picker (Changes vs
 Releases) with a confirmation modal.
 
 ## When to look at changes

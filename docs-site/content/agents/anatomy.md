@@ -10,7 +10,7 @@ ref: ['cli:new', 'cli:edit', 'cli:describe', 'cli:update']
 
 Every agent created by Cast lives at `~/.cast/agents/<name>/`. The directory
 is both the agent's source of truth and its working tree — when you edit an
-agent with `{% ref 'cli:edit" %}` and the Builder writes changes, those
+agent with `{% ref "cli:edit" %}` and the Builder writes changes, those
 changes show up as files on disk.
 
 ```
@@ -44,7 +44,7 @@ changes show up as files on disk.
 ## The files you own
 
 - **`agent.yaml`** — the agent's configuration. Edit it with
-  `{% ref 'cli:update" %}` or by hand; Cast will re-read it on the next
+  `{% ref "cli:update" %}` or by hand; Cast will re-read it on the next
   change/release.
 - **`instructions.md`** — the system prompt the runtime sends to the LLM.
   This is where the agent's "personality" and capabilities live.

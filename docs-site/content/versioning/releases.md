@@ -43,7 +43,7 @@ cast release email-assistant 1.7
 cast release email-assistant 1.7 --message "Switched model + tightened permissions"
 ```
 
-`{% ref 'cli:release" %}` does six things:
+`{% ref "cli:release" %}` does six things:
 
 1. Validates the semver format (`MAJOR.MINOR.PATCH`).
 2. Snapshots the current working tree into `releases/<version>.tar.gz`.
@@ -60,7 +60,7 @@ a required tool), Cast prompts for confirmation.
 
 ## Suggested versions
 
-When you open `{% ref 'slash:release" %}` in the TUI, Cast suggests the
+When you open `{% ref "slash:release" %}` in the TUI, Cast suggests the
 next semver based on the kind of change that was last made:
 
 | Change kind | Bump | Why |
@@ -80,7 +80,7 @@ starting point.
 cast deploy email-assistant --version 1.7 --provider railway
 ```
 
-`{% ref 'cli:deploy" %}` extracts the `1.7.tar.gz` over the working tree
+`{% ref "cli:deploy" %}` extracts the `1.7.tar.gz` over the working tree
 before building the deployment image. The resulting deployment's
 `deployed_version` is recorded as `1.7` in the database. A unique
 **deployment SHA** is also generated and printed:
@@ -98,7 +98,7 @@ cast upgrade email-assistant --version 1.7    # most recent
 cast upgrade email-assistant                  # defaults to latest release
 ```
 
-`{% ref 'cli:upgrade" %}` redeploys with the new tarball. The deployment
+`{% ref "cli:upgrade" %}` redeploys with the new tarball. The deployment
 record is updated in place; the SHA stays the same. Volume mounts (which
 hold the agent's memory) are preserved across upgrades.
 

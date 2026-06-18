@@ -9,8 +9,8 @@ ref: ['cli:dev', 'cli:connect']
 # TUI overview
 
 The Cast terminal UI is a fullscreen chat client built on OpenTUI. You see
-it whenever you run `{% ref 'cli:dev" %}` (local) or
-`{% ref 'cli:connect" %}` (deployed). The TUI is also what
+it whenever you run `{% ref "cli:dev" %}` (local) or
+`{% ref "cli:connect" %}` (deployed). The TUI is also what
 [`cast-tui`](tui/on-host-tui) runs when launched inside a deployed
 container.
 
@@ -41,7 +41,7 @@ change based on the [UI mode](tui/modes).
 
 ## Two chat modes: PLAN and BUILD
 
-Inside the chat you can switch between two modes with `{% ref 'slash:mode" %}`
+Inside the chat you can switch between two modes with `{% ref "slash:mode" %}`
 (or by clicking the badge in the header):
 
 - **PLAN** (green) — the agent proposes actions, shows its reasoning,
@@ -80,11 +80,11 @@ The input line accepts `/` commands. The full list is on the
 [slash commands page](tui/slash-commands); the most useful ones to know
 on day one:
 
-- `{% ref 'slash:help" %}` — list all commands available in the current mode.
-- `{% ref 'slash:mode" %}` — toggle PLAN/BUILD.
-- `{% ref 'slash:save" %}` — save the transcript to a Markdown file.
-- `{% ref 'slash:copy" %}` — copy the last agent reply to the clipboard.
-- `{% ref 'slash:clear" %}` — clear the chat (keeps the agent connection).
+- `{% ref "slash:help" %}` — list all commands available in the current mode.
+- `{% ref "slash:mode" %}` — toggle PLAN/BUILD.
+- `{% ref "slash:save" %}` — save the transcript to a Markdown file.
+- `{% ref "slash:copy" %}` — copy the last agent reply to the clipboard.
+- `{% ref "slash:clear" %}` — clear the chat (keeps the agent connection).
 
 Slash commands that need input (a version, a name, a SHA) open a modal
 instead of requiring flag syntax. You don't need to memorise anything;
