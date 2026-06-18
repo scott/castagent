@@ -15,7 +15,7 @@ Two kinds of pages:
 
    These regenerate on every build and cannot drift from the code.
 
-2. **Prose** — hand-written Markdown in `content/`. Cross-links use `{% ref "..." %}` tags that resolve against the manifest.
+2. **Prose** — hand-written Markdown in `content/`. Cross-links use `{% ref "..." %}` tags that resolve against the manifest. Both single- and double-quoted forms are accepted (``{% ref "cli:edit" %}`` and ``{% ref 'cli:edit' %}``); the build resolves them to clickable links pointing at the matching reference page. Tags written in backticks keep their code styling — the link wraps the `<code>` element.
 
 ## Local development
 
@@ -96,11 +96,37 @@ docs-site/
 ├── src/
 │   ├── components/         # CommandRef, SlashRef, ProviderCard, Sidebar, …
 │   ├── content.config.ts   # content collection schemas
-│   ├── layouts/Docs.astro  # sidebar + content + TOC
-│   ├── lib/                # manifest loader, link resolver
+│   ├── layouts/Docs.astro  # sidebar + content + footer
+│   ├── lib/                # manifest loader, link resolver, proseLoader
+│   │   ├── links.ts        # `{% ref %}` resolution (regex + anchor → URL)
+│   │   ├── manifest.ts     # data/manifest.json accessors
+│   │   └── proseLoader.ts  # custom content loader that resolves refs
 │   ├── pages/              # /, /cli/reference, /tui/slash-commands, …
 │   └── styles/global.css
 ├── content/                # hand-written prose (Markdown/MDX)
 ├── scripts/                # extract-cli, extract-slash, extract-providers, extract-changelog, snapshot-manifest, validate-manifest
 └── data/                   # generated JSON (gitignored except manifest.json)
 ```
+
+### `{% ref %}` resolution
+
+The `proseLoader` (in `src/lib/proseLoader.ts`) is a thin wrapper around
+Astro's stock `glob` loader. It populates the data store normally, then
+walks every entry and rewrites `{% ref "anchor" %}` tags in the rendered
+HTML to `<a href="..."><code>label</code></a>` (when the tag was in
+backticks) or `<a href="...">label</a>` (when it wasn't). Anchor types
+supported:
+
+- `cli:<command>` → `/cli/reference#<command>`
+- `slash:<name>` → `/tui/slash-commands#<name>`
+- `provider:<key>` → `/deployment/providers#<key>`
+- `page:<section>/<slug>` → `/<section>/<slug>`
+
+Unresolvable anchors are surfaced as `[missing: <anchor>]` in the
+rendered page and as a `[WARN]` line in the build log. `npm run check`
+exits non-zero on any missing target.
+
+The custom loader is needed because Astro's `glob` loader does not
+honor `markdown.remarkPlugins` for content collections, and there is
+no public `transform` hook on loaders in 5.18 — wrapping is the
+supported way to pre-process glob-loaded bodies.

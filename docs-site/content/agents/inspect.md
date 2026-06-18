@@ -39,7 +39,7 @@ The status suffix is one of:
 cast describe email-assistant
 ```
 
-`{% ref 'cli:describe" %}` prints:
+`{% ref "cli:describe" %}` prints:
 
 - The description.
 - Current status.
@@ -60,11 +60,11 @@ when connecting.
 cast rename email-assistant mailer
 ```
 
-`{% ref 'cli:rename" %}` moves the directory and rewrites references in the
+`{% ref "cli:rename" %}` moves the directory and rewrites references in the
 SQLite database. It does not change git history if the agent is a Git repo
 — the old name remains in the commit log.
 
-In the TUI, `{% ref 'slash:rename" %}` opens a modal that prompts for the
+In the TUI, `{% ref "slash:rename" %}` opens a modal that prompts for the
 new name with the same validation rules as the CLI.
 
 ## Delete
@@ -74,7 +74,7 @@ cast delete email-assistant
 cast delete email-assistant --force     # skip confirmation
 ```
 
-`{% ref 'cli:delete" %}` removes the agent directory, all release tarballs,
+`{% ref "cli:delete" %}` removes the agent directory, all release tarballs,
 all deployment rows, and the database entry. **This is destructive and
 unrecoverable** — Cast refuses without confirmation unless `--force` is
 passed. To delete safely, first:

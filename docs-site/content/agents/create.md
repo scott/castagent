@@ -50,7 +50,7 @@ cast clone https://github.com/you/email-agent
 cast clone https://github.com/you/email-agent my-local-copy
 ```
 
-`{% ref 'cli:clone" %}` is the right path when:
+`{% ref "cli:clone" %}` is the right path when:
 
 - You want to ship an agent to teammates via a Git repo.
 - You're forking an existing Cast agent.
@@ -72,7 +72,7 @@ welcomes you back into the conversation with what's already there.
 cast edit email-assistant
 ```
 
-Inside the TUI you can also use `{% ref 'slash:edit" %}` to jump straight
+Inside the TUI you can also use `{% ref "slash:edit" %}` to jump straight
 into edit mode without dropping the chat session.
 
 ## Naming rules
