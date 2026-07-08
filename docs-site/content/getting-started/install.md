@@ -86,6 +86,28 @@ git pull
 ./install.sh
 ```
 
+`install.sh` is idempotent and safe to re-run at any time. As of the latest
+version it will also clean up any stale binaries left over from older Cast
+installs (for example the pre-TypeScript Go binary that used to live at
+`~/.cast/bin/cast`) so the freshly-built CLI always wins in your `$PATH`.
+
+## Troubleshooting
+
+**`cast` runs but reports "No agents found" even though `~/.cast/agents/` is populated.**
+
+This typically means an older `cast` binary is shadowing the new one in your
+`$PATH`. The most common culprit is a leftover binary at `~/.cast/bin/cast`
+from a pre-TypeScript version of Cast. Check with:
+
+```bash
+which cast
+file "$(which cast)"
+```
+
+If the result is a `Mach-O`/`ELF` executable (not a `bash` script), run
+`./install.sh` from the project root — it will remove the stale binary and
+refresh the `~/.local/bin/cast` symlink.
+
 ## Uninstalling
 
 ```bash
