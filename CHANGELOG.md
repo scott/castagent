@@ -5,6 +5,41 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.0.0] - 2026-07-16
+
+### Added
+
+- **Sessions**: A new first-class concept for saved conversations tied
+  to an agent. `cast session list|show|new|resume|rename|fork|delete|export|import|prune`,
+  plus matching TUI slash commands (`/session`, `/session-list`,
+  `/session-new`, `/session-resume`, `/session-rename`,
+  `/session-fork`, `/session-delete`). The TUI auto-creates a session
+  on the first chat turn and appends every user/agent message. JSON
+  content lives at `~/.cast/sessions/<id>.json`; a metadata index
+  lives in `cast.db` for fast listing.
+
+- **Undo/redo**: `cast undo <agent> [--steps N]` and
+  `cast redo <agent> [--steps N]` walk an internal change log
+  backward and forward. TUI slash commands `/undo` and `/redo` shell
+  out to the CLI. A new edit clears the redo stack (standard editor
+  behavior). The change log itself is unchanged on disk — it just
+  isn't a first-class user concept any more.
+
+### Changed
+
+- **Removed the "changes" first-class surface.** `cast changes`,
+  `cast diff`, `cast revert`, and the matching TUI slash commands
+  (`/changes`, `/diff`) are gone. The change log at
+  `~/.cast/agents/<name>/.cast/changes/` is still on disk and still
+  feeds `cast release`'s auto-changelog, but users interact with it
+  exclusively through `cast undo` / `cast redo`. `cast restore` no
+  longer accepts `--change`; it now requires `--release`.
+
+- The `releases` table's `change_number` field is still populated
+  (it points at the most recent undo-log entry at release time), so
+  no data migration is required. Existing change tarballs continue to
+  work; they are just no longer reachable via a user-facing command.
+
 ## [1.1.0] - 2026-06-11
 
 ### Added

@@ -144,10 +144,12 @@ Three SQLite tables plus per-agent tarballs:
 
 Tarballs:
 
-- `~/.cast/agents/<name>/.cast/changes/NNN.tar.gz` — automatic, every
-  modification.
-- `~/.cast/agents/<name>/.cast/releases/<semver>.tar.gz` — intentional,
-  one per release.
+- `~/.cast/agents/<name>/.cast/changes/NNN.tar.gz` — the internal undo
+  log; one per modification. Consumed by `cast undo` / `cast redo`.
+- `~/.cast/agents/<name>/.cast/releases/<semver>.tar.gz` — the
+  intentional release log; one per release.
+- `~/.cast/sessions/<id>.json` — one per saved conversation
+  transcript.
 
 ## How deploys talk to providers
 

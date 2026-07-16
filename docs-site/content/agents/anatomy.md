@@ -57,11 +57,15 @@ changes show up as files on disk.
 
 ## The files Cast owns
 
-- **`.cast/changes/`** — the automatic change log. Touch only via Cast
-  commands. The `changes.json` manifest is the source of truth for "v3 was
-  created at <timestamp> because <reason>".
+- **`.cast/changes/`** — the internal change log (undo log). You don't
+  touch this directly. The `changes.json` manifest is the source of
+  truth for "v3 was created at <timestamp> because <reason>". Cast
+  consumes it through `cast undo` / `cast redo` and through
+  `cast release`'s auto-changelog generator. See
+  [versioning/undo](versioning/undo).
 - **`.cast/releases/`** — the intentional release log. Same idea but for
-  semantic versions; `cast release` writes here.
+  semantic versions; `cast release` writes here. See
+  [versioning/releases](versioning/releases).
 - **`Dockerfile`**, **`requirements.txt`**, **`docker-compose.yml`** — generated
   on each `cast deploy` (or `cast upgrade`) and overwritten on the next
   deploy. Do not hand-edit.

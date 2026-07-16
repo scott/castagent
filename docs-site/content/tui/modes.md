@@ -24,9 +24,9 @@ a dynamic port. The header is **purple** and shows just the agent name.
 ```
 
 - The runtime is killed when you quit the TUI.
-- `/changes`, `/releases`, `/release`, `/deploy`, `/upgrade`, `/restore`,
-  `/diff` are all available — you're working on the agent on this
-  machine.
+- `/undo`, `/redo`, `/session …`, `/releases`, `/release`, `/deploy`,
+  `/upgrade`, `/restore` are all available — you're working on the
+  agent on this machine.
 - `/connect` switches to a *different* deployed agent (useful for
   comparing local behaviour to production).
 - No bearer token is required.

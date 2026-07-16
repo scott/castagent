@@ -1,7 +1,7 @@
 ---
 title: Releases
 section: versioning
-order: 3
+order: 4
 description: Creating, listing, and shipping semantic releases.
 ref: ['cli:release', 'cli:releases', 'cli:deploy', 'cli:upgrade']
 ---
