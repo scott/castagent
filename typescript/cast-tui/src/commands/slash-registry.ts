@@ -1955,6 +1955,68 @@ const commands: SlashCommand[] = [
   },
 
   {
+    name: 'undo',
+    description: 'Undo the last change to the agent',
+    category: 'agent',
+    modes: ['dev'],
+    args: '[steps]',
+    handler: async (ctx, args) => {
+      const steps = args[0] ? parseInt(args[0], 10) : 1
+      if (!Number.isFinite(steps) || steps < 1) {
+        ctx.messages.addAgentMessage('Usage: /undo [steps]', ctx.mode)
+        return
+      }
+      try {
+        const out = execFileSync(
+          findCastBinary() ?? 'cast',
+          ['undo', ctx.agentName, '--steps', String(steps), '--json'],
+          {encoding: 'utf-8', cwd: os.homedir()},
+        ).trim()
+        const parsed = JSON.parse(out)
+        const count = Array.isArray(parsed) ? parsed.length : 0
+        ctx.messages.addAgentMessage(
+          `Undid ${count} change${count === 1 ? '' : 's'} for '${ctx.agentName}'. Use /redo to bring them back.`,
+          ctx.mode,
+        )
+      } catch (err: any) {
+        const msg = String(err?.stderr || err?.message || err)
+        ctx.messages.addAgentMessage(`Undo failed: ${msg.split('\n').pop() ?? 'unknown error'}`, ctx.mode)
+      }
+    },
+  },
+
+  {
+    name: 'redo',
+    description: 'Redo previously-undone change(s)',
+    category: 'agent',
+    modes: ['dev'],
+    args: '[steps]',
+    handler: async (ctx, args) => {
+      const steps = args[0] ? parseInt(args[0], 10) : 1
+      if (!Number.isFinite(steps) || steps < 1) {
+        ctx.messages.addAgentMessage('Usage: /redo [steps]', ctx.mode)
+        return
+      }
+      try {
+        const out = execFileSync(
+          findCastBinary() ?? 'cast',
+          ['redo', ctx.agentName, '--steps', String(steps), '--json'],
+          {encoding: 'utf-8', cwd: os.homedir()},
+        ).trim()
+        const parsed = JSON.parse(out)
+        const count = Array.isArray(parsed) ? parsed.length : 0
+        ctx.messages.addAgentMessage(
+          `Redid ${count} change${count === 1 ? '' : 's'} for '${ctx.agentName}'.`,
+          ctx.mode,
+        )
+      } catch (err: any) {
+        const msg = String(err?.stderr || err?.message || err)
+        ctx.messages.addAgentMessage(`Redo failed: ${msg.split('\n').pop() ?? 'unknown error'}`, ctx.mode)
+      }
+    },
+  },
+
+  {
     name: 'mode',
     description: 'Toggle or set plan/build mode',
     category: 'chat',
