@@ -30,12 +30,13 @@ describe('restore command', () => {
       expect(Restore.args.agent.required).to.be.true
     })
 
-    it('should have --change flag', () => {
-      expect(Restore.flags.change).to.exist
-    })
-
     it('should have --release flag', () => {
       expect(Restore.flags.release).to.exist
+      expect(Restore.flags.release.required).to.be.true
+    })
+
+    it('should not have a --change flag (use cast undo instead)', () => {
+      expect(Restore.flags.change).to.be.undefined
     })
 
     it('should have examples', () => {
@@ -61,100 +62,11 @@ describe('restore command', () => {
     })
 
     it('should error when agent does not exist', async () => {
-      const instance = new Restore(['restore', 'nonexistent-agent-zzz', '--change', '1'], {} as any)
+      const instance = new Restore(['restore', 'nonexistent-agent-zzz', '--release', '1.0'], {} as any)
       instance.config = {runHook: async () => ({successes: [], failures: []})}
       instance.parse = async () => ({
         args: {agent: 'nonexistent-agent-zzz'},
-        flags: {change: 1},
-        argv: [],
-        raw: [],
-        metadata: {},
-        nonExistentFlags: [],
-      })
-
-      let errorMessage = ''
-      instance.error = (msg: string) => {
-        errorMessage = msg
-        throw new Error(msg)
-      }
-      instance.log = () => {}
-
-      try {
-        await instance.run()
-      } catch (e: any) {
-        // Expected
-      }
-
-      expect(errorMessage).to.include('not found')
-    })
-
-    it('should error when neither --change nor --release is specified', async () => {
-      const instance = new Restore(['restore', agentName], {} as any)
-      instance.config = {runHook: async () => ({successes: [], failures: []})}
-      instance.parse = async () => ({
-        args: {agent: agentName},
-        flags: {},
-        argv: [],
-        raw: [],
-        metadata: {},
-        nonExistentFlags: [],
-      })
-
-      let errorMessage = ''
-      instance.error = (msg: string) => {
-        errorMessage = msg
-        throw new Error(msg)
-      }
-      instance.log = () => {}
-
-      try {
-        await instance.run()
-      } catch (e: any) {
-        // Expected
-      }
-
-      expect(errorMessage).to.include('Specify either')
-    })
-
-    it('should error when both --change and --release are specified', async () => {
-      const instance = new Restore(['restore', agentName, '--change', '1', '--release', '1.0'], {} as any)
-      instance.config = {runHook: async () => ({successes: [], failures: []})}
-      instance.parse = async () => ({
-        args: {agent: agentName},
-        flags: {change: 1, release: '1.0'},
-        argv: [],
-        raw: [],
-        metadata: {},
-        nonExistentFlags: [],
-      })
-
-      let errorMessage = ''
-      instance.error = (msg: string) => {
-        errorMessage = msg
-        throw new Error(msg)
-      }
-      instance.log = () => {}
-
-      try {
-        await instance.run()
-      } catch (e: any) {
-        // Expected
-      }
-
-      expect(errorMessage).to.include('only one of')
-    })
-
-    it('should error when the change tarball does not exist', async () => {
-      // Create the changes dir but no tarball
-      const changesDir = path.join(realAgentDir, '.cast', 'changes')
-      fs.mkdirSync(changesDir, {recursive: true})
-      // No tarball inside
-
-      const instance = new Restore(['restore', agentName, '--change', '5'], {} as any)
-      instance.config = {runHook: async () => ({successes: [], failures: []})}
-      instance.parse = async () => ({
-        args: {agent: agentName},
-        flags: {change: 5},
+        flags: {release: '1.0'},
         argv: [],
         raw: [],
         metadata: {},
