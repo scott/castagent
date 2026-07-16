@@ -10,6 +10,18 @@ import type {KeyEvent, TextChunk} from '@opentui/core'
 import {saveTranscript} from '../lib/transcript.js'
 import {getDb} from '../lib/db.js'
 import {getKeychain} from '../lib/keychain.js'
+import {
+  listSessions as listSessionsMeta,
+  getSession,
+  renameSession,
+  forkSession,
+  deleteSession,
+  createSession,
+  endSession,
+  appendMessage,
+  type SessionMeta,
+  type Session,
+} from '../lib/sessions.js'
 import {createModal} from '../components/modal.js'
 import {runDeployInTerminal} from '../components/terminal.js'
 import type {UiMode} from '../components/header.js'
@@ -58,6 +70,50 @@ export interface CommandContext {
   exitTui: () => void
   messageHistory: Array<{role: 'user' | 'agent'; text: string}>
   lastAgentMessage?: string
+  /**
+   * The active session id, if one is bound to the chat screen. The TUI
+   * creates a session on first user message and updates this on
+   * /session new, /session fork, and /session resume.
+   */
+  currentSessionId?: string | null
+  /**
+   * Re-render the chat screen from a saved session's transcript. Wired
+   * in the chat screen; defaults to a no-op in tests.
+   */
+  loadSession?: (sessionId: string) => Promise<void>
+  /**
+   * Recursively run a subcommand by name. Used by the /session parent
+   * command to dispatch to /session-list, /session-resume, etc.
+   */
+  executeSubcommand?: (name: string, args: string[]) => Promise<void>
+}
+
+/**
+ * Load a session's transcript into the chat. Clears the in-memory
+ * message history, then re-renders each message as a user/agent
+ * bubble. This is the user-facing "resume" action.
+ */
+async function loadSessionIntoChat(ctx: CommandContext, sessionId: string): Promise<void> {
+  if (!ctx.loadSession) {
+    ctx.messages.addAgentMessage(
+      'Resuming sessions is not available in this context.',
+      ctx.mode,
+    )
+    return
+  }
+  try {
+    await ctx.loadSession(sessionId)
+    ctx.currentSessionId = sessionId
+    ctx.messages.addAgentMessage(
+      `Resumed session ${sessionId}. Future messages will be appended to this session.`,
+      ctx.mode,
+    )
+  } catch (err: any) {
+    ctx.messages.addAgentMessage(
+      `Failed to resume session: ${err?.message ?? String(err)}`,
+      ctx.mode,
+    )
+  }
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -279,6 +335,201 @@ function getChangesForAgent(agentName: string): Array<{id: number; timestamp: st
     return data.versions || []
   } catch {
     return []
+  }
+}
+
+/**
+ * Format an ISO timestamp as a relative "x ago" string for session
+ * pickers. Falls back to a locale string for invalid input.
+ */
+function formatRelativeTime(iso: string): string {
+  if (!iso) return ''
+  const then = new Date(iso).getTime()
+  if (!Number.isFinite(then)) return ''
+  const diff = Date.now() - then
+  const sec = Math.floor(diff / 1000)
+  if (sec < 60) return `${sec}s ago`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}m ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  const day = Math.floor(hr / 24)
+  if (day < 30) return `${day}d ago`
+  const mo = Math.floor(day / 30)
+  if (mo < 12) return `${mo}mo ago`
+  return `${Math.floor(mo / 12)}y ago`
+}
+
+/**
+ * Truncate a string to a maximum length, collapsing whitespace and
+ * adding an ellipsis when truncated. Used to fit user prompts into
+ * session picker rows.
+ */
+function truncatePreview(s: string | null | undefined, n: number): string {
+  if (!s) return ''
+  const oneLine = s.replace(/\s+/g, ' ').trim()
+  return oneLine.length > n ? oneLine.slice(0, n - 1) + '…' : oneLine
+}
+
+/**
+ * Show a session picker modal. Renders the list of sessions for the
+ * current agent, navigates with up/down, and invokes `onSelect` with
+ * the chosen session id (or no-op on escape).
+ *
+ * Follows the AGENTS.md modal standards: 90% wide, 80% tall, centered,
+ * `▸` selection indicator, no row numbers, two-line rows.
+ */
+function showSessionPicker(
+  ctx: CommandContext,
+  sessions: SessionMeta[],
+  options: {
+    title: string
+    onSelect: (sess: SessionMeta) => void | Promise<void>
+    extraActions?: Record<
+      string,
+      (sess: SessionMeta) => void | Promise<void>
+    >
+  },
+): void {
+  const modal = createModal(ctx.renderer, ctx.input, {title: options.title, overlay: true})
+  if (modal.overlay) ctx.renderer.root.add(modal.overlay)
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 0,
+    paddingTop: 2,
+    paddingLeft: 2,
+    paddingRight: 2,
+  })
+
+  if (sessions.length === 0) {
+    const empty = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('No sessions found.')]),
+    })
+    contentBox.add(empty)
+    modal.setContent(contentBox)
+    ctx.renderer.root.add(modal.box)
+    modal.show()
+    const closeKey = modal.box.handleKeyPress?.bind(modal.box)
+    modal.box.handleKeyPress = (key: KeyEvent) => {
+      if (key.name === 'escape' || key.name === 'return' || key.name === 'enter') {
+        modal.hide()
+        ctx.input.focus()
+        return true
+      }
+      return closeKey ? closeKey(key) : false
+    }
+    return
+  }
+
+  let selectedIndex = 0
+
+  const renderList = () => {
+    for (const child of contentBox.getChildren()) {
+      contentBox.remove(child.id)
+    }
+
+    const header = new TextRenderable(ctx.renderer, {
+      content: new StyledText([
+        white(`${sessions.length} session${sessions.length === 1 ? '' : 's'}`),
+      ]),
+    })
+    contentBox.add(header)
+    const sep = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('──────────────────────────────────────────────────────────────────────────────')]),
+    })
+    contentBox.add(sep)
+
+    for (let i = 0; i < sessions.length; i++) {
+      const s = sessions[i]
+      const isSelected = i === selectedIndex
+      const titleColor = isSelected ? white : dim
+      const title = s.name || truncatePreview(s.first_user_message, 60) || '(untitled)'
+      const endedTag = s.ended_at ? ' (ended)' : ''
+
+      const row = new TextRenderable(ctx.renderer, {
+        content: new StyledText([
+          isSelected ? cyan('▸ ') : dim('  '),
+          titleColor(title),
+          dim(endedTag),
+          dim('\n    '),
+          dim(`${s.agent_name} · ${s.message_count} msg · ${formatRelativeTime(s.updated_at)}`),
+        ]),
+      })
+      contentBox.add(row)
+    }
+
+    const sep2 = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('──────────────────────────────────────────────────────────────────────────────')]),
+    })
+    contentBox.add(sep2)
+
+    const footerParts: Array<{text: string; color: typeof white | typeof dim}> = [
+      {text: '↑↓ ', color: white},
+      {text: 'Navigate  ', color: dim},
+      {text: 'Enter ', color: white},
+      {text: 'Select  ', color: dim},
+    ]
+    if (options.extraActions) {
+      for (const [key, _] of Object.entries(options.extraActions)) {
+        footerParts.push({text: `${key.toUpperCase()} `, color: white})
+        footerParts.push({text: 'Action  ', color: dim})
+      }
+    }
+    footerParts.push({text: 'ESC ', color: white})
+    footerParts.push({text: 'Close', color: dim})
+    const chunks: any[] = []
+    for (const p of footerParts) chunks.push(p.color(p.text))
+    const footer = new TextRenderable(ctx.renderer, {content: new StyledText(chunks)})
+    const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+    footerBox.add(footer)
+    contentBox.add(footerBox)
+  }
+
+  renderList()
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+
+  const originalHandle = modal.box.handleKeyPress?.bind(modal.box)
+  modal.box.handleKeyPress = (key: KeyEvent) => {
+    if (key.name === 'up') {
+      selectedIndex = (selectedIndex - 1 + sessions.length) % sessions.length
+      renderList()
+      ctx.renderer.requestRender?.()
+      return true
+    }
+    if (key.name === 'down') {
+      selectedIndex = (selectedIndex + 1) % sessions.length
+      renderList()
+      ctx.renderer.requestRender?.()
+      return true
+    }
+    if (key.name === 'escape') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    if (key.name === 'return' || key.name === 'enter') {
+      const chosen = sessions[selectedIndex]
+      modal.hide()
+      ctx.input.focus()
+      void options.onSelect(chosen)
+      return true
+    }
+    if (options.extraActions) {
+      const k = (key.name ?? '').toLowerCase()
+      if (k.length === 1 && options.extraActions[k]) {
+        const chosen = sessions[selectedIndex]
+        modal.hide()
+        ctx.input.focus()
+        void options.extraActions[k](chosen)
+        return true
+      }
+    }
+    return originalHandle ? originalHandle(key) : false
   }
 }
 
@@ -3343,6 +3594,212 @@ const commands: SlashCommand[] = [
       modal.setContent(contentBox)
       ctx.renderer.root.add(modal.box)
       modal.show()
+    },
+  },
+
+  {
+    name: 'session',
+    description: 'Manage conversation sessions (list, new, resume, rename, fork, delete)',
+    category: 'session',
+    args: '[list|new|resume|rename|fork|delete]',
+    handler: async (ctx, args) => {
+      const subcommand = (args[0] ?? 'list').toLowerCase()
+      const rest = args.slice(1)
+      const targetName =
+        subcommand === 'list' ? 'session-list' :
+        subcommand === 'new' ? 'session-new' :
+        subcommand === 'resume' ? 'session-resume' :
+        subcommand === 'rename' ? 'session-rename' :
+        subcommand === 'fork' ? 'session-fork' :
+        subcommand === 'delete' ? 'session-delete' :
+        null
+
+      if (!targetName) {
+        ctx.messages.addAgentMessage(
+          `Unknown subcommand: /session ${subcommand}. Use one of: list, new, resume, rename, fork, delete.`,
+          ctx.mode,
+        )
+        return
+      }
+      const {executeSlashCommand} = await import('./slash-registry.js')
+      await executeSlashCommand(targetName, rest, ctx)
+    },
+  },
+
+  {
+    name: 'session-list',
+    description: 'List saved sessions for the current agent',
+    category: 'session',
+    handler: async (ctx) => {
+      const items = await listSessionsMeta(ctx.agentName, 50, true)
+      if (items.length === 0) {
+        ctx.messages.addAgentMessage(
+          `No sessions found for '${ctx.agentName}'. A new one will be created on your first message.`,
+          ctx.mode,
+        )
+        return
+      }
+      showSessionPicker(ctx, items, {
+        title: `Sessions: ${ctx.agentName}`,
+        onSelect: async (sess) => {
+          ctx.messages.addAgentMessage(
+            `Resuming session ${sess.id} (${sess.message_count} message${sess.message_count === 1 ? '' : 's'}). Use /session resume ${sess.id} to reload it into the chat.`,
+            ctx.mode,
+          )
+        },
+        extraActions: {
+          r: async (sess) => {
+            ctx.messages.addAgentMessage(
+              `Resume with: /session resume ${sess.id}`,
+              ctx.mode,
+            )
+          },
+          d: async (sess) => {
+            await deleteSession(sess.id)
+            ctx.messages.addAgentMessage(`Deleted session ${sess.id}.`, ctx.mode)
+          },
+        },
+      })
+    },
+  },
+
+  {
+    name: 'session-new',
+    description: 'Start a fresh session for the current agent',
+    category: 'session',
+    args: '[name]',
+    handler: async (ctx, args) => {
+      const name = args[0] ?? null
+      try {
+        const sess = await createSession({
+          agentName: ctx.agentName,
+          mode: ctx.mode,
+          uiMode: ctx.uiMode ?? 'dev',
+          name,
+        })
+        ctx.messages.addAgentMessage(
+          `Started new session ${sess.id}${sess.name ? ` ('${sess.name}')` : ''}. The new session will take over on your next message.`,
+          ctx.mode,
+        )
+        // End the current session and switch to the new one
+        const previousId = ctx.currentSessionId
+        if (previousId) {
+          await endSession(previousId)
+        }
+        ctx.currentSessionId = sess.id
+      } catch (err: any) {
+        ctx.messages.addAgentMessage(
+          `Failed to create session: ${err?.message ?? String(err)}`,
+          ctx.mode,
+        )
+      }
+    },
+  },
+
+  {
+    name: 'session-resume',
+    description: 'Resume an existing session',
+    category: 'session',
+    args: '[id|name]',
+    handler: async (ctx, args) => {
+      const identifier = args[0]
+      if (!identifier) {
+        const items = await listSessionsMeta(ctx.agentName, 50, true)
+        if (items.length === 0) {
+          ctx.messages.addAgentMessage(
+            `No sessions to resume for '${ctx.agentName}'.`,
+            ctx.mode,
+          )
+          return
+        }
+        showSessionPicker(ctx, items, {
+          title: `Resume session: ${ctx.agentName}`,
+          onSelect: async (sess) => {
+            await loadSessionIntoChat(ctx, sess.id)
+          },
+        })
+        return
+      }
+
+      const sess = await getSession(identifier)
+      if (!sess) {
+        ctx.messages.addAgentMessage(`Session not found: ${identifier}`, ctx.mode)
+        return
+      }
+      await loadSessionIntoChat(ctx, sess.id)
+    },
+  },
+
+  {
+    name: 'session-rename',
+    description: 'Rename a session',
+    category: 'session',
+    args: '<id|name> <new-name>',
+    handler: async (ctx, args) => {
+      if (args.length < 2) {
+        ctx.messages.addAgentMessage('Usage: /session rename <id|name> <new-name>', ctx.mode)
+        return
+      }
+      const [identifier, ...rest] = args
+      const name = rest.join(' ')
+      try {
+        const updated = await renameSession(identifier, name)
+        ctx.messages.addAgentMessage(`Renamed session ${updated.id} to '${updated.name}'.`, ctx.mode)
+      } catch (err: any) {
+        ctx.messages.addAgentMessage(`Failed to rename: ${err?.message ?? String(err)}`, ctx.mode)
+      }
+    },
+  },
+
+  {
+    name: 'session-fork',
+    description: 'Fork the current session into a new one',
+    category: 'session',
+    args: '[name]',
+    handler: async (ctx, args) => {
+      const source = ctx.currentSessionId
+      if (!source) {
+        ctx.messages.addAgentMessage('No active session to fork. Send a message first to create one.', ctx.mode)
+        return
+      }
+      const name = args[0] ?? null
+      try {
+        const forked = await forkSession(source, name)
+        ctx.messages.addAgentMessage(
+          `Forked into new session ${forked.id}${forked.name ? ` ('${forked.name}')` : ''}. The fork will take over on your next message.`,
+          ctx.mode,
+        )
+        await endSession(source)
+        ctx.currentSessionId = forked.id
+      } catch (err: any) {
+        ctx.messages.addAgentMessage(`Failed to fork: ${err?.message ?? String(err)}`, ctx.mode)
+      }
+    },
+  },
+
+  {
+    name: 'session-delete',
+    description: 'Delete a session',
+    category: 'session',
+    args: '[id|name]',
+    handler: async (ctx, args) => {
+      const identifier = args[0] ?? ctx.currentSessionId
+      if (!identifier) {
+        ctx.messages.addAgentMessage(
+          'No session to delete. Specify an id/name or use this command while a session is active.',
+          ctx.mode,
+        )
+        return
+      }
+      try {
+        await deleteSession(identifier)
+        ctx.messages.addAgentMessage(`Deleted session ${identifier}.`, ctx.mode)
+        if (ctx.currentSessionId === identifier) {
+          ctx.currentSessionId = null
+        }
+      } catch (err: any) {
+        ctx.messages.addAgentMessage(`Failed to delete: ${err?.message ?? String(err)}`, ctx.mode)
+      }
     },
   },
 

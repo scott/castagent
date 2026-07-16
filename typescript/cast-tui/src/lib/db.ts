@@ -17,6 +17,10 @@ export interface DbApi {
   listAllReleases(): any[]
   listAllReleasesForAgent(name: string): any[]
   listReleases(name: string): any[]
+  // Sessions
+  listSessions(agentName?: string, limit?: number, includeEnded?: boolean): any[]
+  getSession(id: string): any | null
+  getSessionByName(name: string): any | null
 }
 
 let dbInstance: DbApi | null = null
@@ -90,6 +94,34 @@ async function createBunDb(): Promise<DbApi> {
     },
     listReleases(name: string) {
       return db.query('SELECT * FROM releases WHERE agent_name = ? ORDER BY created_at DESC').all(name)
+    },
+    listSessions(agentName?: string, limit: number = 50, includeEnded: boolean = true) {
+      if (agentName) {
+        if (includeEnded) {
+          return db
+            .query('SELECT * FROM sessions WHERE agent_name = ? ORDER BY updated_at DESC LIMIT ?')
+            .all(agentName, limit)
+        }
+        return db
+          .query('SELECT * FROM sessions WHERE agent_name = ? AND ended_at IS NULL ORDER BY updated_at DESC LIMIT ?')
+          .all(agentName, limit)
+      }
+      if (includeEnded) {
+        return db.query('SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?').all(limit)
+      }
+      return db
+        .query('SELECT * FROM sessions WHERE ended_at IS NULL ORDER BY updated_at DESC LIMIT ?')
+        .all(limit)
+    },
+    getSession(id: string) {
+      return db.query('SELECT * FROM sessions WHERE id = ?').get(id) || null
+    },
+    getSessionByName(name: string) {
+      return (
+        db
+          .query('SELECT * FROM sessions WHERE name = ? ORDER BY updated_at DESC LIMIT 1')
+          .get(name) || null
+      )
     },
   }
 }
