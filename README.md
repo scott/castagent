@@ -105,6 +105,9 @@ ln -sf $(pwd)/cast ~/.local/bin/cast
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
+**Upgrading / re-running install:**
+Re-running `./install.sh` is the safe way to upgrade. The script is idempotent: it rebuilds the TypeScript projects, refreshes the `~/.local/bin/cast` symlink, and removes any stale binaries left over from older versions of Cast (e.g. the pre-TypeScript Go binary that used to live at `~/.cast/bin/cast`). If you ever see the wrong version of `cast` running after a rebuild, re-run `./install.sh` — it will clear the conflict.
+
 ### Usage
 
 ```bash

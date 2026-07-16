@@ -416,6 +416,15 @@ EOF
     chmod +x "$SCRIPT_DIR/cast"
 fi
 
+# Remove stale Go binary from older (pre-TypeScript-rewrite) versions of Cast.
+# This binary lives at ~/.cast/bin/cast and, if ~/.cast/bin appears in $PATH
+# before ~/.local/bin, silently shadows the new TypeScript CLI — even after
+# we've set up the symlinks below. Clean it up so the new CLI wins.
+if [ -f "$HOME/.cast/bin/cast" ]; then
+    log_info "Removing stale Cast binary from older (pre-TypeScript) version at ~/.cast/bin/cast"
+    rm -f "$HOME/.cast/bin/cast"
+fi
+
 mkdir -p "$HOME/.local/bin"
 if [ -L "$HOME/.local/bin/cast" ]; then
     rm "$HOME/.local/bin/cast"
