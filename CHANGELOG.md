@@ -5,6 +5,58 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-07-17
+
+### Added
+
+- **Docs site restructured into three top-level categories**: Getting
+  Started, Building Agents, and Configuration. Building Agents is
+  split into three sub-headings: Development Workflow (walkthrough,
+  sessions, TUI, slash commands, CLI reference), Versioning
+  (overview, undo, Git), and Deployment (overview, releases,
+  lifecycle, providers). The Configuration category collects Custom
+  tools, MCP servers, and Persistent memory.
+
+- **`build-agents/development-workflow/workflow.md`** — a new
+  end-to-end walkthrough from `cast new` to a deployed agent. Each
+  step is one command and a link to the reference page that
+  documents the depth, plus a "Where to go next" navigation index.
+
+- **`build-agents/versioning/git.md`** — a new reference page for
+  `cast git` (init, status, commit, log, diff, push, remote). Covers
+  how `cast git` relates to the undo log and to releases, the
+  `.castignore` defaults, and the TUI's `/git` slash command.
+
+- **`/sessions` slash command** — opens a modal that lists saved
+  sessions for the current agent. Replaces the previous
+  `/session-list` form. Fork/rename/delete are reachable through
+  the picker, not as slash subcommands.
+
+### Changed
+
+- **Session slash surface simplified.** The parent `/session`
+  command now accepts only `new` and `resume` as subcommands
+  (e.g. `/session new`, `/session resume [id|name]`). The
+  hyphenated forms (`/session-list`, `/session-new`,
+  `/session-resume`, `/session-rename`, `/session-fork`,
+  `/session-delete`) are removed. The CLI subcommands
+  (`cast session list|new|resume|...`) are unchanged.
+
+- **Docs section structure:** the old `agents/`, `versioning/`,
+  `deployment/`, `tui/`, `cli/`, `configuration/`, `development/`,
+  and `guides/` top-level prose sections are folded into the three
+  new top-level categories. The contributor pages
+  (`docs-site/content/development/architecture.md` and
+  `building.md`) are removed from the docs site. The
+  `getting-started/configuration` page is renamed to
+  `getting-started/global-settings` to disambiguate from the new
+  per-agent Configuration category.
+
+- **Versioning overview rewritten** as a 2-column comparison of the
+  undo log and the optional `cast git` history. The 3-column
+  "Undo log / Releases / Sessions" table is gone — sessions live
+  with Development Workflow, and releases live with Deployment.
+
 ## [2.0.0] - 2026-07-16
 
 ### Added

@@ -1,7 +1,8 @@
 ---
 title: Modes (dev, production, on-host)
-section: tui
-order: 2
+section: building-agents
+group: development-workflow
+order: 4
 description: How the three UI modes change the look, feel, and available commands.
 ref: ['cli:dev', 'cli:connect', 'slash:help', 'slash:connect', 'slash:upgrade']
 ---
@@ -54,7 +55,7 @@ deployed version.
 ## on-host
 
 Triggered by running `cast-tui` inside a DigitalOcean container
-(see [on-host TUI](tui/on-host-tui)). The header is also green, but
+(see [on-host TUI](on-host-tui)). The header is also green, but
 **no version badge** appears because the TUI is talking to a local A2A
 server inside the same container.
 

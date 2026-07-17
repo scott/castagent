@@ -1,6 +1,7 @@
 ---
 title: Undo and redo
-section: versioning
+section: building-agents
+group: versioning
 order: 2
 description: Step backwards and forwards through the agent's edit history.
 ref: ['cli:undo', 'cli:redo']
@@ -77,15 +78,11 @@ add `/undo-to` with a modal picker (see the modal design standards in
 
 ## How it relates to releases
 
-When you `cast release`, the auto-generated changelog pulls from the
-undo log. The release's `change_number` field is the id of the most
-recent log entry at the time of release. Future releases compare
-against that id to compute "what changed since v1.6".
-
-If you `cast undo` after a release, the log entries that fed the
-release's changelog are still there — the release's tarball is
-self-contained, and the changelog is a snapshot of the log at release
-time.
+For the deployment artifact, see [Releases](../deployment/releases).
+The undo log feeds `cast release`'s auto-changelog generator — each
+release records the id of the most recent log entry at the time of
+release, and future releases compare against that id to compute
+"what changed since v1.6".
 
 ## Internal storage
 

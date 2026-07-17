@@ -82,7 +82,7 @@ cast deploy email-assistant --provider digitalocean
 cast deploy email-assistant --provider docker
 ```
 
-Each provider has its own prerequisites; see the [deployment overview](deployment/overview)
+Each provider has its own prerequisites; see the [deployment overview](../building-agents/deployment/overview)
 or the per-provider pages.
 
 ## 6. Connect to the running deploy
@@ -98,10 +98,13 @@ cast connect abc123        # by deployment SHA
 
 ## What's next
 
-- [Concepts](getting-started/concepts) — the Builder / Runtime model, A2A,
-  changes vs. releases.
-- [Configuration](getting-started/configuration) — `~/.cast/config.yaml`,
-  env vars, secrets.
-- [Versioning](versioning/overview) — why there are two version tracks and
-  when to use which.
-- [Deployment](deployment/overview) — multi-deployment, SHAs, providers.
+- [Concepts](concepts) — the Builder / Runtime model, A2A, and how
+  Cast tracks agent state.
+- [Global settings](global-settings) — `~/.cast/config.yaml`, env vars,
+  secrets.
+- [Build an agent end-to-end](../building-agents/development-workflow/workflow)
+  — the dev loop, from `cast new` to a deployed agent.
+- [Versioning](../building-agents/versioning/overview) — the undo log
+  and `cast git`, and when to use which.
+- [Deployment](../building-agents/deployment/overview) — multi-deployment,
+  SHAs, providers.

@@ -1,6 +1,6 @@
 ---
 title: Persistent memory
-section: guides
+section: configuration
 order: 3
 description: How agents remember things across deploys and upgrades.
 ref: ['cli:deploy', 'cli:upgrade', 'cli:shutdown']

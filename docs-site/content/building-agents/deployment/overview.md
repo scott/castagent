@@ -1,6 +1,7 @@
 ---
 title: Deployment overview
-section: deployment
+section: building-agents
+group: deployment
 order: 1
 description: Choosing a provider, the deployment lifecycle, and multi-deployment with SHAs.
 ref: ['cli:deploy', 'cli:connect', 'cli:shutdown', 'cli:upgrade', 'cli:registry']
@@ -31,7 +32,7 @@ later.
 
 ## Providers
 
-See the [providers page](deployment/providers) for the full list. The
+See the [providers page](../../deployment/providers) for the full list. The
 short version:
 
 | Provider | Best for | Container | On-host TUI |

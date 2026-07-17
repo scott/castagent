@@ -1,6 +1,6 @@
 ---
 title: Custom tools
-section: guides
+section: configuration
 order: 1
 description: Adding a Python tool to an agent's runtime.
 ref: ['']

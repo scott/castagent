@@ -13,8 +13,6 @@ import {getKeychain} from '../lib/keychain.js'
 import {
   listSessions as listSessionsMeta,
   getSession,
-  renameSession,
-  forkSession,
   deleteSession,
   createSession,
   endSession,
@@ -82,8 +80,8 @@ export interface CommandContext {
    */
   loadSession?: (sessionId: string) => Promise<void>
   /**
-   * Recursively run a subcommand by name. Used by the /session parent
-   * command to dispatch to /session-list, /session-resume, etc.
+   * Recursively run a subcommand by name. Used by parent slash
+   * commands to dispatch to their subcommands.
    */
   executeSubcommand?: (name: string, args: string[]) => Promise<void>
 }
@@ -2765,37 +2763,8 @@ const commands: SlashCommand[] = [
   },
 
   {
-    name: 'session',
-    description: 'Manage conversation sessions (list, new, resume, rename, fork, delete)',
-    category: 'session',
-    args: '[list|new|resume|rename|fork|delete]',
-    handler: async (ctx, args) => {
-      const subcommand = (args[0] ?? 'list').toLowerCase()
-      const rest = args.slice(1)
-      const targetName =
-        subcommand === 'list' ? 'session-list' :
-        subcommand === 'new' ? 'session-new' :
-        subcommand === 'resume' ? 'session-resume' :
-        subcommand === 'rename' ? 'session-rename' :
-        subcommand === 'fork' ? 'session-fork' :
-        subcommand === 'delete' ? 'session-delete' :
-        null
-
-      if (!targetName) {
-        ctx.messages.addAgentMessage(
-          `Unknown subcommand: /session ${subcommand}. Use one of: list, new, resume, rename, fork, delete.`,
-          ctx.mode,
-        )
-        return
-      }
-      const {executeSlashCommand} = await import('./slash-registry.js')
-      await executeSlashCommand(targetName, rest, ctx)
-    },
-  },
-
-  {
-    name: 'session-list',
-    description: 'List saved sessions for the current agent',
+    name: 'sessions',
+    description: 'List saved sessions and open the picker modal',
     category: 'session',
     handler: async (ctx) => {
       const items = await listSessionsMeta(ctx.agentName, 50, true)
@@ -2809,17 +2778,11 @@ const commands: SlashCommand[] = [
       showSessionPicker(ctx, items, {
         title: `Sessions: ${ctx.agentName}`,
         onSelect: async (sess) => {
-          ctx.messages.addAgentMessage(
-            `Resuming session ${sess.id} (${sess.message_count} message${sess.message_count === 1 ? '' : 's'}). Use /session resume ${sess.id} to reload it into the chat.`,
-            ctx.mode,
-          )
+          await loadSessionIntoChat(ctx, sess.id)
         },
         extraActions: {
           r: async (sess) => {
-            ctx.messages.addAgentMessage(
-              `Resume with: /session resume ${sess.id}`,
-              ctx.mode,
-            )
+            await loadSessionIntoChat(ctx, sess.id)
           },
           d: async (sess) => {
             await deleteSession(sess.id)
@@ -2831,142 +2794,74 @@ const commands: SlashCommand[] = [
   },
 
   {
-    name: 'session-new',
-    description: 'Start a fresh session for the current agent',
+    name: 'session',
+    description: 'Start or resume a session',
     category: 'session',
-    args: '[name]',
+    args: '[new|resume]',
     handler: async (ctx, args) => {
-      const name = args[0] ?? null
-      try {
-        const sess = await createSession({
-          agentName: ctx.agentName,
-          mode: ctx.mode,
-          uiMode: ctx.uiMode ?? 'dev',
-          name,
-        })
-        ctx.messages.addAgentMessage(
-          `Started new session ${sess.id}${sess.name ? ` ('${sess.name}')` : ''}. The new session will take over on your next message.`,
-          ctx.mode,
-        )
-        // End the current session and switch to the new one
-        const previousId = ctx.currentSessionId
-        if (previousId) {
-          await endSession(previousId)
-        }
-        ctx.currentSessionId = sess.id
-      } catch (err: any) {
-        ctx.messages.addAgentMessage(
-          `Failed to create session: ${err?.message ?? String(err)}`,
-          ctx.mode,
-        )
-      }
-    },
-  },
+      const subcommand = (args[0] ?? 'new').toLowerCase()
+      const rest = args.slice(1)
 
-  {
-    name: 'session-resume',
-    description: 'Resume an existing session',
-    category: 'session',
-    args: '[id|name]',
-    handler: async (ctx, args) => {
-      const identifier = args[0]
-      if (!identifier) {
-        const items = await listSessionsMeta(ctx.agentName, 50, true)
-        if (items.length === 0) {
+      if (subcommand === 'new') {
+        const name = rest[0] ?? null
+        try {
+          const sess = await createSession({
+            agentName: ctx.agentName,
+            mode: ctx.mode,
+            uiMode: ctx.uiMode ?? 'dev',
+            name,
+          })
           ctx.messages.addAgentMessage(
-            `No sessions to resume for '${ctx.agentName}'.`,
+            `Started new session ${sess.id}${sess.name ? ` ('${sess.name}')` : ''}. The new session will take over on your next message.`,
             ctx.mode,
           )
+          const previousId = ctx.currentSessionId
+          if (previousId) {
+            await endSession(previousId)
+          }
+          ctx.currentSessionId = sess.id
+        } catch (err: any) {
+          ctx.messages.addAgentMessage(
+            `Failed to create session: ${err?.message ?? String(err)}`,
+            ctx.mode,
+          )
+        }
+        return
+      }
+
+      if (subcommand === 'resume') {
+        const identifier = rest[0]
+        if (!identifier) {
+          const items = await listSessionsMeta(ctx.agentName, 50, true)
+          if (items.length === 0) {
+            ctx.messages.addAgentMessage(
+              `No sessions to resume for '${ctx.agentName}'.`,
+              ctx.mode,
+            )
+            return
+          }
+          showSessionPicker(ctx, items, {
+            title: `Resume session: ${ctx.agentName}`,
+            onSelect: async (sess) => {
+              await loadSessionIntoChat(ctx, sess.id)
+            },
+          })
           return
         }
-        showSessionPicker(ctx, items, {
-          title: `Resume session: ${ctx.agentName}`,
-          onSelect: async (sess) => {
-            await loadSessionIntoChat(ctx, sess.id)
-          },
-        })
-        return
-      }
 
-      const sess = await getSession(identifier)
-      if (!sess) {
-        ctx.messages.addAgentMessage(`Session not found: ${identifier}`, ctx.mode)
-        return
-      }
-      await loadSessionIntoChat(ctx, sess.id)
-    },
-  },
-
-  {
-    name: 'session-rename',
-    description: 'Rename a session',
-    category: 'session',
-    args: '<id|name> <new-name>',
-    handler: async (ctx, args) => {
-      if (args.length < 2) {
-        ctx.messages.addAgentMessage('Usage: /session rename <id|name> <new-name>', ctx.mode)
-        return
-      }
-      const [identifier, ...rest] = args
-      const name = rest.join(' ')
-      try {
-        const updated = await renameSession(identifier, name)
-        ctx.messages.addAgentMessage(`Renamed session ${updated.id} to '${updated.name}'.`, ctx.mode)
-      } catch (err: any) {
-        ctx.messages.addAgentMessage(`Failed to rename: ${err?.message ?? String(err)}`, ctx.mode)
-      }
-    },
-  },
-
-  {
-    name: 'session-fork',
-    description: 'Fork the current session into a new one',
-    category: 'session',
-    args: '[name]',
-    handler: async (ctx, args) => {
-      const source = ctx.currentSessionId
-      if (!source) {
-        ctx.messages.addAgentMessage('No active session to fork. Send a message first to create one.', ctx.mode)
-        return
-      }
-      const name = args[0] ?? null
-      try {
-        const forked = await forkSession(source, name)
-        ctx.messages.addAgentMessage(
-          `Forked into new session ${forked.id}${forked.name ? ` ('${forked.name}')` : ''}. The fork will take over on your next message.`,
-          ctx.mode,
-        )
-        await endSession(source)
-        ctx.currentSessionId = forked.id
-      } catch (err: any) {
-        ctx.messages.addAgentMessage(`Failed to fork: ${err?.message ?? String(err)}`, ctx.mode)
-      }
-    },
-  },
-
-  {
-    name: 'session-delete',
-    description: 'Delete a session',
-    category: 'session',
-    args: '[id|name]',
-    handler: async (ctx, args) => {
-      const identifier = args[0] ?? ctx.currentSessionId
-      if (!identifier) {
-        ctx.messages.addAgentMessage(
-          'No session to delete. Specify an id/name or use this command while a session is active.',
-          ctx.mode,
-        )
-        return
-      }
-      try {
-        await deleteSession(identifier)
-        ctx.messages.addAgentMessage(`Deleted session ${identifier}.`, ctx.mode)
-        if (ctx.currentSessionId === identifier) {
-          ctx.currentSessionId = null
+        const sess = await getSession(identifier)
+        if (!sess) {
+          ctx.messages.addAgentMessage(`Session not found: ${identifier}`, ctx.mode)
+          return
         }
-      } catch (err: any) {
-        ctx.messages.addAgentMessage(`Failed to delete: ${err?.message ?? String(err)}`, ctx.mode)
+        await loadSessionIntoChat(ctx, sess.id)
+        return
       }
+
+      ctx.messages.addAgentMessage(
+        `Unknown subcommand: /session ${subcommand}. Use one of: new, resume. For fork/rename/delete, open the picker with /sessions.`,
+        ctx.mode,
+      )
     },
   },
 

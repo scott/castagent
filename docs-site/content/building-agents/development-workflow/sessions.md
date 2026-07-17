@@ -1,20 +1,23 @@
 ---
 title: Sessions
-section: versioning
-order: 3
-description: Saved conversations — resume, fork, rename, and audit.
-ref: ['cli:session', 'slash:session-list', 'slash:session-new', 'slash:session-resume', 'slash:session-rename', 'slash:session-fork', 'slash:session-delete']
+section: building-agents
+group: development-workflow
+order: 2
+description: Saved conversations — list, start, resume, fork, rename, and delete.
+ref: ['cli:session', 'slash:sessions', 'slash:session']
 ---
 
 # Sessions
 
 A **session** is a saved, named conversation tied to an agent. Sessions
-are distinct from releases (the deployment artifact) and from the undo
-log (the internal edit history of the agent's files).
+are independent of agent state — restoring an agent to an older state
+does not invalidate existing sessions, and a release does not change
+the sessions that were started against it.
 
 Cast creates a session the first time you chat with an agent and
 appends every user/agent message to it. You can resume, rename, fork,
-or delete sessions with `cast session …` (or `/session …` in the TUI).
+or delete sessions with `cast session …` (or the TUI slash commands
+listed below).
 
 ## Listing sessions
 
@@ -120,19 +123,17 @@ sessions accumulate over time.
 ## TUI slash commands
 
 ```
-/session [list|new|resume|rename|fork|delete]   # parent
-/session-list                                    # modal picker
-/session-new [name]                              # start fresh
-/session-resume [id|name]                        # open picker if no arg
-/session-rename <id|name> <new-name>
-/session-fork [name]                             # fork current
-/session-delete [id|name]                        # delete (default: current)
+/sessions                    # list sessions and open the modal picker
+/session new [name]          # start a fresh session
+/session resume [id|name]    # resume; opens the picker if no argument
 ```
 
-`/session list` opens a modal that follows the AGENTS.md design
-standards (90% wide, 80% tall, centered). Use `↑/↓` to navigate, `Enter`
-to select, `/` to filter, and `R` / `D` shortcuts to resume or delete
-the highlighted session.
+`/sessions` and `/session resume` (with no argument) open a modal that
+follows the AGENTS.md design standards (90% wide, 80% tall, centered).
+Use `↑/↓` to navigate, `Enter` to select, `/` to filter, and `R` / `D`
+shortcuts to resume or delete the highlighted session. Fork, rename,
+and delete are reachable through the picker — they don't have
+dedicated slash subcommands.
 
 ## Storage
 

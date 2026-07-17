@@ -1,16 +1,21 @@
 ---
-title: Configuration
+title: Global settings
 section: getting-started
 order: 4
-description: ~/.cast/config.yaml, environment variables, and the secrets model.
+description: '~/.cast/config.yaml, environment variables, and the secrets model.'
 ref: ['']
 ---
 
-# Configuration
+# Global settings
 
-There are two layers of configuration in Cast: the **global** layer that
-applies to every agent on this machine, and the **per-agent** layer that
-lives in each agent's `agent.yaml`.
+This page covers the **global** layer of Cast configuration — the
+settings that apply to every agent on this machine. For
+per-agent configuration (tools, MCP servers, memory, etc.), see the
+[Configuration](../configuration/custom-tools) section.
+
+There are two layers of configuration in Cast: the **global** layer
+covered here, and the **per-agent** layer that lives in each
+agent's `agent.yaml`.
 
 ## Global config: `~/.cast/config.yaml`
 
@@ -107,5 +112,5 @@ runtime:
     - beautifulsoup4
 ```
 
-See the [agent anatomy](agents/anatomy) page for a tour of the
-surrounding directory.
+See the [agent anatomy](../building-agents/anatomy) page for a tour
+of the surrounding directory.

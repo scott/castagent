@@ -23,29 +23,35 @@ import ManifestBadge from '../components/ManifestBadge.astro'
 
   <h2>What you can do with Cast</h2>
   <div class="cards">
-    <a class="card" href="agents/create" style="text-decoration:none;color:inherit;">
+    <a class="card" href="building-agents/create" style="text-decoration:none;color:inherit;">
       <h3>Create an agent</h3>
       <p><code>cast new</code> launches an interactive wizard that scaffolds a new agent with instructions, tools, and a model.</p>
     </a>
-    <a class="card" href="versioning/overview" style="text-decoration:none;color:inherit;">
-      <h3>Version changes and releases</h3>
-      <p>Automatic <em>change</em> snapshots for debugging, intentional <em>release</em> tags for shipping.</p>
+    <a class="card" href="building-agents/development-workflow/workflow" style="text-decoration:none;color:inherit;">
+      <h3>Build, ship, and iterate</h3>
+      <p>A guided tour from <code>cast new</code> to a deployed agent, with the rest of the dev loop linked in.</p>
     </a>
-    <a class="card" href="deployment/overview" style="text-decoration:none;color:inherit;">
+    <a class="card" href="building-agents/deployment/overview" style="text-decoration:none;color:inherit;">
       <h3>Deploy anywhere</h3>
       <p>Railway, Fly.io, DigitalOcean, Sprites, Docker, or local. Each agent gets a unique deployment SHA so you can run many in parallel.</p>
     </a>
-    <a class="card" href="tui/overview" style="text-decoration:none;color:inherit;">
+    <a class="card" href="building-agents/development-workflow/tui/overview" style="text-decoration:none;color:inherit;">
       <h3>Chat in your terminal</h3>
       <p>Streaming responses, slash commands for release and deploy workflows, plus an on-host TUI that runs inside the container.</p>
     </a>
   </div>
 
   <h2>How Cast is organized</h2>
-  <p>This site is auto-generated where it should be and hand-written where it matters.</p>
+  <p>The docs are split into three top-level categories:</p>
+  <ul>
+    <li><strong>Getting Started</strong> — install, quick start, concepts, and the global Cast settings file.</li>
+    <li><strong>Building Agents</strong> — create / edit / run agents; the development workflow (TUI, sessions, walkthrough); versioning (undo log + Git); and deployment (releases, lifecycle, providers).</li>
+    <li><strong>Configuration</strong> — per-agent settings: custom tools, MCP servers, and persistent memory.</li>
+  </ul>
+  <p>Reference is auto-generated where it should be and hand-written where it matters.</p>
   <ul>
     <li><strong>Reference</strong> — every <code>cast &lt;command&gt;</code> and <code>/slash-command</code> is extracted from the source on every build.</li>
-    <li><strong>Prose</strong> — concept pages, guides, and deployment deep-dives are written by humans and linked from the reference.</li>
+    <li><strong>Prose</strong> — concept pages, walkthroughs, and deployment deep-dives are written by humans and linked from the reference.</li>
     <li><strong>Status</strong> — see when the reference was last extracted, what's new in the manifest, and which commands still need a prose page.</li>
   </ul>
 </Docs>

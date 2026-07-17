@@ -1,6 +1,6 @@
 ---
 title: MCP servers
-section: guides
+section: configuration
 order: 2
 description: Configuring Model Context Protocol servers (Gmail, Slack, etc.) in an agent.
 ref: ['cli:new', 'cli:edit']

@@ -1,7 +1,8 @@
 ---
 title: Connect, shutdown, upgrade
-section: deployment
-order: 2
+section: building-agents
+group: deployment
+order: 3
 description: 'The three lifecycle commands: cast connect, cast shutdown, cast upgrade.'
 ref: ['cli:connect', 'cli:shutdown', 'cli:upgrade']
 ---

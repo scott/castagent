@@ -1,7 +1,8 @@
 ---
 title: Releases
-section: versioning
-order: 4
+section: building-agents
+group: deployment
+order: 2
 description: Creating, listing, and shipping semantic releases.
 ref: ['cli:release', 'cli:releases', 'cli:deploy', 'cli:upgrade']
 ---

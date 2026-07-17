@@ -1,6 +1,6 @@
 ---
 title: Inspect, rename, delete
-section: agents
+section: building-agents
 order: 4
 description: cast list, cast describe, cast rename, cast delete.
 ref: ['cli:list', 'cli:describe', 'cli:rename', 'cli:delete']

@@ -1,6 +1,6 @@
 ---
 title: Create an agent
-section: agents
+section: building-agents
 order: 2
 description: 'Two ways to bring a new agent into existence: the Builder wizard, or cast clone.'
 ref: ['cli:new', 'cli:clone', 'cli:dev', 'cli:edit']

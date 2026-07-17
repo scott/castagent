@@ -1,7 +1,7 @@
 ---
 title: Edit an agent
-section: agents
-order: 5
+section: building-agents
+order: 3
 description: Modifying an existing agent — in the Builder, with cast update, or by hand.
 ref: ['cli:edit', 'cli:update', 'cli:dev']
 ---
@@ -90,7 +90,7 @@ python3 -c "import yaml; yaml.safe_load(open('agent.yaml'))"
 
 If the agent is [deployed](deployment/overview) and the Builder detects
 that your edit materially changes the agent (model, instructions, tools,
-permissions), it will offer to create a [release](versioning/releases)
+permissions), it will offer to create a [release](deployment/releases)
 after the save. That's the recommended path if you intend to deploy
 the new state.
 

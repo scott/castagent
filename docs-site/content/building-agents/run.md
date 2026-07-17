@@ -1,7 +1,7 @@
 ---
 title: Run an agent locally
-section: agents
-order: 3
+section: building-agents
+order: 5
 description: cast dev, the A2A server lifecycle, and the TUI vs. headless modes.
 ref: ['cli:dev', 'cli:stop', 'cli:logs', 'cli:connect']
 ---

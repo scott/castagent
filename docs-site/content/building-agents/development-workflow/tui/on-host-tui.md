@@ -1,7 +1,8 @@
 ---
 title: On-host TUI
-section: tui
-order: 3
+section: building-agents
+group: development-workflow
+order: 5
 description: SSH into a deployed DigitalOcean container and chat without going over the public network.
 ref: ['cli:deploy', 'cli:connect']
 ---
