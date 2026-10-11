@@ -68,12 +68,10 @@ jobs:
     needs: check
     if: github.event_name == 'push' && github.ref == 'refs/heads/master'
     env:
-      # GitHub Pages hosts project sites at
-      #   https://<owner>.github.io/<repo>/
-      # so the Astro build needs to know that base path. Derived from
-      # github.event.repository.name so renames "just work".
-      PUBLIC_SITE_BASE: /${{ github.event.repository.name }}/
-      PUBLIC_SITE_URL: https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+      # The site is served at the apex domain. GitHub Pages serves a custom
+      # domain from the site root, so the base path is "/" rather than /<repo>/.
+      PUBLIC_SITE_BASE: /
+      PUBLIC_SITE_URL: https://castagent.dev
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

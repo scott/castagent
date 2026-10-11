@@ -46,34 +46,33 @@ npm run build
 
 The `prebuild` script runs all `extract-*` scripts first, then the snapshot script writes `data/manifest.json` and validates the previous manifest.
 
-### Deploying to a sub-path (GitHub Pages, etc.)
+### Deploying
 
-When the site is served from a sub-path — e.g. a GitHub Pages *project* site at
-`https://<owner>.github.io/<repo>/` — every URL in the built site must be
-prefixed with that sub-path. The build does this via two env vars:
+The public site is [castagent.dev](https://castagent.dev). GitHub Pages serves
+that custom domain from the site root, so the build uses base `/`. Two env
+vars control this:
 
 | Env var             | Default              | Purpose                                                                |
 |---------------------|----------------------|------------------------------------------------------------------------|
 | `PUBLIC_SITE_URL`   | `https://castagent.dev` | The full site origin. Used for canonical / og: URLs.                |
 | `PUBLIC_SITE_BASE`  | `/`                  | The URL sub-path the site is served from. Sets Astro's `base` config.  |
 
-The `docs` workflow in `.github/workflows/docs.yml` derives both from the
-GitHub context:
+The `docs` workflow in `.github/workflows/docs.yml` sets both for production:
 
 ```yaml
 env:
-  PUBLIC_SITE_BASE: /${{ github.event.repository.name }}/
-  PUBLIC_SITE_URL:  https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}
+  PUBLIC_SITE_BASE: /
+  PUBLIC_SITE_URL: https://castagent.dev
 ```
 
-so the build "just works" on any GitHub repo without code changes.
+`docs-site/public/CNAME` contains `castagent.dev`, which GitHub Pages reads
+from the deployed files and keeps as the custom domain.
 
 The layout (`src/layouts/Docs.astro`) emits a `<base href={BASE_URL}>` tag and
 all internal links are written as **base-relative** paths (e.g.
 `href="getting-started/install"`, not `href="/getting-started/install"`).
-The browser then resolves them against `<base>`, which is what lets one
-source tree work for both `astro dev` (base `/`) and the deployed site
-(base `/<repo>/`). Keep new links base-relative.
+Keep new links base-relative. A sub-path deploy still works by setting
+`PUBLIC_SITE_BASE` to that path, for example `/castagent/`.
 
 ## CI sync
 
