@@ -48,17 +48,25 @@ export class A2AClient {
     })
   }
 
-  private async requestWithRetry<T>(
-    payload: unknown,
-    retries = 3,
-    delayMs = 1000,
-  ): Promise<T> {
+  /** DigitalOcean holds a paused MicroVM and answers 503 until resume finishes. */
+  private pausesBetweenRequests(): boolean {
+    return Boolean(this.edgeToken) || this.baseUrl.includes('.microvm.ondigitalocean.com')
+  }
+
+  private async sleep(ms: number): Promise<void> {
+    await new Promise((resolve) => setTimeout(resolve, ms))
+  }
+
+  private async withTransientRetry<T>(run: () => Promise<T>): Promise<T> {
+    const pausing = this.pausesBetweenRequests()
+    // A paused MicroVM can spend most of a minute in 503. Other hosts keep
+    // the short backoff: four tries over about seven seconds.
+    const retries = pausing ? 12 : 3
     let lastError: Error | undefined
 
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const response = await this.http.post('/', payload)
-        return response.data as T
+        return await run()
       } catch (error) {
         lastError = this.handleError(error, attempt, retries)
 
@@ -72,13 +80,22 @@ export class A2AClient {
         }
 
         if (attempt < retries) {
-          const backoffDelay = delayMs * Math.pow(2, attempt)
-          await new Promise((resolve) => setTimeout(resolve, backoffDelay))
+          const backoffDelay = pausing
+            ? Math.min(1500 * Math.pow(2, attempt), 8000)
+            : 1000 * Math.pow(2, attempt)
+          await this.sleep(backoffDelay)
         }
       }
     }
 
     throw lastError
+  }
+
+  private async requestWithRetry<T>(payload: unknown): Promise<T> {
+    return this.withTransientRetry(async () => {
+      const response = await this.http.post('/', payload)
+      return response.data as T
+    })
   }
 
   private handleError(error: unknown, attempt: number, retries: number): Error {
@@ -145,12 +162,19 @@ export class A2AClient {
           )
         case 500:
         case 502:
-        case 503:
         case 504:
           return new A2AClientError(
             `Server error (${status}). The agent may be experiencing issues.`,
             'SERVER_ERROR',
             status,
+          )
+        case 503:
+          return new A2AClientError(
+            this.pausesBetweenRequests()
+              ? 'The MicroVM is resuming from pause and is not accepting requests yet (HTTP 503). Try again in a moment.'
+              : 'Server error (503). The agent may be experiencing issues.',
+            'SERVER_ERROR',
+            503,
           )
         default:
           return new A2AClientError(
@@ -237,7 +261,7 @@ export class A2AClient {
       messageId: this.generateId(),
     }
 
-    const response = await this.http.post('/', {
+    const response = await this.withTransientRetry(() => this.http.post('/', {
       jsonrpc: '2.0',
       id: this.generateId(),
       method: 'message/send',
@@ -250,7 +274,7 @@ export class A2AClient {
         Accept: 'text/event-stream',
       },
       responseType: 'stream',
-    })
+    }))
 
     const stream = response.data as Readable
     stream.setEncoding('utf8')

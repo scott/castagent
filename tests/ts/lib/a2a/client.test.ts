@@ -1,4 +1,6 @@
 import {expect} from 'chai'
+import axios, {AxiosError} from 'axios'
+import {Readable} from 'stream'
 import {A2AClient, A2AClientError} from '../../../../typescript/cast-cli/dist/lib/a2a/client'
 import * as protocol from '../../../../typescript/cast-cli/dist/lib/a2a/protocol'
 
@@ -486,5 +488,101 @@ describe('A2A Protocol Types', () => {
         expect(typeof method).to.equal('string')
       })
     })
+  })
+})
+
+describe('A2AClient resume retries', () => {
+  const sandbox = sinon.createSandbox()
+  let post: sinon.SinonStub
+
+  function statusError(status: number): AxiosError {
+    const error = new AxiosError(`Request failed with status code ${status}`)
+    error.response = {
+      status,
+      statusText: '',
+      headers: {},
+      config: error.config!,
+      data: '',
+    }
+    return error
+  }
+
+  beforeEach(() => {
+    post = sandbox.stub()
+    sandbox.stub(axios, 'create').returns({post} as never)
+    sandbox.stub(A2AClient.prototype as unknown as {sleep: () => Promise<void>}, 'sleep').resolves()
+  })
+
+  afterEach(() => {
+    sandbox.restore()
+  })
+
+  it('retries HTTP 503 while a MicroVM resumes, then reads the stream', async () => {
+    post.onCall(0).rejects(statusError(503))
+    post.onCall(1).rejects(statusError(503))
+    post.onCall(2).resolves({
+      data: Readable.from([
+        'data: {"jsonrpc":"2.0","result":{"parts":[{"kind":"text","text":"pong"}]}}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    })
+
+    const client = new A2AClient(
+      'https://vm.mkc1.microvm.ondigitalocean.com',
+      'agent-token',
+      'do-token',
+    )
+    const chunks: string[] = []
+    for await (const chunk of client.sendMessageStream('hi')) {
+      chunks.push(chunk.text)
+    }
+
+    expect(chunks.join('')).to.equal('pong')
+    expect(post.callCount).to.equal(3)
+    expect(post.secondCall.args[2].headers.Accept).to.equal('text/event-stream')
+  })
+
+  it('does not retry HTTP 401', async () => {
+    post.rejects(statusError(401))
+    const client = new A2AClient('https://vm.mkc1.microvm.ondigitalocean.com', 'agent', 'edge')
+
+    try {
+      await client.getAgentCard()
+      expect.fail('expected auth failure')
+    } catch (error) {
+      expect(error).to.be.instanceOf(A2AClientError)
+      expect((error as A2AClientError).statusCode).to.equal(401)
+    }
+    expect(post.callCount).to.equal(1)
+  })
+
+  it('stops after the MicroVM resume window and names the 503', async () => {
+    post.rejects(statusError(503))
+    const client = new A2AClient('https://vm.mkc1.microvm.ondigitalocean.com', 'agent', 'edge')
+
+    try {
+      for await (const chunk of client.sendMessageStream('hi')) {
+        expect(chunk).to.equal(undefined)
+      }
+      expect.fail('expected resume failure')
+    } catch (error) {
+      expect(error).to.be.instanceOf(A2AClientError)
+      expect((error as A2AClientError).statusCode).to.equal(503)
+      expect((error as Error).message).to.include('resuming from pause')
+    }
+    expect(post.callCount).to.equal(13)
+  })
+
+  it('retries a non-MicroVM 503 only a few times', async () => {
+    post.rejects(statusError(503))
+    const client = new A2AClient('http://localhost:8080', 'agent')
+
+    try {
+      await client.getAgentCard()
+      expect.fail('expected server error')
+    } catch (error) {
+      expect((error as A2AClientError).message).to.equal('Server error (503). The agent may be experiencing issues.')
+    }
+    expect(post.callCount).to.equal(4)
   })
 })
