@@ -40,6 +40,7 @@ short version:
 | **Railway** | managed containers, zero-config | yes | no |
 | **Fly.io** | global edge, low latency | yes | no |
 | **DigitalOcean** | a single VM you can SSH into | yes | yes (opt-in) |
+| **DigitalOcean MicroVM** | pause/resume Firecracker VM in MKC1 (public preview) | yes | no |
 | **Sprites** | tiny Firecracker VMs on Fly | yes | no |
 | **Docker** | self-hosted Docker on this machine | yes | n/a |
 | **Local** | no container, run on this host | no | n/a |
@@ -100,6 +101,19 @@ The previous tarball is extracted over the working tree, the image is
 rebuilt, and the new container starts with the same volume. The
 `deployed_version` field updates in the database.
 
+## DigitalOcean MicroVMs
+
+`--provider microvm` runs the same image on a DigitalOcean MicroVM instead of a Droplet.
+
+- Public preview, region **MKC1** only, **linux/amd64** images only. Not for production.
+- The image is pushed to your team's DigitalOcean Container Registry. Cast reuses the existing registry, or creates one named `cast`.
+- The MicroVM pauses after an idle timeout (default 15 minutes, maximum 4 hours). The next `cast connect` resumes it. A paused MicroVM bills storage only.
+- There is no SSH and no on-host TUI. `--with-tui` is rejected. Logs: `doctl compute microvm exec <id> -- <log command>`.
+- Every request to the endpoint sends your DigitalOcean token as `Authorization`. Cast also sends the agent token as `X-Cast-Authorization`. If deploy's probe gets 401, rerun with `--edge-auth-only`. That mode trusts any token on the team that has `microvm:access`.
+- Sizes are `1:2048` (default), `2:4096`, `8:16384`, and `16:32768`, passed as `--size`.
+- Upgrade copies memory off the old MicroVM and onto a new one. Stores larger than 8 MiB are left on the old MicroVM and the upgrade stops.
+- A custom-scoped token needs `microvm:create`, `microvm:read`, `microvm:update`, `microvm:delete`, `microvm:access`, and registry read/write.
+
 ## Pre-flight checklist
 
 Before `cast deploy`:
@@ -108,7 +122,8 @@ Before `cast deploy`:
       (`cast releases <name>`).
 - [ ] You've authenticated with the provider's CLI
       (`railway login`, `flyctl auth login`, etc.).
-- [ ] For DigitalOcean, you've set `DIGITALOCEAN_ACCESS_TOKEN`.
+- [ ] For DigitalOcean Droplets or MicroVMs, you've set `DIGITALOCEAN_ACCESS_TOKEN`.
+      MicroVMs also need `doctl` 1.173.0 or newer.
 - [ ] The agent's `agent.yaml` has a description — the deploy banner
       uses it.
 - [ ] You're not on a metered connection with a giant image; the on-host

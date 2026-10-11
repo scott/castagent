@@ -174,6 +174,7 @@ Cast supports deploying agents to multiple platforms:
 | Provider | Description | Command |
 |----------|-------------|---------|
 | **DigitalOcean** | Deploy to DigitalOcean Droplets (cloud VMs) | `cast deploy demo-agent --provider digitalocean` |
+| **DigitalOcean MicroVM** | Firecracker microVM in MKC1. Pauses when idle and resumes on the next request. Public preview. | `cast deploy demo-agent --provider microvm` |
 | **Docker** | Containerized deployment to any Docker host | `cast deploy demo-agent --provider docker` |
 | **Railway** | Deploy to Railway's cloud platform | `cast deploy demo-agent --provider railway` |
 | **Fly.io** | Deploy to Fly.io's global edge network | `cast deploy demo-agent --provider fly` |
@@ -189,6 +190,8 @@ To shut down and clean up resources:
 ```bash
 cast shutdown demo-agent
 ```
+
+DigitalOcean MicroVMs (`--provider microvm`) are separate from Droplets. They are in public preview in region MKC1, run linux/amd64 images from DigitalOcean Container Registry, and pause when idle. `--with-tui` is rejected. The endpoint expects your DigitalOcean token on `Authorization` and the agent token on `X-Cast-Authorization`. If the edge does not forward that second header, rerun with `--edge-auth-only`. Logs are `doctl compute microvm exec <id> -- <log command>`. `doctl` 1.173.0 or newer is required.
 
 ### Chatting On-Host (Docker container shell)
 

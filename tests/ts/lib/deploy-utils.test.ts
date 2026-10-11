@@ -322,6 +322,10 @@ describe('Volume helpers', () => {
       expect(getMemoryMountPath('digitalocean')).to.equal('/app/agent/memory')
     })
 
+    it('returns /app/agent/memory for microvm', () => {
+      expect(getMemoryMountPath('microvm')).to.equal('/app/agent/memory')
+    })
+
     it('returns /opt/cast-agent/memory for sprites', () => {
       expect(getMemoryMountPath('sprites')).to.equal('/opt/cast-agent/memory')
     })

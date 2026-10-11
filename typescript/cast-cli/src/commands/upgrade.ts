@@ -8,12 +8,13 @@ import RailwayDeploy from '../lib/deploy/railway'
 import FlyDeploy from '../lib/deploy/fly'
 import DigitalOceanDeploy from '../lib/deploy/digitalocean'
 import SpritesDeploy from '../lib/deploy/sprites'
+import MicrovmDeploy from '../lib/deploy/microvm'
 import {getRelease, getCurrentRelease, listReleases, validateSemver} from '../lib/releases'
 import {db} from '../lib/sqlite'
 import {resolveDeploymentTarget, createDockerignore, execCommand} from '../lib/deploy/deploy-utils'
 import {writeHostMotdOverSsh} from '../lib/deploy/motd'
 
-const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'sprites', 'docker', 'local']
+const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'microvm', 'sprites', 'docker', 'local']
 
 export default class Upgrade extends Command {
   static description = 'Upgrade a deployed agent to a new version'
@@ -203,6 +204,11 @@ export default class Upgrade extends Command {
           break
         }
 
+        case 'microvm': {
+          await this.upgradeMicrovm(agentName, version, versionTarballPath, deployment)
+          break
+        }
+
         default: {
           this.error(`Upgrade not supported for provider '${provider}'. Please use 'cast shutdown' and 'cast deploy' instead.`)
         }
@@ -215,7 +221,11 @@ export default class Upgrade extends Command {
         const currentRelease = await getCurrentRelease(agentName)
         versionToStore = currentRelease || 'latest'
       }
-      db.updateDeployedVersion(agentName, versionToStore)
+      if (provider === 'microvm') {
+        db.updateDeployedVersionById(deploymentSha, versionToStore)
+      } else {
+        db.updateDeployedVersion(agentName, versionToStore)
+      }
       this.log(`Upgraded to version ${versionToStore} successfully.`)
 
     } catch (error: any) {
@@ -230,6 +240,27 @@ export default class Upgrade extends Command {
         `  cast deploy ${agentName} --provider ${provider}`
       )
     }
+  }
+
+  private async upgradeMicrovm(agentName: string, version: string, versionTarballPath: string | null, deployment: any): Promise<void> {
+    const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+    if (versionTarballPath && fs.existsSync(versionTarballPath)) {
+      this.log(`Extracting version ${version} tarball...`)
+      const tar = await import('tar')
+      const agentFiles = fs.readdirSync(agentPath).filter(f =>
+        !f.startsWith('.cast') && !f.startsWith('.git') && f !== 'Dockerfile' && f !== 'docker-compose.yml' && f !== 'requirements.txt'
+      )
+      for (const file of agentFiles) {
+        const filePath = path.join(agentPath, file)
+        if (fs.statSync(filePath).isDirectory()) {
+          fs.rmSync(filePath, {recursive: true})
+        } else {
+          fs.unlinkSync(filePath)
+        }
+      }
+      await tar.extract({file: versionTarballPath, cwd: agentPath})
+    }
+    await MicrovmDeploy.upgrade(agentName, deployment, message => this.log(message))
   }
 
   private async upgradeDocker(agentName: string, version: string, versionTarballPath: string | null): Promise<void> {

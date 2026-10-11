@@ -24,6 +24,7 @@ import {
 } from '../lib/sessions.js'
 import {createModal} from '../components/modal.js'
 import {runDeployInTerminal} from '../components/terminal.js'
+import {DEPLOYMENT_PROVIDERS} from '../lib/deployment-providers.js'
 import type {UiMode} from '../components/header.js'
 
 // Get agent description from agent.yaml
@@ -2539,14 +2540,7 @@ const commands: SlashCommand[] = [
         resultUrl: '' as string,
       }
 
-      const providers = [
-        {key: 'railway', name: 'Railway', desc: 'Managed containers with automatic deployments'},
-        {key: 'fly', name: 'Fly.io', desc: 'Distributed containers close to your users'},
-        {key: 'digitalocean', name: 'DigitalOcean', desc: 'Droplet with Docker container hosting'},
-        {key: 'sprites', name: 'Sprites', desc: 'Persistent Firecracker VMs on Fly.io'},
-        {key: 'docker', name: 'Docker (local)', desc: 'Self-hosted Docker container on this machine'},
-        {key: 'local', name: 'Local (no container)', desc: 'Run the agent directly without Docker'},
-      ]
+      const providers = DEPLOYMENT_PROVIDERS
 
       function refresh(): void {
         for (const child of contentBox.getChildren()) {

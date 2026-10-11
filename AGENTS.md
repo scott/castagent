@@ -144,7 +144,7 @@ When displaying a list of agents in a modal:
 When displaying a list of deployment providers in a modal:
 
 1. **Numbers**: Allowed (e.g., "1. Railway")
-2. **Navigation**: Up/Down arrow keys OR number keys 1-6
+2. **Navigation**: Up/Down arrow keys OR number keys 1 through N, where N is the list length (7 today)
 3. **Display**: Show name and brief description
 
 ### Code Reference
