@@ -1,13 +1,18 @@
 # cast-docs
 
-Static documentation site for [Cast](https://github.com/scott/castagent).
+Static documentation site for [Cast Agent](https://github.com/scott/castagent). The public site is [castagent.dev](https://castagent.dev).
 Built with [Astro](https://astro.build), deployed to GitHub Pages.
 
 ## What this site is
 
+The site root (`/`) is a one-page landing page: what Cast Agent is, the install
+command, and every deployment provider. It links to the GitHub repo and to
+the docs. The docs overview that used to live at `/` is at `/overview`,
+linked from the sidebar.
+
 Two kinds of pages:
 
-1. **Reference** — auto-generated from the Cast source code.
+1. **Reference** — auto-generated from the Cast Agent source code.
    - `/cli/reference` — every `cast <command>`, parsed from `typescript/cast-cli/src/commands/`.
    - `/tui/slash-commands` — every `/command`, parsed from `typescript/cast-tui/src/commands/slash-registry.ts`.
    - `/deployment/providers` — every provider, parsed from `typescript/cast-cli/src/commands/deploy.ts`.
@@ -49,7 +54,7 @@ prefixed with that sub-path. The build does this via two env vars:
 
 | Env var             | Default              | Purpose                                                                |
 |---------------------|----------------------|------------------------------------------------------------------------|
-| `PUBLIC_SITE_URL`   | `https://cast.dev`   | The full site origin. Used for canonical / og: URLs.                   |
+| `PUBLIC_SITE_URL`   | `https://castagent.dev` | The full site origin. Used for canonical / og: URLs.                |
 | `PUBLIC_SITE_BASE`  | `/`                  | The URL sub-path the site is served from. Sets Astro's `base` config.  |
 
 The `docs` workflow in `.github/workflows/docs.yml` derives both from the

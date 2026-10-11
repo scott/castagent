@@ -4,7 +4,7 @@ import mdx from '@astrojs/mdx'
 
 // Cast docs site — Astro static output for GitHub Pages.
 // `site` is the production URL; the workflow overwrites it via env if needed.
-const SITE = process.env.PUBLIC_SITE_URL ?? 'https://cast.dev'
+const SITE = process.env.PUBLIC_SITE_URL ?? 'https://castagent.dev'
 
 export default defineConfig({
   site: SITE,
