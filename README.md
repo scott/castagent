@@ -519,9 +519,7 @@ npm run docs:check
 A pull request that adds, removes, or renames a CLI command, TUI slash
 command, deployment provider, or known model surfaces a manifest diff as
 a PR comment via `.github/workflows/docs.yml`. The `master` branch builds
-and deploys the site to GitHub Pages at
-`https://<owner>.github.io/<repo>/`. The workflow derives the site URL
-and base path from the GitHub repo name, so renames "just work".
+and deploys the site to GitHub Pages at [castagent.dev](https://castagent.dev).
 
 ## Versioning
 
