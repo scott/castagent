@@ -25,8 +25,8 @@ a dynamic port. The header is **purple** and shows just the agent name.
 ```
 
 - The runtime is killed when you quit the TUI.
-- `/undo`, `/redo`, `/session …`, `/releases`, `/release`, `/deploy`,
-  `/upgrade`, `/restore` are all available — you're working on the
+- `/undo`, `/redo`, `/sessions`, `/session …`, `/releases`, `/release`,
+  `/deploy`, and `/upgrade` are all available — you're working on the
   agent on this machine.
 - `/connect` switches to a *different* deployed agent (useful for
   comparing local behaviour to production).
@@ -47,7 +47,7 @@ deployed version.
 - Bearer-token auth is added by `cast connect`; the TUI does not display
   the token, but the underlying A2A client carries it.
 - The same slash commands work, but the destructive ones
-  (`/release`, `/deploy`, `/upgrade`, `/restore`) are scoped to the
+  (`/release`, `/deploy`, `/upgrade`) are scoped to the
   *currently-connected* deployment's agent.
 - `/connect` lets you jump to a different deployment or to a different
   agent's deployment without exiting the TUI.

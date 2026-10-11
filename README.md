@@ -339,10 +339,11 @@ cast session fork <id>
 cast session export <id> --out backup.json
 ```
 
-In the TUI, use `/undo` and `/redo` for iteration, `/session list` to
+In the TUI, use `/undo` and `/redo` for iteration, `/sessions` to
 browse saved conversations (with a modal picker that follows the
-AGENTS.md design standards), and `/release`, `/deploy`, `/upgrade`,
-`/restore` to manage releases and deployments interactively.
+AGENTS.md design standards), and `/release`, `/deploy`, and `/upgrade`
+to manage releases and deployments interactively. Restore a local
+agent with `cast restore <agent> --release <version>`.
 
 To upgrade an existing deployment to a new release:
 
@@ -364,18 +365,13 @@ parameters are needed, a modal prompts for them.
 |---------|----------|--------------|
 | `/undo [steps]` | agent | Step back one (or N) changes. Shells out to `cast undo`. |
 | `/redo [steps]` | agent | Step forward one (or N) changes. |
-| `/session [list\|new\|resume\|rename\|fork\|delete]` | session | Parent for the session subcommands. |
-| `/session-list` | session | Modal picker over saved sessions. `Enter` selects, `R` resumes, `D` deletes. |
-| `/session-new [name]` | session | Start a fresh session and switch the chat to it. |
-| `/session-resume [id\|name]` | session | Replay a session's transcript into the chat. |
-| `/session-rename` | session | Rename a session. |
-| `/session-fork [name]` | session | Fork the active session into a new one. |
-| `/session-delete` | session | Delete a session. |
+| `/sessions` | session | Modal picker over saved sessions. `Enter` or `R` resumes, `F` forks, `N` renames, `D` deletes. |
+| `/session new [name]` | session | Start a fresh session and switch the chat to it. |
+| `/session resume [id\|name]` | session | Replay a session's transcript into the chat. Opens the picker if no argument. |
 | `/releases` | session | Shows semantic releases with `C` (Create Release) and `U` (Upgrade, if deployed) shortcuts. |
 | `/release` | agent | Opens a modal to create a new semantic release. Suggests patch/minor/major versions based on the current release. |
 | `/deploy` | agent | Release picker → provider picker → live deploy with SHA shown on success. |
 | `/upgrade` | agent | Operates on the current agent. Modal lists releases to upgrade to. |
-| `/restore` | agent | Source picker (Releases only) → item picker → confirmation. Use `--release V` to skip the picker. |
 | `/registry` | session | Modal table of all releases across all agents, with deployment status. |
 | `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a SHA directly. |
 

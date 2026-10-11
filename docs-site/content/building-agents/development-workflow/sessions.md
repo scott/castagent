@@ -70,8 +70,9 @@ cast session fork <id|name>
 cast session fork <id|name> --name "alt approach"
 ```
 
-In the TUI, `/session fork` forks the *active* session and
-immediately switches the chat over to the new fork.
+In the TUI, highlight a session in `/sessions` and press `F`.
+Cast copies the transcript into a new session and switches the
+chat to that fork. Leave the name prompt empty to fork without a name.
 
 ## Renaming a session
 
@@ -80,6 +81,7 @@ cast session rename <id|name> "new name"
 ```
 
 A session's name is a human-readable label. The id is immutable.
+In the TUI, highlight a session in `/sessions` and press `N`.
 
 ## Deleting a session
 
@@ -130,10 +132,9 @@ sessions accumulate over time.
 
 `/sessions` and `/session resume` (with no argument) open a modal that
 follows the AGENTS.md design standards (90% wide, 80% tall, centered).
-Use `↑/↓` to navigate, `Enter` to select, `/` to filter, and `R` / `D`
-shortcuts to resume or delete the highlighted session. Fork, rename,
-and delete are reachable through the picker — they don't have
-dedicated slash subcommands.
+Use `↑/↓` to navigate. `Enter` and `R` resume the highlighted session,
+`F` forks it, `N` renames it, and `D` deletes it. Fork, rename, and
+delete do not have dedicated slash subcommands.
 
 ## Storage
 

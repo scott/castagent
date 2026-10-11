@@ -17,20 +17,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   lifecycle, providers). The Configuration category collects Custom
   tools, MCP servers, and Persistent memory.
 
-- **`build-agents/development-workflow/workflow.md`** — a new
+- **`building-agents/development-workflow/workflow.md`** — a new
   end-to-end walkthrough from `cast new` to a deployed agent. Each
   step is one command and a link to the reference page that
   documents the depth, plus a "Where to go next" navigation index.
 
-- **`build-agents/versioning/git.md`** — a new reference page for
+- **`building-agents/versioning/git.md`** — a new reference page for
   `cast git` (init, status, commit, log, diff, push, remote). Covers
   how `cast git` relates to the undo log and to releases, the
   `.castignore` defaults, and the TUI's `/git` slash command.
 
 - **`/sessions` slash command** — opens a modal that lists saved
   sessions for the current agent. Replaces the previous
-  `/session-list` form. Fork/rename/delete are reachable through
-  the picker, not as slash subcommands.
+  `/session-list` form. `Enter` and `R` resume, `F` forks, `N`
+  renames, and `D` deletes. Those actions are not separate slash
+  commands.
 
 ### Changed
 

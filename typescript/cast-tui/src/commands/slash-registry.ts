@@ -17,6 +17,8 @@ import {
   createSession,
   endSession,
   appendMessage,
+  forkSession,
+  renameSession,
   type SessionMeta,
   type Session,
 } from '../lib/sessions.js'
@@ -71,7 +73,7 @@ export interface CommandContext {
   /**
    * The active session id, if one is bound to the chat screen. The TUI
    * creates a session on first user message and updates this on
-   * /session new, /session fork, and /session resume.
+   * /session new, /session resume, and a fork from /sessions.
    */
   currentSessionId?: string | null
   /**
@@ -372,7 +374,10 @@ function showSessionPicker(
     onSelect: (sess: SessionMeta) => void | Promise<void>
     extraActions?: Record<
       string,
-      (sess: SessionMeta) => void | Promise<void>
+      {
+        label: string
+        run: (sess: SessionMeta) => void | Promise<void>
+      }
     >
   },
 ): void {
@@ -458,9 +463,9 @@ function showSessionPicker(
       {text: 'Select  ', color: dim},
     ]
     if (options.extraActions) {
-      for (const [key, _] of Object.entries(options.extraActions)) {
+      for (const [key, action] of Object.entries(options.extraActions)) {
         footerParts.push({text: `${key.toUpperCase()} `, color: white})
-        footerParts.push({text: 'Action  ', color: dim})
+        footerParts.push({text: `${action.label}  `, color: dim})
       }
     }
     footerParts.push({text: 'ESC ', color: white})
@@ -510,12 +515,198 @@ function showSessionPicker(
         const chosen = sessions[selectedIndex]
         modal.hide()
         ctx.input.focus()
-        void options.extraActions[k](chosen)
+        void options.extraActions[k].run(chosen)
         return true
       }
     }
     return originalHandle ? originalHandle(key) : false
   }
+}
+
+function sessionTitle(sess: SessionMeta): string {
+  return sess.name || sess.id
+}
+
+/**
+ * One character from a key event, for a session-name prompt.
+ * Session names are display labels, so spaces and punctuation are
+ * allowed. Backslashes are rejected because the Python wrapper
+ * interpolates the name into a single-quoted string.
+ */
+function sessionNameChar(key: KeyEvent): string | null {
+  if (key.ctrl || key.meta) return null
+  if (key.name === 'space') return ' '
+  if (key.name && key.name.length === 1 && key.name >= ' ' && key.name <= '~' && key.name !== '\\') {
+    return key.name
+  }
+  return null
+}
+
+function promptForSessionName(
+  ctx: CommandContext,
+  opts: {
+    title: string
+    instructions: string
+    allowEmpty: boolean
+    onSubmit: (name: string | null) => void | Promise<void>
+  },
+): void {
+  const modal = createModal(ctx.renderer, ctx.input, {
+    title: opts.title,
+    overlay: true,
+  })
+  if (modal.overlay) ctx.renderer.root.add(modal.overlay)
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 1,
+    paddingTop: 3,
+    paddingLeft: 2,
+    paddingRight: 2,
+  })
+
+  contentBox.add(new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim(opts.instructions)]),
+  }))
+
+  const inputDisplay = new TextRenderable(ctx.renderer, {
+    content: new StyledText([white('_')]),
+  })
+  contentBox.add(inputDisplay)
+
+  const errorText = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim(' ')]),
+  })
+  contentBox.add(errorText)
+
+  const footer = new TextRenderable(ctx.renderer, {
+    content: new StyledText([
+      dim(opts.allowEmpty ? 'Enter Confirm (empty skips)  ESC Cancel' : 'Enter Confirm  ESC Cancel'),
+    ]),
+  })
+  const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+  footerBox.add(footer)
+  contentBox.add(footerBox)
+
+  let draft = ''
+  const MAX_LENGTH = 80
+
+  function updateInputDisplay(error?: string) {
+    inputDisplay.content = new StyledText([white(draft + '_')])
+    errorText.content = new StyledText([error ? red(error) : dim(' ')])
+    ctx.renderer.requestRender?.()
+  }
+
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+  modal.box.handleKeyPress = (key: KeyEvent) => {
+    if (key.name === 'escape') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    if (key.name === 'return' || key.name === 'enter') {
+      const trimmed = draft.trim()
+      if (!trimmed) {
+        if (!opts.allowEmpty) {
+          updateInputDisplay('Name is required')
+          return true
+        }
+        modal.hide()
+        ctx.input.focus()
+        void opts.onSubmit(null)
+        return true
+      }
+      modal.hide()
+      ctx.input.focus()
+      void opts.onSubmit(trimmed)
+      return true
+    }
+    if (key.name === 'backspace' || (key.ctrl && key.name === 'h')) {
+      if (draft.length > 0) {
+        draft = draft.slice(0, -1)
+        updateInputDisplay()
+      }
+      return true
+    }
+    const ch = sessionNameChar(key)
+    if (ch && draft.length < MAX_LENGTH) {
+      draft += ch
+      updateInputDisplay()
+      return true
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+
+  updateInputDisplay()
+  ctx.renderer.requestRender?.()
+}
+
+function promptForkSession(ctx: CommandContext, sess: SessionMeta): void {
+  const title = sessionTitle(sess)
+  promptForSessionName(ctx, {
+    title: 'Fork session',
+    instructions: `Name for the fork of '${title}' (leave empty for none):`,
+    allowEmpty: true,
+    onSubmit: async (name) => {
+      let forked
+      try {
+        forked = await forkSession(sess.id, name)
+      } catch (err: any) {
+        ctx.messages.addAgentMessage(
+          `Failed to fork session: ${err?.message ?? String(err)}`,
+          ctx.mode,
+        )
+        return
+      }
+      try {
+        if (ctx.loadSession) {
+          await ctx.loadSession(forked.id)
+          ctx.currentSessionId = forked.id
+        }
+      } catch (err: any) {
+        ctx.messages.addAgentMessage(
+          `Forked into ${forked.id}, but could not open it: ${err?.message ?? String(err)}`,
+          ctx.mode,
+        )
+        return
+      }
+      const label = forked.name ? `'${forked.name}'` : forked.id
+      ctx.messages.addAgentMessage(
+        `Forked ${title} into ${label}. Future messages will be appended to the fork.`,
+        ctx.mode,
+      )
+    },
+  })
+}
+
+function promptRenameSession(ctx: CommandContext, sess: SessionMeta): void {
+  const title = sessionTitle(sess)
+  promptForSessionName(ctx, {
+    title: 'Rename session',
+    instructions: `New name for '${title}':`,
+    allowEmpty: false,
+    onSubmit: async (name) => {
+      if (!name) return
+      try {
+        const renamed = await renameSession(sess.id, name)
+        ctx.messages.addAgentMessage(
+          `Renamed session ${renamed.id} to '${renamed.name}'.`,
+          ctx.mode,
+        )
+      } catch (err: any) {
+        ctx.messages.addAgentMessage(
+          `Failed to rename session: ${err?.message ?? String(err)}`,
+          ctx.mode,
+        )
+      }
+    },
+  })
 }
 
 function launchBuilderEditor(ctx: CommandContext, agentName: string): void {
@@ -2781,12 +2972,33 @@ const commands: SlashCommand[] = [
           await loadSessionIntoChat(ctx, sess.id)
         },
         extraActions: {
-          r: async (sess) => {
-            await loadSessionIntoChat(ctx, sess.id)
+          r: {
+            label: 'Resume',
+            run: async (sess) => {
+              await loadSessionIntoChat(ctx, sess.id)
+            },
           },
-          d: async (sess) => {
-            await deleteSession(sess.id)
-            ctx.messages.addAgentMessage(`Deleted session ${sess.id}.`, ctx.mode)
+          f: {
+            label: 'Fork',
+            run: (sess) => {
+              promptForkSession(ctx, sess)
+            },
+          },
+          n: {
+            label: 'Rename',
+            run: (sess) => {
+              promptRenameSession(ctx, sess)
+            },
+          },
+          d: {
+            label: 'Delete',
+            run: async (sess) => {
+              await deleteSession(sess.id)
+              if (ctx.currentSessionId === sess.id) {
+                ctx.currentSessionId = null
+              }
+              ctx.messages.addAgentMessage(`Deleted session ${sessionTitle(sess)}.`, ctx.mode)
+            },
           },
         },
       })
