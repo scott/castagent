@@ -285,3 +285,113 @@ main.content {
 
 .cmd-synopsis .arg { color: var(--color-accent); }
 .cmd-synopsis .flag { background: transparent; color: var(--color-fg-muted); padding: 0; }
+
+/* Landing page. Kept short so the install command sits above the fold. */
+.landing {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 0 1.5rem 3rem;
+}
+
+.landing-header,
+.landing-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.landing-header {
+  height: 3.5rem;
+}
+
+.landing-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--color-fg);
+  font-weight: 600;
+  font-size: 1.05rem;
+  text-decoration: none;
+}
+
+.landing-brand:hover { text-decoration: none; color: var(--color-fg); }
+
+.landing-nav,
+.landing-footer {
+  display: flex;
+  gap: 1.25rem;
+  font-size: 0.95rem;
+}
+
+.landing-footer {
+  margin-top: 2.5rem;
+  padding-top: 1rem;
+  border-top: 1px solid var(--color-border);
+  color: var(--color-fg-muted);
+  justify-content: flex-start;
+}
+
+.landing h1 {
+  margin: 0.25rem 0 0.5rem;
+  font-size: 2.15rem;
+}
+
+.landing-lead {
+  margin: 0 0 1.25rem;
+  color: var(--color-fg-muted);
+  font-size: 1.05rem;
+  max-width: 62ch;
+}
+
+.landing-install h2 {
+  margin: 0 0 0.4rem;
+  padding: 0;
+  border: none;
+  font-size: 0.78rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-fg-muted);
+}
+
+.landing-install pre {
+  margin: 0;
+  font-size: 0.95rem;
+}
+
+.landing-install-meta {
+  margin: 0.55rem 0 0;
+  color: var(--color-fg-muted);
+  font-size: 0.92rem;
+}
+
+.landing-providers { margin-top: 2.25rem; }
+
+.landing-providers h2 {
+  margin-top: 0;
+}
+
+.landing-providers ul {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+}
+
+.landing-providers li {
+  padding: 0.75rem 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.landing-providers li p {
+  margin: 0.2rem 0 0;
+  color: var(--color-fg-muted);
+}
+
+.provider-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.6rem;
+}
+
+.provider-name { font-weight: 600; }

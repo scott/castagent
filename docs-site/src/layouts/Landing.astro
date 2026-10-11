@@ -1,0 +1,56 @@
+---
+/**
+ * Landing layout — one page, no docs sidebar.
+ *
+ * Same <base> contract as Docs.astro: relative links are rewritten for the
+ * GitHub Pages base path. Absolute links (the GitHub repo) are left alone.
+ */
+import '../styles/global.css'
+
+interface Props {
+  title: string
+  description?: string
+}
+
+const { title, description = 'Cast — Build, test, and deploy AI agents.' } = Astro.props
+const fullTitle = title === 'Cast' ? title : `${title} · Cast`
+const repo = 'https://github.com/scott/castagent'
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <base href={import.meta.env.BASE_URL} />
+    <title>{fullTitle}</title>
+    <meta name="description" content={description} />
+    <link rel="icon" type="image/svg+xml" href="logo.svg" />
+    <meta property="og:title" content={fullTitle} />
+    <meta property="og:description" content={description} />
+    <meta property="og:type" content="website" />
+  </head>
+  <body>
+    <div class="landing">
+      <header class="landing-header">
+        <a class="landing-brand" href="">
+          <img src="logo.svg" alt="" width="28" height="28" />
+          <span>Cast</span>
+        </a>
+        <nav class="landing-nav" aria-label="Site">
+          <a href={repo}>GitHub</a>
+          <a href="overview">Docs</a>
+        </nav>
+      </header>
+
+      <main class="landing-main">
+        <slot />
+      </main>
+
+      <footer class="landing-footer">
+        <a href={repo}>GitHub</a>
+        <a href="overview">Docs</a>
+      </footer>
+    </div>
+  </body>
+</html>

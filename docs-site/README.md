@@ -5,6 +5,11 @@ Built with [Astro](https://astro.build), deployed to GitHub Pages.
 
 ## What this site is
 
+The site root (`/`) is a one-page landing page: what Cast is, the install
+command, and every deployment provider. It links to the GitHub repo and to
+the docs. The docs overview that used to live at `/` is at `/overview`,
+linked from the sidebar.
+
 Two kinds of pages:
 
 1. **Reference** — auto-generated from the Cast source code.

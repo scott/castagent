@@ -76,7 +76,7 @@ function isCurrent(href: string): boolean {
   const target = fullPath(href)
   return currentPath === target || currentPath === target + '/' || currentPath === target.replace(/\/$/, '')
 }
-const isHome = isCurrent('')
+const isOverview = isCurrent('overview')
 
 const prose = await getCollection('prose')
 const proseBySection = new Map<string, typeof prose>()
@@ -138,7 +138,7 @@ const sections: NavSection[] = SECTIONS.map((s) => {
   <nav>
     <ul style="list-style:none;padding:0;margin:0;">
       <li>
-        <a href="" class={isHome ? 'active' : ''}>Overview</a>
+        <a href="overview" class={isOverview ? 'active' : ''}>Overview</a>
       </li>
       {sections.map((section) => (
         <li>
