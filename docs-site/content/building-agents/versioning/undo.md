@@ -78,7 +78,7 @@ add `/undo-to` with a modal picker (see the modal design standards in
 
 ## How it relates to releases
 
-For the deployment artifact, see [Releases](../deployment/releases).
+For the deployment artifact, see [Releases](building-agents/deployment/releases).
 The undo log feeds `cast release`'s auto-changelog generator — each
 release records the id of the most recent log entry at the time of
 release, and future releases compare against that id to compute

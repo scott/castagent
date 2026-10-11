@@ -73,17 +73,17 @@ single most important idea to internalise.
   `~/.cast/agents/<name>/.cast/changes/`. They are sequential (v1,
   v2, v3…) and are consumed by `cast undo` / `cast redo` (or
   `/undo` / `/redo` in the TUI) and by `cast release`'s auto-changelog
-  generator. See [Versioning overview](../building-agents/versioning/overview).
+  generator. See [Versioning overview](building-agents/versioning/overview).
 - **Releases** are intentional. You create a release with
   `cast release <agent> 1.6` and the agent's tarball is stamped with a
   semantic version. Releases are the *deployment artifact* — when you
-  `cast deploy`, you're shipping a release. See [Releases](../building-agents/deployment/releases).
+  `cast deploy`, you're shipping a release. See [Releases](building-agents/deployment/releases).
 - **Sessions** are saved conversations. Cast auto-saves every chat
   turn into a session, so you can `cast session resume` (or
   `/session resume` in the TUI) to pick up where you left off,
   `cast session fork` to branch into a parallel thread, or
   `cast session export` to back up the transcript. See
-  [Sessions](../building-agents/development-workflow/sessions).
+  [Sessions](building-agents/development-workflow/sessions).
 
 ## Multi-deployment and the deployment SHA
 

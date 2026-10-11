@@ -11,7 +11,7 @@ ref: ['']
 This page covers the **global** layer of Cast configuration — the
 settings that apply to every agent on this machine. For
 per-agent configuration (tools, MCP servers, memory, etc.), see the
-[Configuration](../configuration/custom-tools) section.
+[Configuration](configuration/custom-tools) section.
 
 There are two layers of configuration in Cast: the **global** layer
 covered here, and the **per-agent** layer that lives in each
@@ -72,9 +72,7 @@ interpolation falls through to the environment if not set in YAML.
 
 Every agent's config is a single file at
 `~/.cast/agents/<name>/agent.yaml`. The Builder Agent creates this when you
-run `cast new`, and `cast update` mutates it. The full schema lives in the
-[configuration](configuration/schema) reference (TODO: link once written),
-but the high-level shape is:
+run `cast new`, and `cast update` mutates it. The high-level shape is:
 
 ```yaml
 description: "Drafts and triages incoming email."
@@ -112,5 +110,5 @@ runtime:
     - beautifulsoup4
 ```
 
-See the [agent anatomy](../building-agents/anatomy) page for a tour
+See the [agent anatomy](building-agents/anatomy) page for a tour
 of the surrounding directory.

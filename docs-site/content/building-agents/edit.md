@@ -28,7 +28,7 @@ Inside the TUI, the Builder loads the current `agent.yaml` and welcomes
 you with a summary of what's there. Every save writes a new entry to
 the internal change log at
 `~/.cast/agents/<name>/.cast/changes/`, so the agent state is
-fully recoverable via [cast undo / cast redo](versioning/undo).
+fully recoverable via [cast undo / cast redo](building-agents/versioning/undo).
 
 `/edit` is also a slash command — use it inside any TUI session (during
 `cast dev` or `cast connect`) to drop into the Builder without losing
@@ -64,7 +64,7 @@ cast update email-assistant --model openrouter/openai/gpt-4o --dry-run
 Every `cast update` call writes a new entry to the agent's internal
 change log with an "Updated: …" message describing what changed. The
 log is internal — to step backward or forward through it, use
-[cast undo / cast redo](versioning/undo) (or `/undo` / `/redo` in the
+[cast undo / cast redo](building-agents/versioning/undo) (or `/undo` / `/redo` in the
 TUI).
 
 ## Hand edit
@@ -88,9 +88,9 @@ python3 -c "import yaml; yaml.safe_load(open('agent.yaml'))"
 
 ## When the Builder prompts for a release
 
-If the agent is [deployed](deployment/overview) and the Builder detects
+If the agent is [deployed](building-agents/deployment/overview) and the Builder detects
 that your edit materially changes the agent (model, instructions, tools,
-permissions), it will offer to create a [release](deployment/releases)
+permissions), it will offer to create a [release](building-agents/deployment/releases)
 after the save. That's the recommended path if you intend to deploy
 the new state.
 

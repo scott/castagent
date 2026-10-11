@@ -4,6 +4,7 @@ import SlashRef from '../../components/SlashRef.astro'
 import { getSlashCommands } from '../../lib/manifest.ts'
 
 const commands = getSlashCommands()
+const pagePath = Astro.url.pathname.replace(/\/$/, '') || ''
 const byCategory = new Map<string, typeof commands>()
 for (const c of commands) {
   const list = byCategory.get(c.category) ?? []
@@ -32,7 +33,7 @@ const sortedCategories = [...byCategory.keys()].sort(
         <strong>{cat}</strong>
         <ul>
           {(byCategory.get(cat) ?? []).map((c) => (
-            <li><a href={`#${c.name.replace(/[^a-z0-9]/gi, '-')}`}><code>/{c.name}</code></a> — {c.description}</li>
+            <li><a href={`${pagePath}#${c.name.replace(/[^a-z0-9]/gi, '-')}`}><code>/{c.name}</code></a> — {c.description}</li>
           ))}
         </ul>
       </li>

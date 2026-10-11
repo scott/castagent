@@ -43,7 +43,7 @@ other — is the most common source of confusion.
 | Step back one edit while iterating | undo log + `cast undo` |
 | Recover from a "this used to work" moment after several edits | undo log + `cast undo --steps 5` |
 | Share the agent with another machine or collaborator | Git (`cast git push`) |
-| Keep a permanent, named version of the agent | [Releases](../deployment/releases) (a separate concept) |
+| Keep a permanent, named version of the agent | [Releases](building-agents/deployment/releases) (a separate concept) |
 | Audit who changed what, when | Git (`cast git log`) |
 | Operate on a single machine, no sharing needed | undo log only; skip Git |
 
@@ -84,10 +84,10 @@ the Git history.
 
 ## Related concepts
 
-- [Releases](../deployment/releases) — the deployment artifact, a
+- [Releases](building-agents/deployment/releases) — the deployment artifact, a
   semver'd tarball that `cast deploy` ships.
-- [Sessions](../development-workflow/sessions) — saved conversations,
+- [Sessions](building-agents/development-workflow/sessions) — saved conversations,
   independent of agent state and of both version tracks.
-- [Build an agent end-to-end](../development-workflow/workflow) — a
+- [Build an agent end-to-end](building-agents/development-workflow/workflow) — a
   walkthrough that uses the undo log and Git together with the rest
   of the dev loop.

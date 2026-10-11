@@ -13,8 +13,8 @@ ref: ['cli:git-init', 'cli:git-status', 'cli:git-commit', 'cli:git-log', 'cli:gi
 agent. The repo lives at `~/.cast/agents/<name>/.git/`. It is
 **not required to use Cast** — every Cast command works without it.
 
-The two version tracks (`cast git` and the [undo log](overview)) are
-deliberately independent. See the [Versioning overview](overview)
+The two version tracks (`cast git` and the [undo log](building-agents/versioning/overview)) are
+deliberately independent. See the [Versioning overview](building-agents/versioning/overview)
 for the comparison table.
 
 ## Initialize a repo

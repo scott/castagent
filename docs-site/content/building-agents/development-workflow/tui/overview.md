@@ -12,7 +12,7 @@ ref: ['cli:dev', 'cli:connect']
 The Cast terminal UI is a fullscreen chat client built on OpenTUI. You see
 it whenever you run `{% ref "cli:dev" %}` (local) or
 `{% ref "cli:connect" %}` (deployed). The TUI is also what
-[`cast-tui`](on-host-tui) runs when launched inside a deployed
+[`cast-tui`](building-agents/development-workflow/tui/on-host-tui) runs when launched inside a deployed
 container.
 
 ## Anatomy
@@ -38,7 +38,7 @@ container.
 
 Three regions, top to bottom: a 1-line **header**, a scrollable
 **messages** area, and the **input** line. The header color and contents
-change based on the [UI mode](modes).
+change based on the [UI mode](building-agents/development-workflow/tui/modes).
 
 ## Two chat modes: PLAN and BUILD
 
@@ -67,7 +67,7 @@ The header bar reflects which *environment* the TUI is connected to:
 
 In dev and production the header shows the deployed version (e.g.
 `email-assistant (v1.6)`); in dev without a deployment the version is
-hidden. See the [modes page](modes) for the details and screenshots.
+hidden. See the [modes page](building-agents/development-workflow/tui/modes) for the details and screenshots.
 
 ## Streaming
 
@@ -78,7 +78,7 @@ scroll automatically while you read.
 ## Slash commands
 
 The input line accepts `/` commands. The full list is on the
-[slash commands page](../../../tui/slash-commands); the most useful ones to know
+[slash commands page](tui/slash-commands); the most useful ones to know
 on day one:
 
 - `{% ref "slash:help" %}` — list all commands available in the current mode.

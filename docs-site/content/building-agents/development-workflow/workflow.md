@@ -23,8 +23,8 @@ cast new
 should do, and it writes the scaffold to
 `~/.cast/agents/<name>/`.
 
-See [Create an agent](../create) for the wizard reference and
-[Agent anatomy](../anatomy) for the resulting directory layout.
+See [Create an agent](building-agents/create) for the wizard reference and
+[Agent anatomy](building-agents/anatomy) for the resulting directory layout.
 
 ## 2. Refine it
 
@@ -36,7 +36,7 @@ cast edit <name>
 the model, instructions, tools, and permissions until the agent
 behaves the way you want.
 
-See [Edit an agent](../edit).
+See [Edit an agent](building-agents/edit).
 
 ## 3. Test it in the TUI
 
@@ -48,8 +48,9 @@ cast dev <name>
 Chat with the agent, try `/mode` to switch between PLAN and BUILD,
 and use `/undo` / `/redo` if it goes off the rails.
 
-See [TUI overview](./tui/overview), [TUI modes](./tui/modes), and
-[Slash commands](../../../tui/slash-commands).
+See [TUI overview](building-agents/development-workflow/tui/overview),
+[TUI modes](building-agents/development-workflow/tui/modes), and
+[Slash commands](tui/slash-commands).
 
 ## 4. Make a release
 
@@ -62,7 +63,7 @@ cast release <name> 1.0
 auto-generated changelog is your record of what changed since the
 last release.
 
-See [Releases](../deployment/releases).
+See [Releases](building-agents/deployment/releases).
 
 ## 5. Ship it
 
@@ -73,7 +74,7 @@ cast deploy <name> --version 1.0
 `cast deploy` packages the release tarball into a container and
 pushes it to your provider. A unique deployment SHA is returned.
 
-See [Deployment overview](../deployment/overview).
+See [Deployment overview](building-agents/deployment/overview).
 
 ## 6. Chat with the deployed agent
 
@@ -84,7 +85,7 @@ cast connect <name>
 `cast connect` opens the TUI against the deployed A2A server. The
 header shows the deployed version (e.g. `v1.0`).
 
-See [Connect, shutdown, upgrade](../deployment/lifecycle).
+See [Connect, shutdown, upgrade](building-agents/deployment/lifecycle).
 
 ## 7. Iterate
 
@@ -98,20 +99,21 @@ Edit the agent locally, make a new release, and push it without
 losing any persistent memory — `cast upgrade` redeploys but keeps
 the same volume mount.
 
-See [Connect, shutdown, upgrade](../deployment/lifecycle).
+See [Connect, shutdown, upgrade](building-agents/deployment/lifecycle).
 
 ## Where to go next
 
 You now have the full loop. The reference pages you'll come back to:
 
-- **Capabilities** — add [Custom tools](../../configuration/custom-tools)
-  and [MCP servers](../../configuration/mcp-servers) when the agent
+- **Capabilities** — add [Custom tools](configuration/custom-tools)
+  and [MCP servers](configuration/mcp-servers) when the agent
   needs to do more than chat.
-- **Memory** — [Persistent memory](../../configuration/persistent-memory)
+- **Memory** — [Persistent memory](configuration/persistent-memory)
   explains the volume that survives deploys and upgrades.
-- **Sessions** — [Sessions](./sessions) covers resume, fork, and
-  auditing conversations.
-- **History** — [Versioning overview](../versioning/overview) ties
-  together the undo log and [versioning with Git](../versioning/git).
-- **Full CLI** — [Command reference](../../cli/reference) lists every
+- **Sessions** — [Sessions](building-agents/development-workflow/sessions)
+  covers resume, fork, and auditing conversations.
+- **History** — [Versioning overview](building-agents/versioning/overview)
+  ties together the undo log and
+  [versioning with Git](building-agents/versioning/git).
+- **Full CLI** — [Command reference](cli/reference) lists every
   `cast <subcommand>` with flags and examples.
