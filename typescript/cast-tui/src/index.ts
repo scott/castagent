@@ -23,6 +23,7 @@ interface TuiOptions {
   token?: string
   mode?: UiMode
   welcome?: string
+  session?: string
 }
 
 export async function startTui(options: TuiOptions): Promise<void> {
@@ -36,7 +37,7 @@ export async function startTui(options: TuiOptions): Promise<void> {
     if (options.mode !== 'on-host') {
       await showWelcomeScreen(renderer, options.agent)
     }
-    await showChatScreen(renderer, options.agent, options.url, options.token, options.mode, options.welcome)
+    await showChatScreen(renderer, options.agent, options.url, options.token, options.mode, options.welcome, options.session)
   } catch (err) {
     logCrash('TUI error', err)
   } finally {
@@ -78,6 +79,9 @@ if (isMain) {
         break
       case '--welcome':
         options.welcome = value
+        break
+      case '--session':
+        options.session = value
         break
     }
   }

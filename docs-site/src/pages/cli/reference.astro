@@ -4,6 +4,7 @@ import CommandRef from '../../components/CommandRef.astro'
 import { getCliCommands } from '../../lib/manifest.ts'
 
 const commands = getCliCommands().sort((a, b) => a.full.localeCompare(b.full))
+const pagePath = Astro.url.pathname.replace(/\/$/, '') || ''
 
 // Group by topic (first segment of the command path)
 const groups = new Map<string, typeof commands>()
@@ -39,7 +40,7 @@ const sortedTopics = [...groups.keys()].sort((a, b) => {
         <strong>{topic === 'core' ? 'Core' : topic}</strong>
         <ul>
           {(groups.get(topic) ?? []).map((c) => (
-            <li><a href={`#${c.full.replace(/^cast /, '').replace(/\s+/g, '-')}`}><code>{c.full}</code></a> — {c.description}</li>
+            <li><a href={`${pagePath}#${c.full.replace(/^cast /, '').replace(/\s+/g, '-')}`}><code>{c.full}</code></a> — {c.description}</li>
           ))}
         </ul>
       </li>
@@ -62,7 +63,7 @@ const sortedTopics = [...groups.keys()].sort((a, b) => {
     <code>KNOWN_MODELS</code> in <code>typescript/cast-cli/src/commands/update.ts</code>.
   </p>
   <p>
-    See the <a href="#cast-update"><code>cast update</code></a> reference
+    See the <a href={`${pagePath}#update`}><code>cast update</code></a> reference
     for the full flag list.
   </p>
 </Docs>

@@ -7,6 +7,13 @@ import {createInput} from '../components/input.js'
 import {createAutocomplete} from '../components/autocomplete.js'
 import {executeSlashCommand, getSlashCommands} from '../commands/slash-registry.js'
 import {getDb} from '../lib/db.js'
+import {
+  createSession as createSessionStore,
+  getSession,
+  appendMessage as appendSessionMessage,
+  endSession,
+  type Session,
+} from '../lib/sessions.js'
 import type {A2AClient} from '../../../cast-cli/dist/lib/a2a/client.js'
 
 /**
@@ -62,9 +69,10 @@ export async function showChatScreen(
   authToken?: string,
   uiMode: UiMode = 'dev',
   initialWelcome?: string,
+  initialSessionId?: string,
 ): Promise<void> {
   const {A2AClient} = await import('../../../cast-cli/dist/lib/a2a/client.js')
-  
+
   return new Promise(async (resolve) => {
     // Remove previous screen (e.g. welcome screen)
     for (const child of renderer.root.getChildren()) {
@@ -81,6 +89,9 @@ export async function showChatScreen(
 // Message tracking for /save and /copy
     let messageHistory: Array<{role: 'user' | 'agent'; text: string}> = []
     let lastAgentMessage: string | undefined
+    // Bound to an active session id once /session new or the first chat
+    // message creates one. Slash commands can swap this out.
+    let currentSessionId: string | null = initialSessionId ?? null
 
     // Get deployed version for initial agent
     let deployedVersion: string | null = null
@@ -132,6 +143,31 @@ export async function showChatScreen(
       showAgentIntro(client, agentName, messages, mode, messageHistory, (msg) => { lastAgentMessage = msg })
     }
 
+    // If launched with --session <id>, load the transcript before the
+    // user sees the empty chat. We replay the messages into the chat
+    // and bind the session id so future turns get appended to it.
+    if (initialSessionId) {
+      try {
+        const sess: Session | null = await getSession(initialSessionId)
+        if (sess) {
+          for (const m of sess.messages) {
+            if (m.role === 'user') {
+              messages.addUserMessage(m.text)
+            } else {
+              messages.addAgentMessage(m.text, mode)
+            }
+            messageHistory.push({role: m.role, text: m.text})
+            if (m.role === 'agent') {
+              lastAgentMessage = m.text
+            }
+          }
+          currentSessionId = sess.id
+        }
+      } catch {
+        // ignore — start a fresh session on first message
+      }
+    }
+
     // Autocomplete dropdown — filtered by current UI mode
     const autocompleteOptions = getSlashCommands(currentUiMode).map((cmd) => ({
       name: cmd.name,
@@ -181,6 +217,10 @@ export async function showChatScreen(
             client = new A2AClient(newUrl, newToken)
             messageHistory = []
             lastAgentMessage = undefined
+            if (currentSessionId) {
+              void endSession(currentSessionId)
+              currentSessionId = null
+            }
             header.setAgentName(agentName)
 
             // Update deployed version for new agent
@@ -212,6 +252,35 @@ export async function showChatScreen(
           },
           messageHistory,
           lastAgentMessage,
+          get currentSessionId() {
+            return currentSessionId
+          },
+          set currentSessionId(v: string | null) {
+            currentSessionId = v
+          },
+          loadSession: async (sessionId: string) => {
+            const sess: Session | null = await getSession(sessionId)
+            if (!sess) {
+              throw new Error(`Session not found: ${sessionId}`)
+            }
+            // Clear current chat
+            for (const child of messages.scrollBox.getChildren()) {
+              messages.scrollBox.remove(child.id)
+            }
+            messageHistory = []
+            lastAgentMessage = undefined
+            // Replay transcript
+            for (const m of sess.messages) {
+              if (m.role === 'user') {
+                messages.addUserMessage(m.text)
+              } else {
+                messages.addAgentMessage(m.text, mode)
+              }
+              messageHistory.push({role: m.role, text: m.text})
+              lastAgentMessage = m.role === 'agent' ? m.text : lastAgentMessage
+            }
+            currentSessionId = sess.id
+          },
         }
 
         const found = await executeSlashCommand(cmdName, args, ctx)
@@ -228,6 +297,24 @@ export async function showChatScreen(
       messages.addUserMessage(text)
       messageHistory.push({role: 'user', text})
 
+      // Lazily create a session for this conversation. Best-effort: a
+      // failure to create or append must not break the chat.
+      if (!currentSessionId) {
+        try {
+          const sess = await createSessionStore({
+            agentName: agentName,
+            mode: mode,
+            uiMode: currentUiMode,
+          })
+          currentSessionId = sess.id
+        } catch {
+          // ignore — chat continues without session persistence
+        }
+      }
+      if (currentSessionId) {
+        void appendSessionMessage(currentSessionId, 'user', text)
+      }
+
       try {
         const stream = messages.addStreamingAgentMessage(mode)
         let fullResponse = ''
@@ -243,6 +330,10 @@ export async function showChatScreen(
         stream.done()
         lastAgentMessage = fullResponse
         messageHistory.push({role: 'agent', text: fullResponse})
+
+        if (currentSessionId) {
+          void appendSessionMessage(currentSessionId, 'agent', fullResponse, uiAction)
+        }
 
         // Handle uiAction (e.g., open deploy modal)
         if (uiAction && uiAction.type === 'open_deploy_modal') {
@@ -283,6 +374,10 @@ export async function showChatScreen(
     const onKey = (key: KeyEvent) => {
       // Global exit shortcut
       if (key.ctrl && key.name === 'c') {
+        if (currentSessionId) {
+          void endSession(currentSessionId)
+          currentSessionId = null
+        }
         resolve()
         return
       }

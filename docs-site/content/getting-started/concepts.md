@@ -63,21 +63,27 @@ For Cast, this means:
   Sprites, or in a plain Docker container.
 - Bearer-token auth is added only when the agent is deployed.
 
-## Changes vs. Releases
+## Undo log, Releases, and Sessions
 
-Cast tracks **two kinds of versions** for an agent. This is the single most
-important concept to internalise.
+Cast tracks **three independent concepts** for an agent. This is the
+single most important idea to internalise.
 
-- **Changes** are automatic. Every time the Builder or `cast update` modifies
-  an agent, Cast snapshots the working tree as a tarball in
-  `~/.cast/agents/<name>/.cast/changes/`. They are sequential (v1, v2, v3…)
-  and meant for *debugging* and *diff* during development.
+- The **undo log** is automatic. Every time the Builder or `cast update`
+  modifies an agent, Cast snapshots the working tree as a tarball in
+  `~/.cast/agents/<name>/.cast/changes/`. They are sequential (v1,
+  v2, v3…) and are consumed by `cast undo` / `cast redo` (or
+  `/undo` / `/redo` in the TUI) and by `cast release`'s auto-changelog
+  generator. See [Versioning overview](building-agents/versioning/overview).
 - **Releases** are intentional. You create a release with
   `cast release <agent> 1.6` and the agent's tarball is stamped with a
   semantic version. Releases are the *deployment artifact* — when you
-  `cast deploy`, you're shipping a release.
-
-The full data model is in the [versioning overview](versioning/overview).
+  `cast deploy`, you're shipping a release. See [Releases](building-agents/deployment/releases).
+- **Sessions** are saved conversations. Cast auto-saves every chat
+  turn into a session, so you can `cast session resume` (or
+  `/session resume` in the TUI) to pick up where you left off,
+  `cast session fork` to branch into a parallel thread, or
+  `cast session export` to back up the transcript. See
+  [Sessions](building-agents/development-workflow/sessions).
 
 ## Multi-deployment and the deployment SHA
 

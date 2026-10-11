@@ -10,6 +10,18 @@ import type {KeyEvent, TextChunk} from '@opentui/core'
 import {saveTranscript} from '../lib/transcript.js'
 import {getDb} from '../lib/db.js'
 import {getKeychain} from '../lib/keychain.js'
+import {
+  listSessions as listSessionsMeta,
+  getSession,
+  deleteSession,
+  createSession,
+  endSession,
+  appendMessage,
+  forkSession,
+  renameSession,
+  type SessionMeta,
+  type Session,
+} from '../lib/sessions.js'
 import {createModal} from '../components/modal.js'
 import {runDeployInTerminal} from '../components/terminal.js'
 import type {UiMode} from '../components/header.js'
@@ -58,6 +70,50 @@ export interface CommandContext {
   exitTui: () => void
   messageHistory: Array<{role: 'user' | 'agent'; text: string}>
   lastAgentMessage?: string
+  /**
+   * The active session id, if one is bound to the chat screen. The TUI
+   * creates a session on first user message and updates this on
+   * /session new, /session resume, and a fork from /sessions.
+   */
+  currentSessionId?: string | null
+  /**
+   * Re-render the chat screen from a saved session's transcript. Wired
+   * in the chat screen; defaults to a no-op in tests.
+   */
+  loadSession?: (sessionId: string) => Promise<void>
+  /**
+   * Recursively run a subcommand by name. Used by parent slash
+   * commands to dispatch to their subcommands.
+   */
+  executeSubcommand?: (name: string, args: string[]) => Promise<void>
+}
+
+/**
+ * Load a session's transcript into the chat. Clears the in-memory
+ * message history, then re-renders each message as a user/agent
+ * bubble. This is the user-facing "resume" action.
+ */
+async function loadSessionIntoChat(ctx: CommandContext, sessionId: string): Promise<void> {
+  if (!ctx.loadSession) {
+    ctx.messages.addAgentMessage(
+      'Resuming sessions is not available in this context.',
+      ctx.mode,
+    )
+    return
+  }
+  try {
+    await ctx.loadSession(sessionId)
+    ctx.currentSessionId = sessionId
+    ctx.messages.addAgentMessage(
+      `Resumed session ${sessionId}. Future messages will be appended to this session.`,
+      ctx.mode,
+    )
+  } catch (err: any) {
+    ctx.messages.addAgentMessage(
+      `Failed to resume session: ${err?.message ?? String(err)}`,
+      ctx.mode,
+    )
+  }
 }
 
 function isProcessAlive(pid: number): boolean {
@@ -263,23 +319,394 @@ function getCurrentReleaseVersion(agentName: string): string | null {
   }
 }
 
-// Helper to get changes for an agent
-function getChangesForAgent(agentName: string): Array<{id: number; timestamp: string; source: string; message: string}> {
-  const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
-  // Try new path first, fall back to old
-  const newPath = path.join(agentPath, '.cast', 'changes', 'changes.json')
-  const oldPath = path.join(agentPath, '.cast', 'versions', 'versions.json')
-  const changesJsonPath = fs.existsSync(newPath) ? newPath : oldPath
+// Helper to get changes for an agent — REMOVED in favor of undo/redo.
+// The change log at ~/.cast/agents/<name>/.cast/changes/ is now
+// internal: it powers cast undo / cast redo but is not a user-facing
+// concept. Use cast.undo.get_undo_history() if you need to surface
+// the timeline programmatically.
 
-  if (!fs.existsSync(changesJsonPath)) {
-    return []
+/**
+ * Format an ISO timestamp as a relative "x ago" string for session
+ * pickers. Falls back to a locale string for invalid input.
+ */
+function formatRelativeTime(iso: string): string {
+  if (!iso) return ''
+  const then = new Date(iso).getTime()
+  if (!Number.isFinite(then)) return ''
+  const diff = Date.now() - then
+  const sec = Math.floor(diff / 1000)
+  if (sec < 60) return `${sec}s ago`
+  const min = Math.floor(sec / 60)
+  if (min < 60) return `${min}m ago`
+  const hr = Math.floor(min / 60)
+  if (hr < 24) return `${hr}h ago`
+  const day = Math.floor(hr / 24)
+  if (day < 30) return `${day}d ago`
+  const mo = Math.floor(day / 30)
+  if (mo < 12) return `${mo}mo ago`
+  return `${Math.floor(mo / 12)}y ago`
+}
+
+/**
+ * Truncate a string to a maximum length, collapsing whitespace and
+ * adding an ellipsis when truncated. Used to fit user prompts into
+ * session picker rows.
+ */
+function truncatePreview(s: string | null | undefined, n: number): string {
+  if (!s) return ''
+  const oneLine = s.replace(/\s+/g, ' ').trim()
+  return oneLine.length > n ? oneLine.slice(0, n - 1) + '…' : oneLine
+}
+
+/**
+ * Show a session picker modal. Renders the list of sessions for the
+ * current agent, navigates with up/down, and invokes `onSelect` with
+ * the chosen session id (or no-op on escape).
+ *
+ * Follows the AGENTS.md modal standards: 90% wide, 80% tall, centered,
+ * `▸` selection indicator, no row numbers, two-line rows.
+ */
+function showSessionPicker(
+  ctx: CommandContext,
+  sessions: SessionMeta[],
+  options: {
+    title: string
+    onSelect: (sess: SessionMeta) => void | Promise<void>
+    extraActions?: Record<
+      string,
+      {
+        label: string
+        run: (sess: SessionMeta) => void | Promise<void>
+      }
+    >
+  },
+): void {
+  const modal = createModal(ctx.renderer, ctx.input, {title: options.title, overlay: true})
+  if (modal.overlay) ctx.renderer.root.add(modal.overlay)
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 0,
+    paddingTop: 2,
+    paddingLeft: 2,
+    paddingRight: 2,
+  })
+
+  if (sessions.length === 0) {
+    const empty = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('No sessions found.')]),
+    })
+    contentBox.add(empty)
+    modal.setContent(contentBox)
+    ctx.renderer.root.add(modal.box)
+    modal.show()
+    const closeKey = modal.box.handleKeyPress?.bind(modal.box)
+    modal.box.handleKeyPress = (key: KeyEvent) => {
+      if (key.name === 'escape' || key.name === 'return' || key.name === 'enter') {
+        modal.hide()
+        ctx.input.focus()
+        return true
+      }
+      return closeKey ? closeKey(key) : false
+    }
+    return
   }
-  try {
-    const data = JSON.parse(fs.readFileSync(changesJsonPath, 'utf8'))
-    return data.versions || []
-  } catch {
-    return []
+
+  let selectedIndex = 0
+
+  const renderList = () => {
+    for (const child of contentBox.getChildren()) {
+      contentBox.remove(child.id)
+    }
+
+    const header = new TextRenderable(ctx.renderer, {
+      content: new StyledText([
+        white(`${sessions.length} session${sessions.length === 1 ? '' : 's'}`),
+      ]),
+    })
+    contentBox.add(header)
+    const sep = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('──────────────────────────────────────────────────────────────────────────────')]),
+    })
+    contentBox.add(sep)
+
+    for (let i = 0; i < sessions.length; i++) {
+      const s = sessions[i]
+      const isSelected = i === selectedIndex
+      const titleColor = isSelected ? white : dim
+      const title = s.name || truncatePreview(s.first_user_message, 60) || '(untitled)'
+      const endedTag = s.ended_at ? ' (ended)' : ''
+
+      const row = new TextRenderable(ctx.renderer, {
+        content: new StyledText([
+          isSelected ? cyan('▸ ') : dim('  '),
+          titleColor(title),
+          dim(endedTag),
+          dim('\n    '),
+          dim(`${s.agent_name} · ${s.message_count} msg · ${formatRelativeTime(s.updated_at)}`),
+        ]),
+      })
+      contentBox.add(row)
+    }
+
+    const sep2 = new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('──────────────────────────────────────────────────────────────────────────────')]),
+    })
+    contentBox.add(sep2)
+
+    const footerParts: Array<{text: string; color: typeof white | typeof dim}> = [
+      {text: '↑↓ ', color: white},
+      {text: 'Navigate  ', color: dim},
+      {text: 'Enter ', color: white},
+      {text: 'Select  ', color: dim},
+    ]
+    if (options.extraActions) {
+      for (const [key, action] of Object.entries(options.extraActions)) {
+        footerParts.push({text: `${key.toUpperCase()} `, color: white})
+        footerParts.push({text: `${action.label}  `, color: dim})
+      }
+    }
+    footerParts.push({text: 'ESC ', color: white})
+    footerParts.push({text: 'Close', color: dim})
+    const chunks: any[] = []
+    for (const p of footerParts) chunks.push(p.color(p.text))
+    const footer = new TextRenderable(ctx.renderer, {content: new StyledText(chunks)})
+    const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+    footerBox.add(footer)
+    contentBox.add(footerBox)
   }
+
+  renderList()
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+
+  const originalHandle = modal.box.handleKeyPress?.bind(modal.box)
+  modal.box.handleKeyPress = (key: KeyEvent) => {
+    if (key.name === 'up') {
+      selectedIndex = (selectedIndex - 1 + sessions.length) % sessions.length
+      renderList()
+      ctx.renderer.requestRender?.()
+      return true
+    }
+    if (key.name === 'down') {
+      selectedIndex = (selectedIndex + 1) % sessions.length
+      renderList()
+      ctx.renderer.requestRender?.()
+      return true
+    }
+    if (key.name === 'escape') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    if (key.name === 'return' || key.name === 'enter') {
+      const chosen = sessions[selectedIndex]
+      modal.hide()
+      ctx.input.focus()
+      void options.onSelect(chosen)
+      return true
+    }
+    if (options.extraActions) {
+      const k = (key.name ?? '').toLowerCase()
+      if (k.length === 1 && options.extraActions[k]) {
+        const chosen = sessions[selectedIndex]
+        modal.hide()
+        ctx.input.focus()
+        void options.extraActions[k].run(chosen)
+        return true
+      }
+    }
+    return originalHandle ? originalHandle(key) : false
+  }
+}
+
+function sessionTitle(sess: SessionMeta): string {
+  return sess.name || sess.id
+}
+
+/**
+ * One character from a key event, for a session-name prompt.
+ * Session names are display labels, so spaces and punctuation are
+ * allowed. Backslashes are rejected because the Python wrapper
+ * interpolates the name into a single-quoted string.
+ */
+function sessionNameChar(key: KeyEvent): string | null {
+  if (key.ctrl || key.meta) return null
+  if (key.name === 'space') return ' '
+  if (key.name && key.name.length === 1 && key.name >= ' ' && key.name <= '~' && key.name !== '\\') {
+    return key.name
+  }
+  return null
+}
+
+function promptForSessionName(
+  ctx: CommandContext,
+  opts: {
+    title: string
+    instructions: string
+    allowEmpty: boolean
+    onSubmit: (name: string | null) => void | Promise<void>
+  },
+): void {
+  const modal = createModal(ctx.renderer, ctx.input, {
+    title: opts.title,
+    overlay: true,
+  })
+  if (modal.overlay) ctx.renderer.root.add(modal.overlay)
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 1,
+    paddingTop: 3,
+    paddingLeft: 2,
+    paddingRight: 2,
+  })
+
+  contentBox.add(new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim(opts.instructions)]),
+  }))
+
+  const inputDisplay = new TextRenderable(ctx.renderer, {
+    content: new StyledText([white('_')]),
+  })
+  contentBox.add(inputDisplay)
+
+  const errorText = new TextRenderable(ctx.renderer, {
+    content: new StyledText([dim(' ')]),
+  })
+  contentBox.add(errorText)
+
+  const footer = new TextRenderable(ctx.renderer, {
+    content: new StyledText([
+      dim(opts.allowEmpty ? 'Enter Confirm (empty skips)  ESC Cancel' : 'Enter Confirm  ESC Cancel'),
+    ]),
+  })
+  const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+  footerBox.add(footer)
+  contentBox.add(footerBox)
+
+  let draft = ''
+  const MAX_LENGTH = 80
+
+  function updateInputDisplay(error?: string) {
+    inputDisplay.content = new StyledText([white(draft + '_')])
+    errorText.content = new StyledText([error ? red(error) : dim(' ')])
+    ctx.renderer.requestRender?.()
+  }
+
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+  modal.show()
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+  modal.box.handleKeyPress = (key: KeyEvent) => {
+    if (key.name === 'escape') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    if (key.name === 'return' || key.name === 'enter') {
+      const trimmed = draft.trim()
+      if (!trimmed) {
+        if (!opts.allowEmpty) {
+          updateInputDisplay('Name is required')
+          return true
+        }
+        modal.hide()
+        ctx.input.focus()
+        void opts.onSubmit(null)
+        return true
+      }
+      modal.hide()
+      ctx.input.focus()
+      void opts.onSubmit(trimmed)
+      return true
+    }
+    if (key.name === 'backspace' || (key.ctrl && key.name === 'h')) {
+      if (draft.length > 0) {
+        draft = draft.slice(0, -1)
+        updateInputDisplay()
+      }
+      return true
+    }
+    const ch = sessionNameChar(key)
+    if (ch && draft.length < MAX_LENGTH) {
+      draft += ch
+      updateInputDisplay()
+      return true
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+
+  updateInputDisplay()
+  ctx.renderer.requestRender?.()
+}
+
+function promptForkSession(ctx: CommandContext, sess: SessionMeta): void {
+  const title = sessionTitle(sess)
+  promptForSessionName(ctx, {
+    title: 'Fork session',
+    instructions: `Name for the fork of '${title}' (leave empty for none):`,
+    allowEmpty: true,
+    onSubmit: async (name) => {
+      let forked
+      try {
+        forked = await forkSession(sess.id, name)
+      } catch (err: any) {
+        ctx.messages.addAgentMessage(
+          `Failed to fork session: ${err?.message ?? String(err)}`,
+          ctx.mode,
+        )
+        return
+      }
+      try {
+        if (ctx.loadSession) {
+          await ctx.loadSession(forked.id)
+          ctx.currentSessionId = forked.id
+        }
+      } catch (err: any) {
+        ctx.messages.addAgentMessage(
+          `Forked into ${forked.id}, but could not open it: ${err?.message ?? String(err)}`,
+          ctx.mode,
+        )
+        return
+      }
+      const label = forked.name ? `'${forked.name}'` : forked.id
+      ctx.messages.addAgentMessage(
+        `Forked ${title} into ${label}. Future messages will be appended to the fork.`,
+        ctx.mode,
+      )
+    },
+  })
+}
+
+function promptRenameSession(ctx: CommandContext, sess: SessionMeta): void {
+  const title = sessionTitle(sess)
+  promptForSessionName(ctx, {
+    title: 'Rename session',
+    instructions: `New name for '${title}':`,
+    allowEmpty: false,
+    onSubmit: async (name) => {
+      if (!name) return
+      try {
+        const renamed = await renameSession(sess.id, name)
+        ctx.messages.addAgentMessage(
+          `Renamed session ${renamed.id} to '${renamed.name}'.`,
+          ctx.mode,
+        )
+      } catch (err: any) {
+        ctx.messages.addAgentMessage(
+          `Failed to rename session: ${err?.message ?? String(err)}`,
+          ctx.mode,
+        )
+      }
+    },
+  })
 }
 
 function launchBuilderEditor(ctx: CommandContext, agentName: string): void {
@@ -921,725 +1348,9 @@ function executeUpgrade(ctx: CommandContext, agent: DeployedAgent, targetVersion
   process.exit(0)
 }
 
-/**
- * Show a restore confirmation modal. The user must confirm before
- * `onConfirm` is invoked.
- */
-function showRestoreConfirmation(
-  ctx: CommandContext,
-  agentName: string,
-  kind: 'change' | 'release',
-  value: string | number,
-  onConfirm: (kind: 'change' | 'release', value: string | number) => void,
-): void {
-  const modal = createModal(ctx.renderer, ctx.input, {
-    title: `Restore: ${agentName}`,
-    overlay: true,
-  })
-  if (modal.overlay) ctx.renderer.root.add(modal.overlay)
 
-  const contentBox = new BoxRenderable(ctx.renderer, {
-    width: '100%',
-    height: '100%',
-    flexDirection: 'column',
-    gap: 1,
-    paddingTop: 3,
-    paddingLeft: 2,
-    paddingRight: 2,
-    alignItems: 'center',
-  })
 
-  const label = kind === 'change' ? `change v${value}` : `release ${value}`
-  const restoreLine = new TextRenderable(ctx.renderer, {
-    content: new StyledText([
-      dim('Restore from '),
-      cyan(label),
-      dim('?'),
-    ]),
-  })
-  contentBox.add(restoreLine)
 
-  const note = new TextRenderable(ctx.renderer, {
-    content: new StyledText([dim('Your current changes will be preserved in the change history.')]),
-  })
-  contentBox.add(note)
-
-  const warning = new TextRenderable(ctx.renderer, {
-    content: new StyledText([yellow('Note: Restore does not deploy. Use /deploy to update the deployment.')]),
-  })
-  contentBox.add(warning)
-
-  const spacer = new TextRenderable(ctx.renderer, {content: new StyledText([dim(' ')])})
-  contentBox.add(spacer)
-
-  const footer = new TextRenderable(ctx.renderer, {
-    content: new StyledText([dim('Enter Restore  ESC Cancel')]),
-  })
-  contentBox.add(footer)
-
-  modal.setContent(contentBox)
-  ctx.renderer.root.add(modal.box)
-  modal.show()
-
-  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
-  modal.box.handleKeyPress = (key: KeyEvent): boolean => {
-    if (key.name === 'escape') {
-      modal.hide()
-      ctx.input.focus()
-      return true
-    }
-    if (key.name === 'return' || key.name === 'enter') {
-      modal.hide()
-      ctx.input.focus()
-      onConfirm(kind, value)
-      return true
-    }
-    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
-  }
-}
-
-/**
- * Show the restore picker: pick source (Changes vs Releases), then pick a
- * specific item, then ask for confirmation.
- */
-function showRestorePicker(
-  ctx: CommandContext,
-  agentName: string,
-  changes: Array<{id: number; timestamp: string; source: string; message: string}>,
-  releases: Array<{version: string; message: string; changelog: string; created_at: string}>,
-  onConfirm: (kind: 'change' | 'release', value: string | number) => void,
-): void {
-  const modal = createModal(ctx.renderer, ctx.input, {
-    title: `Restore: ${agentName}`,
-    overlay: true,
-  })
-  if (modal.overlay) ctx.renderer.root.add(modal.overlay)
-
-  const contentBox = new BoxRenderable(ctx.renderer, {
-    width: '100%',
-    height: '100%',
-    flexDirection: 'column',
-    gap: 0,
-    paddingTop: 2,
-    paddingLeft: 2,
-    paddingRight: 2,
-  })
-
-  type Source = 'change' | 'release'
-  type Stage = 'source' | 'item'
-  type Item =
-    | {kind: 'change'; id: number; label: string; sub: string}
-    | {kind: 'release'; version: string; label: string; sub: string}
-
-  const state = {
-    source: 'change' as Source,
-    stage: 'source' as Stage,
-    selectedIndex: 0,
-  }
-
-  function getItems(): Item[] {
-    if (state.source === 'change') {
-      return changes.map((c) => ({
-        kind: 'change' as const,
-        id: c.id,
-        label: `v${c.id}`,
-        sub: c.message || '',
-      }))
-    }
-    return releases.map((r) => ({
-      kind: 'release' as const,
-      version: r.version,
-      label: r.version,
-      sub: r.message || '',
-    }))
-  }
-
-  function refresh(): void {
-    for (const child of contentBox.getChildren()) {
-      contentBox.remove(child.id)
-    }
-
-    if (state.stage === 'source') {
-      const header = new TextRenderable(ctx.renderer, {
-        content: new StyledText([white(`Restore from:`)]),
-      })
-      contentBox.add(header)
-      const sep = new TextRenderable(ctx.renderer, {
-        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
-      })
-      contentBox.add(sep)
-
-      const sources: Array<{key: Source; label: string; count: number}> = [
-        {key: 'change', label: 'Changes', count: changes.length},
-        {key: 'release', label: 'Releases', count: releases.length},
-      ]
-      for (let i = 0; i < sources.length; i++) {
-        const s = sources[i]
-        const isSelected = i === state.selectedIndex
-        const prefix = isSelected ? cyan('(•) ') : dim('( ) ')
-        const row = new TextRenderable(ctx.renderer, {
-          content: new StyledText([
-            prefix,
-            isSelected ? white(s.label) : dim(s.label),
-            dim(`  (${s.count} available)`),
-          ]),
-        })
-        contentBox.add(row)
-      }
-
-      const sep2 = new TextRenderable(ctx.renderer, {
-        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
-      })
-      contentBox.add(sep2)
-      const note = new TextRenderable(ctx.renderer, {
-        content: new StyledText([yellow('Note: Restore does not deploy. Your current changes will be preserved.')]),
-      })
-      contentBox.add(note)
-
-      const footer = new TextRenderable(ctx.renderer, {
-        content: new StyledText([dim('↑↓ Navigate  Enter Select  ESC Cancel')]),
-      })
-      const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
-      footerBox.add(footer)
-      contentBox.add(footerBox)
-    } else {
-      // 'item' stage: show the list of changes or releases
-      const items = getItems()
-      if (items.length === 0) {
-        const empty = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim(`No ${state.source}s available.`)]),
-        })
-        contentBox.add(empty)
-        const hint = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('ESC Back')]),
-        })
-        contentBox.add(hint)
-        ctx.renderer.requestRender?.()
-        return
-      }
-      const header = new TextRenderable(ctx.renderer, {
-        content: new StyledText([white(`Select ${state.source} to restore from:`)]),
-      })
-      contentBox.add(header)
-      const sep = new TextRenderable(ctx.renderer, {
-        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
-      })
-      contentBox.add(sep)
-
-      for (let i = 0; i < items.length; i++) {
-        const it = items[i]
-        const isSelected = i === state.selectedIndex
-        const prefix = isSelected ? cyan('▸ ') : dim('  ')
-        const sub = it.sub.length > 50 ? it.sub.slice(0, 47) + '...' : it.sub
-        const row = new TextRenderable(ctx.renderer, {
-          content: new StyledText([
-            prefix,
-            isSelected ? white(it.label) : dim(it.label),
-            dim('  '),
-            dim(sub),
-          ]),
-        })
-        contentBox.add(row)
-      }
-
-      const sep2 = new TextRenderable(ctx.renderer, {
-        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
-      })
-      contentBox.add(sep2)
-      const note = new TextRenderable(ctx.renderer, {
-        content: new StyledText([yellow('Your current changes will be preserved in the change history.')]),
-      })
-      contentBox.add(note)
-
-      const footer = new TextRenderable(ctx.renderer, {
-        content: new StyledText([dim('↑↓ Navigate  Enter Restore  ESC Back')]),
-      })
-      const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
-      footerBox.add(footer)
-      contentBox.add(footerBox)
-    }
-
-    ctx.renderer.requestRender?.()
-  }
-
-  modal.setContent(contentBox)
-  ctx.renderer.root.add(modal.box)
-  modal.show()
-  refresh()
-
-  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
-  modal.box.handleKeyPress = (key: KeyEvent): boolean => {
-    if (key.name === 'escape') {
-      if (state.stage === 'item') {
-        state.stage = 'source'
-        state.selectedIndex = 0
-        refresh()
-        return true
-      }
-      modal.hide()
-      ctx.input.focus()
-      return true
-    }
-    if (state.stage === 'source') {
-      const maxIndex = 1 // 2 sources
-      if (key.name === 'up') {
-        state.selectedIndex = Math.max(0, state.selectedIndex - 1)
-        refresh()
-        return true
-      }
-      if (key.name === 'down') {
-        state.selectedIndex = Math.min(maxIndex, state.selectedIndex + 1)
-        refresh()
-        return true
-      }
-      if (key.name === 'return' || key.name === 'enter') {
-        const sources: Source[] = ['change', 'release']
-        // If only one source has data, jump to it directly
-        if (state.selectedIndex === 0 && changes.length === 0 && releases.length > 0) {
-          state.source = 'release'
-        } else if (state.selectedIndex === 1 && releases.length === 0 && changes.length > 0) {
-          state.source = 'change'
-        } else {
-          state.source = sources[state.selectedIndex]
-        }
-        // If no items of the chosen type, stay on source stage
-        const items = getItems()
-        if (items.length === 0) {
-          refresh()
-          return true
-        }
-        state.stage = 'item'
-        state.selectedIndex = 0
-        refresh()
-        return true
-      }
-    } else {
-      // 'item' stage
-      const items = getItems()
-      if (key.name === 'up') {
-        state.selectedIndex = Math.max(0, state.selectedIndex - 1)
-        refresh()
-        return true
-      }
-      if (key.name === 'down') {
-        state.selectedIndex = Math.min(items.length - 1, state.selectedIndex + 1)
-        refresh()
-        return true
-      }
-      if (key.name === 'return' || key.name === 'enter') {
-        const it = items[state.selectedIndex]
-        modal.hide()
-        ctx.input.focus()
-        if (it.kind === 'change') {
-          showRestoreConfirmation(ctx, agentName, 'change', it.id, onConfirm)
-        } else {
-          showRestoreConfirmation(ctx, agentName, 'release', it.version, onConfirm)
-        }
-        return true
-      }
-    }
-    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
-  }
-}
-
-/**
- * Show a diff between two changes or two releases for an agent. The
- * implementation shells out to `cast diff` for changes (using version IDs)
- * and displays the result in a modal. For release diffs, falls back to a
- * summary view since there is no dedicated `cast diff` for releases.
- */
-function showDiffModal(
-  ctx: CommandContext,
-  agentName: string,
-  kind: 'change' | 'release',
-  v1: string,
-  v2: string,
-): void {
-  const modal = createModal(ctx.renderer, ctx.input, {
-    title: `Diff: ${agentName}`,
-    overlay: true,
-  })
-  if (modal.overlay) ctx.renderer.root.add(modal.overlay)
-
-  const contentBox = new BoxRenderable(ctx.renderer, {
-    width: '100%',
-    height: '100%',
-    flexDirection: 'column',
-    gap: 0,
-    paddingTop: 2,
-    paddingLeft: 2,
-    paddingRight: 2,
-  })
-
-  const label1 = kind === 'change' ? `v${v1}` : `${v1}`
-  const label2 = kind === 'change' ? `v${v2}` : `${v2}`
-
-  const header = new TextRenderable(ctx.renderer, {
-    content: new StyledText([
-      dim(`${kind === 'change' ? 'Change' : 'Release'} diff: `),
-      cyan(label1),
-      dim(' → '),
-      cyan(label2),
-    ]),
-  })
-  contentBox.add(header)
-
-  const sep = new TextRenderable(ctx.renderer, {
-    content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
-  })
-  contentBox.add(sep)
-
-  // Run the diff
-  const binary = findCastBinary()
-  let output = ''
-  if (!binary) {
-    output = 'Could not find cast CLI binary. Please ensure cast is installed.'
-  } else {
-      try {
-      if (kind === 'change') {
-        // `cast diff <agent> <v1> <v2>` uses integer version IDs
-        output = execFileSync(binary, ['diff', agentName, v1, v2], {encoding: 'utf8', timeout: 30000})
-      } else {
-        // Releases: no dedicated `cast diff`; produce a summary
-        // Show a synchronous message and then compute summary using releases from file.
-        // We use a synchronous fs read here so the modal can be shown without await.
-        const releasesJsonPath = path.join(os.homedir(), '.cast', 'agents', agentName, '.cast', 'releases', 'releases.json')
-        let rels: any[] = []
-        if (fs.existsSync(releasesJsonPath)) {
-          try {
-            const data = JSON.parse(fs.readFileSync(releasesJsonPath, 'utf8'))
-            rels = data.releases || []
-          } catch {
-            rels = []
-          }
-        }
-        const r1 = rels.find((r: any) => r.version === v1)
-        const r2 = rels.find((r: any) => r.version === v2)
-        if (!r1 || !r2) {
-          output = `Could not find release ${!r1 ? v1 : v2} for agent ${agentName}.`
-        } else {
-          output = [
-            `Comparing release ${v1} → ${v2}`,
-            '',
-            `${v1}: ${r1.message || '(no message)'}  — ${r1.created_at}`,
-            `${v2}: ${r2.message || '(no message)'}  — ${r2.created_at}`,
-            '',
-            'No line-level diff available for releases in this build.',
-          ].join('\n')
-        }
-      }
-    } catch (err: any) {
-      if (err.stdout) {
-        output = err.stdout.toString()
-      } else {
-        output = `Failed to run diff: ${err.message || String(err)}`
-      }
-    }
-  }
-
-  // Render output (truncate very long output)
-  const maxLines = 200
-  const lines = output.split('\n').slice(0, maxLines)
-  for (const line of lines) {
-    const displayLine = line.length > 200 ? line.slice(0, 197) + '...' : line
-    const text = new TextRenderable(ctx.renderer, {
-      content: new StyledText([white(displayLine)]),
-    })
-    contentBox.add(text)
-  }
-  if (output.split('\n').length > maxLines) {
-    const more = new TextRenderable(ctx.renderer, {
-      content: new StyledText([dim(`... (${output.split('\n').length - maxLines} more lines truncated)`)]),
-    })
-    contentBox.add(more)
-  }
-
-  const sep2 = new TextRenderable(ctx.renderer, {
-    content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
-  })
-  contentBox.add(sep2)
-
-  const footer = new TextRenderable(ctx.renderer, {
-    content: new StyledText([dim('ESC Close')]),
-  })
-  const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
-  footerBox.add(footer)
-  contentBox.add(footerBox)
-
-  modal.setContent(contentBox)
-  ctx.renderer.root.add(modal.box)
-  modal.show()
-
-  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
-  modal.box.handleKeyPress = (key: KeyEvent): boolean => {
-    if (key.name === 'escape' || key.name === 'return' || key.name === 'enter') {
-      modal.hide()
-      ctx.input.focus()
-      return true
-    }
-    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
-  }
-}
-
-/**
- * Show the /diff flow: pick kind (Changes or Releases), then pick two
- * items, then show the diff modal.
- */
-function showDiffPicker(
-  ctx: CommandContext,
-  agentName: string,
-  preselectedFirstChange: number | null,
-  changes: Array<{id: number; timestamp: string; source: string; message: string}>,
-  releases: Array<{version: string; message: string; changelog: string; created_at: string}>,
-): void {
-  const modal = createModal(ctx.renderer, ctx.input, {
-    title: `Diff: ${agentName}`,
-    overlay: true,
-  })
-  if (modal.overlay) ctx.renderer.root.add(modal.overlay)
-
-  const contentBox = new BoxRenderable(ctx.renderer, {
-    width: '100%',
-    height: '100%',
-    flexDirection: 'column',
-    gap: 0,
-    paddingTop: 2,
-    paddingLeft: 2,
-    paddingRight: 2,
-  })
-
-  type Kind = 'change' | 'release'
-  type Stage = 'kind' | 'first' | 'second' | 'show'
-  type Item =
-    | {kind: 'change'; id: number; label: string; sub: string}
-    | {kind: 'release'; version: string; label: string; sub: string}
-
-  const state = {
-    kind: (preselectedFirstChange !== null ? 'change' : 'change') as Kind,
-    stage: (preselectedFirstChange !== null ? 'second' : 'kind') as Stage,
-    first: (preselectedFirstChange !== null
-      ? ({kind: 'change', id: preselectedFirstChange, label: `v${preselectedFirstChange}`, sub: ''} as Item)
-      : null) as Item | null,
-    second: null as Item | null,
-    selectedIndex: 0,
-  }
-
-  function getItems(): Item[] {
-    if (state.kind === 'change') {
-      return changes.map((c) => ({
-        kind: 'change' as const,
-        id: c.id,
-        label: `v${c.id}`,
-        sub: c.message || '',
-      }))
-    }
-    return releases.map((r) => ({
-      kind: 'release' as const,
-      version: r.version,
-      label: r.version,
-      sub: r.message || '',
-    }))
-  }
-
-  function refresh(): void {
-    for (const child of contentBox.getChildren()) {
-      contentBox.remove(child.id)
-    }
-
-    if (state.stage === 'kind') {
-      const header = new TextRenderable(ctx.renderer, {
-        content: new StyledText([white('Compare:')]),
-      })
-      contentBox.add(header)
-      const sep = new TextRenderable(ctx.renderer, {
-        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
-      })
-      contentBox.add(sep)
-      const kinds: Array<{key: Kind; label: string}> = [
-        {key: 'change', label: 'Compare Changes'},
-        {key: 'release', label: 'Compare Releases'},
-      ]
-      for (let i = 0; i < kinds.length; i++) {
-        const k = kinds[i]
-        const isSelected = i === state.selectedIndex
-        const prefix = isSelected ? cyan('(•) ') : dim('( ) ')
-        const row = new TextRenderable(ctx.renderer, {
-          content: new StyledText([
-            prefix,
-            isSelected ? white(k.label) : dim(k.label),
-          ]),
-        })
-        contentBox.add(row)
-      }
-      const sep2 = new TextRenderable(ctx.renderer, {
-        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
-      })
-      contentBox.add(sep2)
-      const footer = new TextRenderable(ctx.renderer, {
-        content: new StyledText([dim('↑↓ Navigate  Enter Select  ESC Cancel')]),
-      })
-      const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
-      footerBox.add(footer)
-      contentBox.add(footerBox)
-    } else if (state.stage === 'first' || state.stage === 'second') {
-      const stageLabel = state.stage === 'first' ? 'First' : 'Second'
-      const items = getItems()
-      if (items.length === 0) {
-        const empty = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim(`No ${state.kind}s available.`)]),
-        })
-        contentBox.add(empty)
-      } else {
-        const headerChunks: any[] = [
-          white(`${stageLabel} ${state.kind}:`),
-          dim('  '),
-        ]
-        if (state.first) {
-          headerChunks.push(dim(`(first: ${state.first.label})`))
-        }
-        const header = new TextRenderable(ctx.renderer, {
-          content: new StyledText(headerChunks),
-        })
-        contentBox.add(header)
-        const sep = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
-        })
-        contentBox.add(sep)
-
-        for (let i = 0; i < items.length; i++) {
-          const it = items[i]
-          const isSelected = i === state.selectedIndex
-          const prefix = isSelected ? cyan('▸ ') : dim('  ')
-          const sub = it.sub.length > 50 ? it.sub.slice(0, 47) + '...' : it.sub
-          const row = new TextRenderable(ctx.renderer, {
-            content: new StyledText([
-              prefix,
-              isSelected ? white(it.label) : dim(it.label),
-              dim('  '),
-              dim(sub),
-            ]),
-          })
-          contentBox.add(row)
-        }
-      }
-      const sep2 = new TextRenderable(ctx.renderer, {
-        content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
-      })
-      contentBox.add(sep2)
-      const footer = new TextRenderable(ctx.renderer, {
-        content: new StyledText([dim('↑↓ Navigate  Enter Select  ESC Back')]),
-      })
-      const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
-      footerBox.add(footer)
-      contentBox.add(footerBox)
-    }
-
-    ctx.renderer.requestRender?.()
-  }
-
-  modal.setContent(contentBox)
-  ctx.renderer.root.add(modal.box)
-  modal.show()
-  refresh()
-
-  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
-  modal.box.handleKeyPress = (key: KeyEvent): boolean => {
-    if (key.name === 'escape') {
-      if (state.stage === 'kind') {
-        modal.hide()
-        ctx.input.focus()
-        return true
-      }
-      if (state.stage === 'first') {
-        state.stage = 'kind'
-        state.selectedIndex = 0
-        state.kind = 'change'
-        refresh()
-        return true
-      }
-      if (state.stage === 'second') {
-        state.stage = 'first'
-        state.selectedIndex = 0
-        state.first = null
-        refresh()
-        return true
-      }
-    }
-    if (state.stage === 'kind') {
-      if (key.name === 'up') {
-        state.selectedIndex = Math.max(0, state.selectedIndex - 1)
-        refresh()
-        return true
-      }
-      if (key.name === 'down') {
-        state.selectedIndex = Math.min(1, state.selectedIndex + 1)
-        refresh()
-        return true
-      }
-      if (key.name === 'return' || key.name === 'enter') {
-        state.kind = state.selectedIndex === 0 ? 'change' : 'release'
-        // Make sure we have items
-        const items = getItems()
-        if (items.length < 1) {
-          refresh()
-          return true
-        }
-        // For changes, preselect the second-to-last (older) and last (newer) for convenience
-        if (state.kind === 'change' && items.length >= 2) {
-          state.selectedIndex = items.length - 2
-        } else {
-          state.selectedIndex = 0
-        }
-        state.stage = 'first'
-        refresh()
-        return true
-      }
-    } else if (state.stage === 'first') {
-      const items = getItems()
-      if (key.name === 'up') {
-        state.selectedIndex = Math.max(0, state.selectedIndex - 1)
-        refresh()
-        return true
-      }
-      if (key.name === 'down') {
-        state.selectedIndex = Math.min(items.length - 1, state.selectedIndex + 1)
-        refresh()
-        return true
-      }
-      if (key.name === 'return' || key.name === 'enter') {
-        state.first = items[state.selectedIndex]
-        state.selectedIndex = 0
-        state.stage = 'second'
-        refresh()
-        return true
-      }
-    } else if (state.stage === 'second') {
-      const items = getItems()
-      if (key.name === 'up') {
-        state.selectedIndex = Math.max(0, state.selectedIndex - 1)
-        refresh()
-        return true
-      }
-      if (key.name === 'down') {
-        state.selectedIndex = Math.min(items.length - 1, state.selectedIndex + 1)
-        refresh()
-        return true
-      }
-      if (key.name === 'return' || key.name === 'enter') {
-        state.second = items[state.selectedIndex]
-        modal.hide()
-        ctx.input.focus()
-        const first = state.first!
-        const second = state.second!
-        const v1 = first.kind === 'change' ? String(first.id) : first.version
-        const v2 = second.kind === 'change' ? String(second.id) : second.version
-        showDiffModal(ctx, agentName, state.kind, v1, v2)
-        return true
-      }
-    }
-    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
-  }
-}
 
 const commands: SlashCommand[] = [
   {
@@ -1700,6 +1411,68 @@ const commands: SlashCommand[] = [
       }
       ctx.messageHistory = []
       ctx.lastAgentMessage = undefined
+    },
+  },
+
+  {
+    name: 'undo',
+    description: 'Undo the last change to the agent',
+    category: 'agent',
+    modes: ['dev'],
+    args: '[steps]',
+    handler: async (ctx, args) => {
+      const steps = args[0] ? parseInt(args[0], 10) : 1
+      if (!Number.isFinite(steps) || steps < 1) {
+        ctx.messages.addAgentMessage('Usage: /undo [steps]', ctx.mode)
+        return
+      }
+      try {
+        const out = execFileSync(
+          findCastBinary() ?? 'cast',
+          ['undo', ctx.agentName, '--steps', String(steps), '--json'],
+          {encoding: 'utf-8', cwd: os.homedir()},
+        ).trim()
+        const parsed = JSON.parse(out)
+        const count = Array.isArray(parsed) ? parsed.length : 0
+        ctx.messages.addAgentMessage(
+          `Undid ${count} change${count === 1 ? '' : 's'} for '${ctx.agentName}'. Use /redo to bring them back.`,
+          ctx.mode,
+        )
+      } catch (err: any) {
+        const msg = String(err?.stderr || err?.message || err)
+        ctx.messages.addAgentMessage(`Undo failed: ${msg.split('\n').pop() ?? 'unknown error'}`, ctx.mode)
+      }
+    },
+  },
+
+  {
+    name: 'redo',
+    description: 'Redo previously-undone change(s)',
+    category: 'agent',
+    modes: ['dev'],
+    args: '[steps]',
+    handler: async (ctx, args) => {
+      const steps = args[0] ? parseInt(args[0], 10) : 1
+      if (!Number.isFinite(steps) || steps < 1) {
+        ctx.messages.addAgentMessage('Usage: /redo [steps]', ctx.mode)
+        return
+      }
+      try {
+        const out = execFileSync(
+          findCastBinary() ?? 'cast',
+          ['redo', ctx.agentName, '--steps', String(steps), '--json'],
+          {encoding: 'utf-8', cwd: os.homedir()},
+        ).trim()
+        const parsed = JSON.parse(out)
+        const count = Array.isArray(parsed) ? parsed.length : 0
+        ctx.messages.addAgentMessage(
+          `Redid ${count} change${count === 1 ? '' : 's'} for '${ctx.agentName}'.`,
+          ctx.mode,
+        )
+      } catch (err: any) {
+        const msg = String(err?.stderr || err?.message || err)
+        ctx.messages.addAgentMessage(`Redo failed: ${msg.split('\n').pop() ?? 'unknown error'}`, ctx.mode)
+      }
     },
   },
 
@@ -3005,172 +2778,6 @@ const commands: SlashCommand[] = [
     },
   },
 
-  {
-    name: 'changes',
-    description: 'Show change history for current agent',
-    category: 'session',
-    modes: ['dev', 'production'],
-    handler: async (ctx) => {
-      const agentName = ctx.agentName
-      const changes = getChangesForAgent(agentName)
-
-      // Build modal content
-      const modal = createModal(ctx.renderer, ctx.input, {
-        title: `Changes: ${agentName}`,
-        overlay: true,
-      })
-
-      if (modal.overlay) {
-        ctx.renderer.root.add(modal.overlay)
-      }
-
-      const contentBox = new BoxRenderable(ctx.renderer, {
-        width: '100%',
-        height: '100%',
-        flexDirection: 'column',
-        gap: 0,
-        paddingTop: 2,
-        paddingLeft: 2,
-        paddingRight: 2,
-      })
-
-      if (changes.length === 0) {
-        const emptyText = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('No changes found.')]),
-        })
-        contentBox.add(emptyText)
-
-        const hint = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('\nChanges are created when the agent is edited.')]),
-        })
-        contentBox.add(hint)
-      } else {
-        const sortedChanges = [...changes].sort((a, b) => b.id - a.id)
-
-        let selectedIndex = 0
-
-        function renderList() {
-          for (const child of contentBox.getChildren()) {
-            contentBox.remove(child.id)
-          }
-
-          const headerText = new TextRenderable(ctx.renderer, {
-            content: new StyledText([
-              white('Change History'),
-              dim(' | '),
-              white(`Current: v${sortedChanges[0]?.id || 0}`),
-            ]),
-          })
-          contentBox.add(headerText)
-
-          const sep = new TextRenderable(ctx.renderer, {
-            content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
-          })
-          contentBox.add(sep)
-
-          for (let i = 0; i < sortedChanges.length; i++) {
-            const c = sortedChanges[i]
-            const isSelected = i === selectedIndex
-            const date = new Date(c.timestamp)
-            const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
-            const sourceLabel = c.source === 'create' ? dim('[CREATED]') :
-                               c.source === 'cli' ? cyan('[CLI]') :
-                               green('[BUILDER]')
-
-            const prefix = isSelected ? cyan('▸ ') : dim('  ')
-            const changeColor = isSelected ? white : dim
-
-            const changeText = new TextRenderable(ctx.renderer, {
-              content: new StyledText([
-                prefix,
-                changeColor(`v${c.id}`),
-                dim('  '),
-                sourceLabel,
-                dim('  '),
-                dim(dateStr),
-                dim('\n    '),
-                changeColor(c.message),
-              ]),
-            })
-            contentBox.add(changeText)
-          }
-
-          const sep2 = new TextRenderable(ctx.renderer, {
-            content: new StyledText([dim('\n───────────────────────────────────────────────────────────────')]),
-          })
-          contentBox.add(sep2)
-
-          // Footer: ↑↓ Navigate  R Restore  D Diff  ESC Close
-          const footerChunks: any[] = [
-            white('↑↓ '), dim('Navigate  '),
-            white('R '), dim('Restore  '),
-            white('D '), dim('Diff  '),
-            white('ESC '), dim('Close'),
-          ]
-          const footer = new TextRenderable(ctx.renderer, {
-            content: new StyledText(footerChunks),
-          })
-          const footerBox = new BoxRenderable(ctx.renderer, {
-            width: '100%',
-            alignItems: 'center',
-          })
-          footerBox.add(footer)
-          contentBox.add(footerBox)
-        }
-
-        renderList()
-
-        const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
-
-        modal.box.handleKeyPress = (key: KeyEvent) => {
-          if (key.name === 'up') {
-            selectedIndex = Math.max(0, selectedIndex - 1)
-            renderList()
-            ctx.renderer.requestRender?.()
-            return true
-          }
-          if (key.name === 'down') {
-            selectedIndex = Math.min(changes.length - 1, selectedIndex + 1)
-            renderList()
-            ctx.renderer.requestRender?.()
-            return true
-          }
-          if (key.name === 'escape') {
-            modal.hide()
-            ctx.input.focus()
-            return true
-          }
-          // R = Restore selected change
-          if (key.name && key.name.length === 1 && key.name.toLowerCase() === 'r' && !key.ctrl && !key.meta) {
-            const c = sortedChanges[selectedIndex]
-            if (c) {
-              modal.hide()
-              ctx.input.focus()
-              void executeSlashCommand('restore', [`--change`, String(c.id)], ctx)
-            }
-            return true
-          }
-          // D = Diff: start a /diff flow with the selected change as the first version
-          if (key.name && key.name.length === 1 && key.name.toLowerCase() === 'd' && !key.ctrl && !key.meta) {
-            const c = sortedChanges[selectedIndex]
-            if (c) {
-              modal.hide()
-              ctx.input.focus()
-              // Open /diff with the first change pre-populated; the /diff modal
-              // will prompt for the second change.
-              void executeSlashCommand('diff', [`--change`, String(c.id)], ctx)
-            }
-            return true
-          }
-          return originalHandleKeyPress ? originalHandleKeyPress(key) : false
-        }
-      }
-
-      modal.setContent(contentBox)
-      ctx.renderer.root.add(modal.box)
-      modal.show()
-    },
-  },
 
   {
     name: 'releases',
@@ -3343,6 +2950,130 @@ const commands: SlashCommand[] = [
       modal.setContent(contentBox)
       ctx.renderer.root.add(modal.box)
       modal.show()
+    },
+  },
+
+  {
+    name: 'sessions',
+    description: 'List saved sessions and open the picker modal',
+    category: 'session',
+    handler: async (ctx) => {
+      const items = await listSessionsMeta(ctx.agentName, 50, true)
+      if (items.length === 0) {
+        ctx.messages.addAgentMessage(
+          `No sessions found for '${ctx.agentName}'. A new one will be created on your first message.`,
+          ctx.mode,
+        )
+        return
+      }
+      showSessionPicker(ctx, items, {
+        title: `Sessions: ${ctx.agentName}`,
+        onSelect: async (sess) => {
+          await loadSessionIntoChat(ctx, sess.id)
+        },
+        extraActions: {
+          r: {
+            label: 'Resume',
+            run: async (sess) => {
+              await loadSessionIntoChat(ctx, sess.id)
+            },
+          },
+          f: {
+            label: 'Fork',
+            run: (sess) => {
+              promptForkSession(ctx, sess)
+            },
+          },
+          n: {
+            label: 'Rename',
+            run: (sess) => {
+              promptRenameSession(ctx, sess)
+            },
+          },
+          d: {
+            label: 'Delete',
+            run: async (sess) => {
+              await deleteSession(sess.id)
+              if (ctx.currentSessionId === sess.id) {
+                ctx.currentSessionId = null
+              }
+              ctx.messages.addAgentMessage(`Deleted session ${sessionTitle(sess)}.`, ctx.mode)
+            },
+          },
+        },
+      })
+    },
+  },
+
+  {
+    name: 'session',
+    description: 'Start or resume a session',
+    category: 'session',
+    args: '[new|resume]',
+    handler: async (ctx, args) => {
+      const subcommand = (args[0] ?? 'new').toLowerCase()
+      const rest = args.slice(1)
+
+      if (subcommand === 'new') {
+        const name = rest[0] ?? null
+        try {
+          const sess = await createSession({
+            agentName: ctx.agentName,
+            mode: ctx.mode,
+            uiMode: ctx.uiMode ?? 'dev',
+            name,
+          })
+          ctx.messages.addAgentMessage(
+            `Started new session ${sess.id}${sess.name ? ` ('${sess.name}')` : ''}. The new session will take over on your next message.`,
+            ctx.mode,
+          )
+          const previousId = ctx.currentSessionId
+          if (previousId) {
+            await endSession(previousId)
+          }
+          ctx.currentSessionId = sess.id
+        } catch (err: any) {
+          ctx.messages.addAgentMessage(
+            `Failed to create session: ${err?.message ?? String(err)}`,
+            ctx.mode,
+          )
+        }
+        return
+      }
+
+      if (subcommand === 'resume') {
+        const identifier = rest[0]
+        if (!identifier) {
+          const items = await listSessionsMeta(ctx.agentName, 50, true)
+          if (items.length === 0) {
+            ctx.messages.addAgentMessage(
+              `No sessions to resume for '${ctx.agentName}'.`,
+              ctx.mode,
+            )
+            return
+          }
+          showSessionPicker(ctx, items, {
+            title: `Resume session: ${ctx.agentName}`,
+            onSelect: async (sess) => {
+              await loadSessionIntoChat(ctx, sess.id)
+            },
+          })
+          return
+        }
+
+        const sess = await getSession(identifier)
+        if (!sess) {
+          ctx.messages.addAgentMessage(`Session not found: ${identifier}`, ctx.mode)
+          return
+        }
+        await loadSessionIntoChat(ctx, sess.id)
+        return
+      }
+
+      ctx.messages.addAgentMessage(
+        `Unknown subcommand: /session ${subcommand}. Use one of: new, resume. For fork/rename/delete, open the picker with /sessions.`,
+        ctx.mode,
+      )
     },
   },
 
@@ -3972,151 +3703,7 @@ cast dev ${agentName}
     },
   },
 
-  {
-    name: 'restore',
-    description: 'Restore agent to a previous change or release',
-    category: 'agent',
-    modes: ['dev', 'production'],
-    args: '[--change <num>|--release <version>]',
-    handler: async (ctx, args) => {
-      const agentName = ctx.agentName
 
-      // Parse args for --change or --release
-      let targetChange: number | null = null
-      let targetRelease: string | null = null
-
-      for (let i = 0; i < args.length; i++) {
-        if (args[i] === '--change' && args[i + 1]) {
-          targetChange = parseInt(args[i + 1], 10)
-          if (!Number.isFinite(targetChange)) targetChange = null
-        }
-        if (args[i] === '--release' && args[i + 1]) {
-          targetRelease = args[i + 1]
-        }
-      }
-
-      // Run a restore by shelling out to the cast CLI.
-      const doRestore = (kind: 'change' | 'release', value: string | number): void => {
-        const binary = findCastBinary()
-        if (!binary) {
-          showInfoModal(
-            ctx,
-            'Restore Failed',
-            [{value: 'Could not find cast CLI binary. Please ensure cast is installed.', color: red}],
-            'Enter/ESC Close',
-            false,
-          )
-          return
-        }
-        const cliArgs = ['restore', agentName, kind === 'change' ? '--change' : '--release', String(value)]
-        try {
-          execFileSync(binary, cliArgs, {stdio: 'inherit'})
-          showInfoModal(
-            ctx,
-            'Restore Complete',
-            [
-              {label: 'Agent', value: agentName},
-              {label: 'Restored from', value: kind === 'change' ? `v${value}` : `release ${value}`, color: green},
-              {value: 'Local files updated. Use /deploy to update the deployment.', color: dim},
-            ],
-            'Enter/ESC Close',
-            true,
-          )
-        } catch (err: any) {
-          if (err.signal === 'SIGINT') return
-          showInfoModal(
-            ctx,
-            'Restore Failed',
-            [{value: err.message || String(err), color: red}],
-            'Enter/ESC Close',
-            false,
-          )
-        }
-      }
-
-      // If args provided, skip the picker and go straight to confirmation
-      if (targetChange !== null) {
-        showRestoreConfirmation(ctx, agentName, 'change', targetChange, doRestore)
-        return
-      }
-      if (targetRelease !== null) {
-        showRestoreConfirmation(ctx, agentName, 'release', targetRelease, doRestore)
-        return
-      }
-
-      // No args: open the modal flow
-      const changes = getChangesForAgent(agentName)
-      const releases = await getReleasesForAgent(agentName)
-
-      if (changes.length === 0 && releases.length === 0) {
-        showInfoModal(
-          ctx,
-          'Nothing to Restore',
-          [
-            {value: 'No changes or releases found for this agent.', color: yellow},
-            {value: 'Make a change or create a release first.', color: dim},
-          ],
-          'Enter/ESC Close',
-          false,
-        )
-        return
-      }
-
-      showRestorePicker(ctx, agentName, changes, releases, doRestore)
-    },
-  },
-
-  {
-    name: 'diff',
-    description: 'Compare two changes or releases',
-    category: 'agent',
-    modes: ['dev', 'production'],
-    args: '[--change <num> --change <num>|--release <ver> --release <ver>]',
-    handler: async (ctx, args) => {
-      const agentName = ctx.agentName
-      const changes = getChangesForAgent(agentName)
-      const releases = await getReleasesForAgent(agentName)
-
-      // Parse --change/--release pairs
-      const changeFlags: number[] = []
-      const releaseFlags: string[] = []
-      for (let i = 0; i < args.length; i++) {
-        if (args[i] === '--change' && args[i + 1]) {
-          const n = parseInt(args[i + 1], 10)
-          if (Number.isFinite(n)) changeFlags.push(n)
-        }
-        if (args[i] === '--release' && args[i + 1]) {
-          releaseFlags.push(args[i + 1])
-        }
-      }
-
-      if (changeFlags.length === 2) {
-        showDiffModal(ctx, agentName, 'change', String(changeFlags[0]), String(changeFlags[1]))
-        return
-      }
-      if (releaseFlags.length === 2) {
-        showDiffModal(ctx, agentName, 'release', releaseFlags[0], releaseFlags[1])
-        return
-      }
-
-      // No (or partial) args: open the picker
-      if (changes.length === 0 && releases.length === 0) {
-        showInfoModal(
-          ctx,
-          'Nothing to Diff',
-          [
-            {value: 'No changes or releases found for this agent.', color: yellow},
-          ],
-          'Enter/ESC Close',
-          false,
-        )
-        return
-      }
-      // If the first change is preselected (from a D press in /changes), pass it
-      const preselected = changeFlags.length === 1 ? changeFlags[0] : null
-      showDiffPicker(ctx, agentName, preselected, changes, releases)
-    },
-  },
 
   {
     name: 'registry',

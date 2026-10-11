@@ -5,6 +5,94 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.0] - 2026-07-17
+
+### Added
+
+- **Docs site restructured into three top-level categories**: Getting
+  Started, Building Agents, and Configuration. Building Agents is
+  split into three sub-headings: Development Workflow (walkthrough,
+  sessions, TUI, slash commands, CLI reference), Versioning
+  (overview, undo, Git), and Deployment (overview, releases,
+  lifecycle, providers). The Configuration category collects Custom
+  tools, MCP servers, and Persistent memory.
+
+- **`building-agents/development-workflow/workflow.md`** — a new
+  end-to-end walkthrough from `cast new` to a deployed agent. Each
+  step is one command and a link to the reference page that
+  documents the depth, plus a "Where to go next" navigation index.
+
+- **`building-agents/versioning/git.md`** — a new reference page for
+  `cast git` (init, status, commit, log, diff, push, remote). Covers
+  how `cast git` relates to the undo log and to releases, the
+  `.castignore` defaults, and the TUI's `/git` slash command.
+
+- **`/sessions` slash command** — opens a modal that lists saved
+  sessions for the current agent. Replaces the previous
+  `/session-list` form. `Enter` and `R` resume, `F` forks, `N`
+  renames, and `D` deletes. Those actions are not separate slash
+  commands.
+
+### Changed
+
+- **Session slash surface simplified.** The parent `/session`
+  command now accepts only `new` and `resume` as subcommands
+  (e.g. `/session new`, `/session resume [id|name]`). The
+  hyphenated forms (`/session-list`, `/session-new`,
+  `/session-resume`, `/session-rename`, `/session-fork`,
+  `/session-delete`) are removed. The CLI subcommands
+  (`cast session list|new|resume|...`) are unchanged.
+
+- **Docs section structure:** the old `agents/`, `versioning/`,
+  `deployment/`, `tui/`, `cli/`, `configuration/`, `development/`,
+  and `guides/` top-level prose sections are folded into the three
+  new top-level categories. The contributor pages
+  (`docs-site/content/development/architecture.md` and
+  `building.md`) are removed from the docs site. The
+  `getting-started/configuration` page is renamed to
+  `getting-started/global-settings` to disambiguate from the new
+  per-agent Configuration category.
+
+- **Versioning overview rewritten** as a 2-column comparison of the
+  undo log and the optional `cast git` history. The 3-column
+  "Undo log / Releases / Sessions" table is gone — sessions live
+  with Development Workflow, and releases live with Deployment.
+
+## [2.0.0] - 2026-07-16
+
+### Added
+
+- **Sessions**: A new first-class concept for saved conversations tied
+  to an agent. `cast session list|show|new|resume|rename|fork|delete|export|import|prune`,
+  plus matching TUI slash commands (`/session`, `/session-list`,
+  `/session-new`, `/session-resume`, `/session-rename`,
+  `/session-fork`, `/session-delete`). The TUI auto-creates a session
+  on the first chat turn and appends every user/agent message. JSON
+  content lives at `~/.cast/sessions/<id>.json`; a metadata index
+  lives in `cast.db` for fast listing.
+
+- **Undo/redo**: `cast undo <agent> [--steps N]` and
+  `cast redo <agent> [--steps N]` walk an internal change log
+  backward and forward. TUI slash commands `/undo` and `/redo` shell
+  out to the CLI. A new edit clears the redo stack (standard editor
+  behavior). The change log itself is unchanged on disk — it just
+  isn't a first-class user concept any more.
+
+### Changed
+
+- **Removed the "changes" first-class surface.** `cast changes`,
+  `cast diff`, `cast revert`, and the matching TUI slash commands
+  (`/changes`, `/diff`) are gone. The change log at
+  `~/.cast/agents/<name>/.cast/changes/` is still on disk and still
+  feeds `cast release`'s auto-changelog, but users interact with it
+  exclusively through `cast undo` / `cast redo`. `cast restore` no
+  longer accepts `--change`; it now requires `--release`.
+
+- The `releases` table's `change_number` field is still populated
+  (it points at the most recent undo-log entry at release time), so
+  no data migration is required. Existing change tarballs continue to
+  work; they are just no longer reachable via a user-facing command.
+
 ## [1.1.0] - 2026-06-11
 
 ### Added

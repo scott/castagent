@@ -309,33 +309,41 @@ cast update my-agent --python-version 3.12 --add-requirement requests
 cast update my-agent --model openrouter/openai/gpt-4o --dry-run
 ```
 
-### Agent Versioning
+### Agent versioning
 
-Cast tracks two kinds of versions for your agent:
+Cast tracks an agent with three independent concepts:
 
-- **Changes** — automatic, sequential snapshots (v1, v2, v3…) taken whenever the agent is modified. Use these for debugging, diffing, and rollback during development.
+- **Undo log (internal)** — automatic, sequential snapshots taken on every edit. You don't manage this directly; you interact with it through `cast undo` / `cast redo`. The log also feeds `cast release`'s auto-changelog.
 - **Releases** — intentional semantic versions (1.0, 1.5, 2.0) you create when you're ready to ship. Releases are the deployment artifact.
+- **Sessions** — saved conversations tied to an agent. Cast auto-saves every chat turn into a session so you can resume, fork, rename, or audit conversations.
 
 ```bash
-# List all automatic changes
-cast changes my-agent
+# Undo and redo (the user-facing surface of the change log)
+cast undo my-agent
+cast undo my-agent --steps 3
+cast redo my-agent
 
-# List all releases
+# Releases
 cast releases my-agent
-
-# Create a new semantic release
 cast release my-agent 1.6
 cast release my-agent 1.6 --message "Added email parsing"
 
-# Restore local files to a previous change or release
-cast restore my-agent --change 5
+# Restore local files to a previous release
 cast restore my-agent --release 1.0
 
-# Compare two changes
-cast diff my-agent --change 1 --change 3
+# Sessions
+cast session list
+cast session new my-agent --name "auth experiment"
+cast session resume <id|name>
+cast session fork <id>
+cast session export <id> --out backup.json
 ```
 
-In the TUI, use `/changes` and `/releases` to view the respective histories with keyboard navigation, or `/release`, `/deploy`, `/upgrade`, and `/restore` to manage releases and deployments interactively.
+In the TUI, use `/undo` and `/redo` for iteration, `/sessions` to
+browse saved conversations (with a modal picker that follows the
+AGENTS.md design standards), and `/release`, `/deploy`, and `/upgrade`
+to manage releases and deployments interactively. Restore a local
+agent with `cast restore <agent> --release <version>`.
 
 To upgrade an existing deployment to a new release:
 
@@ -349,17 +357,21 @@ cast upgrade abc123 --version 1.6
 
 #### TUI Slash Commands
 
-Slash commands in the TUI use interactive modals for input — no need to remember flag syntax. Every command works with no arguments; if parameters are needed, a modal prompts for them.
+Slash commands in the TUI use interactive modals for input — no need
+to remember flag syntax. Every command works with no arguments; if
+parameters are needed, a modal prompts for them.
 
 | Command | Category | What it does |
 |---------|----------|--------------|
-| `/changes` | session | Shows the automatic change history with per-item Restore (`R`) and Diff (`D`) actions. |
+| `/undo [steps]` | agent | Step back one (or N) changes. Shells out to `cast undo`. |
+| `/redo [steps]` | agent | Step forward one (or N) changes. |
+| `/sessions` | session | Modal picker over saved sessions. `Enter` or `R` resumes, `F` forks, `N` renames, `D` deletes. |
+| `/session new [name]` | session | Start a fresh session and switch the chat to it. |
+| `/session resume [id\|name]` | session | Replay a session's transcript into the chat. Opens the picker if no argument. |
 | `/releases` | session | Shows semantic releases with `C` (Create Release) and `U` (Upgrade, if deployed) shortcuts. |
 | `/release` | agent | Opens a modal to create a new semantic release. Suggests patch/minor/major versions based on the current release. |
 | `/deploy` | agent | Release picker → provider picker → live deploy with SHA shown on success. |
 | `/upgrade` | agent | Operates on the current agent. Modal lists releases to upgrade to. |
-| `/restore` | agent | Source picker (Changes or Releases) → item picker → confirmation. Use `--change N` or `--release V` to skip the picker. |
-| `/diff` | agent | Pick a kind (Changes or Releases) and two items, then see the diff inline. |
 | `/registry` | session | Modal table of all releases across all agents, with deployment status. |
 | `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a SHA directly. |
 

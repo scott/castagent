@@ -36,14 +36,6 @@ export class CastDatabase {
 
   private initSchema(): void {
     this.db.exec(`
-      CREATE TABLE IF NOT EXISTS builder_sessions (
-        id TEXT PRIMARY KEY,
-        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        current_agent_name TEXT,
-        conversation_history TEXT
-      );
-
       CREATE TABLE IF NOT EXISTS agents (
         name TEXT PRIMARY KEY,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -101,6 +93,25 @@ export class CastDatabase {
         tarball_path TEXT,
         PRIMARY KEY (agent_name, version)
       );
+
+      CREATE TABLE IF NOT EXISTS sessions (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        agent_name TEXT NOT NULL,
+        mode TEXT,
+        ui_mode TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        ended_at DATETIME,
+        message_count INTEGER DEFAULT 0,
+        parent_session_id TEXT,
+        first_user_message TEXT,
+        last_user_message TEXT,
+        json_path TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_sessions_agent_name ON sessions(agent_name);
+      CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC);
     `)
     this.runMigrations()
   }
@@ -171,6 +182,34 @@ export class CastDatabase {
         )
       `)
     }
+
+    // Migration: Add sessions table (idempotent)
+    if (!this.tableExists('sessions')) {
+      this.db.exec(`
+        CREATE TABLE sessions (
+          id TEXT PRIMARY KEY,
+          name TEXT,
+          agent_name TEXT NOT NULL,
+          mode TEXT,
+          ui_mode TEXT,
+          created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+          ended_at DATETIME,
+          message_count INTEGER DEFAULT 0,
+          parent_session_id TEXT,
+          first_user_message TEXT,
+          last_user_message TEXT,
+          json_path TEXT NOT NULL
+        );
+        CREATE INDEX idx_sessions_agent_name ON sessions(agent_name);
+        CREATE INDEX idx_sessions_updated_at ON sessions(updated_at DESC);
+      `)
+    }
+
+    // Migration: Drop legacy builder_sessions table (unused) if present
+    if (this.tableExists('builder_sessions')) {
+      this.db.exec('DROP TABLE IF EXISTS builder_sessions')
+    }
   }
 
   private tableExists(table: string): boolean {
@@ -218,6 +257,10 @@ export class CastDatabase {
     // Releases are stored in their own table that wasn't part of the
     // original schema, so they need to be explicitly deleted here.
     this.db.prepare('DELETE FROM releases WHERE agent_name = ?').run(name)
+    // Sessions are stored in their own table and have JSON content
+    // that should be cleaned up by the caller; here we just drop the
+    // index rows.
+    this.db.prepare('DELETE FROM sessions WHERE agent_name = ?').run(name)
     this.db.prepare('DELETE FROM agents WHERE name = ?').run(name)
   }
 
@@ -461,6 +504,104 @@ export class CastDatabase {
   public deleteRelease(agentName: string, version: string): void {
     const stmt = this.db.prepare('DELETE FROM releases WHERE agent_name = ? AND version = ?')
     stmt.run(agentName, version)
+  }
+
+  // Session methods
+  public upsertSession(meta: {
+    id: string
+    name: string | null
+    agent_name: string
+    mode: string | null
+    ui_mode: string | null
+    created_at: string
+    updated_at: string
+    ended_at: string | null
+    message_count: number
+    parent_session_id: string | null
+    first_user_message: string | null
+    last_user_message: string | null
+    json_path: string
+  }): void {
+    const stmt = this.db.prepare(`
+      INSERT OR REPLACE INTO sessions (
+        id, name, agent_name, mode, ui_mode, created_at, updated_at,
+        ended_at, message_count, parent_session_id,
+        first_user_message, last_user_message, json_path
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `)
+    stmt.run(
+      meta.id,
+      meta.name,
+      meta.agent_name,
+      meta.mode,
+      meta.ui_mode,
+      meta.created_at,
+      meta.updated_at,
+      meta.ended_at,
+      meta.message_count,
+      meta.parent_session_id,
+      meta.first_user_message,
+      meta.last_user_message,
+      meta.json_path,
+    )
+  }
+
+  public updateSessionFields(sessionId: string, fields: Record<string, any>): void {
+    const keys = Object.keys(fields)
+    if (keys.length === 0) return
+    const setClause = keys.map(k => `${k} = ?`).join(', ')
+    const values = keys.map(k => fields[k])
+    values.push(sessionId)
+    const stmt = this.db.prepare(`UPDATE sessions SET ${setClause} WHERE id = ?`)
+    stmt.run(...values)
+  }
+
+  public getSession(id: string): any {
+    const stmt = this.db.prepare('SELECT * FROM sessions WHERE id = ?')
+    return stmt.get(id)
+  }
+
+  public getSessionByName(name: string): any {
+    const stmt = this.db.prepare(
+      'SELECT * FROM sessions WHERE name = ? ORDER BY updated_at DESC LIMIT 1',
+    )
+    return stmt.get(name)
+  }
+
+  public listSessions(agentName?: string, limit: number = 50, includeEnded: boolean = true): any[] {
+    if (agentName) {
+      if (includeEnded) {
+        const stmt = this.db.prepare(
+          'SELECT * FROM sessions WHERE agent_name = ? ORDER BY updated_at DESC LIMIT ?',
+        )
+        return stmt.all(agentName, limit)
+      }
+      const stmt = this.db.prepare(
+        'SELECT * FROM sessions WHERE agent_name = ? AND ended_at IS NULL ORDER BY updated_at DESC LIMIT ?',
+      )
+      return stmt.all(agentName, limit)
+    }
+    if (includeEnded) {
+      const stmt = this.db.prepare(
+        'SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?',
+      )
+      return stmt.all(limit)
+    }
+    const stmt = this.db.prepare(
+      'SELECT * FROM sessions WHERE ended_at IS NULL ORDER BY updated_at DESC LIMIT ?',
+    )
+    return stmt.all(limit)
+  }
+
+  public deleteSession(id: string): void {
+    const stmt = this.db.prepare('DELETE FROM sessions WHERE id = ?')
+    stmt.run(id)
+  }
+
+  public deleteSessionsForAgent(agentName: string): number {
+    const stmt = this.db.prepare('DELETE FROM sessions WHERE agent_name = ?')
+    const result = stmt.run(agentName)
+    return Number(result.changes) || 0
   }
 }
 

@@ -3,10 +3,10 @@
  * Sidebar — the global navigation.
  *
  * Sections are sourced from the content collection schema. Within each
- * section, pages are listed in the order declared by their `order`
- * frontmatter (ascending). Auto-generated pages (/cli/reference,
- * /tui/slash-commands, /deployment/providers, /changelog) are appended
- * to their respective sections.
+ * section, pages can be grouped into titled sub-headings (e.g. Building
+ * Agents → Development Workflow). Auto-generated pages (/cli/reference,
+ * /tui/slash-commands, /deployment/providers) are appended to the
+ * group they belong to.
  */
 import { getCollection } from 'astro:content'
 
@@ -17,28 +17,48 @@ interface NavItem {
   isGenerated?: boolean
 }
 
-interface NavSection {
-  id: string
-  title: string
+interface NavGroup {
+  id: string | null
+  title: string | null
   items: NavItem[]
 }
 
-const SECTIONS: Array<{ id: string; title: string; generated?: { title: string; href: string }[] }> = [
+interface NavSection {
+  id: string
+  title: string
+  groups: NavGroup[]
+}
+
+type SidebarGroupConfig = {
+  id: string | null
+  title: string | null
+  generated?: { title: string; href: string }[]
+}
+
+type SidebarSectionConfig = {
+  id: string
+  title: string
+  groups?: SidebarGroupConfig[]
+}
+
+const SECTIONS: SidebarSectionConfig[] = [
   { id: 'getting-started', title: 'Getting Started' },
-  { id: 'agents',          title: 'Agents' },
-  { id: 'versioning',      title: 'Versioning' },
-  { id: 'deployment',      title: 'Deployment', generated: [
-    { title: 'Providers',     href: 'deployment/providers' },
-  ] },
-  { id: 'tui',             title: 'TUI', generated: [
-    { title: 'Slash commands', href: 'tui/slash-commands' },
-  ] },
-  { id: 'configuration',   title: 'Configuration' },
-  { id: 'cli',             title: 'CLI', generated: [
-    { title: 'Command reference', href: 'cli/reference' },
-  ] },
-  { id: 'development',     title: 'Development' },
-  { id: 'guides',          title: 'Guides' },
+  {
+    id: 'building-agents',
+    title: 'Building Agents',
+    groups: [
+      { id: null,                    title: null },
+      { id: 'development-workflow',  title: 'Development Workflow', generated: [
+        { title: 'Slash commands',    href: 'tui/slash-commands' },
+        { title: 'Command reference', href: 'cli/reference' },
+      ] },
+      { id: 'versioning',            title: 'Versioning' },
+      { id: 'deployment',            title: 'Deployment', generated: [
+        { title: 'Providers',         href: 'deployment/providers' },
+      ] },
+    ],
+  },
+  { id: 'configuration', title: 'Configuration' },
 ]
 
 // Build a base-aware path from a base-relative href like "cli/reference".
@@ -67,26 +87,45 @@ for (const entry of prose) {
 }
 
 const sections: NavSection[] = SECTIONS.map((s) => {
-  const items: NavItem[] = []
-  for (const entry of (proseBySection.get(s.id) ?? []).sort(
+  const allInSection = (proseBySection.get(s.id) ?? []).slice().sort(
     (a, b) => a.data.order - b.data.order,
-  )) {
-    const href = entry.id
-    items.push({
-      title: entry.data.title,
-      href,
-      isCurrent: isCurrent(href),
-    })
-  }
-  for (const gen of s.generated ?? []) {
-    items.push({
-      title: gen.title,
-      href: gen.href,
-      isCurrent: isCurrent(gen.href),
-      isGenerated: true,
-    })
-  }
-  return { id: s.id, title: s.title, items }
+  )
+
+  // If no groups are configured, the section is a single flat list.
+  const groupConfigs: SidebarGroupConfig[] = s.groups ?? [{ id: null, title: null }]
+
+  const groups: NavGroup[] = groupConfigs.map((gc) => {
+    const items: NavItem[] = []
+    if (gc.id === null) {
+      // null group catches pages without a `group` field.
+      for (const entry of allInSection.filter((e) => !e.data.group)) {
+        items.push({
+          title: entry.data.title,
+          href: entry.id,
+          isCurrent: isCurrent(entry.id),
+        })
+      }
+    } else {
+      for (const entry of allInSection.filter((e) => e.data.group === gc.id)) {
+        items.push({
+          title: entry.data.title,
+          href: entry.id,
+          isCurrent: isCurrent(entry.id),
+        })
+      }
+    }
+    for (const gen of gc.generated ?? []) {
+      items.push({
+        title: gen.title,
+        href: gen.href,
+        isCurrent: isCurrent(gen.href),
+        isGenerated: true,
+      })
+    }
+    return { id: gc.id, title: gc.title, items }
+  })
+
+  return { id: s.id, title: s.title, groups }
 })
 ---
 
@@ -105,13 +144,20 @@ const sections: NavSection[] = SECTIONS.map((s) => {
         <li>
           <h5>{section.title}</h5>
           <ul>
-            {section.items.map((item) => (
-              <li>
-                <a href={item.href} class={item.isCurrent ? 'active' : ''}>
-                  {item.title}
-                  {item.isGenerated && <span class="badge" style="margin-left:0.4em;font-size:0.65em;">auto</span>}
-                </a>
-              </li>
+            {section.groups.map((group) => (
+              <>
+                {group.title && (
+                  <li class="sidebar-subhead">{group.title}</li>
+                )}
+                {group.items.map((item) => (
+                  <li>
+                    <a href={item.href} class={item.isCurrent ? 'active' : ''}>
+                      {item.title}
+                      {item.isGenerated && <span class="badge" style="margin-left:0.4em;font-size:0.65em;">auto</span>}
+                    </a>
+                  </li>
+                ))}
+              </>
             ))}
           </ul>
         </li>

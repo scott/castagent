@@ -82,31 +82,48 @@ def _get_version_filename(version_id: int) -> str:
 
 
 def _get_next_version_id(name: str) -> int:
-    """Get the next version ID for a new version."""
+    """Get the next version ID for a new version.
+
+    Uses the maximum existing version id + 1 (rather than `current + 1`)
+    so that snapshots taken after an undo (which sets `current` below
+    the latest existing id) don't overwrite an existing tarball.
+    """
     # Try canonical location first, fall back to old location
     changes_json = _get_changes_json_path(name)
     if changes_json.exists():
         with open(changes_json, "r") as f:
             data = json.load(f)
-            return data.get("current", 0) + 1
+            versions = data.get("versions", [])
+            if versions:
+                return max(v.get("id", 0) for v in versions) + 1
+            return 1
 
     versions_json = _get_versions_json_path(name)
     if versions_json.exists():
         with open(versions_json, "r") as f:
             data = json.load(f)
-            return data.get("current", 0) + 1
+            versions = data.get("versions", [])
+            if versions:
+                return max(v.get("id", 0) for v in versions) + 1
+            return 1
     return 1
 
 
-def create_version(agent_name: str, source: str = "builder", message: str = "", agents_dir: Optional[Path] = None) -> VersionInfo:
+def create_version(agent_name: str, source: str = "builder", message: str = "", agents_dir: Optional[Path] = None, preserve_redo_stack: bool = False) -> VersionInfo:
     """
     Create a version snapshot of the current agent state.
 
     Args:
         agent_name: The name of the agent.
-        source: The source of the change ("create", "cli", "builder").
+        source: The source of the change ("create", "cli", "builder",
+            "undo", "redo"). System sources like "undo" and "redo"
+            pass preserve_redo_stack=True so the snapshot doesn't
+            invalidate the user's redo path.
         message: Optional description of the changes.
         agents_dir: Optional path to agents directory. Defaults to AGENTS_DIR.
+        preserve_redo_stack: When True, the call does NOT clear the
+            redo_stack field. Used internally by cast.undo to record
+            snapshots without invalidating the user's redo path.
 
     Returns:
         VersionInfo about the created version.
@@ -134,6 +151,10 @@ def create_version(agent_name: str, source: str = "builder", message: str = "", 
             message = "Initial version"
         elif source == "cli":
             message = "Updated via CLI"
+        elif source == "undo":
+            message = "Auto-snapshot before undo"
+        elif source == "redo":
+            message = "Auto-snapshot before redo"
         else:
             message = "Updated via builder agent"
 
@@ -170,7 +191,15 @@ def create_version(agent_name: str, source: str = "builder", message: str = "", 
         with open(changes_json_path, "r") as f:
             changes_data = json.load(f)
     else:
-        changes_data = {"versions": [], "current": 0}
+        changes_data = {"versions": [], "current": 0, "redo_stack": []}
+
+    # Any fresh edit invalidates the undo redo stack: a user who
+    # edits after an undo has explicitly diverged from the redo path.
+    # Mirrors the behavior of standard text editors. The preserve
+    # flag lets cast.undo snapshot the working tree mid-undo/redo
+    # without losing the user's redo path.
+    if not preserve_redo_stack and changes_data.get("redo_stack"):
+        changes_data["redo_stack"] = []
 
     # Add new version to the list
     version_info = VersionInfo(
