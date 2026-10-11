@@ -15,6 +15,8 @@ import {
   mkc1Available,
   parseIdleTimeout,
   parseMicrovmPayload,
+  dockerHostFromInspect,
+  parseRegistryDockerConfig,
   parseRegistryName,
   parseSize,
   parseVolumeConfig,
@@ -88,6 +90,17 @@ describe('DigitalOcean MicroVM helpers', () => {
     expect(microvmReady(pending)).to.equal('pending')
     expect(microvmReady({...pending, endpointStatus: 'ACTIVE', state: 'running'})).to.equal('ready')
     expect(microvmReady({id: 'vm-1', state: 'failed', failureReason: 'boom'})).to.equal('failed')
+    const listed = parseMicrovmPayload(JSON.stringify([{
+      id: '01a12c49-fa25-71f0-8d33-4140ee900ff7',
+      region: 'mkc1',
+      state: 'creating',
+      urls: [{port: 8080, default: true, status: 'PENDING'}],
+    }]))
+    expect(listed.id).to.equal('01a12c49-fa25-71f0-8d33-4140ee900ff7')
+    expect(listed.endpoint).to.equal('https://01a12c49-fa25-71f0-8d33-4140ee900ff7.mkc1.microvm.ondigitalocean.com')
+    expect(listed.endpointStatus).to.equal('PENDING')
+    expect(microvmReady(listed)).to.equal('pending')
+    expect(microvmReady({...listed, endpointStatus: 'ACTIVE', state: 'running'})).to.equal('ready')
     expect(probeAuthResult(200)).to.equal('ok')
     expect(probeAuthResult(401)).to.equal('unauthorized')
     expect(probeAuthResult(503)).to.equal('retry')
@@ -95,6 +108,14 @@ describe('DigitalOcean MicroVM helpers', () => {
 
   it('reads registry names and region availability', () => {
     expect(parseRegistryName('{"registry":{"name":"cast"}}')).to.equal('cast')
+    expect(parseRegistryName('[{"name":"scottmillerio","region":"sfo3"}]')).to.equal('scottmillerio')
+    expect(parseRegistryName('{"name":"cast"}')).to.equal('cast')
+    expect(parseRegistryDockerConfig('{"auths":{"registry.digitalocean.com":{"auth":"abc"}},"credsStore":"desktop"}'))
+      .to.equal('{"auths":{"registry.digitalocean.com":{"auth":"abc"}}}')
+    expect(() => parseRegistryDockerConfig('{"auths":{}}')).to.throw(/registry credentials/)
+    expect(dockerHostFromInspect('unix:///Users/scott/.colima/default/docker.sock\n'))
+      .to.equal('unix:///Users/scott/.colima/default/docker.sock')
+    expect(dockerHostFromInspect('<no value>')).to.equal(undefined)
     expect(mkc1Available('{"regions":["mkc1"]}')).to.equal(true)
     expect(mkc1Available('{"regions":["nyc1"]}')).to.equal(false)
     expect(mkc1Available('not-json')).to.equal(null)

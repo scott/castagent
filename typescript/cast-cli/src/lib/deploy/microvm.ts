@@ -185,18 +185,54 @@ export function buildCreateArgs(opts: {
 export function parseRegistryName(raw: string): string | undefined {
   try {
     const parsed = JSON.parse(raw)
-    const registry = parsed.registry ?? parsed
-    if (typeof registry?.name === 'string' && registry.name.length > 0) return registry.name
+    // doctl 1.181 prints `registry get -o json` as an array. Older shapes
+    // are a bare object or `{registry: {name}}`.
+    const candidates = [
+      parsed?.registry,
+      Array.isArray(parsed) ? parsed[0] : undefined,
+      Array.isArray(parsed?.registries) ? parsed.registries[0] : undefined,
+      parsed,
+    ]
+    for (const registry of candidates) {
+      if (typeof registry?.name === 'string' && registry.name.length > 0) return registry.name
+    }
   } catch {
     return undefined
   }
   return undefined
 }
 
+// Keep only the registry auth entry. `doctl registry login` stores that
+// auth through Docker's credsStore, and a `desktop` helper fails with
+// `dial unix backend.sock` when Docker Desktop is not running.
+export function parseRegistryDockerConfig(raw: string): string {
+  const parsed = JSON.parse(raw)
+  const auth = parsed?.auths?.['registry.digitalocean.com']?.auth
+  if (typeof auth !== 'string' || auth.length === 0) {
+    throw new Error('DigitalOcean did not return registry credentials.')
+  }
+  return JSON.stringify({
+    auths: {
+      'registry.digitalocean.com': {auth},
+    },
+  })
+}
+
+export function dockerHostFromInspect(raw: string): string | undefined {
+  const host = raw.trim()
+  if (!host || host === '<no value>') return undefined
+  if (/^(unix|tcp|npipe|ssh):\/\//.test(host)) return host
+  return undefined
+}
+
 export function parseMicrovmPayload(raw: string): MicrovmRecord {
   const parsed = JSON.parse(raw)
-  const vm = parsed.microvm ?? (Array.isArray(parsed.microvms) ? parsed.microvms[0] : parsed)
-  if (!vm || typeof vm.id !== 'string' && typeof vm.id !== 'number') {
+  // doctl 1.181 prints create/get/list as a JSON array. Older responses
+  // are a bare object, `{microvm}`, or `{microvms}`.
+  const vm = Array.isArray(parsed)
+    ? parsed[0]
+    : parsed.microvm ?? (Array.isArray(parsed.microvms) ? parsed.microvms[0] : parsed)
+  if (!vm || (typeof vm.id !== 'string' && typeof vm.id !== 'number')) {
     throw new Error('MicroVM response did not include an id.')
   }
   const urls = Array.isArray(vm.urls) ? vm.urls : []
@@ -209,6 +245,9 @@ export function parseMicrovmPayload(raw: string): MicrovmRecord {
     }
   }
   const region = typeof vm.region === 'string' ? vm.region : vm.region?.slug
+  if (!endpoint && region) {
+    endpoint = `https://${vm.id}.${region}.microvm.ondigitalocean.com`
+  }
   return {
     id: String(vm.id),
     name: vm.name,
@@ -364,11 +403,12 @@ function volumeConfigJson(config: MicrovmVolumeConfig): string {
   return JSON.stringify(config)
 }
 
-async function run(command: string, args: string[], opts?: {silent?: boolean; timeoutMs?: number}) {
+async function run(command: string, args: string[], opts?: {silent?: boolean; timeoutMs?: number; env?: NodeJS.ProcessEnv}) {
   return execCommand(command, args, {
     shell: false,
     silent: opts?.silent ?? true,
     timeoutMs: opts?.timeoutMs,
+    env: opts?.env,
   })
 }
 
@@ -675,6 +715,37 @@ async function ensureRegistry(token: string, log: (message: string) => void): Pr
   return name
 }
 
+async function fetchRegistryDockerConfig(token: string, registry: string): Promise<string> {
+  const result = await doctl(token, [
+    'registry', 'docker-config', registry,
+    '--read-write',
+    '--expiry-seconds', '3600',
+  ])
+  if (result.exitCode !== 0) {
+    throw new Error(`Could not get DigitalOcean registry credentials: ${result.stderr || 'doctl registry docker-config failed'}`)
+  }
+  try {
+    return parseRegistryDockerConfig(result.stdout)
+  } catch (error: any) {
+    throw new Error(error?.message || 'DigitalOcean did not return registry credentials.')
+  }
+}
+
+function writeRegistryDockerConfig(configJson: string): string {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-docr-'))
+  fs.writeFileSync(path.join(dir, 'config.json'), configJson, {mode: 0o600})
+  return dir
+}
+
+async function registryDockerEnv(configDir: string): Promise<NodeJS.ProcessEnv> {
+  const env: NodeJS.ProcessEnv = {...process.env, DOCKER_CONFIG: configDir}
+  if (env.DOCKER_HOST) return env
+  const inspected = await run('docker', ['context', 'inspect', '--format', '{{.Endpoints.docker.Host}}'])
+  const host = inspected.exitCode === 0 ? dockerHostFromInspect(inspected.stdout) : undefined
+  if (host) env.DOCKER_HOST = host
+  return env
+}
+
 async function buildAndPushImage(agentName: string, tag: string, log: (message: string) => void): Promise<string> {
   const token = requireToken()
   const registry = await ensureRegistry(token, log)
@@ -702,17 +773,19 @@ async function buildAndPushImage(agentName: string, tag: string, log: (message: 
     throw new Error(`MicroVMs run linux/amd64 images only. This image is '${arch || 'unknown'}'.`)
   }
 
-  log('Logging in to DigitalOcean Container Registry...')
-  const login = await run('doctl', ['--access-token', token, 'registry', 'login'], {silent: false, timeoutMs: 120000})
-  if (login.exitCode !== 0) {
-    throw new Error(`doctl registry login failed: ${login.stderr || login.stdout}`)
+  log('Authenticating to DigitalOcean Container Registry...')
+  const configJson = await fetchRegistryDockerConfig(token, registry)
+  const configDir = writeRegistryDockerConfig(configJson)
+  try {
+    const env = await registryDockerEnv(configDir)
+    log(`Pushing ${remote}...`)
+    const tagged = await run('docker', ['tag', localTag, remote], {env})
+    if (tagged.exitCode !== 0) throw new Error(`docker tag failed: ${tagged.stderr}`)
+    const pushed = await run('docker', ['push', remote], {silent: false, timeoutMs: 600000, env})
+    if (pushed.exitCode !== 0) throw new Error(`docker push failed: ${pushed.stderr || pushed.stdout}`)
+  } finally {
+    fs.rmSync(configDir, {recursive: true, force: true})
   }
-
-  log(`Pushing ${remote}...`)
-  const tagged = await run('docker', ['tag', localTag, remote])
-  if (tagged.exitCode !== 0) throw new Error(`docker tag failed: ${tagged.stderr}`)
-  const pushed = await run('docker', ['push', remote], {silent: false, timeoutMs: 600000})
-  if (pushed.exitCode !== 0) throw new Error(`docker push failed: ${pushed.stderr || pushed.stdout}`)
   return remote
 }
 
