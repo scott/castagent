@@ -59,8 +59,9 @@ endpoints; the TUI discovers the card on connect and uses it for
 For Cast, this means:
 
 - Your agent is not locked to Cast's TUI — any A2A client can talk to it.
-- The same agent runs locally, on Railway, on Fly, on DigitalOcean, on
-  Sprites, or in a plain Docker container.
+- The same agent runs locally, on Railway, on Fly, on DigitalOcean
+  Droplets, on DigitalOcean MicroVMs, on Sprites, or in a plain Docker
+  container.
 - Bearer-token auth is added only when the agent is deployed.
 
 ## Undo log, Releases, and Sessions

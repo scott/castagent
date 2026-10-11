@@ -21,6 +21,7 @@ interface TuiOptions {
   agent: string
   url: string
   token?: string
+  edgeToken?: string
   mode?: UiMode
   welcome?: string
   session?: string
@@ -37,7 +38,7 @@ export async function startTui(options: TuiOptions): Promise<void> {
     if (options.mode !== 'on-host') {
       await showWelcomeScreen(renderer, options.agent)
     }
-    await showChatScreen(renderer, options.agent, options.url, options.token, options.mode, options.welcome, options.session)
+    await showChatScreen(renderer, options.agent, options.url, options.token, options.mode, options.welcome, options.session, options.edgeToken)
   } catch (err) {
     logCrash('TUI error', err)
   } finally {
@@ -71,6 +72,9 @@ if (isMain) {
         break
       case '--token':
         options.token = value
+        break
+      case '--edge-token':
+        options.edgeToken = value
         break
       case '--mode':
         if (value === 'dev' || value === 'production' || value === 'on-host') {

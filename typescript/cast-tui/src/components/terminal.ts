@@ -1,6 +1,7 @@
 import {BoxRenderable, TextRenderable, ScrollBoxRenderable, StyledText, white, dim, green, yellow, red, cyan} from '@opentui/core'
 import type {RenderContext, KeyEvent, Renderable} from '@opentui/core'
 import {createModal} from './modal.js'
+import {DEPLOYMENT_PROVIDERS, providerIndexForNumberKey} from '../lib/deployment-providers.js'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -148,14 +149,7 @@ async function showProviderSelection(
   provider: string,
   messagesComponent: any,
 ) {
-  const providers = [
-    {key: 'railway', name: 'Railway', desc: 'Managed containers with automatic deployments'},
-    {key: 'fly', name: 'Fly.io', desc: 'Distributed containers close to your users'},
-    {key: 'digitalocean', name: 'DigitalOcean', desc: 'Droplet with Docker container hosting'},
-    {key: 'sprites', name: 'Sprites', desc: 'Persistent Firecracker VMs on Fly.io'},
-    {key: 'docker', name: 'Docker (local)', desc: 'Self-hosted Docker container on this machine'},
-    {key: 'local', name: 'Local (no container)', desc: 'Run the agent directly without Docker'},
-  ]
+  const providers = DEPLOYMENT_PROVIDERS
 
   // Track selected index for keyboard navigation
   let selectedIndex = 0
@@ -193,7 +187,7 @@ async function showProviderSelection(
 
     // Help
     const helpText = new TextRenderable(renderer, {
-      content: new StyledText([dim('\n↑↓ Navigate  1-6 Select  ESC Cancel')]),
+      content: new StyledText([dim(`\n↑↓ Navigate  1-${providers.length} Select  ESC Cancel`)]),
     })
     outputScroll.add(helpText)
   }
@@ -216,10 +210,9 @@ async function showProviderSelection(
       renderList()
       return true
     }
-    // Handle number keys 1-6
-    const num = parseInt(key.name || '')
-    if (num >= 1 && num <= 6) {
-      selectedIndex = num - 1
+    const index = providerIndexForNumberKey(key.name, providers.length)
+    if (index !== null) {
+      selectedIndex = index
       const selectedProvider = providers[selectedIndex].key
       modal.hide()
       handleDeployModal(renderer, renderer.root, agentName, selectedProvider, messagesComponent)

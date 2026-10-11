@@ -103,6 +103,36 @@ export function loadConfig(): any {
   }
 }
 
+export function readDoctlAccessToken(configPath = path.join(os.homedir(), '.config', 'doctl', 'config.yaml')): string | undefined {
+  if (!fs.existsSync(configPath)) return undefined
+  try {
+    const parsed = YAML.parse(fs.readFileSync(configPath, 'utf8')) || {}
+    if (typeof parsed['access-token'] === 'string' && parsed['access-token']) {
+      return parsed['access-token']
+    }
+    const contexts = parsed['auth-contexts']
+    const context = typeof parsed.context === 'string' ? parsed.context : 'default'
+    if (contexts && typeof contexts[context] === 'string' && contexts[context]) {
+      return contexts[context]
+    }
+    if (contexts && typeof contexts.default === 'string' && contexts.default) {
+      return contexts.default
+    }
+  } catch {
+    return undefined
+  }
+  return undefined
+}
+
+export function resolveDigitalOceanToken(): string | undefined {
+  return getProviderToken('digitalocean', [
+    'DIGITALOCEAN_ACCESS_TOKEN',
+    'DIGITALOCEAN_API_TOKEN',
+    'DIGITALOCEAN_API_KEY',
+    'DIGITALOCEAN_TOKEN',
+  ]) || readDoctlAccessToken()
+}
+
 export function getProviderToken(provider: string, envVarNames?: string[]): string | undefined {
   // Check custom env vars first
   if (envVarNames) {
@@ -718,6 +748,8 @@ export function getMemoryMountPath(provider: string): string {
       return '' // Railway uses CAST_MEMORY_PATH env var
     case 'digitalocean':
       return '/app/agent/memory'
+    case 'microvm':
+      return '/app/agent/memory'
     default:
       return '/app/agent/memory'
   }
@@ -746,6 +778,9 @@ export async function createMemoryVolume(
       break
     case 'digitalocean':
       // Volume creation and attachment happen in digitalocean.ts
+      break
+    case 'microvm':
+      // The MicroVM disk survives pause and resume. There is no separate volume.
       break
     default:
       throw new Error(`Unsupported provider for memory volume: ${provider}`)

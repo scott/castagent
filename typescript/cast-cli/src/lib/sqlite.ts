@@ -379,6 +379,19 @@ export class CastDatabase {
     stmt.run(versionStr, deployment.id)
   }
 
+  public updateDeploymentEndpoint(id: string, url: string, volumeId: string, volumeConfig: string): void {
+    const stmt = this.db.prepare(
+      'UPDATE deployments SET deployment_url = ?, volume_id = ?, volume_config = ? WHERE id = ? AND deleted_at IS NULL',
+    )
+    stmt.run(url, volumeId, volumeConfig, id)
+  }
+
+  public updateDeployedVersionById(id: string, version: string | number): void {
+    const versionStr = typeof version === 'number' ? `v${version}` : version
+    const stmt = this.db.prepare('UPDATE deployments SET deployed_version = ? WHERE id = ? AND deleted_at IS NULL')
+    stmt.run(versionStr, id)
+  }
+
   public updateDeploymentLastConnected(sha: string): void {
     const stmt = this.db.prepare('UPDATE deployments SET last_connected_at = CURRENT_TIMESTAMP WHERE id = ?')
     stmt.run(sha)

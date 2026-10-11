@@ -32,14 +32,19 @@ export class A2AClient {
   constructor(
     private baseUrl: string,
     private authToken?: string,
+    private edgeToken?: string,
   ) {
+    const headers: Record<string, string> = {'Content-Type': 'application/json'}
+    if (this.edgeToken) {
+      headers.Authorization = `Bearer ${this.edgeToken}`
+      if (this.authToken) headers['X-Cast-Authorization'] = `Bearer ${this.authToken}`
+    } else if (this.authToken) {
+      headers.Authorization = `Bearer ${this.authToken}`
+    }
     this.http = axios.create({
       baseURL: this.baseUrl,
       timeout: 120000,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(this.authToken ? {Authorization: `Bearer ${this.authToken}`} : {}),
-      },
+      headers,
     })
   }
 

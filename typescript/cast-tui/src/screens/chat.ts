@@ -70,6 +70,7 @@ export async function showChatScreen(
   uiMode: UiMode = 'dev',
   initialWelcome?: string,
   initialSessionId?: string,
+  edgeToken?: string,
 ): Promise<void> {
   const {A2AClient} = await import('../../../cast-cli/dist/lib/a2a/client.js')
 
@@ -82,7 +83,7 @@ export async function showChatScreen(
     // Mutable state for /connect
     let agentName = initialAgentName
     let agentUrl = initialAgentUrl
-    let client = new A2AClient(agentUrl, authToken)
+    let client = new A2AClient(agentUrl, authToken, edgeToken)
     let mode: Mode = 'plan'
     let currentUiMode: UiMode = uiMode
 
@@ -214,7 +215,8 @@ export async function showChatScreen(
           reinitializeChat: async (newName: string, newUrl: string, newToken?: string, newUiMode?: UiMode) => {
             agentName = newName
             agentUrl = newUrl
-            client = new A2AClient(newUrl, newToken)
+            const nextEdge = newUrl.includes('.microvm.ondigitalocean.com') ? edgeToken : undefined
+            client = new A2AClient(newUrl, newToken, nextEdge)
             messageHistory = []
             lastAgentMessage = undefined
             if (currentSessionId) {

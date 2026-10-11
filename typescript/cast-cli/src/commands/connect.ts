@@ -6,7 +6,7 @@ import * as os from 'os'
 import {db} from '../lib/sqlite'
 import {keychain} from '../lib/keychain'
 import {A2AClient, A2AClientError} from '../lib/a2a/client'
-import {resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
+import {resolveDeploymentTarget, resolveDigitalOceanToken} from '../lib/deploy/deploy-utils'
 
 export default class Connect extends Command {
   static description = 'Connect to deployed agent'
@@ -65,10 +65,32 @@ export default class Connect extends Command {
 
     let deploymentUrl = deployment.deployment_url
     const provider = deployment.provider
-    const token = await keychain.getToken(agentName)
+    let token = await keychain.getToken(agentName)
+    let edgeToken: string | undefined
     let proxyProcess: ReturnType<typeof spawn> | undefined
 
-    if (!token) {
+    if (provider === 'microvm') {
+      edgeToken = resolveDigitalOceanToken()
+      if (!edgeToken) {
+        this.error(
+          `DigitalOcean API token not found for MicroVM '${agentName}'.\n` +
+          `Set DIGITALOCEAN_ACCESS_TOKEN or run doctl auth init.\n` +
+          `The first request can take longer while a paused MicroVM resumes.`
+        )
+      }
+      let authMode = 'dual'
+      try {
+        authMode = JSON.parse(deployment.volume_config || '{}').authMode || 'dual'
+      } catch {
+        authMode = 'dual'
+      }
+      if (authMode === 'edge-only') token = null
+      else if (!token) {
+        this.warn(`No agent auth token in the keychain for '${agentName}'. The MicroVM may reject the connection.`)
+      }
+    }
+
+    if (!token && !edgeToken) {
       this.warn(`No auth token found for agent '${agentName}'. Connecting without authentication...`)
     }
 
@@ -91,7 +113,7 @@ export default class Connect extends Command {
 
     // Verify connection before launching TUI
     try {
-      const client = new A2AClient(deploymentUrl, token || undefined)
+      const client = new A2AClient(deploymentUrl, token || undefined, edgeToken)
       await client.getAgentCard()
       this.log(`Connection verified: ${deploymentUrl}`)
     } catch (error: any) {
@@ -109,9 +131,12 @@ export default class Connect extends Command {
             `Check the deployment status with your provider.`
           )
         } else if (error.code === 'TIMEOUT') {
+          const resumeHint = provider === 'microvm'
+            ? `\nThe MicroVM may be resuming from pause. Try again in a moment.`
+            : ''
           this.error(
             `Connection to ${deploymentUrl} timed out.\n` +
-            `The agent may be starting up or unresponsive. Try again in a moment.`
+            `The agent may be starting up or unresponsive. Try again in a moment.${resumeHint}`
           )
         } else {
           this.warn(`Could not verify connection: ${error.message}`)
@@ -121,7 +146,7 @@ export default class Connect extends Command {
       }
     }
 
-    await this.launchTui(agentName, deploymentUrl, token || undefined, proxyProcess)
+    await this.launchTui(agentName, deploymentUrl, token || undefined, proxyProcess, edgeToken)
   }
 
   private async checkNeedsProxy(url: string): Promise<boolean> {
@@ -206,7 +231,7 @@ export default class Connect extends Command {
     })
   }
 
-  private async launchTui(agentName: string, url: string, token?: string, proxyProcess?: ReturnType<typeof spawn>): Promise<void> {
+  private async launchTui(agentName: string, url: string, token?: string, proxyProcess?: ReturnType<typeof spawn>, edgeToken?: string): Promise<void> {
     this.log(`Deployment URL: ${url}`)
 
     // Launch OpenTUI
@@ -234,6 +259,9 @@ export default class Connect extends Command {
 
     if (token) {
       opentuiArgs.push('--token', token)
+    }
+    if (edgeToken) {
+      opentuiArgs.push('--edge-token', edgeToken)
     }
 
     const opentui = spawn(bunPath, opentuiArgs, {

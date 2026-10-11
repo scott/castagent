@@ -555,14 +555,14 @@ def deploy_agent(name: str = "", provider: str = "") -> str:
         name: The name of the agent to deploy. If not provided, the TUI will use
             the current agent being edited.
         provider: The hosting provider to deploy to (e.g., 'railway', 'fly',
-            'digitalocean', 'sprites', 'docker', 'local'). If not specified,
+            'digitalocean', 'microvm', 'sprites', 'docker', 'local'). If not specified,
             the deploy will be interactive and prompt for provider selection.
 
     Returns:
         A response indicating the deploy modal will open, or an error if
         the agent doesn't exist.
     """
-    valid_providers = ["railway", "fly", "digitalocean", "sprites", "docker", "local"]
+    valid_providers = ["railway", "fly", "digitalocean", "microvm", "sprites", "docker", "local"]
 
     # If name is provided, validate agent exists
     if name:

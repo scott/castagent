@@ -8,6 +8,7 @@ import FlyDeploy from '../lib/deploy/fly'
 import RailwayDeploy from '../lib/deploy/railway'
 import DigitalOceanDeploy from '../lib/deploy/digitalocean'
 import SpritesDeploy from '../lib/deploy/sprites'
+import MicrovmDeploy from '../lib/deploy/microvm'
 
 export const PROVIDER_DESTROYERS: Record<string, (agentName: string) => Promise<void>> = {
   docker: DockerDeploy.destroy,
@@ -15,6 +16,7 @@ export const PROVIDER_DESTROYERS: Record<string, (agentName: string) => Promise<
   railway: RailwayDeploy.destroy,
   digitalocean: DigitalOceanDeploy.destroy,
   sprites: SpritesDeploy.destroy,
+  microvm: MicrovmDeploy.destroy,
 }
 
 export default class Shutdown extends Command {

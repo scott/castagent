@@ -9,7 +9,7 @@ import {Command} from '@oclif/core'
 import DeployCommand from '../../../typescript/cast-cli/src/commands/deploy'
 
 describe('Deploy Command', () => {
-  const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'sprites', 'docker', 'local']
+  const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'microvm', 'sprites', 'docker', 'local']
 
   describe('static properties', () => {
     it('should have correct description', () => {
@@ -31,7 +31,7 @@ describe('Deploy Command', () => {
 
   describe('provider validation', () => {
     it('should include all expected providers', () => {
-      const expectedProviders = ['railway', 'fly', 'digitalocean', 'sprites', 'docker', 'local']
+      const expectedProviders = ['railway', 'fly', 'digitalocean', 'microvm', 'sprites', 'docker', 'local']
       expect(DeployCommand.flags.provider.options).to.include.members(expectedProviders)
     })
 

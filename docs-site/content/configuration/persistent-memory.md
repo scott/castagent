@@ -33,6 +33,7 @@ file I/O. There's no special API.
 | Railway | persistent volume attached to the service | provisioned on first deploy |
 | Fly | volume attached to the app | provisioned on first deploy |
 | DigitalOcean | directory inside the droplet's host filesystem | mounted into the container |
+| DigitalOcean MicroVM | MicroVM disk at `/app/agent/memory` | survives pause and resume. Upgrade copies it to the replacement MicroVM when it is 8 MiB or smaller |
 | Sprites | persistent directory inside the sprite | managed by Sprites |
 
 The volume is **keyed by the agent name**, not the deployment SHA. So

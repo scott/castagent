@@ -91,6 +91,7 @@ deployment).
   updates the SSH login MOTD so it shows the new version (and the
   on-host TUI hint if `--with-tui` is in the image).
 - **Sprites** — re-extracts, runs `sprite deploy`.
+- **DigitalOcean MicroVM** — exports memory (8 MiB cap), builds a new linux/amd64 image, creates a replacement MicroVM, restores memory, then deletes the previous one. Image, size, and env cannot be changed in place.
 
 `cast upgrade` is the right command for routine version bumps. For
 destructive rollbacks (you shipped a broken release and want to revert),

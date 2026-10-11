@@ -10,6 +10,49 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from .agent.base import AgentConfig
 from .agent.runtime import RuntimeAgent
 
+def request_auth_error(auth_token_hash: Optional[str], headers) -> Optional[str]:
+    """Return an error message when a request must be rejected, else None.
+
+    A present X-Cast-Authorization header is the agent token. Authorization
+    is only checked when that header is absent.
+    """
+    if not auth_token_hash:
+        return None
+
+    def bearer(value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value)
+        if text == "":
+            return ""
+        if text.startswith("Bearer "):
+            return text[7:]
+        return None
+
+    cast_header = headers.get("x-cast-authorization")
+    if cast_header is None:
+        cast_header = headers.get("X-Cast-Authorization")
+    if cast_header is not None and str(cast_header) != "":
+        token = bearer(str(cast_header))
+        if not token:
+            return "Authentication required"
+        import hashlib
+        if hashlib.sha256(token.encode()).hexdigest() != auth_token_hash:
+            return "Invalid auth token"
+        return None
+
+    auth_header = headers.get("authorization")
+    if auth_header is None:
+        auth_header = headers.get("Authorization", "")
+    token = bearer(str(auth_header or ""))
+    if not token:
+        return "Authentication required"
+    import hashlib
+    if hashlib.sha256(token.encode()).hexdigest() != auth_token_hash:
+        return "Invalid auth token"
+    return None
+
+
 # JSON-RPC 2.0 error codes
 JSONRPC_PARSE_ERROR = -32700
 JSONRPC_INVALID_REQUEST = -32600
@@ -45,6 +88,14 @@ class A2AServer:
             return True  # Local mode, no auth required
         import hashlib
         return hashlib.sha256(token.encode()).hexdigest() == self.auth_token_hash
+
+    def authorize_request(self, headers) -> Optional[str]:
+        """Return an error message when the request is rejected, else None.
+
+        X-Cast-Authorization wins when it is present so a platform edge can
+        occupy Authorization without replacing the agent token.
+        """
+        return request_auth_error(self.auth_token_hash, headers)
 
     def _make_error_response(self, msg_id: Any, code: int, message: str, data: Any = None) -> Dict[str, Any]:
         error = {"code": code, "message": message}
@@ -214,21 +265,12 @@ class A2AServer:
             from starlette.routing import Route
 
             async def handle_http(request: Request):
-                # Verify auth token if configured
-                if self.auth_token_hash:
-                    auth_header = request.headers.get("authorization", "")
-                    if not auth_header.startswith("Bearer "):
-                        return JSONResponse({
-                            "jsonrpc": "2.0",
-                            "error": {"code": JSONRPC_SERVER_ERROR, "message": "Authentication required"},
-                        }, status_code=401)
-
-                    token = auth_header[7:]  # Strip "Bearer " prefix
-                    if not self.verify_token(token):
-                        return JSONResponse({
-                            "jsonrpc": "2.0",
-                            "error": {"code": JSONRPC_SERVER_ERROR, "message": "Invalid auth token"},
-                        }, status_code=401)
+                auth_error = self.authorize_request(request.headers)
+                if auth_error:
+                    return JSONResponse({
+                        "jsonrpc": "2.0",
+                        "error": {"code": JSONRPC_SERVER_ERROR, "message": auth_error},
+                    }, status_code=401)
 
                 body = await request.body()
                 try:
@@ -290,27 +332,15 @@ class A2AServer:
             server_ref = None
 
             def do_POST(self):
-                # Verify auth token if configured
-                if self.server_ref and self.server_ref.auth_token_hash:
-                    auth_header = self.headers.get('Authorization', '')
-                    if not auth_header.startswith('Bearer '):
+                if self.server_ref:
+                    auth_error = self.server_ref.authorize_request(self.headers)
+                    if auth_error:
                         self.send_response(401)
                         self.send_header('Content-Type', 'application/json')
                         self.end_headers()
                         self.wfile.write(json.dumps({
                             "jsonrpc": "2.0",
-                            "error": {"code": JSONRPC_SERVER_ERROR, "message": "Authentication required"},
-                        }).encode())
-                        return
-
-                    token = auth_header[7:]  # Strip "Bearer " prefix
-                    if not self.server_ref.verify_token(token):
-                        self.send_response(401)
-                        self.send_header('Content-Type', 'application/json')
-                        self.end_headers()
-                        self.wfile.write(json.dumps({
-                            "jsonrpc": "2.0",
-                            "error": {"code": JSONRPC_SERVER_ERROR, "message": "Invalid auth token"},
+                            "error": {"code": JSONRPC_SERVER_ERROR, "message": auth_error},
                         }).encode())
                         return
 

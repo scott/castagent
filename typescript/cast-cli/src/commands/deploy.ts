@@ -9,11 +9,12 @@ import RailwayDeploy from '../lib/deploy/railway'
 import FlyDeploy from '../lib/deploy/fly'
 import DigitalOceanDeploy from '../lib/deploy/digitalocean'
 import SpritesDeploy from '../lib/deploy/sprites'
+import MicrovmDeploy from '../lib/deploy/microvm'
 import {checkCli, getProviderToken, generateDeploymentSha} from '../lib/deploy/deploy-utils'
 import {getCurrentRelease} from '../lib/releases'
 import {db} from '../lib/sqlite'
 
-const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'sprites', 'docker', 'local']
+const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'microvm', 'sprites', 'docker', 'local']
 
 interface ProviderInfo {
   name: string
@@ -43,6 +44,15 @@ const PROVIDERS: Record<string, ProviderInfo> = {
   digitalocean: {
     name: 'DigitalOcean',
     description: 'Droplet with Docker container hosting',
+    cliCommand: 'doctl',
+    cliInstallUrl: 'https://docs.digitalocean.com/reference/doctl/how-to/install/',
+    authCommand: 'doctl auth init',
+    authEnvVar: 'DIGITALOCEAN_ACCESS_TOKEN',
+    authConfigKey: 'providers.digitalocean.token',
+  },
+  microvm: {
+    name: 'DigitalOcean MicroVM',
+    description: 'Firecracker microVM in MKC1. Pauses when idle, resumes on the next request.',
     cliCommand: 'doctl',
     cliInstallUrl: 'https://docs.digitalocean.com/reference/doctl/how-to/install/',
     authCommand: 'doctl auth init',
@@ -79,6 +89,7 @@ export default class Deploy extends Command {
     '<%= config.bin %> <%= command.id %> email-agent --provider railway',
     '<%= config.bin %> <%= command.id %> email-agent --provider fly',
     '<%= config.bin %> <%= command.id %> email-agent --provider digitalocean',
+    '<%= config.bin %> <%= command.id %> email-agent --provider microvm',
     '<%= config.bin %> <%= command.id %> email-agent --provider docker',
     '<%= config.bin %> <%= command.id %> email-agent --provider local',
   ]
@@ -101,11 +112,23 @@ export default class Deploy extends Command {
       description: 'Release version to deploy (defaults to latest/current state)',
       default: 'latest',
     }),
+    size: Flags.string({
+      description: 'DigitalOcean MicroVM size as cpu:memory-mib. One of 1:2048, 2:4096, 8:16384, 16:32768.',
+      default: '1:2048',
+    }),
+    'idle-timeout': Flags.string({
+      description: 'DigitalOcean MicroVM idle timeout before auto-pause (for example 15m, maximum 4h).',
+      default: '15m',
+    }),
+    'edge-auth-only': Flags.boolean({
+      description: 'DigitalOcean MicroVM only. Skip the per-agent AUTH_TOKEN and rely on the team microvm:access token.',
+      default: false,
+    }),
     'with-tui': Flags.boolean({
       description:
         'Bundle the on-host TUI (cast-tui command) into the image. ' +
         'Off by default to keep images small and streaming fast. ' +
-        'Only the DigitalOcean provider currently supports the on-host TUI.',
+        'Only the DigitalOcean Droplet provider currently supports the on-host TUI. MicroVMs reject this flag.',
       default: false,
     }),
   }
@@ -265,8 +288,8 @@ export default class Deploy extends Command {
         }
       }
 
-      // API token check for DigitalOcean
-      if (provider === 'digitalocean') {
+      // API token check for DigitalOcean droplets and MicroVMs
+      if (provider === 'digitalocean' || provider === 'microvm') {
         const token = getProviderToken('digitalocean', ['DIGITALOCEAN_ACCESS_TOKEN', 'DIGITALOCEAN_API_TOKEN', 'DIGITALOCEAN_API_KEY'])
         if (!token) {
           this.log('')
@@ -343,8 +366,8 @@ export default class Deploy extends Command {
       }
     }
 
-    // Docker check for docker and digitalocean providers
-    if (provider === 'docker' || provider === 'digitalocean') {
+    // Docker check for docker, droplet, and MicroVM providers
+    if (provider === 'docker' || provider === 'digitalocean' || provider === 'microvm') {
       let dockerInstalled = false
       try {
         await checkCli('docker', 'https://docs.docker.com/get-docker/')
@@ -451,6 +474,20 @@ export default class Deploy extends Command {
           this.error(`Docker is required for DigitalOcean deployment.\nInstall it from: https://docs.docker.com/get-docker/`)
         }
 
+        break
+      }
+
+      case 'microvm': {
+        try {
+          await checkCli('docker', 'https://docs.docker.com/get-docker/')
+        } catch (error: any) {
+          this.error(`Docker is required for DigitalOcean MicroVM deployment.\nInstall it from: https://docs.docker.com/get-docker/`)
+        }
+        try {
+          await checkCli('doctl', 'https://docs.digitalocean.com/reference/doctl/how-to/install/')
+        } catch (error: any) {
+          this.error(`doctl 1.173.0 or newer is required for DigitalOcean MicroVMs.\nInstall it from: https://docs.digitalocean.com/reference/doctl/how-to/install/`)
+        }
         break
       }
     }
@@ -564,6 +601,19 @@ export default class Deploy extends Command {
           // flag for now.
           const doArgs = withTui ? [agentName, '--with-tui'] : [agentName]
           await DigitalOceanDeploy.run(doArgs)
+          break
+        }
+
+        case 'microvm': {
+          if (withTui) {
+            this.error('On-host TUI is not available for DigitalOcean MicroVMs. Deploy with --provider digitalocean --with-tui to SSH into a Droplet.')
+          }
+          await MicrovmDeploy.run([
+            agentName,
+            '--size', flags.size,
+            '--idle-timeout', flags['idle-timeout'],
+            ...(flags['edge-auth-only'] ? ['--edge-auth-only'] : []),
+          ])
           break
         }
 
