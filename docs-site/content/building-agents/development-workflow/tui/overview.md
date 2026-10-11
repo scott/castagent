@@ -87,6 +87,10 @@ on day one:
 - `{% ref "slash:copy" %}` — copy the last agent reply to the clipboard.
 - `{% ref "slash:clear" %}` — clear the chat (keeps the agent connection).
 
+Highlighting text with the mouse copies that selection to the clipboard
+in dev, production, and on-host. On-host reaches the local clipboard
+through OSC 52.
+
 Slash commands that need input (a version, a name, a SHA) open a modal
 instead of requiring flag syntax. You don't need to memorise anything;
 type `/` and autocomplete kicks in.
