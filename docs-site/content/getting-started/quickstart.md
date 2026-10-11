@@ -49,7 +49,7 @@ freshly created agent.
 cast dev email-assistant
 ```
 
-You should see the TUI welcome screen. Type a message and press Enter — the
+The TUI opens on the chat screen, ready to type. Type a message and press Enter — the
 agent replies over streaming A2A. Slash commands are available in the input
 (`/help` for the list).
 

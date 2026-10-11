@@ -4,7 +4,6 @@ import {fileURLToPath} from 'node:url'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
-import {showWelcomeScreen} from './screens/welcome.js'
 import {showChatScreen} from './screens/chat.js'
 import type {UiMode} from './components/header.js'
 
@@ -35,9 +34,6 @@ export async function startTui(options: TuiOptions): Promise<void> {
       renderer.start()
     }
 
-    if (options.mode !== 'on-host') {
-      await showWelcomeScreen(renderer, options.agent)
-    }
     await showChatScreen(renderer, options.agent, options.url, options.token, options.mode, options.welcome, options.session, options.edgeToken)
   } catch (err) {
     logCrash('TUI error', err)
