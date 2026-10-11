@@ -1,4 +1,4 @@
-/* Cast docs — base styles. Kept minimal and dependency-free. */
+/* Cast Agent docs — base styles. Kept minimal and dependency-free. */
 
 :root {
   --color-bg: #ffffff;
@@ -7,10 +7,10 @@
   --color-fg: #0f172a;
   --color-fg-muted: #475569;
   --color-border: #e2e8f0;
-  --color-link: #6d28d9;
-  --color-link-hover: #5b21b6;
-  --color-accent: #6d28d9;
-  --color-accent-bg: #ede9fe;
+  --color-link: #0f766e;
+  --color-link-hover: #115e59;
+  --color-accent: #0f766e;
+  --color-accent-bg: #f0fdfa;
   --color-pro: #10b981;
   --color-warn: #f59e0b;
   --color-danger: #ef4444;
@@ -31,10 +31,10 @@
     --color-fg: #e2e8f0;
     --color-fg-muted: #94a3b8;
     --color-border: #1f2937;
-    --color-link: #a78bfa;
-    --color-link-hover: #c4b5fd;
-    --color-accent: #a78bfa;
-    --color-accent-bg: #1e1b4b;
+    --color-link: #2dd4bf;
+    --color-link-hover: #99f6e4;
+    --color-accent: #2dd4bf;
+    --color-accent-bg: #134e4a;
     --color-code-bg: #050810;
     --color-code-fg: #cbd5e1;
   }
@@ -286,12 +286,46 @@ main.content {
 .cmd-synopsis .arg { color: var(--color-accent); }
 .cmd-synopsis .flag { background: transparent; color: var(--color-fg-muted); padding: 0; }
 
-/* Landing page. Kept short so the install command sits above the fold. */
+/* Landing page. Same teal as the docs. Install stays directly under the headline. */
+body:has(.landing) { overflow-x: clip; }
+
 .landing {
-  max-width: 760px;
+  max-width: 960px;
   margin: 0 auto;
   padding: 0 1.5rem 3rem;
 }
+
+.landing-top {
+  position: relative;
+  z-index: 0;
+  padding-bottom: 2.5rem;
+}
+
+.landing-top::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  top: 0;
+  bottom: 0;
+  left: 50%;
+  width: 100vw;
+  transform: translateX(-50%);
+  pointer-events: none;
+  background-image:
+    radial-gradient(820px 460px at 92% -40px, rgba(45, 212, 191, 0.4), transparent 68%),
+    radial-gradient(640px 420px at -8% 36%, rgba(15, 118, 110, 0.1), transparent 70%);
+  mask-image: linear-gradient(#000 calc(100% - 3rem), transparent);
+}
+
+@media (prefers-color-scheme: dark) {
+  .landing-top::before {
+    background-image:
+      radial-gradient(780px 440px at 96% -60px, rgba(15, 118, 110, 0.55), transparent 70%),
+      radial-gradient(620px 420px at -8% 40%, rgba(19, 78, 74, 0.72), transparent 72%);
+  }
+}
+
+.landing-top + .landing-main > .landing-why { margin-top: 0; }
 
 .landing-header,
 .landing-footer {
@@ -332,16 +366,112 @@ main.content {
   justify-content: flex-start;
 }
 
+.landing-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.05fr) minmax(260px, 0.95fr);
+  gap: 1.25rem 1.75rem;
+  align-items: center;
+  margin: 0.25rem 0 1.25rem;
+}
+
 .landing h1 {
-  margin: 0.25rem 0 0.5rem;
+  margin: 0 0 0.5rem;
   font-size: 2.15rem;
 }
 
 .landing-lead {
-  margin: 0 0 1.25rem;
+  margin: 0;
   color: var(--color-fg-muted);
   font-size: 1.05rem;
-  max-width: 62ch;
+}
+
+.tui {
+  height: 232px;
+  display: flex;
+  flex-direction: column;
+  background: #0b0d12;
+  color: #e2e8f0;
+  border: 1px solid #1f2937;
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 12px 40px rgb(0 0 0 / 0.16);
+  font-family: var(--font-mono);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.tui-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  height: 28px;
+  padding: 0 0.65rem;
+  background: #10b981;
+  color: #fff;
+  font-weight: 600;
+  flex: none;
+}
+
+.tui-log {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.7rem 0.75rem 0.4rem;
+}
+
+.tui-row {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.tui-mark { flex: none; }
+
+.tui-user .tui-mark { color: #60a5fa; }
+.tui-agent .tui-mark { color: #4ade80; }
+.tui-row.is-pending [data-body] { color: #94a3b8; }
+
+.tui-input {
+  display: flex;
+  gap: 0.4rem;
+  flex: none;
+  margin: 0 0.45rem 0.45rem;
+  padding: 0.4rem 0.5rem;
+  background: #333333;
+  border-radius: 2px;
+}
+
+.tui-input .tui-mark { color: #60a5fa; }
+
+.tui-entry {
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.tui-caret {
+  display: inline-block;
+  width: 0.55ch;
+  height: 1.05em;
+  margin-left: 1px;
+  background: #e2e8f0;
+  vertical-align: text-bottom;
+  animation: tui-blink 1.05s steps(1) infinite;
+}
+
+@keyframes tui-blink {
+  50% { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tui-caret { animation: none; }
+}
+
+@media (max-width: 800px) {
+  .landing-hero { grid-template-columns: 1fr; }
 }
 
 .landing-install h2 {
@@ -365,7 +495,86 @@ main.content {
   font-size: 0.92rem;
 }
 
-.landing-providers { margin-top: 2.25rem; }
+.landing-why,
+.landing-build,
+.landing-providers { margin-top: 2.5rem; }
+
+.landing-why ul,
+.landing-kinds ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.15rem;
+}
+
+.landing-why li,
+.landing-kinds li { margin: 0.35rem 0; }
+
+.landing-kinds {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.landing-kind {
+  border: 1px solid var(--color-border);
+  border-radius: 12px;
+  background: linear-gradient(180deg, #f0fdfa 0%, var(--color-bg-elevated) 72%);
+  padding: 1rem 1.1rem 0.85rem;
+}
+
+.landing-kind:nth-child(2) {
+  background: linear-gradient(180deg, #f8fafc 0%, var(--color-bg-elevated) 72%);
+}
+
+.landing-kind:nth-child(3) {
+  background: linear-gradient(180deg, #ecfeff 0%, var(--color-bg-elevated) 72%);
+}
+
+.landing-kind:nth-child(4) {
+  background: linear-gradient(180deg, #f1f5f9 0%, var(--color-bg-elevated) 72%);
+}
+
+@media (prefers-color-scheme: dark) {
+  .landing-kind {
+    background: linear-gradient(180deg, #14312e 0%, var(--color-bg-elevated) 78%);
+  }
+
+  .landing-kind:nth-child(2) {
+    background: linear-gradient(180deg, #1a222c 0%, var(--color-bg-elevated) 78%);
+  }
+
+  .landing-kind:nth-child(3) {
+    background: linear-gradient(180deg, #102a30 0%, var(--color-bg-elevated) 78%);
+  }
+
+  .landing-kind:nth-child(4) {
+    background: linear-gradient(180deg, #1c2433 0%, var(--color-bg-elevated) 78%);
+  }
+}
+
+.landing-kind-head {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.landing-kind-head img {
+  width: 48px;
+  height: 48px;
+  flex: none;
+  display: block;
+}
+
+.landing-kinds h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.landing-build > p:last-child { margin-top: 1.25rem; }
+
+@media (max-width: 700px) {
+  .landing-kinds { grid-template-columns: 1fr; }
+}
 
 .landing-providers h2 {
   margin-top: 0;

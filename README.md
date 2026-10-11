@@ -1,10 +1,10 @@
-# Agent Cast: Build and Deploy AI Agents
+# Cast Agent: Build and Deploy AI Agents
 
-Agent Cast is a complete platform for creating, testing, and deploying autonomous AI agents. It combines an interactive CLI with a beautiful terminal UI to guide you through building agents that can reason, use tools, and operate independently.
+Cast Agent is a complete platform for creating, testing, and deploying autonomous AI agents. It combines an interactive CLI with a beautiful terminal UI to guide you through building agents that can reason, use tools, and operate independently. The project site is [castagent.dev](https://castagent.dev).
 
-**Cast transforms how developers build AI agents** — instead of writing boilerplate code, you describe what you want your agent to do, and Cast handles the scaffolding, configuration, and deployment. Your agent becomes a production-ready A2A server that can be connected to from any client.
+**Cast Agent transforms how developers build AI agents** — instead of writing boilerplate code, you describe what you want your agent to do, and Cast Agent handles the scaffolding, configuration, and deployment. Your agent becomes a production-ready A2A server that can be connected to from any client.
 
-## Why Agent Cast?
+## Why Cast Agent?
 
 - **Interactive Builder**: Describe your agent in plain language, get a fully scaffolded agent with proper instructions, tools, and configuration
 - **Built-in Runtime**: Python-based runtime with A2A protocol support, streaming responses, and secure auth
@@ -16,7 +16,7 @@ Agent Cast is a complete platform for creating, testing, and deploying autonomou
 
 ## What Can You Build?
 
-Cast agents are flexible AI assistants that can be customized for virtually any task. Here are examples of agents you can create:
+Agents you build with Cast Agent are flexible AI assistants that can be customized for virtually any task. Here are examples of agents you can create:
 
 **Developer Agents**
 - Code review assistant — reviews PRs, suggests improvements, checks style
@@ -43,7 +43,7 @@ Create any agent with:
 cast new
 ```
 
-Describe what you want, and Cast builds the complete agent scaffold with instructions, tools, and configuration ready for development.
+Describe what you want, and Cast Agent builds the complete agent scaffold with instructions, tools, and configuration ready for development.
 
 ## Architecture
 
@@ -106,7 +106,7 @@ export PATH="$HOME/.local/bin:$PATH"
 ```
 
 **Upgrading / re-running install:**
-Re-running `./install.sh` is the safe way to upgrade. The script is idempotent: it rebuilds the TypeScript projects, refreshes the `~/.local/bin/cast` symlink, and removes any stale binaries left over from older versions of Cast (e.g. the pre-TypeScript Go binary that used to live at `~/.cast/bin/cast`). If you ever see the wrong version of `cast` running after a rebuild, re-run `./install.sh` — it will clear the conflict.
+Re-running `./install.sh` is the safe way to upgrade. The script is idempotent: it rebuilds the TypeScript projects, refreshes the `~/.local/bin/cast` symlink, and removes any stale binaries left over from older versions of Cast Agent (e.g. the pre-TypeScript Go binary that used to live at `~/.cast/bin/cast`). If you ever see the wrong version of `cast` running after a rebuild, re-run `./install.sh` — it will clear the conflict.
 
 ### Usage
 
@@ -169,7 +169,7 @@ cast meta test
 
 ### Deployment Providers
 
-Cast supports deploying agents to multiple platforms:
+Cast Agent supports deploying agents to multiple platforms:
 
 | Provider | Description | Command |
 |----------|-------------|---------|
@@ -191,7 +191,7 @@ To shut down and clean up resources:
 cast shutdown demo-agent
 ```
 
-DigitalOcean MicroVMs (`--provider microvm`) are separate from Droplets. They are in public preview in region MKC1, run linux/amd64 images from DigitalOcean Container Registry, and pause when idle. The next request resumes a paused MicroVM. Cast retries HTTP 503 while it wakes. `--with-tui` is rejected. The endpoint expects your DigitalOcean token on `Authorization` and the agent token on `X-Cast-Authorization`. If the edge does not forward that second header, rerun with `--edge-auth-only`. Logs are `doctl compute microvm exec <id> -- <log command>`. `doctl` 1.173.0 or newer is required.
+DigitalOcean MicroVMs (`--provider microvm`) are separate from Droplets. They are in public preview in region MKC1, run linux/amd64 images from DigitalOcean Container Registry, and pause when idle. The next request resumes a paused MicroVM. Cast Agent retries HTTP 503 while it wakes. `--with-tui` is rejected. The endpoint expects your DigitalOcean token on `Authorization` and the agent token on `X-Cast-Authorization`. If the edge does not forward that second header, rerun with `--edge-auth-only`. Logs are `doctl compute microvm exec <id> -- <log command>`. `doctl` 1.173.0 or newer is required.
 
 ### Chatting On-Host (Docker container shell)
 
@@ -314,11 +314,11 @@ cast update my-agent --model openrouter/openai/gpt-4o --dry-run
 
 ### Agent versioning
 
-Cast tracks an agent with three independent concepts:
+Cast Agent tracks an agent with three independent concepts:
 
 - **Undo log (internal)** — automatic, sequential snapshots taken on every edit. You don't manage this directly; you interact with it through `cast undo` / `cast redo`. The log also feeds `cast release`'s auto-changelog.
 - **Releases** — intentional semantic versions (1.0, 1.5, 2.0) you create when you're ready to ship. Releases are the deployment artifact.
-- **Sessions** — saved conversations tied to an agent. Cast auto-saves every chat turn into a session so you can resume, fork, rename, or audit conversations.
+- **Sessions** — saved conversations tied to an agent. Cast Agent auto-saves every chat turn into a session so you can resume, fork, rename, or audit conversations.
 
 ```bash
 # Undo and redo (the user-facing surface of the change log)
@@ -380,7 +380,7 @@ parameters are needed, a modal prompts for them.
 
 ### Git Integration
 
-Cast agents include built-in Git support for version control:
+Cast Agent includes built-in Git support for version control:
 
 ```bash
 # Initialize a Git repository

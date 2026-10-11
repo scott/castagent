@@ -10,14 +10,97 @@ const installCommand = 'curl -sL https://raw.githubusercontent.com/scott/castage
 ---
 
 <Landing
-  title="Cast"
-  description="Cast is a CLI and terminal UI for creating, testing, and deploying AI agents."
+  title="Cast Agent"
+  description="Cast Agent is a CLI and terminal UI for creating, testing, and deploying AI agents. The project site is https://castagent.dev."
 >
-  <h1>Build, test, and deploy AI agents.</h1>
-  <p class="landing-lead">
-    Cast is a CLI and terminal UI for creating, testing, and deploying AI agents.
-    You describe what the agent should do; Cast scaffolds it and deploys it as an A2A server.
-  </p>
+  <div slot="top">
+  <div class="landing-hero">
+    <div>
+      <h1>Build, test, and deploy AI agents.</h1>
+      <p class="landing-lead">
+        Cast Agent is a CLI and terminal UI for creating, testing, and deploying AI agents.
+        You describe what the agent should do; Cast Agent scaffolds it and deploys it as an A2A server.
+      </p>
+    </div>
+    <div
+      class="tui"
+      role="img"
+      aria-label="Terminal preview. You ask for a code review assistant, and Cast Agent scaffolds review-bot with instructions, a pull-request tool, and a model."
+    >
+      <div class="tui-header">
+        <span>● review-bot</span>
+        <span>[● LIVE]</span>
+      </div>
+      <div class="tui-log" data-log>
+        <div class="tui-row tui-user">
+          <span class="tui-mark">▸</span>
+          <span data-body>A code review assistant that comments on pull requests.</span>
+        </div>
+        <div class="tui-row tui-agent">
+          <span class="tui-mark">▹</span>
+          <span data-body>Scaffolded review-bot with instructions, a pull-request tool, and a model.</span>
+        </div>
+      </div>
+      <div class="tui-input">
+        <span class="tui-mark">▸</span>
+        <span class="tui-entry"><span data-typed></span><span class="tui-caret"></span></span>
+      </div>
+      <script is:inline>
+        (function () {
+          var root = document.currentScript.parentElement
+          var log = root.querySelector('[data-log]')
+          var typed = root.querySelector('[data-typed]')
+          var userText = log.querySelector('.tui-user [data-body]').textContent
+          var agentText = log.querySelector('.tui-agent [data-body]').textContent
+          if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return
+
+          function row(kind, text) {
+            var el = document.createElement('div')
+            el.className = 'tui-row tui-' + kind + (text === '●●●' ? ' is-pending' : '')
+            var mark = document.createElement('span')
+            mark.className = 'tui-mark'
+            mark.textContent = kind === 'user' ? '▸' : '▹'
+            var body = document.createElement('span')
+            body.setAttribute('data-body', '')
+            body.textContent = text
+            el.appendChild(mark)
+            el.appendChild(body)
+            return el
+          }
+
+          function wait(ms) {
+            return new Promise(function (resolve) { setTimeout(resolve, ms) })
+          }
+
+          async function play() {
+            log.textContent = ''
+            typed.textContent = ''
+            for (var i = 0; i < userText.length; i++) {
+              typed.textContent += userText.charAt(i)
+              await wait(45)
+            }
+            await wait(420)
+            typed.textContent = ''
+            log.appendChild(row('user', userText))
+            var pending = row('agent', '●●●')
+            log.appendChild(pending)
+            await wait(700)
+            var body = pending.querySelector('[data-body]')
+            pending.classList.remove('is-pending')
+            body.textContent = ''
+            for (var j = 0; j < agentText.length; j++) {
+              body.textContent += agentText.charAt(j)
+              await wait(26)
+            }
+            await wait(3600)
+            play()
+          }
+
+          play()
+        })()
+      </script>
+    </div>
+  </div>
 
   <section class="landing-install" aria-labelledby="install-heading">
     <h2 id="install-heading">Install</h2>
@@ -25,6 +108,78 @@ const installCommand = 'curl -sL https://raw.githubusercontent.com/scott/castage
     <p class="landing-install-meta">
       Node.js 18+, Python 3.11+, and Bun.
       <a href="getting-started/install">Full install instructions</a>
+    </p>
+  </section>
+  </div>
+
+  <section class="landing-why" aria-labelledby="why-heading">
+    <h2 id="why-heading">Why Cast Agent?</h2>
+    <ul>
+      <li><strong>Interactive Builder</strong>: Describe your agent in plain language, get a fully scaffolded agent with proper instructions, tools, and configuration</li>
+      <li><strong>Built-in Runtime</strong>: Python-based runtime with A2A protocol support, streaming responses, and secure auth</li>
+      <li><strong>Multiple Deployment Options</strong>: Deploy to Docker, Railway, Fly.io, DigitalOcean, or Sprites with a single command</li>
+      <li><strong>Production-Ready</strong>: Automatic change tracking, semantic release management, secure token storage, OAuth credential vault, and deployment tracking</li>
+      <li><strong>Agent Versioning</strong>: Track every change to your agent with automatic snapshots, create intentional semantic releases, compare with diffs, and rollback to any state</li>
+      <li><strong>GitHub Integration</strong>: Full Git operations for agents—init, commit, push, pull, and branch management</li>
+      <li><strong>Agent Memory</strong>: Persistent memory system for agents to maintain context across sessions</li>
+    </ul>
+  </section>
+
+  <section class="landing-build" aria-labelledby="build-heading">
+    <h2 id="build-heading">What you can build</h2>
+    <p>
+      Agents you build with Cast Agent are flexible AI assistants that can be customized for virtually any task.
+      Here are examples of agents you can create:
+    </p>
+    <div class="landing-kinds">
+      <div class="landing-kind">
+        <div class="landing-kind-head">
+          <img src="agents/developer.svg" alt="" width="48" height="48" />
+          <h3>Developer agents</h3>
+        </div>
+        <ul>
+          <li>Code review assistant — reviews PRs, suggests improvements, checks style</li>
+          <li>Debugging partner — analyzes errors, traces issues, proposes fixes</li>
+          <li>Documentation writer — generates API docs, README files, code comments</li>
+        </ul>
+      </div>
+      <div class="landing-kind">
+        <div class="landing-kind-head">
+          <img src="agents/business.svg" alt="" width="48" height="48" />
+          <h3>Business agents</h3>
+        </div>
+        <ul>
+          <li>Customer support agent — answers questions, handles tickets, escalates issues</li>
+          <li>Data analyst — queries databases, generates reports, creates visualizations</li>
+          <li>Meeting scheduler — coordinates calendars, sends invites, handles conflicts</li>
+        </ul>
+      </div>
+      <div class="landing-kind">
+        <div class="landing-kind-head">
+          <img src="agents/productivity.svg" alt="" width="48" height="48" />
+          <h3>Productivity agents</h3>
+        </div>
+        <ul>
+          <li>Email assistant — drafts responses, summarizes threads, manages inbox</li>
+          <li>Research assistant — finds information, summarizes papers, extracts insights</li>
+          <li>File organizer — categorizes documents, renames files, manages storage</li>
+        </ul>
+      </div>
+      <div class="landing-kind">
+        <div class="landing-kind-head">
+          <img src="agents/communications.svg" alt="" width="48" height="48" />
+          <h3>Communications agents</h3>
+        </div>
+        <ul>
+          <li>Slack bot — responds to mentions, runs commands, posts updates</li>
+          <li>Newsletter writer — curates content, writes summaries, formats for delivery</li>
+          <li>Social media manager — schedules posts, monitors mentions, engages followers</li>
+        </ul>
+      </div>
+    </div>
+    <p>
+      Create any agent with <code>cast new</code>.
+      Describe what you want, and Cast Agent builds the complete agent scaffold with instructions, tools, and configuration ready for development.
     </p>
   </section>
 
