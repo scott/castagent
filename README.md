@@ -144,9 +144,12 @@ cast stop demo-agent
 # Rename an agent
 cast rename old-name new-name
 
-# Clone an agent from Git repository
+# Clone an agent from a Git repository, GitHub user/repo, or local directory
 cast clone https://github.com/user/my-agent
 cast clone https://github.com/user/my-agent my-local-name
+cast clone user/my-agent
+cast clone ./path/to/local-agent
+cast clone /absolute/path/to/local-agent my-local-name
 
 # Deploy an agent
 cast deploy demo-agent --provider docker
@@ -380,6 +383,7 @@ Highlighting text with the mouse copies that selection to the clipboard.
 | `/upgrade` | agent | Operates on the current agent. Modal lists releases to upgrade to. |
 | `/registry` | session | Modal table of all releases across all agents, with deployment status. |
 | `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a SHA directly. |
+| `/import [source] [name]` | agent | Import a Cast agent from GitHub or a local path. |
 | `/builder-skills [add <github-or-folder>]` | agent | Add or remove skills the builder uses when creating agents. Dev mode only. Applies on the next `cast new` or `cast edit`. |
 
 ### Git Integration

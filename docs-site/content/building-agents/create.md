@@ -2,15 +2,16 @@
 title: Create an agent
 section: building-agents
 order: 2
-description: 'Two ways to bring a new agent into existence: the Builder wizard, or cast clone.'
-ref: ['cli:new', 'cli:clone', 'cli:dev', 'cli:edit']
+description: 'Bring an agent into existence with the Builder, cast clone, or /import.'
+ref: ['cli:new', 'cli:clone', 'cli:dev', 'cli:edit', 'slash:import']
 ---
 
 # Create an agent
 
-There are two paths to a new agent on disk: the **Builder** (interactive,
-conversational, scaffolds from a description) and **`cast clone`** (pulls
-an existing agent from a Git repository).
+There are three paths to a new agent on disk: the **Builder** (interactive,
+conversational, scaffolds from a description), **`cast clone`** (copies an
+existing agent from Git or a local directory), and
+`{% ref "slash:import" %}` in the TUI.
 
 ## With the Builder
 
@@ -48,7 +49,10 @@ The Builder reads stdin if no TTY is available.
 ```bash
 cast clone https://github.com/you/email-agent
 cast clone https://github.com/you/email-agent my-local-copy
+cast clone you/email-agent
 ```
+
+`you/email-agent` is shorthand for `https://github.com/you/email-agent.git`.
 
 `{% ref "cli:clone" %}` is the right path when:
 
@@ -61,6 +65,34 @@ cast clone https://github.com/you/email-agent my-local-copy
 The clone validates that the repo contains an `agent.yaml` and refuses
 non-Cast repositories. After clone, `repository` is added to the local
 `agent.yaml` so `cast git push` knows where to send future commits.
+
+## From a local directory
+
+A filesystem path is copied into `~/.cast/agents/<name>/`. The name
+defaults to the directory's basename.
+
+```bash
+cast clone ./path/to/local-agent
+cast clone /absolute/path/to/local-agent my-local-name
+```
+
+The directory must contain `agent.yaml`. If it does not, clone stops with
+`Directory does not contain a Cast agent (missing agent.yaml).` A missing
+path reports `Path '<path>' does not exist.` An existing agent is left
+unchanged unless you pass `--force`.
+
+If the copy has no git repository, Cast initializes one. Registration is
+the directory under `~/.cast/agents/` — `{% ref "cli:list" %}` picks it
+up with no separate catalog entry.
+
+Inside a dev or production TUI session, `{% ref "slash:import" %}` opens
+a modal titled "Import Cast Agent". Source takes a GitHub URL, `user/repo`,
+or a local path (`./relative` or `/absolute`). Name is optional. Enter
+submits and ESC closes, returning focus to the chat input. `/import <source>`
+skips the modal, and a second argument sets the local name.
+
+On success the TUI reports the agent name and suggests `cast dev`,
+`cast edit`, and `cast deploy <name> --provider docker`.
 
 ## Editing an existing agent
 
