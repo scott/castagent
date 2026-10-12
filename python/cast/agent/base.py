@@ -59,9 +59,10 @@ class AgentConfig:
         return raw
 
     def load_skills(self) -> List[dict]:
-        """Read each listed skill. Skip a missing directory or SKILL.md.
+        """Read each listed skill. Skip a missing directory or skill file.
 
-        A bad file must not stop the agent from starting.
+        A bad file must not stop the agent from starting. `SKILL.md` and
+        `skill.md` are both accepted.
         """
         loaded: List[dict] = []
         for entry in self.skills:
@@ -118,8 +119,8 @@ class AgentConfig:
             return None
         if not os.path.isdir(skill_dir):
             return None
-        skill_md = os.path.join(skill_dir, "SKILL.md")
-        if not os.path.isfile(skill_md):
+        skill_md = _skill_markdown_path(skill_dir)
+        if skill_md is None:
             return None
         with open(skill_md, "r", encoding="utf-8") as handle:
             parsed = _parse_skill_markdown(handle.read())
@@ -152,6 +153,27 @@ class AgentConfig:
 
 
 _SKILL_FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\Z", re.DOTALL)
+_SKILL_MARKDOWN_NAMES = ("SKILL.md", "skill.md")
+
+
+def _collapse_skill_description(description: str) -> str:
+    """Folded and literal YAML descriptions load as one line."""
+    return " ".join(line.strip() for line in description.splitlines() if line.strip())
+
+
+def _skill_markdown_path(skill_dir: str) -> Optional[str]:
+    """Exact `SKILL.md` or `skill.md`. Prefer `SKILL.md` when both exist."""
+    try:
+        names = set(os.listdir(skill_dir))
+    except OSError:
+        return None
+    for name in _SKILL_MARKDOWN_NAMES:
+        if name not in names:
+            continue
+        candidate = os.path.join(skill_dir, name)
+        if os.path.isfile(candidate):
+            return candidate
+    return None
 
 
 def _parse_skill_markdown(text: str) -> Optional[dict]:
@@ -168,12 +190,11 @@ def _parse_skill_markdown(text: str) -> Optional[dict]:
     description = meta.get("description")
     if not isinstance(name, str) or not name.strip():
         return None
-    if not isinstance(description, str) or not description.strip():
+    if not isinstance(description, str):
         return None
-    if "\n" in description or "\r" in description:
-        description = description.strip().splitlines()[0].strip()
-    else:
-        description = description.strip()
+    description = _collapse_skill_description(description)
+    if not description:
+        return None
     body = match.group(2)
     if body.startswith("\r\n"):
         body = body[2:]

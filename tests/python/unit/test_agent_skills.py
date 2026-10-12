@@ -176,3 +176,114 @@ def test_runtime_prompt_includes_skills(mock_create_react_agent, mock_provider_c
     assert "### triage" in prompt
     assert "Sort the mail." in prompt
     assert prompt.startswith("You are a helpful test agent.")
+
+
+WRAPPED = "Sort incoming mail into buckets. Use this when new mail arrives."
+LONG_LEFT = "A" * 512
+LONG_RIGHT = "B" * 511
+LONG_DESCRIPTION = f"{LONG_LEFT} {LONG_RIGHT}"
+
+
+def _write_skill_file(agent_dir, name, filename, markdown):
+    skill_dir = os.path.join(agent_dir, "skills", name)
+    os.makedirs(skill_dir, exist_ok=True)
+    with open(os.path.join(skill_dir, filename), "w", encoding="utf-8") as handle:
+        handle.write(markdown)
+    return skill_dir
+
+
+def _list_skill(agent_dir, name, path):
+    with open(os.path.join(agent_dir, "agent.yaml"), "a", encoding="utf-8") as handle:
+        handle.write(
+            "skills:\n"
+            f"  - name: {name}\n"
+            "    description: Sort incoming mail into buckets.\n"
+            f"    path: {path}\n"
+        )
+
+
+def test_wrapped_description_is_complete_in_prompt_and_card(tmp_path):
+    agent_dir = _write_agent(tmp_path)
+    markdown = (
+        "---\nname: triage\ndescription: |\n"
+        "  Sort incoming mail into buckets.\n"
+        "  Use this when new mail arrives.\n---\n"
+    )
+    _write_skill_file(agent_dir, "triage", "SKILL.md", markdown)
+    _list_skill(agent_dir, "triage", "skills/triage")
+    config = AgentConfig.from_path(agent_dir)
+    prompt = config.rendered_prompt()
+    assert f"### triage\n{WRAPPED}\n" in prompt
+    assert "### triage\nSort incoming mail into buckets.\n" not in prompt
+    with patch.dict(os.environ, {}, clear=True):
+        card = RuntimeAgent(config, agent_dir).get_agent_card()
+    assert card["skills"] == [{
+        "id": "triage",
+        "name": "triage",
+        "description": WRAPPED,
+    }]
+
+
+def test_folded_description_is_complete_in_the_prompt(tmp_path):
+    agent_dir = _write_agent(tmp_path)
+    markdown = (
+        "---\nname: folded-skill\ndescription: >\n"
+        "  Sort incoming mail into buckets.\n"
+        "  Use this when new mail arrives.\n---\n"
+    )
+    _write_skill_file(agent_dir, "folded-skill", "SKILL.md", markdown)
+    _list_skill(agent_dir, "folded-skill", "skills/folded-skill")
+    prompt = AgentConfig.from_path(agent_dir).rendered_prompt()
+    assert f"### folded-skill\n{WRAPPED}\n" in prompt
+
+
+def test_empty_body_is_omitted_from_the_prompt(tmp_path):
+    agent_dir = _write_agent(tmp_path)
+    markdown = (
+        "---\nname: skill-name\n"
+        "description: A description of what this skill does and when to use it.\n---\n"
+    )
+    _write_skill_file(agent_dir, "skill-name", "SKILL.md", markdown)
+    _list_skill(agent_dir, "skill-name", "skills/skill-name")
+    prompt = AgentConfig.from_path(agent_dir).rendered_prompt()
+    assert "### skill-name\nA description of what this skill does and when to use it.\n" in prompt
+    assert prompt.strip().endswith("A description of what this skill does and when to use it.")
+    assert "# Triage" not in prompt
+
+
+def test_lowercase_skill_file_loads(tmp_path):
+    agent_dir = _write_agent(tmp_path)
+    markdown = "---\nname: lower-skill\ndescription: Lowercase skill file\n---\n"
+    skill_dir = _write_skill_file(agent_dir, "lower-skill", "skill.md", markdown)
+    _list_skill(agent_dir, "lower-skill", "skills/lower-skill")
+    loaded = AgentConfig.from_path(agent_dir).load_skills()
+    assert [item["name"] for item in loaded] == ["lower-skill"]
+    assert loaded[0]["description"] == "Lowercase skill file"
+    assert "skill.md" in os.listdir(skill_dir)
+
+
+def test_1024_character_description_stays_intact_on_the_card(tmp_path):
+    agent_dir = _write_agent(tmp_path)
+    markdown = (
+        "---\nname: long-desc\ndescription: |\n"
+        f"  {LONG_LEFT}\n"
+        f"  {LONG_RIGHT}\n---\n"
+    )
+    _write_skill_file(agent_dir, "long-desc", "SKILL.md", markdown)
+    _list_skill(agent_dir, "long-desc", "skills/long-desc")
+    config = AgentConfig.from_path(agent_dir)
+    assert LONG_DESCRIPTION in config.rendered_prompt()
+    with patch.dict(os.environ, {}, clear=True):
+        card = RuntimeAgent(config, agent_dir).get_agent_card()
+    assert card["skills"][0]["description"] == LONG_DESCRIPTION
+    assert len(card["skills"][0]["description"]) == 1024
+
+
+def test_one_line_skill_with_a_body_loads_unchanged(tmp_path):
+    agent_dir = _write_agent(tmp_path, instructions="You are a helpful test agent.")
+    _write_skill(agent_dir, "triage", "Sort incoming mail into buckets", "# Triage\n\nSort the mail.")
+    _list_skill(agent_dir, "triage", "skills/triage")
+    prompt = AgentConfig.from_path(agent_dir).rendered_prompt()
+    assert "### triage\nSort incoming mail into buckets\n" in prompt
+    assert "# Triage" in prompt
+    assert "Sort the mail." in prompt

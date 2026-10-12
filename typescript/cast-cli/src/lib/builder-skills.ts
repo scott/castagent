@@ -9,6 +9,36 @@ export const SKILL_NAME_PATTERN = /^[a-z0-9][a-z0-9-]*$/
 
 const FRONTMATTER_RE = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/
 const GITHUB_HOST_RE = /^(?:https?:\/\/)?(?:www\.)?github\.com\/(.+)$/i
+const SKILL_MARKDOWN_NAMES = ['SKILL.md', 'skill.md']
+
+/** Collapse a folded or literal YAML description onto one line. */
+function collapseSkillDescription(description: string): string {
+  return description
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join(' ')
+}
+
+/** Agent Skills uses `SKILL.md` or `skill.md`. Prefer `SKILL.md` when both exist. */
+function skillMarkdownFile(dir: string): string | null {
+  let names: string[]
+  try {
+    names = fs.readdirSync(dir)
+  } catch {
+    return null
+  }
+  for (const name of SKILL_MARKDOWN_NAMES) {
+    if (!names.includes(name)) continue
+    const full = path.join(dir, name)
+    try {
+      if (fs.statSync(full).isFile()) return full
+    } catch {
+      continue
+    }
+  }
+  return null
+}
 const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})$/
 const REPO_RE = /^[A-Za-z0-9._-]{1,100}$/
 const REF_RE = /^[A-Za-z0-9._/-]+$/
@@ -143,15 +173,6 @@ function parseGithubPath(spec: string, fromUrl: boolean): GithubSkillSource | nu
   return {owner, repo: repoPart, subpath}
 }
 
-/** YAML `>` and `|` scalars keep newlines. Store the description as one line. */
-function collapseSkillDescription(description: string): string {
-  return description
-    .split(/\r\n|\r|\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .join(' ')
-}
-
 export function parseSkillMarkdown(text: string): ParsedSkill | null {
   const cleaned = text.replace(/^\uFEFF/, '')
   const match = cleaned.match(FRONTMATTER_RE)
@@ -222,7 +243,7 @@ function placeSkillDirectory(srcDir: string, doc: ParsedSkill, skillsRoot: strin
   }
   try {
     copySkillDirectory(srcDir, dest)
-    if (!fs.existsSync(path.join(dest, 'SKILL.md'))) {
+    if (!skillMarkdownFile(dest)) {
       throw new BuilderSkillError(`No SKILL.md in ${srcDir}`)
     }
   } catch (err) {
@@ -237,11 +258,11 @@ export function installFromFields(
   home = castHome(),
 ): ListedSkill {
   const name = opts.name.trim()
-  const description = opts.description
+  const description = typeof opts.description === 'string' ? collapseSkillDescription(opts.description) : ''
   if (!isValidSkillName(name)) {
     throw new BuilderSkillError(`Invalid skill name '${opts.name}'.`)
   }
-  if (typeof description !== 'string' || description.includes('\n') || description.includes('\r') || !description.trim()) {
+  if (!description) {
     throw new BuilderSkillError('Skill description must be a single non-empty line.')
   }
   const skillsRoot = builderSkillsRoot(home)
@@ -250,7 +271,7 @@ export function installFromFields(
   if (fs.existsSync(dest)) {
     throw new BuilderSkillError(`Builder skill '${name}' is already installed.`)
   }
-  const markdown = renderSkillMarkdown(name, description.trim(), opts.body)
+  const markdown = renderSkillMarkdown(name, description, opts.body)
   try {
     fs.mkdirSync(dest)
     fs.writeFileSync(path.join(dest, 'SKILL.md'), markdown, 'utf8')
@@ -258,7 +279,7 @@ export function installFromFields(
     fs.rmSync(dest, {recursive: true, force: true})
     throw err
   }
-  return {name, description: description.trim(), path: dest}
+  return {name, description, path: dest}
 }
 
 export function installFromFolder(folder: string, home = castHome()): ListedSkill {
@@ -266,8 +287,8 @@ export function installFromFolder(folder: string, home = castHome()): ListedSkil
   if (!fs.existsSync(resolved) || !fs.statSync(resolved).isDirectory()) {
     throw new BuilderSkillError(`Folder not found: ${folder}`)
   }
-  const skillFile = path.join(resolved, 'SKILL.md')
-  if (!fs.existsSync(skillFile) || !fs.statSync(skillFile).isFile()) {
+  const skillFile = skillMarkdownFile(resolved)
+  if (!skillFile) {
     throw new BuilderSkillError(`No SKILL.md in ${resolved}`)
   }
   const skillsRoot = builderSkillsRoot(home)
@@ -309,12 +330,17 @@ function walkSkillFiles(dir: string, out: string[]): void {
   } catch {
     return
   }
+  const skillName = entries.some((entry) => entry.isFile() && entry.name === 'SKILL.md')
+    ? 'SKILL.md'
+    : entries.some((entry) => entry.isFile() && entry.name === 'skill.md')
+      ? 'skill.md'
+      : null
+  if (skillName) out.push(path.join(dir, skillName))
   for (const entry of entries) {
     if (entry.name === '.git' || entry.name === 'node_modules') continue
     const full = path.join(dir, entry.name)
     if (entry.isSymbolicLink()) continue
     if (entry.isDirectory()) walkSkillFiles(full, out)
-    else if (entry.isFile() && entry.name === 'SKILL.md') out.push(full)
   }
 }
 
@@ -344,12 +370,13 @@ function skillDirectoryFromTarget(root: string, target: string): string {
   }
   const stat = fs.statSync(target)
   if (stat.isFile()) {
-    if (path.basename(target) !== 'SKILL.md') {
+    const base = path.basename(target)
+    if (base !== 'SKILL.md' && base !== 'skill.md') {
       throw new BuilderSkillError(`No SKILL.md found at ${path.relative(root, target) || '.'}`)
     }
     return path.dirname(target)
   }
-  if (stat.isDirectory() && fs.existsSync(path.join(target, 'SKILL.md'))) return target
+  if (stat.isDirectory() && skillMarkdownFile(target)) return target
   throw new BuilderSkillError(`No SKILL.md found at ${path.relative(root, target) || '.'}`)
 }
 
@@ -361,9 +388,13 @@ export function resolveSkillsInTree(
     const rel = opts.subpath === '.' ? '' : opts.subpath
     const target = rel === '' ? root : resolveInside(root, rel)
     const directory = skillDirectoryFromTarget(root, target)
-    const doc = readSkillFile(path.join(directory, 'SKILL.md'))
+    const skillFile = skillMarkdownFile(directory)
+    if (!skillFile) {
+      throw new BuilderSkillError(`No SKILL.md found at ${path.relative(root, directory) || '.'}`)
+    }
+    const doc = readSkillFile(skillFile)
     if (!doc) {
-      throw new BuilderSkillError(`Invalid skill frontmatter in ${path.join(directory, 'SKILL.md')}`)
+      throw new BuilderSkillError(`Invalid skill frontmatter in ${skillFile}`)
     }
     return {kind: 'one', directory, doc}
   }
@@ -453,8 +484,8 @@ export function listBuilderSkills(home = castHome()): {skills: ListedSkill[]; wa
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.name.startsWith('.')) continue
     const dir = path.join(root, entry.name)
-    const skillFile = path.join(dir, 'SKILL.md')
-    if (!fs.existsSync(skillFile) || !fs.statSync(skillFile).isFile()) {
+    const skillFile = skillMarkdownFile(dir)
+    if (!skillFile) {
       warnings.push(`Skipping builder skill '${entry.name}': SKILL.md is missing`)
       continue
     }

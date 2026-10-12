@@ -326,4 +326,101 @@ describe('cast skills command', () => {
     expect(result.errors.join('\n')).to.include('Give a GitHub repo')
     expect(fs.existsSync(path.join(agent.dir, 'skills'))).to.equal(false)
   })
+
+  const wrapped = 'Sort incoming mail into buckets. Use this when new mail arrives.'
+  const longLeft = 'A'.repeat(512)
+  const longRight = 'B'.repeat(511)
+  const longDescription = `${longLeft} ${longRight}`
+  const folderCases: Array<{title: string; name: string; filename?: string; markdown: string; description: string}> = [
+    {
+      title: 'a frontmatter-only file',
+      name: 'skill-name',
+      markdown: '---\nname: skill-name\ndescription: A description of what this skill does and when to use it.\n---\n',
+      description: 'A description of what this skill does and when to use it.',
+    },
+    {
+      title: 'a folded description',
+      name: 'folded-skill',
+      markdown: '---\nname: folded-skill\ndescription: >\n  Sort incoming mail into buckets.\n  Use this when new mail arrives.\n---\n',
+      description: wrapped,
+    },
+    {
+      title: 'a literal description of two sentences',
+      name: 'literal-skill',
+      markdown: '---\nname: literal-skill\ndescription: |\n  Sort incoming mail into buckets.\n  Use this when new mail arrives.\n---\n',
+      description: wrapped,
+    },
+    {
+      title: 'skill.md',
+      name: 'lower-skill',
+      filename: 'skill.md',
+      markdown: '---\nname: lower-skill\ndescription: Lowercase skill file\n---\n',
+      description: 'Lowercase skill file',
+    },
+    {
+      title: 'license and metadata',
+      name: 'pdf-processing',
+      markdown: [
+        '---',
+        'name: pdf-processing',
+        'description: Extract PDF text, fill forms, merge files. Use when handling PDFs.',
+        'license: Apache-2.0',
+        'metadata:',
+        '  author: example-org',
+        '  version: "1.0"',
+        '---',
+        '',
+      ].join('\n'),
+      description: 'Extract PDF text, fill forms, merge files. Use when handling PDFs.',
+    },
+    {
+      title: 'a one-line skill with a body',
+      name: 'triage',
+      markdown: '---\nname: triage\ndescription: Sort incoming mail into buckets\n---\n\n# Triage\n\nSort the mail.\n',
+      description: 'Sort incoming mail into buckets',
+    },
+    {
+      title: 'a 1024-character description',
+      name: 'long-desc',
+      markdown: `---\nname: long-desc\ndescription: |\n  ${longLeft}\n  ${longRight}\n---\n`,
+      description: longDescription,
+    },
+  ]
+
+  for (const testCase of folderCases) {
+    it(`adds ${testCase.title} from a folder`, async () => {
+      const agent = makeAgent()
+      const filename = testCase.filename ?? 'SKILL.md'
+      const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-skill-agentskills-'))
+      fs.writeFileSync(path.join(folder, filename), testCase.markdown)
+      fs.mkdirSync(path.join(folder, 'scripts'))
+      fs.writeFileSync(path.join(folder, 'scripts', 'run.sh'), 'echo hi\n')
+      const added = await runCommand(Skills, {target: 'add', agent: agent.name}, {folder, json: false})
+      expect(added.errors).to.deep.equal([])
+      const installed = path.join(agent.dir, 'skills', testCase.name)
+      expect(fs.readdirSync(installed).filter((name) => name.toLowerCase() === 'skill.md')).to.deep.equal([filename])
+      expect(fs.readFileSync(path.join(installed, filename), 'utf8')).to.equal(testCase.markdown)
+      expect(fs.readFileSync(path.join(installed, 'scripts', 'run.sh'), 'utf8')).to.equal('echo hi\n')
+      expect(readConfig(agent.dir).skills[0].description).to.equal(testCase.description)
+      expect(readConfig(agent.dir).skills[0].description).to.not.include('\n')
+      fs.rmSync(folder, {recursive: true, force: true})
+    })
+  }
+
+  it('rejects a blank or missing description from a folder', async () => {
+    for (const markdown of [
+      '---\nname: blank-desc\ndescription: "   "\n---\n',
+      '---\nname: blank-desc\n---\n# Body\n',
+    ]) {
+      const agent = makeAgent()
+      const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-skill-blank-'))
+      fs.writeFileSync(path.join(folder, 'SKILL.md'), markdown)
+      const before = fs.readFileSync(path.join(agent.dir, 'agent.yaml'), 'utf8')
+      const result = await runCommand(Skills, {target: 'add', agent: agent.name}, {folder, json: false})
+      expect(result.errors.join('\n')).to.include('description')
+      expect(fs.readFileSync(path.join(agent.dir, 'agent.yaml'), 'utf8')).to.equal(before)
+      expect(fs.existsSync(path.join(agent.dir, 'skills'))).to.equal(false)
+      fs.rmSync(folder, {recursive: true, force: true})
+    }
+  })
 })

@@ -39,6 +39,45 @@ const LITERAL_DESCRIPTION = [
   '',
 ].join('\n')
 
+const WRAPPED = 'Sort incoming mail into buckets. Use this when new mail arrives.'
+const LONG_LEFT = 'A'.repeat(512)
+const LONG_RIGHT = 'B'.repeat(511)
+const LONG_DESCRIPTION = `${LONG_LEFT} ${LONG_RIGHT}`
+
+function foldedMarkdown(name: string): string {
+  return `---\nname: ${name}\ndescription: >\n  Sort incoming mail into buckets.\n  Use this when new mail arrives.\n---\n`
+}
+
+function literalMarkdown(name: string): string {
+  return `---\nname: ${name}\ndescription: |\n  Sort incoming mail into buckets.\n  Use this when new mail arrives.\n---\n`
+}
+
+function minimalMarkdown(name = 'skill-name'): string {
+  return `---\nname: ${name}\ndescription: A description of what this skill does and when to use it.\n---\n`
+}
+
+function metadataMarkdown(): string {
+  return [
+    '---',
+    'name: pdf-processing',
+    'description: Extract PDF text, fill forms, merge files. Use when handling PDFs.',
+    'license: Apache-2.0',
+    'metadata:',
+    '  author: example-org',
+    '  version: "1.0"',
+    '---',
+    '',
+  ].join('\n')
+}
+
+function longMarkdown(): string {
+  return `---\nname: long-desc\ndescription: |\n  ${LONG_LEFT}\n  ${LONG_RIGHT}\n---\n`
+}
+
+function oneLineMarkdown(): string {
+  return '---\nname: triage\ndescription: Sort incoming mail into buckets\n---\n\n# Triage\n\nSort the mail.\n'
+}
+
 function skillMarkdown(name: string, description: string, body: string): string {
   return renderSkillMarkdown(name, description, body)
 }
@@ -151,6 +190,24 @@ describe('skill folder paths and markdown', () => {
   it('reads stdin when the body flag is -', () => {
     expect(readSkillBody('-', () => '# From stdin\n')).to.equal('# From stdin\n')
     expect(readSkillBody('# Inline\n', () => 'ignored')).to.equal('# Inline\n')
+  })
+
+  it('accepts a frontmatter-only skill and collapses wrapped descriptions', () => {
+    expect(parseSkillMarkdown(minimalMarkdown())).to.deep.equal({
+      name: 'skill-name',
+      description: 'A description of what this skill does and when to use it.',
+      body: '',
+    })
+    expect(parseSkillMarkdown(foldedMarkdown('folded-skill')).description).to.equal(WRAPPED)
+    expect(parseSkillMarkdown(literalMarkdown('literal-skill')).description).to.equal(WRAPPED)
+    const parsedLong = parseSkillMarkdown(longMarkdown())
+    expect(parsedLong.description).to.equal(LONG_DESCRIPTION)
+    expect(parsedLong.description).to.have.length(1024)
+    const oneLine = parseSkillMarkdown(oneLineMarkdown())
+    expect(oneLine.description).to.equal('Sort incoming mail into buckets')
+    expect(oneLine.body).to.equal('# Triage\n\nSort the mail.')
+    expect(() => parseSkillMarkdown('---\nname: triage\ndescription: "   "\n---\n')).to.throw(SkillError, /description/)
+    expect(() => parseSkillMarkdown('---\nname: triage\n---\nBody\n')).to.throw(SkillError, /description/)
   })
 })
 
@@ -304,6 +361,110 @@ describe('installFromGitHub', () => {
     expect(stored.description).to.equal(
       'Sort incoming mail into buckets. Use when the user asks to triage an inbox.',
     )
+    fs.rmSync(src, {recursive: true, force: true})
+  })
+})
+
+describe('installFromGitHub agent skills directories', () => {
+  const agentsDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-skills-agentskills-'))
+  const agentName = 'email-agent'
+
+  before(() => {
+    const agent = path.join(agentsDir, agentName)
+    fs.mkdirSync(agent, {recursive: true})
+    fs.writeFileSync(path.join(agent, 'agent.yaml'), 'name: email-agent\ndescription: Mail\n')
+  })
+
+  after(() => {
+    fs.rmSync(agentsDir, {recursive: true, force: true})
+  })
+
+  const cases: Array<{title: string; name: string; filename?: string; markdown: string; description: string}> = [
+    {
+      title: 'a frontmatter-only file',
+      name: 'skill-name',
+      markdown: minimalMarkdown(),
+      description: 'A description of what this skill does and when to use it.',
+    },
+    {
+      title: 'a folded description',
+      name: 'folded-skill',
+      markdown: foldedMarkdown('folded-skill'),
+      description: WRAPPED,
+    },
+    {
+      title: 'a literal description of two sentences',
+      name: 'literal-skill',
+      markdown: literalMarkdown('literal-skill'),
+      description: WRAPPED,
+    },
+    {
+      title: 'skill.md',
+      name: 'lower-skill',
+      filename: 'skill.md',
+      markdown: minimalMarkdown('lower-skill'),
+      description: 'A description of what this skill does and when to use it.',
+    },
+    {
+      title: 'license and metadata',
+      name: 'pdf-processing',
+      markdown: metadataMarkdown(),
+      description: 'Extract PDF text, fill forms, merge files. Use when handling PDFs.',
+    },
+    {
+      title: 'a one-line skill with a body',
+      name: 'triage',
+      markdown: oneLineMarkdown(),
+      description: 'Sort incoming mail into buckets',
+    },
+    {
+      title: 'a 1024-character description',
+      name: 'long-desc',
+      markdown: longMarkdown(),
+      description: LONG_DESCRIPTION,
+    },
+  ]
+
+  for (const testCase of cases) {
+    it(`installs ${testCase.title}`, () => {
+      const filename = testCase.filename ?? 'SKILL.md'
+      const src = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-skill-src-'))
+      fs.writeFileSync(path.join(src, filename), testCase.markdown)
+      fs.mkdirSync(path.join(src, 'scripts'))
+      fs.writeFileSync(path.join(src, 'scripts', 'run.sh'), 'echo hi\n')
+      const entry = installFromGitHub({
+        agentName,
+        repo: 'owner/repo',
+        sourceLabel: 'owner/repo',
+        agentsDir,
+        clone: (_url, dest) => fs.cpSync(src, dest, {recursive: true}),
+      })
+      expect(entry.description).to.equal(testCase.description)
+      expect(entry.description).to.have.length(testCase.description.length)
+      const installed = path.join(agentsDir, agentName, 'skills', testCase.name)
+      expect(fs.readdirSync(installed).filter((name) => name.toLowerCase() === 'skill.md')).to.deep.equal([filename])
+      expect(fs.readFileSync(path.join(installed, filename), 'utf8')).to.equal(testCase.markdown)
+      expect(fs.readFileSync(path.join(installed, 'scripts', 'run.sh'), 'utf8')).to.equal('echo hi\n')
+      const config = yaml.parse(fs.readFileSync(path.join(agentsDir, agentName, 'agent.yaml'), 'utf8'))
+      const recorded = config.skills.find((skill: {name: string}) => skill.name === testCase.name)
+      expect(recorded.description).to.equal(testCase.description)
+      fs.rmSync(src, {recursive: true, force: true})
+    })
+  }
+
+  it('rejects a blank description and writes nothing new', () => {
+    const before = fs.readFileSync(path.join(agentsDir, agentName, 'agent.yaml'), 'utf8')
+    const src = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-skill-blank-'))
+    fs.writeFileSync(path.join(src, 'SKILL.md'), '---\nname: blank-desc\ndescription: "   "\n---\n')
+    expect(() => installFromGitHub({
+      agentName,
+      repo: 'owner/repo',
+      sourceLabel: 'owner/repo',
+      agentsDir,
+      clone: (_url, dest) => fs.cpSync(src, dest, {recursive: true}),
+    })).to.throw(SkillError, /description/)
+    expect(fs.readFileSync(path.join(agentsDir, agentName, 'agent.yaml'), 'utf8')).to.equal(before)
+    expect(fs.existsSync(path.join(agentsDir, agentName, 'skills', 'blank-desc'))).to.equal(false)
     fs.rmSync(src, {recursive: true, force: true})
   })
 })

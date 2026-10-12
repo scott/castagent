@@ -28,6 +28,63 @@ description: |
 # Inbox
 """
 
+WRAPPED = "Sort incoming mail into buckets. Use this when new mail arrives."
+LONG_LEFT = "A" * 512
+LONG_RIGHT = "B" * 511
+LONG_DESCRIPTION = f"{LONG_LEFT} {LONG_RIGHT}"
+
+
+def _folded(name="folded-skill"):
+    return (
+        f"---\nname: {name}\ndescription: >\n"
+        "  Sort incoming mail into buckets.\n"
+        "  Use this when new mail arrives.\n---\n"
+    )
+
+
+def _literal(name="literal-skill"):
+    return (
+        f"---\nname: {name}\ndescription: |\n"
+        "  Sort incoming mail into buckets.\n"
+        "  Use this when new mail arrives.\n---\n"
+    )
+
+
+def _minimal(name="skill-name"):
+    return (
+        f"---\nname: {name}\n"
+        "description: A description of what this skill does and when to use it.\n---\n"
+    )
+
+
+def _metadata():
+    return (
+        "---\n"
+        "name: pdf-processing\n"
+        "description: Extract PDF text, fill forms, merge files. Use when handling PDFs.\n"
+        "license: Apache-2.0\n"
+        "metadata:\n"
+        "  author: example-org\n"
+        '  version: "1.0"\n'
+        "---\n"
+    )
+
+
+def _long():
+    return (
+        "---\nname: long-desc\ndescription: |\n"
+        f"  {LONG_LEFT}\n"
+        f"  {LONG_RIGHT}\n---\n"
+    )
+
+
+def _one_line():
+    return (
+        "---\nname: triage\n"
+        "description: Sort incoming mail into buckets\n"
+        "---\n\n# Triage\n\nSort the mail.\n"
+    )
+
 
 def _skill(directory, name, description, body):
     directory.mkdir(parents=True)
@@ -42,7 +99,7 @@ def _use_home(monkeypatch, home):
     return home
 
 
-class TestParseSkillMarkdown:
+class TestCollapseWrappedDescriptions:
     def test_folded_description_is_one_line(self):
         parsed = _parse_skill_markdown(FOLDED_SKILL)
         assert parsed is not None
@@ -240,4 +297,63 @@ class TestLoadSystemPromptSkills:
         assert isinstance(agent.messages[0], SystemMessage)
         assert agent.messages[0].content == agent.system_prompt
         assert "Alpha body." in agent.messages[0].content
+        assert not (home / ".cast" / "agents").exists()
+
+
+class TestParseSkillMarkdown:
+    def test_frontmatter_only(self):
+        parsed = _parse_skill_markdown(_minimal())
+        assert parsed is not None
+        name, description, body = parsed
+        assert name == "skill-name"
+        assert description == "A description of what this skill does and when to use it."
+        assert body.strip() == ""
+
+    def test_folded_paragraph_is_one_line(self):
+        parsed = _parse_skill_markdown(_folded())
+        assert parsed is not None
+        assert parsed[1] == WRAPPED
+        assert "\n" not in parsed[1]
+
+    def test_literal_two_sentences_are_separated_by_a_space(self):
+        parsed = _parse_skill_markdown(_literal())
+        assert parsed is not None
+        assert parsed[1] == WRAPPED
+
+    def test_license_and_metadata_do_not_reject_the_skill(self):
+        parsed = _parse_skill_markdown(_metadata())
+        assert parsed is not None
+        assert parsed[0] == "pdf-processing"
+        assert parsed[1] == "Extract PDF text, fill forms, merge files. Use when handling PDFs."
+
+    def test_blank_or_missing_description_is_invalid(self):
+        assert _parse_skill_markdown('---\nname: triage\ndescription: "   "\n---\n') is None
+        assert _parse_skill_markdown("---\nname: triage\n---\nBody\n") is None
+        assert _parse_skill_markdown("---\nname: triage\ndescription: >\n  \n---\n") is None
+
+    def test_one_line_skill_with_a_body_is_unchanged(self):
+        parsed = _parse_skill_markdown(_one_line())
+        assert parsed is not None
+        assert parsed[0] == "triage"
+        assert parsed[1] == "Sort incoming mail into buckets"
+        assert "Sort the mail." in parsed[2]
+        assert "# Triage" in parsed[2]
+
+    def test_1024_character_description_stays_intact(self):
+        parsed = _parse_skill_markdown(_long())
+        assert parsed is not None
+        assert parsed[1] == LONG_DESCRIPTION
+        assert len(parsed[1]) == 1024
+
+    def test_lowercase_skill_file_loads_the_collapsed_description(self, monkeypatch, tmp_path):
+        home = _use_home(monkeypatch, tmp_path / "home")
+        directory = home / ".cast" / "builder" / "skills" / "not-the-skill-name"
+        directory.mkdir(parents=True)
+        (directory / "skill.md").write_text(_literal("triage"))
+
+        prompt = load_system_prompt()
+
+        assert "### triage\n" + WRAPPED + "\n" in prompt
+        assert "Sort incoming mail into buckets.\n" not in prompt
+        assert (directory / "skill.md").is_file()
         assert not (home / ".cast" / "agents").exists()
