@@ -317,8 +317,9 @@ export async function showChatScreen(
         void appendSessionMessage(currentSessionId, 'user', text)
       }
 
+      let stream: ReturnType<typeof messages.addStreamingAgentMessage> | undefined
       try {
-        const stream = messages.addStreamingAgentMessage(mode)
+        stream = messages.addStreamingAgentMessage(mode)
         let fullResponse = ''
         let uiAction: Record<string, unknown> | undefined
 
@@ -360,6 +361,7 @@ export async function showChatScreen(
           }
         }
       } catch (err) {
+        stream?.cancel()
         const errorMsg = `Error: ${err instanceof Error ? err.message : String(err)}`
         messages.addAgentMessage(errorMsg, mode)
       }

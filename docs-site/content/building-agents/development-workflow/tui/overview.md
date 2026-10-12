@@ -75,6 +75,8 @@ The TUI streams A2A responses as the agent produces them. The message
 bubble grows in place rather than appearing all at once; long responses
 scroll automatically while you read.
 
+A reply shows an animated "Working" indicator until the first token arrives.
+
 ## Slash commands
 
 The input line accepts `/` commands. The full list is on the
