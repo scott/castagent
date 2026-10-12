@@ -10,6 +10,51 @@ from typing import Any, AsyncGenerator, Dict, List, Optional
 from .agent.base import AgentConfig
 from .agent.runtime import RuntimeAgent
 
+# The MicroVM edge closes a response that sends no bytes for about 15 seconds.
+# A tool call that installs a skill is quiet for longer than that. A padded
+# comment forces a buffering proxy to flush, which resets the idle timer.
+STREAM_KEEPALIVE_INTERVAL = 5
+STREAM_KEEPALIVE = ": " + ("keepalive " * 400) + "\n\n"
+
+
+async def with_stream_keepalive(
+    events: AsyncGenerator[str, None],
+    interval: float = STREAM_KEEPALIVE_INTERVAL,
+    keepalive: str = STREAM_KEEPALIVE,
+) -> AsyncGenerator[str, None]:
+    """Yield events from `events`, and a comment when it is quiet."""
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def pump() -> None:
+        try:
+            async for event in events:
+                await queue.put(("event", event))
+        except Exception as exc:
+            await queue.put(("error", exc))
+        else:
+            await queue.put(("end", None))
+
+    task = asyncio.create_task(pump())
+    try:
+        while True:
+            try:
+                kind, payload = await asyncio.wait_for(queue.get(), interval)
+            except asyncio.TimeoutError:
+                yield keepalive
+                continue
+            if kind == "end":
+                break
+            if kind == "error":
+                raise payload
+            yield payload
+    finally:
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+
 def request_auth_error(auth_token_hash: Optional[str], headers) -> Optional[str]:
     """Return an error message when a request must be rejected, else None.
 
@@ -287,7 +332,7 @@ class A2AServer:
                 # Check if client requests streaming
                 if "text/event-stream" in accept:
                     async def event_generator():
-                        async for event in self.handle_streaming_request(data):
+                        async for event in with_stream_keepalive(self.handle_streaming_request(data)):
                             yield event
 
                     return StreamingResponse(
@@ -295,7 +340,7 @@ class A2AServer:
                         media_type="text/event-stream",
                         headers={
                             "Cache-Control": "no-cache",
-                            "Connection": "keep-alive",
+                            "X-Accel-Buffering": "no",
                         },
                     )
 

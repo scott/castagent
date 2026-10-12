@@ -1,3 +1,4 @@
+import asyncio
 import os
 import pytest
 from unittest.mock import patch, MagicMock, AsyncMock
@@ -6,6 +7,7 @@ from cast.agent.base import AgentConfig
 from cast.agent.runtime import RuntimeAgent
 from cast.runtime import (
     A2AServer,
+    with_stream_keepalive,
     JSONRPC_PARSE_ERROR,
     JSONRPC_INVALID_REQUEST,
     JSONRPC_METHOD_NOT_FOUND,
@@ -637,6 +639,54 @@ class TestA2AServerStreaming:
             if "result" in data or "error" in data:
                 assert data["jsonrpc"] == "2.0"
                 break
+
+
+class TestStreamKeepalive:
+    """The MicroVM edge closes a stream that is quiet for about 15 seconds."""
+
+    @pytest.mark.asyncio
+    async def test_emits_a_comment_while_the_agent_is_quiet(self):
+        async def slow():
+            await asyncio.sleep(0.15)
+            yield "data: hi\n\n"
+
+        chunks = []
+        async for chunk in with_stream_keepalive(slow(), interval=0.05, keepalive=": keepalive\n\n"):
+            chunks.append(chunk)
+
+        assert chunks[-1] == "data: hi\n\n"
+        assert any(chunk == ": keepalive\n\n" for chunk in chunks[:-1])
+
+    @pytest.mark.asyncio
+    async def test_propagates_agent_errors(self):
+        async def broken():
+            await asyncio.sleep(0.01)
+            raise RuntimeError("boom")
+            yield "unused"
+
+        with pytest.raises(RuntimeError, match="boom"):
+            async for _chunk in with_stream_keepalive(broken(), interval=1, keepalive=": keepalive\n\n"):
+                pass
+
+    @pytest.mark.asyncio
+    async def test_stops_the_agent_when_the_client_disconnects(self):
+        started = asyncio.Event()
+        cancelled = asyncio.Event()
+
+        async def forever():
+            started.set()
+            try:
+                await asyncio.sleep(30)
+                yield "data: late\n\n"
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        generator = with_stream_keepalive(forever(), interval=0.05, keepalive=": keepalive\n\n")
+        first = await generator.__anext__()
+        assert first == ": keepalive\n\n"
+        await generator.aclose()
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
 
 
 class TestA2AServerErrors:

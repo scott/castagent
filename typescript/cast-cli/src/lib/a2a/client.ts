@@ -125,6 +125,10 @@ export class A2AClient {
           )
         }
 
+        if (this.isUnexpectedSocketClose(axiosError)) {
+          return new A2AClientError(this.socketClosedMessage(), 'ECONNRESET')
+        }
+
         return new A2AClientError(
           `Network error: ${axiosError.message}`,
           axiosError.code,
@@ -280,43 +284,68 @@ export class A2AClient {
     stream.setEncoding('utf8')
 
     let buffer = ''
-    for await (const chunk of stream) {
-      buffer += chunk as string
-      const lines = buffer.split('\n')
-      buffer = lines.pop() || ''
+    try {
+      for await (const chunk of stream) {
+        buffer += chunk as string
+        const lines = buffer.split('\n')
+        buffer = lines.pop() || ''
 
-      for (const line of lines) {
-        if (line.startsWith('data: ')) {
-          const data = line.slice(6)
-          if (data === '[DONE]') {
-            return
-          }
-
-          try {
-            const parsed: A2AResponse = JSON.parse(data)
-            if (parsed.error) {
-              throw new Error(`A2A error: ${parsed.error.message}`)
+        for (const line of lines) {
+          if (line.startsWith('data: ')) {
+            const data = line.slice(6)
+            if (data === '[DONE]') {
+              return
             }
 
-            const parts: A2APart[] = parsed.result?.parts || []
-            const metadata = parsed.result?.metadata
-            const uiAction = metadata?.uiAction as Record<string, unknown> | undefined
-
-            for (const part of parts) {
-              if (part.text) {
-                yield { text: part.text, uiAction }
+            try {
+              const parsed: A2AResponse = JSON.parse(data)
+              if (parsed.error) {
+                throw new Error(`A2A error: ${parsed.error.message}`)
               }
+
+              const parts: A2APart[] = parsed.result?.parts || []
+              const metadata = parsed.result?.metadata
+              const uiAction = metadata?.uiAction as Record<string, unknown> | undefined
+
+              for (const part of parts) {
+                if (part.text) {
+                  yield { text: part.text, uiAction }
+                }
+              }
+            } catch (error) {
+              // Ignore parse errors for non-JSON lines
+              if (error instanceof Error && !error.message.includes('A2A error')) {
+                continue
+              }
+              throw error
             }
-          } catch (error) {
-            // Ignore parse errors for non-JSON lines
-            if (error instanceof Error && !error.message.includes('A2A error')) {
-              continue
-            }
-            throw error
           }
         }
       }
+    } catch (error) {
+      if (error instanceof A2AClientError) throw error
+      if (this.isUnexpectedSocketClose(error)) {
+        throw new A2AClientError(this.socketClosedMessage(), 'ECONNRESET')
+      }
+      throw error
     }
+  }
+
+  private isUnexpectedSocketClose(error: unknown): boolean {
+    const message = error instanceof Error ? error.message : String(error)
+    const code = typeof error === 'object' && error !== null && 'code' in error
+      ? String((error as {code?: unknown}).code ?? '')
+      : ''
+    return code === 'ECONNRESET'
+      || message.includes('socket connection was closed')
+      || message.includes('socket hang up')
+  }
+
+  private socketClosedMessage(): string {
+    if (this.pausesBetweenRequests()) {
+      return 'The MicroVM edge closed the chat stream. It drops a response that sends no data for about 15 seconds, which happens during a long step such as installing a skill.'
+    }
+    return 'The connection closed while the agent was still responding.'
   }
 
   private generateId(): string {
