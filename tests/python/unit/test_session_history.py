@@ -76,13 +76,15 @@ def llm_runtime(temp_agent_dir):
         yield AIMessageChunk(content=text), {}
 
     with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
-        with patch("cast.agent.runtime.OpenRouterProvider") as provider_cls, patch(
+        with patch("cast.agent.runtime.get_provider") as get_provider, patch(
             "cast.agent.runtime.create_react_agent"
         ) as create_graph:
             provider = MagicMock()
+            provider.is_available.return_value = True
             provider.create_llm.return_value = MagicMock()
-            provider_cls.return_value = provider
-            provider_cls.is_available.return_value = True
+            provider.env_var = "OPENROUTER_API_KEY"
+            provider.name = "OpenRouter"
+            get_provider.return_value = provider
             graph = MagicMock()
             graph.ainvoke = ainvoke
             graph.astream = astream
