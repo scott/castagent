@@ -148,6 +148,7 @@ async function showProviderSelection(
   agentName: string,
   provider: string,
   messagesComponent: any,
+  previouslyFocused: Renderable,
 ) {
   const providers = DEPLOYMENT_PROVIDERS
 
@@ -215,14 +216,14 @@ async function showProviderSelection(
       selectedIndex = index
       const selectedProvider = providers[selectedIndex].key
       modal.hide()
-      handleDeployModal(renderer, renderer.root, agentName, selectedProvider, messagesComponent)
+      handleDeployModal(renderer, previouslyFocused, agentName, selectedProvider, messagesComponent)
       return true
     }
     // Handle Enter key
     if (key.name === 'return' || key.name === 'enter') {
       const selectedProvider = providers[selectedIndex].key
       modal.hide()
-      handleDeployModal(renderer, renderer.root, agentName, selectedProvider, messagesComponent)
+      handleDeployModal(renderer, previouslyFocused, agentName, selectedProvider, messagesComponent)
       return true
     }
     if (key.name === 'escape') {
@@ -242,6 +243,7 @@ async function showAgentSelection(
   agentName: string,
   provider: string,
   messagesComponent: any,
+  previouslyFocused: Renderable,
 ) {
   const validAgents = listAgents()
 
@@ -331,7 +333,7 @@ async function showAgentSelection(
     if (key.name === 'return' || key.name === 'enter') {
       const selectedAgent = validAgents[selectedIndex]
       modal.hide()
-      handleDeployModal(renderer, renderer.root, selectedAgent, provider, messagesComponent)
+      handleDeployModal(renderer, previouslyFocused, selectedAgent, provider, messagesComponent)
       return true
     }
     if (key.name === 'escape') {
@@ -344,13 +346,13 @@ async function showAgentSelection(
 
 export async function handleDeployModal(
   renderer: any,
-  _previouslyFocused: Renderable,
+  previouslyFocused: Renderable,
   agentName: string,
   provider: string,
   messagesComponent: any,
 ): Promise<void> {
-  // Use the renderer's root as the previously focused (or renderer itself)
-  const prevFocused = renderer.root || renderer
+  // Closing the modal returns focus to the chat input, not the renderer root.
+  const prevFocused = previouslyFocused
 
   // If no provider specified, show provider selection
   if (!provider) {
@@ -382,7 +384,7 @@ export async function handleDeployModal(
     })
 
     // Add content BEFORE setting it on the modal (like slash-registry does)
-    await showProviderSelection(renderer, modal, contentBox, outputScroll, agentName, provider, messagesComponent)
+    await showProviderSelection(renderer, modal, contentBox, outputScroll, agentName, provider, messagesComponent, previouslyFocused)
 
     contentBox.add(outputScroll)
     modal.setContent(contentBox)
@@ -422,7 +424,7 @@ export async function handleDeployModal(
     })
 
     // Add content BEFORE setting it on the modal (like slash-registry does)
-    await showAgentSelection(renderer, modal, contentBox, outputScroll, agentName, provider, messagesComponent)
+    await showAgentSelection(renderer, modal, contentBox, outputScroll, agentName, provider, messagesComponent, previouslyFocused)
 
     contentBox.add(outputScroll)
     modal.setContent(contentBox)
