@@ -142,7 +142,6 @@ castagent/                        # Project repo
 │       ├── src/
 │       │   ├── index.ts
 │       │   ├── screens/
-│       │   │   ├── welcome.ts         # Welcome screen
 │       │   │   └── chat.ts            # Chat screen
 │       │   └── components/
 │       │       ├── header.ts
@@ -761,27 +760,27 @@ The Cast TUI uses **OpenTUI** — a native Zig core with TypeScript bindings, po
 
 ### Screen States
 
+The TUI opens on the chat screen as soon as the renderer starts. `dev`, `production`, and `on-host` all do this.
+
 ```
-┌─────────────┐      timer/key      ┌─────────────┐
-│   Welcome   │ ─────────────────▶  │    Chat     │
-│   Screen    │                    │    Screen   │
-│ (full takeover) │                    │             │
-└─────────────┘                    └─────────────┘
-                                          │
-                                     Tab key toggles
-                                          │
-                         ┌────────────────┴────────────────┐
-                         ▼                                ▼
-                   [PLAN MODE]                       [BUILD MODE]
-                   (read-only, no exec)               (full execution)
+┌─────────────┐
+│    Chat     │
+│    Screen   │
+└─────────────┘
+       │
+  Tab key toggles
+       │
+┌──────┴──────────────────┐
+▼                         ▼
+[PLAN MODE]          [BUILD MODE]
+(read-only, no exec)  (full execution)
 ```
 
 ### Screen State Machine
 
 | State | Description |
 |-------|-------------|
-| `ScreenWelcome` | Initial full-screen takeover showing Cast branding and agent name |
-| `ScreenChat` | Main interaction screen with agent |
+| `ScreenChat` | Main interaction screen with agent. Shown immediately; there is no screen before it. |
 
 ### Chat Modes
 
@@ -792,12 +791,9 @@ The Cast TUI uses **OpenTUI** — a native Zig core with TypeScript bindings, po
 
 ### Welcome Screen
 
-- Full viewport takeover using terminal clear + cursor hide
-- Cast branding with ASCII art logo
-- Agent name display: `"Creating: <agent-name>"`
-- Help text: `"Press any key to start..."`
-- Auto-advances after 2 seconds if no input
-- Any keypress skips immediately
+Removed. There is no splash before the chat. `dev`, `production`, and `on-host` open on the chat screen as soon as the renderer starts, with the input focused and ready to type.
+
+A `--welcome` string is still the first agent message in the chat when one is passed. On-host mode still shows the agent introduction. Those are chat messages, not a separate screen.
 
 ### Chat Screen
 
@@ -1223,7 +1219,7 @@ assertions:
 ### Phase 2: OpenTUI TUI (2-3 weeks)
 
 - [ ] Set up OpenTUI subprocess management
-- [ ] Create Welcome screen with full-viewport takeover
+- [ ] Open the TUI directly on the chat screen (no splash)
 - [ ] Create Chat screen with Plan/Build mode toggle
 - [ ] Implement Tab key for mode toggle
 - [ ] Add slash commands (`/help`, `/exit`, `/thinking`, etc.)
@@ -1354,7 +1350,6 @@ typescript/
     ├── src/
     │   ├── index.ts
     │   ├── screens/
-    │   │   ├── welcome.ts
     │   │   └── chat.ts
     │   └── components/
     │       ├── header.ts
