@@ -1,6 +1,6 @@
 [project]
 name = "cast"
-version = "2.1.0"
+version = "2.2.0"
 description = "Cast - Agent Building & Deployment Platform Runtime"
 readme = "README.md"
 license = {text = "Apache-2.0"}

@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.2.0] - 2026-10-11
+
+### Added
+
+- Highlighting text in the TUI copies that selection on mouse-up, in dev, production, and on-host. On-host reaches the local clipboard through OSC 52 ([#69](https://github.com/scott/castagent/pull/69)).
+- A reply shows an animated "Working" indicator until the first token arrives, including elapsed seconds after one second ([#71](https://github.com/scott/castagent/pull/71)).
+- The TUI opens on the chat screen. The startup splash is gone. A `--welcome` string is still shown as the first chat message when one is passed ([#70](https://github.com/scott/castagent/pull/70)).
+- The chat cursor stays in the input after send, slash commands, modal close, and mouse-up. Pressing `/` jumps there when focus is elsewhere ([#72](https://github.com/scott/castagent/pull/72)).
+
+### Fixed
+
+- DigitalOcean image streaming timeouts, with gzip on the image stream, an opt-in on-host TUI, and a larger default droplet ([#44](https://github.com/scott/castagent/pull/44)).
+- Deploys wait until Docker is ready on a fresh DigitalOcean droplet ([#42](https://github.com/scott/castagent/pull/42)).
+- The docs site uses the GitHub Pages project base path so styles and links resolve ([#50](https://github.com/scott/castagent/pull/50)).
+- `install.sh` removes a stale pre-TypeScript `cast` binary that could shadow the TypeScript CLI ([#54](https://github.com/scott/castagent/pull/54)).
+
 ## [2.1.0] - 2026-07-17
 
 ### Added
