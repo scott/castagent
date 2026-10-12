@@ -23,6 +23,7 @@ import {
   probeAuthResult,
   sanitizeMicrovmName,
   sanitizeRepoName,
+  copyCastRuntime,
 } from '../../../typescript/cast-cli/src/lib/deploy/microvm'
 import {readDoctlAccessToken} from '../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 
@@ -37,6 +38,29 @@ describe('DigitalOcean MicroVM helpers', () => {
 
   it('rejects an agent name that sanitizes to empty', () => {
     expect(() => sanitizeMicrovmName('---', '')).to.throw(/Cannot build a MicroVM name/)
+  })
+
+  it('replaces a stale packaged runtime with the current checkout', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-runtime-src-'))
+    const agent = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-agent-'))
+    try {
+      const source = path.join(root, 'python', 'cast')
+      fs.mkdirSync(source, {recursive: true})
+      fs.writeFileSync(path.join(source, 'runtime.py'), 'STREAM_KEEPALIVE = 5\n')
+      const stale = path.join(agent, '.cast-runtime', 'cast')
+      fs.mkdirSync(stale, {recursive: true})
+      fs.writeFileSync(path.join(stale, 'runtime.py'), 'old runtime\n')
+      fs.writeFileSync(path.join(stale, 'leftover.py'), 'from the previous image\n')
+
+      expect(copyCastRuntime(agent, root)).to.equal(true)
+      expect(fs.readFileSync(path.join(stale, 'runtime.py'), 'utf8')).to.include('STREAM_KEEPALIVE')
+      expect(fs.existsSync(path.join(stale, 'leftover.py'))).to.equal(false)
+      expect(copyCastRuntime(agent, path.join(root, 'missing'))).to.equal(false)
+      expect(fs.readFileSync(path.join(stale, 'runtime.py'), 'utf8')).to.include('STREAM_KEEPALIVE')
+    } finally {
+      fs.rmSync(root, {recursive: true, force: true})
+      fs.rmSync(agent, {recursive: true, force: true})
+    }
   })
 
   it('parses sizes and idle timeouts', () => {

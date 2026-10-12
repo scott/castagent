@@ -479,6 +479,16 @@ export default class MicrovmDeploy extends Command {
     const memory = decodeMemoryExport(exported)
     const encoded = memory.length > 0 ? memory.toString('base64') : ''
 
+    // A previous deploy left .cast-runtime/cast in the agent directory.
+    // Rebuild from that copy and the image keeps the old runtime, so a
+    // quiet chat stream still dies on the MicroVM edge.
+    const agentPath = getAgentPath(agentName)
+    if (!copyCastRuntime(agentPath)) {
+      throw new Error(
+        `Cast Python package not found under ${findProjectRoot()}. Run cast upgrade from a Cast Agent checkout so the image includes the current runtime.`,
+      )
+    }
+
     const sha = deployment.id as string
     const stamp = Date.now().toString(36)
     const ociRef = await buildAndPushImage(agentName, `${sha}-${stamp}`, log)
@@ -555,7 +565,7 @@ export default class MicrovmDeploy extends Command {
 
     ensureDockerfile(agentPath)
     createDockerignore(agentPath)
-    await this.copyCastRuntime(agentPath)
+    copyCastRuntime(agentPath)
     await prepareHostTuiBuildContext(agentPath, findProjectRoot(), {enabled: false})
 
     const deploymentId = generateDeploymentId()
@@ -653,15 +663,21 @@ export default class MicrovmDeploy extends Command {
     }
   }
 
-  private async copyCastRuntime(agentPath: string): Promise<void> {
-    const projectRoot = findProjectRoot()
-    const castRuntimeDir = path.join(agentPath, '.cast-runtime', 'cast')
-    fs.mkdirSync(path.dirname(castRuntimeDir), {recursive: true})
-    const castRuntimeSrc = path.join(projectRoot, 'python', 'cast')
-    if (!fs.existsSync(castRuntimeSrc)) return
-    if (fs.existsSync(castRuntimeDir)) fs.rmSync(castRuntimeDir, {recursive: true})
-    fs.cpSync(castRuntimeSrc, castRuntimeDir, {recursive: true})
-  }
+}
+
+/**
+ * Copy the current Cast runtime into the agent image context.
+ * Returns false when this checkout has no python/cast package.
+ * Replaces any runtime left behind by an earlier deploy.
+ */
+export function copyCastRuntime(agentPath: string, projectRoot: string = findProjectRoot()): boolean {
+  const castRuntimeSrc = path.join(projectRoot, 'python', 'cast')
+  if (!fs.existsSync(castRuntimeSrc)) return false
+  const castRuntimeDir = path.join(agentPath, '.cast-runtime', 'cast')
+  fs.mkdirSync(path.dirname(castRuntimeDir), {recursive: true})
+  if (fs.existsSync(castRuntimeDir)) fs.rmSync(castRuntimeDir, {recursive: true})
+  fs.cpSync(castRuntimeSrc, castRuntimeDir, {recursive: true})
+  return true
 }
 
 function requireToken(): string {

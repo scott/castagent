@@ -108,11 +108,11 @@ rebuilt, and the new container starts with the same volume. The
 - Public preview, region **MKC1** only, **linux/amd64** images only. Not for production.
 - The image is pushed to your team's DigitalOcean Container Registry. Cast reuses the existing registry, or creates one named `cast`.
 - The MicroVM pauses after an idle timeout (default 15 minutes, maximum 4 hours). The next request resumes it. While it is waking, the endpoint can return HTTP 503. Cast retries that response for about a minute. A paused MicroVM bills storage only.
-- The edge closes a chat stream that sends no bytes for about 15 seconds. A long step, such as installing a skill, used to fail with a socket error. The runtime now sends a keepalive every 5 seconds so that stream stays open. Redeploy the agent to pick this up.
+- The edge closes a chat stream that sends no bytes for about 15 seconds. A long step, such as installing a skill, used to fail with a socket error. The runtime sends a keepalive every 5 seconds so that stream stays open. Deploy or upgrade the agent so the image includes that runtime.
 - There is no SSH and no on-host TUI. `--with-tui` is rejected. Logs: `doctl compute microvm exec <id> -- <log command>`.
 - Every request to the endpoint sends your DigitalOcean token as `Authorization`. Cast also sends the agent token as `X-Cast-Authorization`. If deploy's probe gets 401, rerun with `--edge-auth-only`. That mode trusts any token on the team that has `microvm:access`.
 - Sizes are `1:2048` (default), `2:4096`, `8:16384`, and `16:32768`, passed as `--size`.
-- Upgrade copies memory off the old MicroVM and onto a new one. Stores larger than 8 MiB are left on the old MicroVM and the upgrade stops.
+- Upgrade copies memory off the old MicroVM and onto a new one, and packages the current Cast runtime into the new image. Stores larger than 8 MiB are left on the old MicroVM and the upgrade stops.
 - A custom-scoped token needs `microvm:create`, `microvm:read`, `microvm:update`, `microvm:delete`, `microvm:access`, and registry read/write.
 
 ## Pre-flight checklist
