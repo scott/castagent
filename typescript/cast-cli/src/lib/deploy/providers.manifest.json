@@ -1,0 +1,73 @@
+[
+  {
+    "key": "railway",
+    "name": "Railway",
+    "description": "Managed containers with automatic deployments",
+    "cliCommand": "railway",
+    "cliInstallUrl": "https://docs.railway.app/getting-started/installation",
+    "authCommand": "railway login",
+    "supportsWithTui": false,
+    "order": 10
+  },
+  {
+    "key": "fly",
+    "name": "Fly.io",
+    "description": "Distributed containers close to your users",
+    "cliCommand": "flyctl",
+    "cliInstallUrl": "https://fly.io/docs/hands-on/install-flyctl/",
+    "authCommand": "flyctl auth login",
+    "supportsWithTui": false,
+    "order": 20
+  },
+  {
+    "key": "digitalocean",
+    "name": "DigitalOcean",
+    "description": "Droplet with Docker container hosting",
+    "cliCommand": "doctl",
+    "cliInstallUrl": "https://docs.digitalocean.com/reference/doctl/how-to/install/",
+    "authCommand": "doctl auth init",
+    "authEnvVar": "DIGITALOCEAN_ACCESS_TOKEN",
+    "supportsWithTui": true,
+    "order": 30
+  },
+  {
+    "key": "microvm",
+    "name": "DigitalOcean MicroVM",
+    "description": "Firecracker microVM in MKC1. Pauses when idle, resumes on the next request.",
+    "cliCommand": "doctl",
+    "cliInstallUrl": "https://docs.digitalocean.com/reference/doctl/how-to/install/",
+    "authCommand": "doctl auth init",
+    "authEnvVar": "DIGITALOCEAN_ACCESS_TOKEN",
+    "supportsWithTui": false,
+    "order": 40
+  },
+  {
+    "key": "sprites",
+    "name": "Sprites",
+    "description": "Persistent Firecracker VMs on Fly.io (sprites.dev)",
+    "cliCommand": "sprite",
+    "cliInstallUrl": "https://sprites.dev/install.sh",
+    "authCommand": "sprite login",
+    "authEnvVar": "SPRITES_TOKEN",
+    "supportsWithTui": false,
+    "order": 50
+  },
+  {
+    "key": "docker",
+    "name": "Docker (local)",
+    "description": "Self-hosted Docker container on this machine",
+    "cliCommand": "docker",
+    "cliInstallUrl": "https://docs.docker.com/get-docker/",
+    "supportsWithTui": false,
+    "order": 60
+  },
+  {
+    "key": "local",
+    "name": "Local (no container)",
+    "description": "Run the agent directly on this machine without Docker",
+    "cliCommand": "",
+    "cliInstallUrl": "",
+    "supportsWithTui": false,
+    "order": 70
+  }
+]

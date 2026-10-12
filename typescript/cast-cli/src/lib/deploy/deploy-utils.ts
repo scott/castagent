@@ -817,23 +817,17 @@ export function getVolumeName(agentName: string, deploymentId: string): string {
   return `cast-${agentName}-${deploymentId}-memory`
 }
 
+/** Lazy require: the registry imports this module while it is still loading. */
+function loadDeploymentRegistry(): typeof import('./registry') {
+  return require('./registry')
+}
+
 export function getMemoryMountPath(provider: string): string {
-  switch (provider) {
-    case 'docker':
-      return '/app/agent/memory'
-    case 'fly':
-      return '/app/agent/memory'
-    case 'sprites':
-      return '/opt/cast-agent/memory'
-    case 'railway':
-      return '' // Railway uses CAST_MEMORY_PATH env var
-    case 'digitalocean':
-      return '/app/agent/memory'
-    case 'microvm':
-      return '/app/agent/memory'
-    default:
-      return '/app/agent/memory'
+  const registered = loadDeploymentRegistry().getDeploymentProvider(provider)
+  if (registered?.memory && typeof registered.memory.mountPath === 'string') {
+    return registered.memory.mountPath
   }
+  return '/app/agent/memory'
 }
 
 export async function createMemoryVolume(
@@ -843,53 +837,24 @@ export async function createMemoryVolume(
 ): Promise<VolumeConfig> {
   const volumeId = getVolumeName(agentName, deploymentId)
   const mountPath = getMemoryMountPath(provider)
-
-  switch (provider) {
-    case 'docker':
-      await execCommand('docker', ['volume', 'create', volumeId])
-      break
-    case 'fly':
-      await execCommand('flyctl', ['volumes', 'create', volumeId, '--size', '1', '--app', `cast-${agentName}`])
-      break
-    case 'sprites':
-      // For sprites, we create the host directory (actual volume creation happens at deploy time)
-      break
-    case 'railway':
-      await execCommand('railway', ['volume', 'create', volumeId])
-      break
-    case 'digitalocean':
-      // Volume creation and attachment happen in digitalocean.ts
-      break
-    case 'microvm':
-      // The MicroVM disk survives pause and resume. There is no separate volume.
-      break
-    default:
-      throw new Error(`Unsupported provider for memory volume: ${provider}`)
+  const registered = loadDeploymentRegistry().getDeploymentProvider(provider)
+  if (!registered?.memory?.create) {
+    throw new Error(`Unsupported provider for memory volume: ${provider}`)
   }
-
+  await registered.memory.create({agentName, deploymentId, volumeId, mountPath})
   return { volumeId, mountPath, provider }
 }
 
 export async function deleteMemoryVolume(volumeConfig: VolumeConfig, agentName: string): Promise<void> {
-  const { provider, volumeId } = volumeConfig
-
-  switch (provider) {
-    case 'docker':
-      await execCommandIgnoreError('docker', ['volume', 'rm', volumeId])
-      break
-    case 'fly':
-      await execCommandIgnoreError('flyctl', ['volumes', 'delete', volumeId, '--app', `cast-${agentName}`, '--yes'])
-      break
-    case 'sprites':
-      // Host directory cleanup happens at deploy time
-      break
-    case 'railway':
-      // Railway volumes are tied to projects and cleaned up with project deletion
-      break
-    case 'digitalocean':
-      // DigitalOcean volumes are cleaned up in digitalocean.ts destroy
-      break
-  }
+  const { provider, volumeId, mountPath } = volumeConfig
+  const registered = loadDeploymentRegistry().getDeploymentProvider(provider)
+  if (!registered?.memory?.delete) return
+  await registered.memory.delete({
+    agentName,
+    deploymentId: '',
+    volumeId,
+    mountPath,
+  })
 }
 
 /**

@@ -16,7 +16,14 @@ function loadProviders(): {
     compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022},
   }).outputText
   const module = {exports: {} as any}
-  const sandbox = {exports: module.exports, module, require}
+  const sandbox = {
+    exports: module.exports,
+    module,
+    require,
+    __dirname: path.dirname(file),
+    __filename: file,
+    process,
+  }
   vm.createContext(sandbox)
   vm.runInContext(js, sandbox)
   return module.exports

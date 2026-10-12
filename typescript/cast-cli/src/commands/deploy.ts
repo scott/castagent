@@ -4,81 +4,57 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import * as readline from 'readline'
-import DockerDeploy from '../lib/deploy/docker'
-import RailwayDeploy from '../lib/deploy/railway'
-import FlyDeploy from '../lib/deploy/fly'
-import DigitalOceanDeploy from '../lib/deploy/digitalocean'
-import SpritesDeploy from '../lib/deploy/sprites'
-import MicrovmDeploy from '../lib/deploy/microvm'
-import {checkCli, getProviderToken, generateDeploymentSha} from '../lib/deploy/deploy-utils'
+import {checkCli, generateAuthToken, generateDeploymentSha} from '../lib/deploy/deploy-utils'
+import {
+  deploymentProviderKeys,
+  deploymentProviderLoadErrors,
+  getDeploymentProvider,
+  isBuiltinDeploymentProvider,
+  listDeploymentProviders,
+  resolveProviderAuthToken,
+} from '../lib/deploy/registry'
+import type {DeployContext, DeploymentProvider} from '../lib/deploy/types'
 import {getCurrentRelease} from '../lib/releases'
 import {db} from '../lib/sqlite'
 
-const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'microvm', 'sprites', 'docker', 'local']
+const DOCKER_INSTALL_URL = 'https://docs.docker.com/get-docker/'
 
-interface ProviderInfo {
-  name: string
-  description: string
-  cliCommand: string
-  cliInstallUrl: string
-  authCommand?: string
-  authEnvVar?: string
-  authConfigKey?: string
-}
+function buildDeployFlags(): Record<string, any> {
+  const flags: Record<string, any> = {
+    force: Flags.boolean({
+      char: 'f',
+      description: 'Skip all interactive prompts (auto-commit uncommitted changes before deploying)',
+      default: false,
+    }),
+    provider: Flags.string({
+      description: 'Deployment provider',
+      options: deploymentProviderKeys(),
+    }),
+    port: Flags.integer({
+      description: 'Port for local deployment',
+      default: 8080,
+    }),
+    version: Flags.string({
+      description: 'Release version to deploy (defaults to latest/current state)',
+      default: 'latest',
+    }),
+    'with-tui': Flags.boolean({
+      description:
+        'Bundle the on-host TUI (cast-tui command) into the image. ' +
+        'Off by default to keep images small and streaming fast. ' +
+        'Only the DigitalOcean Droplet provider currently supports the on-host TUI. MicroVMs reject this flag.',
+      default: false,
+    }),
+  }
 
-const PROVIDERS: Record<string, ProviderInfo> = {
-  railway: {
-    name: 'Railway',
-    description: 'Managed containers with automatic deployments',
-    cliCommand: 'railway',
-    cliInstallUrl: 'https://docs.railway.app/getting-started/installation',
-    authCommand: 'railway login',
-  },
-  fly: {
-    name: 'Fly.io',
-    description: 'Distributed containers close to your users',
-    cliCommand: 'flyctl',
-    cliInstallUrl: 'https://fly.io/docs/hands-on/install-flyctl/',
-    authCommand: 'flyctl auth login',
-  },
-  digitalocean: {
-    name: 'DigitalOcean',
-    description: 'Droplet with Docker container hosting',
-    cliCommand: 'doctl',
-    cliInstallUrl: 'https://docs.digitalocean.com/reference/doctl/how-to/install/',
-    authCommand: 'doctl auth init',
-    authEnvVar: 'DIGITALOCEAN_ACCESS_TOKEN',
-    authConfigKey: 'providers.digitalocean.token',
-  },
-  microvm: {
-    name: 'DigitalOcean MicroVM',
-    description: 'Firecracker microVM in MKC1. Pauses when idle, resumes on the next request.',
-    cliCommand: 'doctl',
-    cliInstallUrl: 'https://docs.digitalocean.com/reference/doctl/how-to/install/',
-    authCommand: 'doctl auth init',
-    authEnvVar: 'DIGITALOCEAN_ACCESS_TOKEN',
-    authConfigKey: 'providers.digitalocean.token',
-  },
-  sprites: {
-    name: 'Sprites',
-    description: 'Persistent Firecracker VMs on Fly.io (sprites.dev)',
-    cliCommand: 'sprite',
-    cliInstallUrl: 'https://sprites.dev/install.sh',
-    authCommand: 'sprite login',
-    authEnvVar: 'SPRITES_TOKEN',
-  },
-  docker: {
-    name: 'Docker (local)',
-    description: 'Self-hosted Docker container on this machine',
-    cliCommand: 'docker',
-    cliInstallUrl: 'https://docs.docker.com/get-docker/',
-  },
-  local: {
-    name: 'Local (no container)',
-    description: 'Run the agent directly on this machine without Docker',
-    cliCommand: '',
-    cliInstallUrl: '',
-  },
+  for (const provider of listDeploymentProviders()) {
+    for (const [name, flag] of Object.entries(provider.flags || {})) {
+      if (name in flags) continue
+      flags[name] = flag
+    }
+  }
+
+  return flags
 }
 
 export default class Deploy extends Command {
@@ -94,43 +70,8 @@ export default class Deploy extends Command {
     '<%= config.bin %> <%= command.id %> email-agent --provider local',
   ]
 
-  static flags = {
-    force: Flags.boolean({
-      char: 'f',
-      description: 'Skip all interactive prompts (auto-commit uncommitted changes before deploying)',
-      default: false,
-    }),
-    provider: Flags.string({
-      description: 'Deployment provider',
-      options: VALID_PROVIDERS,
-    }),
-    port: Flags.integer({
-      description: 'Port for local deployment',
-      default: 8080,
-    }),
-    version: Flags.string({
-      description: 'Release version to deploy (defaults to latest/current state)',
-      default: 'latest',
-    }),
-    size: Flags.string({
-      description: 'DigitalOcean MicroVM size as cpu:memory-mib. One of 1:2048, 2:4096, 8:16384, 16:32768.',
-      default: '1:2048',
-    }),
-    'idle-timeout': Flags.string({
-      description: 'DigitalOcean MicroVM idle timeout before auto-pause (for example 15m, maximum 4h).',
-      default: '15m',
-    }),
-    'edge-auth-only': Flags.boolean({
-      description: 'DigitalOcean MicroVM only. Skip the per-agent AUTH_TOKEN and rely on the team microvm:access token.',
-      default: false,
-    }),
-    'with-tui': Flags.boolean({
-      description:
-        'Bundle the on-host TUI (cast-tui command) into the image. ' +
-        'Off by default to keep images small and streaming fast. ' +
-        'Only the DigitalOcean Droplet provider currently supports the on-host TUI. MicroVMs reject this flag.',
-      default: false,
-    }),
+  static get flags() {
+    return buildDeployFlags()
   }
 
   static args = {
@@ -189,22 +130,22 @@ export default class Deploy extends Command {
     this.log('╚══════════════════════════════════════════════════════════════╝')
     this.log('')
 
-    const providerEntries = Object.entries(PROVIDERS)
-    for (let i = 0; i < providerEntries.length; i++) {
-      const [key, info] = providerEntries[i]
+    const providers = listDeploymentProviders()
+    for (let i = 0; i < providers.length; i++) {
+      const info = providers[i]
       this.log(`  ${i + 1}. ${info.name}`)
       this.log(`     ${info.description}`)
       this.log('')
     }
 
-    const answer = await this.prompt('Enter number (1-' + providerEntries.length + '): ')
+    const answer = await this.prompt('Enter number (1-' + providers.length + '): ')
     const index = parseInt(answer, 10) - 1
 
-    if (isNaN(index) || index < 0 || index >= providerEntries.length) {
+    if (isNaN(index) || index < 0 || index >= providers.length) {
       this.error('Invalid selection. Please run the command again and enter a valid number.')
     }
 
-    return providerEntries[index][0]
+    return providers[index].key
   }
 
   private async prepareVersionForDeploy(agentName: string, agentPath: string, version: string): Promise<void> {
@@ -224,15 +165,15 @@ export default class Deploy extends Command {
     this.log(`Using release ${version} from ${release.tarball_path}`)
   }
 
-  private async walkthroughProviderSetup(provider: string, force = false): Promise<void> {
-    const info = PROVIDERS[provider]
-    if (!info) return
+  private async walkthroughProviderSetup(providerKey: string, force = false): Promise<void> {
+    const provider = getDeploymentProvider(providerKey)
+    if (!provider) return
 
-    // Cloud provider CLI check
-    if (info.cliCommand && provider !== 'docker' && provider !== 'local') {
+    const cli = provider.cli
+    if (cli?.command && cli.walkthrough !== 'skip') {
       let cliInstalled = false
       try {
-        await checkCli(info.cliCommand, info.cliInstallUrl)
+        await checkCli(cli.command, cli.installUrl)
         cliInstalled = true
       } catch {
         cliInstalled = false
@@ -241,23 +182,17 @@ export default class Deploy extends Command {
       if (!cliInstalled) {
         this.log('')
         this.log('─────────────────────────────────────────────────────────────')
-        this.log(`  ${info.name} CLI is not installed`)
+        this.log(`  ${provider.name} CLI is not installed`)
         this.log('─────────────────────────────────────────────────────────────')
         this.log('')
-        this.log('To deploy to ' + info.name + ', you need the ' + info.cliCommand + ' CLI.')
+        this.log('To deploy to ' + provider.name + ', you need the ' + cli.command + ' CLI.')
         this.log('')
         this.log('Install it:')
-        this.log('  ' + info.cliInstallUrl)
+        this.log('  ' + cli.installUrl)
         this.log('')
         this.log('Quick install commands:')
-        if (provider === 'railway') {
-          this.log('  npm install -g @railway/cli')
-          this.log('  # or')
-          this.log('  brew install railway')
-        } else if (provider === 'fly') {
-          this.log('  curl -L https://fly.io/install.sh | sh')
-          this.log('  # or')
-          this.log('  brew install flyctl')
+        for (const hint of cli.installHints || []) {
+          this.log('  ' + hint)
         }
         this.log('')
         const ready = await this.confirm('Have you installed the CLI and are ready to continue?', force)
@@ -268,17 +203,16 @@ export default class Deploy extends Command {
         }
       }
 
-      // Auth check for providers that use CLI login
-      if (info.authCommand) {
+      if (provider.auth?.command) {
         this.log('')
         this.log('─────────────────────────────────────────────────────────────')
-        this.log(`  Authenticate with ${info.name}`)
+        this.log(`  Authenticate with ${provider.name}`)
         this.log('─────────────────────────────────────────────────────────────')
         this.log('')
-        this.log('You need to be logged in to ' + info.name + '.')
+        this.log('You need to be logged in to ' + provider.name + '.')
         this.log('')
         this.log('Run this command in another terminal:')
-        this.log('  ' + info.authCommand)
+        this.log('  ' + provider.auth.command)
         this.log('')
         const ready = await this.confirm('Have you logged in and are ready to continue?', force)
         if (!ready) {
@@ -288,135 +222,90 @@ export default class Deploy extends Command {
         }
       }
 
-      // API token check for DigitalOcean droplets and MicroVMs
-      if (provider === 'digitalocean' || provider === 'microvm') {
-        const token = getProviderToken('digitalocean', ['DIGITALOCEAN_ACCESS_TOKEN', 'DIGITALOCEAN_API_TOKEN', 'DIGITALOCEAN_API_KEY'])
+      if (provider.auth?.tokenHelp) {
+        const token = resolveProviderAuthToken(provider)
         if (!token) {
-          this.log('')
-          this.log('─────────────────────────────────────────────────────────────')
-          this.log('  DigitalOcean API Token Required')
-          this.log('─────────────────────────────────────────────────────────────')
-          this.log('')
-          this.log('You need a DigitalOcean API token to deploy.')
-          this.log('')
-          this.log('Get your token:')
-          this.log('  1. Visit https://cloud.digitalocean.com/account/api/tokens')
-          this.log('  2. Click "Generate New Token"')
-          this.log('  3. Give it a name (e.g., "cast-deploy")')
-          this.log('  4. Copy the token')
-          this.log('')
-          this.log('Then set it via one of these methods:')
-          this.log('  export DIGITALOCEAN_ACCESS_TOKEN=<your-token>')
-          this.log('  # or add to ~/.cast/config.yaml:')
-          this.log('  providers:')
-          this.log('    digitalocean:')
-          this.log('      token: ${DIGITALOCEAN_ACCESS_TOKEN}')
-          this.log('')
-          const ready = await this.confirm('Have you set your DigitalOcean API token and are ready to continue?', force)
+          for (const line of provider.auth.tokenHelp) {
+            this.log(line)
+          }
+          const ready = await this.confirm(
+            provider.auth.tokenConfirm || 'Have you configured the token and are ready to continue?',
+            force,
+          )
           if (!ready) {
             this.log('')
             this.log('Deployment cancelled. Run again when your token is configured.')
             this.exit(0)
           }
         }
-
-        // doctl check
-        try {
-          await checkCli('doctl', 'https://docs.digitalocean.com/reference/doctl/how-to/install/')
-        } catch {
-          this.log('')
-          this.log('─────────────────────────────────────────────────────────────')
-          this.log('  doctl CLI Required')
-          this.log('─────────────────────────────────────────────────────────────')
-          this.log('')
-          this.log('You need the doctl CLI to deploy to DigitalOcean.')
-          this.log('')
-          this.log('Install it:')
-          this.log('  brew install doctl')
-          this.log('  # or visit: https://docs.digitalocean.com/reference/doctl/how-to/install/')
-          this.log('')
-          this.log('Then authenticate:')
-          this.log('  doctl auth init')
-          this.log('')
-          this.error('doctl is required for DigitalOcean deployment.')
-        }
       }
 
-      // Auth check for Sprites
-      if (provider === 'sprites') {
+      if (cli.interactiveRecheckError) {
         try {
-          await checkCli('sprite', 'https://sprites.dev/install.sh')
+          await checkCli(cli.command, cli.installUrl)
         } catch {
-          this.log('')
-          this.log('─────────────────────────────────────────────────────────────')
-          this.log('  Sprites CLI Required')
-          this.log('─────────────────────────────────────────────────────────────')
-          this.log('')
-          this.log('You need the Sprites CLI to deploy.')
-          this.log('')
-          this.log('Install it:')
-          this.log('  curl https://sprites.dev/install.sh | bash')
-          this.log('')
-          this.log('Then authenticate:')
-          this.log('  sprite login')
-          this.log('  # or set SPRITES_TOKEN environment variable')
-          this.log('')
-          this.error('Sprites CLI is required.')
+          for (const line of cli.interactiveRecheckHelp || []) {
+            this.log(line)
+          }
+          this.error(cli.interactiveRecheckError)
         }
       }
     }
 
-    // Docker check for docker, droplet, and MicroVM providers
-    if (provider === 'docker' || provider === 'digitalocean' || provider === 'microvm') {
-      let dockerInstalled = false
-      try {
-        await checkCli('docker', 'https://docs.docker.com/get-docker/')
-        dockerInstalled = true
-      } catch {
-        dockerInstalled = false
-      }
+    if (provider.requiresDocker) {
+      await this.walkthroughDocker(provider, force)
+    }
+  }
 
-      if (!dockerInstalled) {
+  private async walkthroughDocker(provider: DeploymentProvider, force: boolean): Promise<void> {
+    let dockerInstalled = false
+    try {
+      await checkCli('docker', DOCKER_INSTALL_URL)
+      dockerInstalled = true
+    } catch {
+      dockerInstalled = false
+    }
+
+    if (!dockerInstalled) {
+      this.log('')
+      this.log('─────────────────────────────────────────────────────────────')
+      this.log('  Docker is not installed')
+      this.log('─────────────────────────────────────────────────────────────')
+      this.log('')
+      this.log('Docker is required for this deployment option.')
+      this.log('')
+      this.log('Install it:')
+      this.log('  ' + DOCKER_INSTALL_URL)
+      this.log('')
+      this.log('Quick install commands:')
+      this.log('  # macOS:')
+      this.log('  brew install --cask docker')
+      this.log('  # Linux:')
+      this.log('  curl -fsSL https://get.docker.com | sh')
+      this.log('')
+      const ready = await this.confirm('Have you installed Docker and are ready to continue?', force)
+      if (!ready) {
         this.log('')
-        this.log('─────────────────────────────────────────────────────────────')
-        this.log('  Docker is not installed')
-        this.log('─────────────────────────────────────────────────────────────')
+        this.log('Deployment cancelled. Run again when Docker is installed.')
+        this.exit(0)
+      }
+    }
+
+    if (provider.requiresDockerDaemon) {
+      const isRunning = await this.checkDockerRunning()
+      if (!isRunning) {
         this.log('')
-        this.log('Docker is required for this deployment option.')
+        this.log('Docker daemon is not running.')
         this.log('')
-        this.log('Install it:')
-        this.log('  https://docs.docker.com/get-docker/')
+        this.log('Start Docker:')
+        this.log('  - macOS: Open Docker Desktop')
+        this.log('  - Linux: sudo systemctl start docker')
         this.log('')
-        this.log('Quick install commands:')
-        this.log('  # macOS:')
-        this.log('  brew install --cask docker')
-        this.log('  # Linux:')
-        this.log('  curl -fsSL https://get.docker.com | sh')
-        this.log('')
-        const ready = await this.confirm('Have you installed Docker and are ready to continue?', force)
+        const ready = await this.confirm('Is Docker running now?', force)
         if (!ready) {
           this.log('')
-          this.log('Deployment cancelled. Run again when Docker is installed.')
+          this.log('Deployment cancelled. Start Docker and run again.')
           this.exit(0)
-        }
-      }
-
-      if (provider === 'docker') {
-        const isRunning = await this.checkDockerRunning()
-        if (!isRunning) {
-          this.log('')
-          this.log('Docker daemon is not running.')
-          this.log('')
-          this.log('Start Docker:')
-          this.log('  - macOS: Open Docker Desktop')
-          this.log('  - Linux: sudo systemctl start docker')
-          this.log('')
-          const ready = await this.confirm('Is Docker running now?', force)
-          if (!ready) {
-            this.log('')
-            this.log('Deployment cancelled. Start Docker and run again.')
-            this.exit(0)
-          }
         }
       }
     }
@@ -430,77 +319,66 @@ export default class Deploy extends Command {
     })
   }
 
-  private async checkProviderTools(provider: string): Promise<void> {
-    switch (provider) {
-      case 'docker': {
-        try {
-          await checkCli('docker', 'https://docs.docker.com/get-docker/')
-        } catch (error: any) {
-          this.error(`Docker is not installed or not in PATH.\nInstall it from: https://docs.docker.com/get-docker/`)
-        }
+  private async checkProviderTools(providerKey: string): Promise<void> {
+    const provider = getDeploymentProvider(providerKey)
+    if (!provider) return
 
+    if (provider.toolChecks) {
+      for (const check of provider.toolChecks) {
+        try {
+          await checkCli(check.command, check.installUrl)
+        } catch {
+          this.error(check.error)
+        }
+        if (check.requireDaemon) {
+          const isRunning = await this.checkDockerRunning()
+          if (!isRunning) {
+            this.error('Docker daemon is not running. Start Docker Desktop or the Docker service.')
+          }
+        }
+      }
+      return
+    }
+
+    if (provider.cli?.command) {
+      try {
+        await checkCli(provider.cli.command, provider.cli.installUrl)
+      } catch {
+        this.error(`${provider.name} CLI is not installed.\nInstall it from: ${provider.cli.installUrl}`)
+      }
+    }
+
+    if (provider.requiresDocker) {
+      try {
+        await checkCli('docker', DOCKER_INSTALL_URL)
+      } catch {
+        this.error(`Docker is required for ${provider.name} deployment.\nInstall it from: ${DOCKER_INSTALL_URL}`)
+      }
+      if (provider.requiresDockerDaemon) {
         const isRunning = await this.checkDockerRunning()
         if (!isRunning) {
           this.error('Docker daemon is not running. Start Docker Desktop or the Docker service.')
         }
-
-        break
-      }
-
-      case 'railway': {
-        try {
-          await checkCli('railway', 'https://docs.railway.app/getting-started/installation')
-        } catch (error: any) {
-          this.error(`Railway CLI is not installed.\nInstall it from: https://docs.railway.app/getting-started/installation`)
-        }
-
-        break
-      }
-
-      case 'fly': {
-        try {
-          await checkCli('flyctl', 'https://fly.io/docs/hands-on/install-flyctl/')
-        } catch (error: any) {
-          this.error(`Fly.io CLI (flyctl) is not installed.\nInstall it from: https://fly.io/docs/hands-on/install-flyctl/`)
-        }
-
-        break
-      }
-
-      case 'digitalocean': {
-        try {
-          await checkCli('docker', 'https://docs.docker.com/get-docker/')
-        } catch (error: any) {
-          this.error(`Docker is required for DigitalOcean deployment.\nInstall it from: https://docs.docker.com/get-docker/`)
-        }
-
-        break
-      }
-
-      case 'microvm': {
-        try {
-          await checkCli('docker', 'https://docs.docker.com/get-docker/')
-        } catch (error: any) {
-          this.error(`Docker is required for DigitalOcean MicroVM deployment.\nInstall it from: https://docs.docker.com/get-docker/`)
-        }
-        try {
-          await checkCli('doctl', 'https://docs.digitalocean.com/reference/doctl/how-to/install/')
-        } catch (error: any) {
-          this.error(`doctl 1.173.0 or newer is required for DigitalOcean MicroVMs.\nInstall it from: https://docs.digitalocean.com/reference/doctl/how-to/install/`)
-        }
-        break
       }
     }
   }
 
+  private failProviderLoad(): void {
+    const loadErrors = deploymentProviderLoadErrors()
+    if (loadErrors.length > 0) {
+      this.error(loadErrors.map(error => error.message).join('\n'))
+    }
+  }
+
   async run(): Promise<void> {
+    this.failProviderLoad()
     const {args, flags} = await this.parse(Deploy)
     const agentName = args.agent
     let provider = flags.provider
-    const version = flags.version
-    const withTui = flags['with-tui'] as boolean
+    const version = flags.version ?? 'latest'
+    const withTui = Boolean(flags['with-tui'])
 
-    // Validate agent exists
+    // Validate agent exists before reading provider-specific flags.
     const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
     if (!fs.existsSync(agentPath)) {
       this.error(
@@ -553,11 +431,11 @@ export default class Deploy extends Command {
       await this.walkthroughProviderSetup(provider, flags.force)
     }
 
-    // Validate provider name
-    if (!VALID_PROVIDERS.includes(provider)) {
+    const registered = getDeploymentProvider(provider)
+    if (!registered) {
       this.error(
         `Invalid provider '${provider}'.\n` +
-        `Valid providers: ${VALID_PROVIDERS.join(', ')}`
+        `Valid providers: ${deploymentProviderKeys().join(', ')}`
       )
     }
 
@@ -570,68 +448,45 @@ export default class Deploy extends Command {
     // Check provider CLI tools before attempting deployment
     await this.checkProviderTools(provider)
 
+    if (withTui && registered.withTui === 'rejected') {
+      this.error(registered.withTuiRejectMessage || 'On-host TUI is not available for this provider.')
+    }
+
     try {
-      switch (provider) {
-        case 'docker': {
-          await DockerDeploy.run([agentName, '--port', flags.port.toString()])
-          break
-        }
-
-        case 'local': {
-          this.log('Local deployment: Spawning agent in production mode...')
-          // TODO: Implement local production deployment
-          this.log('Not yet implemented. Use --provider docker for now.')
-          break
-        }
-
-        case 'railway': {
-          await RailwayDeploy.run([agentName])
-          break
-        }
-
-        case 'fly': {
-          await FlyDeploy.run([agentName])
-          break
-        }
-
-        case 'digitalocean': {
-          // Forward --with-tui to the digitalocean subcommand so the
-          // TUI bundle (or its absence) is reflected in the image
-          // and the resulting MOTD. Other providers ignore this
-          // flag for now.
-          const doArgs = withTui ? [agentName, '--with-tui'] : [agentName]
-          await DigitalOceanDeploy.run(doArgs)
-          break
-        }
-
-        case 'microvm': {
-          if (withTui) {
-            this.error('On-host TUI is not available for DigitalOcean MicroVMs. Deploy with --provider digitalocean --with-tui to SSH into a Droplet.')
-          }
-          await MicrovmDeploy.run([
-            agentName,
-            '--size', flags.size,
-            '--idle-timeout', flags['idle-timeout'],
-            ...(flags['edge-auth-only'] ? ['--edge-auth-only'] : []),
-          ])
-          break
-        }
-
-        case 'sprites': {
-          await SpritesDeploy.run([agentName])
-          break
-        }
-
-        default: {
-          this.error(`Unknown provider: ${provider}`)
-        }
+      let authToken = ''
+      let tokenHash = ''
+      if (!isBuiltinDeploymentProvider(provider)) {
+        const generated = await generateAuthToken(agentName)
+        authToken = generated.authToken
+        tokenHash = generated.tokenHash
       }
 
+      const ctx: DeployContext = {
+        agentName,
+        agentPath,
+        force: Boolean(flags.force),
+        token: resolveProviderAuthToken(registered),
+        authToken,
+        tokenHash,
+        flags: flags as Record<string, unknown>,
+        version,
+        deploymentSha,
+        port: flags.port ?? 8080,
+        withTui,
+        log: message => this.log(message),
+        warn: message => this.warn(message),
+        error: (message: string): never => this.error(message),
+        confirm: message => this.confirm(message, flags.force),
+      }
+
+      if (registered.prepare) {
+        await registered.prepare(ctx)
+      }
+      await registered.deploy(ctx)
+
       // Store deployed version after successful deployment
-      // Now using semantic versions
       let versionToStore = version
       if (version === 'latest') {
-        // Get the current release version or use 'latest' for working state
         const currentRelease = await getCurrentRelease(agentName)
         versionToStore = currentRelease || 'latest'
       }
