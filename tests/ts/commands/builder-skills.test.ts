@@ -36,6 +36,11 @@ const LITERAL_SKILL = [
   '',
 ].join('\n')
 
+const WRAPPED = 'Sort incoming mail into buckets. Use this when new mail arrives.'
+const LONG_LEFT = 'A'.repeat(512)
+const LONG_RIGHT = 'B'.repeat(511)
+const LONG_DESCRIPTION = `${LONG_LEFT} ${LONG_RIGHT}`
+
 const originalHome = process.env.HOME
 
 function skillMarkdown(name: string, description: string, body: string): string {
@@ -310,6 +315,126 @@ describe('builder skills CLI', () => {
     const text = '---\nname: triage\ndescription: Sort incoming mail into buckets\n---\n# Triage\n'
     expect(parseSkillMarkdown(text)?.description).to.equal('Sort incoming mail into buckets')
     expect(parseSkillMarkdown(text)?.description).to.not.include('\n')
+  })
+
+  const agentSkillCases: Array<{title: string; name: string; filename?: string; markdown: string; description: string}> = [
+    {
+      title: 'a frontmatter-only file',
+      name: 'skill-name',
+      markdown: '---\nname: skill-name\ndescription: A description of what this skill does and when to use it.\n---\n',
+      description: 'A description of what this skill does and when to use it.',
+    },
+    {
+      title: 'a folded description',
+      name: 'folded-skill',
+      markdown: '---\nname: folded-skill\ndescription: >\n  Sort incoming mail into buckets.\n  Use this when new mail arrives.\n---\n',
+      description: WRAPPED,
+    },
+    {
+      title: 'a literal description of two sentences',
+      name: 'literal-skill',
+      markdown: '---\nname: literal-skill\ndescription: |\n  Sort incoming mail into buckets.\n  Use this when new mail arrives.\n---\n',
+      description: WRAPPED,
+    },
+    {
+      title: 'skill.md',
+      name: 'lower-skill',
+      filename: 'skill.md',
+      markdown: '---\nname: lower-skill\ndescription: Lowercase skill file\n---\n',
+      description: 'Lowercase skill file',
+    },
+    {
+      title: 'license and metadata',
+      name: 'pdf-processing',
+      markdown: [
+        '---',
+        'name: pdf-processing',
+        'description: Extract PDF text, fill forms, merge files. Use when handling PDFs.',
+        'license: Apache-2.0',
+        'metadata:',
+        '  author: example-org',
+        '  version: "1.0"',
+        '---',
+        '',
+      ].join('\n'),
+      description: 'Extract PDF text, fill forms, merge files. Use when handling PDFs.',
+    },
+    {
+      title: 'a one-line skill with a body',
+      name: 'triage',
+      markdown: '---\nname: triage\ndescription: Sort incoming mail into buckets\n---\n\n# Triage\n\nSort the mail.\n',
+      description: 'Sort incoming mail into buckets',
+    },
+    {
+      title: 'a 1024-character description',
+      name: 'long-desc',
+      markdown: `---\nname: long-desc\ndescription: |\n  ${LONG_LEFT}\n  ${LONG_RIGHT}\n---\n`,
+      description: LONG_DESCRIPTION,
+    },
+  ]
+
+  it('parses agent skills frontmatter without rewriting the description', () => {
+    expect(parseSkillMarkdown(agentSkillCases[0].markdown)?.description).to.equal(agentSkillCases[0].description)
+    expect(parseSkillMarkdown(agentSkillCases[0].markdown)?.body).to.equal('')
+    expect(parseSkillMarkdown(agentSkillCases[1].markdown)?.description).to.equal(WRAPPED)
+    expect(parseSkillMarkdown(agentSkillCases[2].markdown)?.description).to.equal(WRAPPED)
+    expect(parseSkillMarkdown(agentSkillCases[6].markdown)?.description).to.equal(LONG_DESCRIPTION)
+    expect(parseSkillMarkdown(agentSkillCases[6].markdown)?.description).to.have.length(1024)
+    expect(parseSkillMarkdown(agentSkillCases[5].markdown)?.description).to.equal('Sort incoming mail into buckets')
+    expect(parseSkillMarkdown('---\nname: triage\ndescription: "   "\n---\n')).to.equal(null)
+    expect(parseSkillMarkdown('---\nname: triage\n---\nBody\n')).to.equal(null)
+  })
+
+  for (const testCase of agentSkillCases) {
+    it(`installs ${testCase.title} from a folder and from GitHub`, () => {
+      const filename = testCase.filename ?? 'SKILL.md'
+      const source = path.join(home, `src-${testCase.name}`)
+      fs.mkdirSync(source, {recursive: true})
+      fs.writeFileSync(path.join(source, filename), testCase.markdown)
+      fs.mkdirSync(path.join(source, 'scripts'))
+      fs.writeFileSync(path.join(source, 'scripts', 'run.sh'), 'echo hi\n')
+
+      const installed = installFromFolder(source, home)
+      expect(installed.description).to.equal(testCase.description)
+      const copied = path.join(installed.path, filename)
+      expect(fs.readdirSync(installed.path).filter((name) => name.toLowerCase() === 'skill.md')).to.deep.equal([filename])
+      expect(fs.readFileSync(copied, 'utf8')).to.equal(testCase.markdown)
+      expect(fs.readFileSync(path.join(installed.path, 'scripts', 'run.sh'), 'utf8')).to.equal('echo hi\n')
+      expect(listBuilderSkills(home).skills.map((skill) => skill.description)).to.deep.equal([testCase.description])
+      removeBuilderSkill(testCase.name, home)
+
+      const repo = path.join(home, `repo-${testCase.name}`)
+      fs.cpSync(source, repo, {recursive: true})
+      const fromGithub = installFromGithub({
+        repo: 'owner/skills',
+        home,
+        clone: (_github, dest) => fs.cpSync(repo, dest, {recursive: true}),
+      })
+      expect(fromGithub.kind).to.equal('installed')
+      if (fromGithub.kind === 'installed') {
+        expect(fromGithub.skill.description).to.equal(testCase.description)
+        expect(fs.readFileSync(path.join(fromGithub.skill.path, filename), 'utf8')).to.equal(testCase.markdown)
+        expect(fs.readdirSync(fromGithub.skill.path).filter((name) => name.toLowerCase() === 'skill.md')).to.deep.equal([filename])
+      }
+      expect(listBuilderSkills(home).skills[0].description).to.equal(testCase.description)
+    })
+  }
+
+  it('rejects a blank or missing description from a folder and from GitHub', () => {
+    for (const markdown of [
+      '---\nname: blank-desc\ndescription: "   "\n---\n',
+      '---\nname: blank-desc\n---\n# Body\n',
+    ]) {
+      const source = fs.mkdtempSync(path.join(home, 'blank-'))
+      fs.writeFileSync(path.join(source, 'SKILL.md'), markdown)
+      expect(() => installFromFolder(source, home)).to.throw(/Invalid skill/)
+      expect(() => installFromGithub({
+        repo: 'owner/blank',
+        home,
+        clone: (_github, dest) => fs.cpSync(source, dest, {recursive: true}),
+      })).to.throw(/SKILL\.md/)
+      expect(fs.existsSync(path.join(skillsRoot, 'blank-desc'))).to.equal(false)
+    }
   })
 
   it('errors when a repository has no SKILL.md', () => {

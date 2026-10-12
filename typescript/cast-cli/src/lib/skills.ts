@@ -10,6 +10,36 @@ export const GITHUB_SOURCE_HINT =
 
 const SKILL_NAME = /^[a-z0-9][a-z0-9-]*$/
 const GITHUB_REPO = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/
+const SKILL_MARKDOWN_NAMES = ['SKILL.md', 'skill.md']
+
+/** Collapse a folded or literal YAML description onto one line. */
+function collapseSkillDescription(description: string): string {
+  return description
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join(' ')
+}
+
+/** Agent Skills uses `SKILL.md` or `skill.md`. Prefer `SKILL.md` when both exist. */
+function skillMarkdownFile(dir: string): string | null {
+  let names: string[]
+  try {
+    names = fs.readdirSync(dir)
+  } catch {
+    return null
+  }
+  for (const name of SKILL_MARKDOWN_NAMES) {
+    if (!names.includes(name)) continue
+    const full = path.join(dir, name)
+    try {
+      if (fs.statSync(full).isFile()) return full
+    } catch {
+      continue
+    }
+  }
+  return null
+}
 
 export class SkillError extends Error {
   readonly code: string
@@ -174,15 +204,6 @@ function isGitHubSegment(value: string): boolean {
   return /^[A-Za-z0-9_.-]+$/.test(value) && value !== '.' && value !== '..'
 }
 
-/** YAML `>` and `|` scalars keep newlines. Store the description as one line. */
-function collapseSkillDescription(description: string): string {
-  return description
-    .split(/\r\n|\r|\n/)
-    .map((line) => line.trim())
-    .filter((line) => line.length > 0)
-    .join(' ')
-}
-
 export function assertSkillIdentity(name: string, description: string, body: string): SkillDocument {
   const skillName = name.trim()
   if (!SKILL_NAME.test(skillName)) {
@@ -191,8 +212,7 @@ export function assertSkillIdentity(name: string, description: string, body: str
   const skillDescription = collapseSkillDescription(description)
   if (!skillDescription) throw new SkillError('Skill description is required.')
   const skillBody = body.replace(/^\n+/, '').replace(/\s+$/, '')
-  if (!skillBody.trim()) throw new SkillError('Skill body is required.')
-  return {name: skillName, description: skillDescription, body: skillBody}
+  return {name: skillName, description: skillDescription, body: skillBody.trim() ? skillBody : ''}
 }
 
 export function renderSkillMarkdown(name: string, description: string, body: string): string {
@@ -246,7 +266,9 @@ export function installFromFolder(options: {
   if (isInsidePath(path.join(agent, 'skills'), real)) {
     throw new SkillError(`That path is inside '${options.agentName}' skills/ and cannot be installed onto itself.`)
   }
-  const parsed = readSkillFile(path.join(real, 'SKILL.md'), real)
+  const skillMd = skillMarkdownFile(real)
+  if (!skillMd) throw new SkillError(`No SKILL.md in ${real}.`)
+  const parsed = readSkillFile(skillMd, real)
   return commitSkill(agent, options.agentName, {
     name: parsed.name,
     description: parsed.description,
@@ -351,7 +373,10 @@ interface LocatedSkill {
 function locateSkill(root: string, subpath: string | undefined, sourceLabel: string, ref?: string): LocatedSkill {
   if (subpath) {
     const dir = resolveSubpath(root, subpath)
-    const parsed = readSkillFile(path.join(dir, 'SKILL.md'), sourceLabelFor(sourceLabel, subpath))
+    const label = sourceLabelFor(sourceLabel, subpath)
+    const skillMd = skillMarkdownFile(dir)
+    if (!skillMd) throw new SkillError(`No SKILL.md in ${label}.`)
+    const parsed = readSkillFile(skillMd, label)
     return {name: parsed.name, description: parsed.description, subpath, dir}
   }
 
@@ -393,8 +418,8 @@ function discoverSkills(root: string): LocatedSkill[] {
   const problems: string[] = []
 
   const walk = (dir: string): void => {
-    const skillMd = path.join(dir, 'SKILL.md')
-    if (fs.existsSync(skillMd) && fs.statSync(skillMd).isFile()) {
+    const skillMd = skillMarkdownFile(dir)
+    if (skillMd) {
       try {
         const parsed = parseSkillMarkdown(fs.readFileSync(skillMd, 'utf8'))
         const rel = path.relative(rootReal, dir)
@@ -519,7 +544,7 @@ function commitSkill(
   try {
     fs.mkdirSync(staging, {recursive: true})
     prepared.writeTo(staging)
-    if (!fs.existsSync(path.join(staging, 'SKILL.md'))) {
+    if (!skillMarkdownFile(staging)) {
       throw new SkillError(`No SKILL.md in ${prepared.name}.`)
     }
     if (fs.existsSync(dest)) throw new SkillError(duplicateSkillMessage(prepared.name, agentName))

@@ -274,8 +274,23 @@ def ensure_builder_skills_dir() -> None:
 
 
 def _collapse_skill_description(description: str) -> str:
-    """Join a folded or literal YAML description into one line."""
+    """Folded and literal YAML descriptions load as one line."""
     return " ".join(line.strip() for line in description.splitlines() if line.strip())
+
+
+def _skill_markdown_path(directory: Path) -> Optional[Path]:
+    """Exact `SKILL.md` or `skill.md`. Prefer `SKILL.md` when both exist."""
+    try:
+        names = {entry.name for entry in directory.iterdir()}
+    except OSError:
+        return None
+    for name in ("SKILL.md", "skill.md"):
+        if name not in names:
+            continue
+        candidate = directory / name
+        if candidate.is_file():
+            return candidate
+    return None
 
 
 def _parse_skill_markdown(text: str) -> Optional[tuple[str, str, str]]:
@@ -317,8 +332,8 @@ def _load_builder_skills() -> List[tuple[str, str, str]]:
     for child in children:
         if not child.is_dir() or child.name.startswith("."):
             continue
-        skill_md = child / "SKILL.md"
-        if not skill_md.is_file():
+        skill_md = _skill_markdown_path(child)
+        if skill_md is None:
             print(
                 f"Skipping builder skill '{child.name}': SKILL.md is missing",
                 file=sys.stderr,
