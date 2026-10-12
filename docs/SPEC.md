@@ -94,6 +94,9 @@ Cast is a CLI+TUI application that helps developers create, test, and deploy AI 
 └── <agent-name>/
     ├── agent.yaml                 # Agent definition
     ├── instructions.md            # Agent's brain (system prompt)
+    ├── skills/                    # Installed skills (SKILL.md at each skill root)
+    │   └── <skill-name>/
+    │       └── SKILL.md
     ├── tools/                     # Custom Python tools
     │   └── my_tool.py
     ├── tests/

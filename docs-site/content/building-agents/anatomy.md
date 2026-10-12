@@ -17,6 +17,9 @@ changes show up as files on disk.
 ~/.cast/agents/email-assistant/
 ├── agent.yaml             # the agent's config
 ├── instructions.md        # the agent's system prompt ("the brain")
+├── skills/                # skills copied onto this agent
+│   └── triage/
+│       └── SKILL.md
 ├── tools/                 # custom Python tools
 │   └── summarize_thread.py
 ├── mcp/                   # MCP server configs (one YAML per server)
@@ -48,6 +51,10 @@ changes show up as files on disk.
   change/release.
 - **`instructions.md`** — the system prompt the runtime sends to the LLM.
   This is where the agent's "personality" and capabilities live.
+- **`skills/<name>/SKILL.md`** — a skill copied onto this agent. The runtime
+  appends each loaded skill to the system prompt and publishes it on the
+  agent card. Install and remove skills with `{% ref "slash:skills" %}` or
+  `{% ref "cli:skills" %}`. See [Skills](configuration/skills).
 - **`tools/`** — drop in `.py` files that define new LangChain tools. Cast
   picks them up automatically; no registration step.
 - **`mcp/`** — one YAML file per MCP server. The Builder Agent scaffolds
@@ -81,6 +88,7 @@ changes show up as files on disk.
 | `repository` | git remote, used by `cast git push` |
 | `brain.model` | the LLM the runtime agent calls |
 | `brain.instructions_file` | relative path to the system prompt |
+| `skills` | skills installed on this agent (`name`, `description`, `path`, `source`) |
 | `tools.builtin` | which of `bash` / `read` / `glob` to expose |
 | `tools.mcp` | list of MCP server YAMLs to load |
 | `tools.custom` | list of `tools/*.py` modules to load |
