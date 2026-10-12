@@ -1,0 +1,47 @@
+name: Docs snapshot
+
+# Build a frozen docs archive when a product release is published and attach
+# it to that release. The master docs workflow unpacks these assets later.
+# contents: write is required to upload a release asset.
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  snapshot:
+    name: Archive docs
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout release tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Build and upload docs snapshot
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          TAG="${{ github.event.release.tag_name }}"
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Skipping ${TAG}; not a product release."
+            exit 0
+          fi
+          if [ ! -d docs-site ]; then
+            echo "Skipping ${TAG}; docs-site/ is not in this commit."
+            exit 0
+          fi
+          VERSION="${TAG#v}"
+          npm ci
+          npm --prefix docs-site ci
+          PUBLIC_SITE_URL=https://castagent.dev \
+          PUBLIC_SITE_BASE="/${TAG}/" \
+          DOCS_VERSION="$VERSION" \
+            npm --prefix docs-site run build
+          rm -f docs-site/dist/CNAME
+          COPYFILE_DISABLE=1 tar -C docs-site/dist -czf "docs-${TAG}.tar.gz" .
+          gh release upload "$TAG" "docs-${TAG}.tar.gz" --clobber
