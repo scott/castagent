@@ -131,6 +131,73 @@ describe('cast skills command', () => {
     fs.rmSync(folder, {recursive: true, force: true})
   })
 
+  it('adds a folded description and stores one line', async () => {
+    const agent = makeAgent()
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-skill-fold-'))
+    fs.writeFileSync(path.join(folder, 'SKILL.md'), [
+      '---',
+      'name: triage',
+      'description: >',
+      '  Sort incoming mail into buckets',
+      '---',
+      '',
+      '# Triage',
+      '',
+    ].join('\n'))
+    const added = await runCommand(Skills, {target: 'add', agent: agent.name}, {folder, json: false})
+    expect(added.errors).to.deep.equal([])
+    expect(readConfig(agent.dir).skills[0].description).to.equal('Sort incoming mail into buckets')
+    expect(fs.readFileSync(path.join(agent.dir, 'skills', 'triage', 'SKILL.md'), 'utf8')).to.include('description: >')
+    fs.rmSync(folder, {recursive: true, force: true})
+  })
+
+  it('adds a literal description as one line', async () => {
+    const agent = makeAgent()
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-skill-lit-'))
+    fs.writeFileSync(path.join(folder, 'SKILL.md'), [
+      '---',
+      'name: triage',
+      'description: |',
+      '  Sort incoming mail into buckets.',
+      '  Use when the user asks to triage an inbox.',
+      '---',
+      '',
+      '# Triage',
+      '',
+    ].join('\n'))
+    const added = await runCommand(Skills, {target: 'add', agent: agent.name}, {folder, json: false})
+    expect(added.errors).to.deep.equal([])
+    expect(readConfig(agent.dir).skills[0].description).to.equal(
+      'Sort incoming mail into buckets. Use when the user asks to triage an inbox.',
+    )
+    fs.rmSync(folder, {recursive: true, force: true})
+  })
+
+  it('rejects a missing or blank description', async () => {
+    const agent = makeAgent()
+    const folder = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-skill-blank-'))
+    fs.writeFileSync(path.join(folder, 'SKILL.md'), '---\nname: triage\ndescription: ""\n---\n\n# Triage\n')
+    const blank = await runCommand(Skills, {target: 'add', agent: agent.name}, {folder, json: false})
+    expect(blank.errors.join('\n')).to.include('Skill description is required')
+    expect(readConfig(agent.dir).skills).to.equal(undefined)
+    expect(fs.existsSync(path.join(agent.dir, 'skills'))).to.equal(false)
+
+    const missingDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-skill-missing-'))
+    fs.writeFileSync(path.join(missingDir, 'SKILL.md'), '---\nname: triage\n---\n\n# Triage\n')
+    const missing = await runCommand(Skills, {target: 'add', agent: agent.name}, {folder: missingDir, json: false})
+    expect(missing.errors.join('\n')).to.include('Skill description is required')
+
+    const inline = await runCommand(
+      Skills,
+      {target: 'add', agent: agent.name},
+      {name: 'triage', description: '   ', body: '# Triage', json: false},
+    )
+    expect(inline.errors.join('\n')).to.include('Skill description is required.')
+    expect(readConfig(agent.dir).skills).to.equal(undefined)
+    fs.rmSync(folder, {recursive: true, force: true})
+    fs.rmSync(missingDir, {recursive: true, force: true})
+  })
+
   it('adds an inline skill from name, description, and body', async () => {
     const agent = makeAgent()
     const added = await runCommand(

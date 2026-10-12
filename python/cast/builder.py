@@ -273,6 +273,11 @@ def ensure_builder_skills_dir() -> None:
         print(f"Warning: could not create builder skills directory: {exc}", file=sys.stderr)
 
 
+def _collapse_skill_description(description: str) -> str:
+    """Join a folded or literal YAML description into one line."""
+    return " ".join(line.strip() for line in description.splitlines() if line.strip())
+
+
 def _parse_skill_markdown(text: str) -> Optional[tuple[str, str, str]]:
     """Return (name, description, body) or None when frontmatter is invalid."""
     cleaned = text.lstrip("\ufeff")
@@ -289,9 +294,9 @@ def _parse_skill_markdown(text: str) -> Optional[tuple[str, str, str]]:
     description = data.get("description")
     if not isinstance(name, str) or _SKILL_NAME_RE.fullmatch(name) is None:
         return None
-    if not isinstance(description, str) or "\n" in description or "\r" in description:
+    if not isinstance(description, str):
         return None
-    description = description.strip()
+    description = _collapse_skill_description(description)
     if not description:
         return None
     return name, description, match.group(2)

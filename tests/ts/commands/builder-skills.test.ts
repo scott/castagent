@@ -8,9 +8,33 @@ import {
   installFromGithub,
   listBuilderSkills,
   parseGithubSkillSource,
+  parseSkillMarkdown,
   removeBuilderSkill,
   type GithubSkillSource,
 } from '../../../typescript/cast-cli/src/lib/builder-skills'
+
+const FOLDED_SKILL = [
+  '---',
+  'name: triage-fold',
+  'description: >',
+  '  Sort incoming mail into buckets',
+  '---',
+  '',
+  '# Triage',
+  '',
+].join('\n')
+
+const LITERAL_SKILL = [
+  '---',
+  'name: triage-lit',
+  'description: |',
+  '  Sort incoming mail into buckets.',
+  '  Use when the user asks to triage an inbox.',
+  '---',
+  '',
+  '# Triage',
+  '',
+].join('\n')
 
 const originalHome = process.env.HOME
 
@@ -213,6 +237,79 @@ describe('builder skills CLI', () => {
     expect(installed.kind).to.equal('installed')
     if (installed.kind === 'installed') expect(installed.skill.name).to.equal('alpha')
     expect(fs.readdirSync(skillsRoot)).to.deep.equal(['alpha'])
+  })
+
+  it('accepts folded and literal descriptions from a github fixture', () => {
+    const folded = path.join(home, 'folded-repo')
+    const literal = path.join(home, 'literal-repo')
+    fs.mkdirSync(folded)
+    fs.mkdirSync(literal)
+    fs.writeFileSync(path.join(folded, 'SKILL.md'), FOLDED_SKILL)
+    fs.writeFileSync(path.join(literal, 'SKILL.md'), LITERAL_SKILL)
+
+    const foldedInstall = installFromGithub({
+      repo: 'owner/folded',
+      home,
+      clone: (_source, dest) => fs.cpSync(folded, dest, {recursive: true}),
+    })
+    const literalInstall = installFromGithub({
+      repo: 'owner/literal',
+      home,
+      clone: (_source, dest) => fs.cpSync(literal, dest, {recursive: true}),
+    })
+
+    expect(foldedInstall.kind).to.equal('installed')
+    expect(literalInstall.kind).to.equal('installed')
+    if (foldedInstall.kind === 'installed') {
+      expect(foldedInstall.skill.description).to.equal('Sort incoming mail into buckets')
+    }
+    if (literalInstall.kind === 'installed') {
+      expect(literalInstall.skill.description).to.equal(
+        'Sort incoming mail into buckets. Use when the user asks to triage an inbox.',
+      )
+    }
+    const listed = listBuilderSkills(home)
+    expect(listed.warnings).to.deep.equal([])
+    expect(listed.skills.map((skill) => skill.description)).to.deep.equal([
+      'Sort incoming mail into buckets',
+      'Sort incoming mail into buckets. Use when the user asks to triage an inbox.',
+    ])
+  })
+
+  it('accepts folded and literal descriptions from a folder', () => {
+    const folded = path.join(home, 'folded-folder')
+    const literal = path.join(home, 'literal-folder')
+    fs.mkdirSync(folded)
+    fs.mkdirSync(literal)
+    fs.writeFileSync(path.join(folded, 'SKILL.md'), FOLDED_SKILL)
+    fs.writeFileSync(path.join(literal, 'SKILL.md'), LITERAL_SKILL)
+
+    const foldedInstall = installFromFolder(folded, home)
+    const literalInstall = installFromFolder(literal, home)
+
+    expect(foldedInstall.description).to.equal('Sort incoming mail into buckets')
+    expect(literalInstall.description).to.equal(
+      'Sort incoming mail into buckets. Use when the user asks to triage an inbox.',
+    )
+    expect(fs.readFileSync(path.join(foldedInstall.path, 'SKILL.md'), 'utf8')).to.include('description: >')
+    expect(fs.readFileSync(path.join(literalInstall.path, 'SKILL.md'), 'utf8')).to.include('description: |')
+  })
+
+  it('rejects a blank description instead of installing it', () => {
+    const source = path.join(home, 'blank-skill')
+    fs.mkdirSync(source)
+    fs.writeFileSync(path.join(source, 'SKILL.md'), '---\nname: triage\ndescription: ""\n---\n# Triage\n')
+
+    expect(() => installFromFolder(source, home)).to.throw(/Invalid skill frontmatter/)
+    expect(parseSkillMarkdown('---\nname: triage\ndescription: >\n---\n# Triage\n')).to.equal(null)
+    expect(parseSkillMarkdown('---\nname: triage\n---\n# Triage\n')).to.equal(null)
+    expect(fs.existsSync(skillsRoot)).to.equal(false)
+  })
+
+  it('keeps a one-line description unchanged', () => {
+    const text = '---\nname: triage\ndescription: Sort incoming mail into buckets\n---\n# Triage\n'
+    expect(parseSkillMarkdown(text)?.description).to.equal('Sort incoming mail into buckets')
+    expect(parseSkillMarkdown(text)?.description).to.not.include('\n')
   })
 
   it('errors when a repository has no SKILL.md', () => {

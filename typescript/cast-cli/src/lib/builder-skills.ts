@@ -143,6 +143,15 @@ function parseGithubPath(spec: string, fromUrl: boolean): GithubSkillSource | nu
   return {owner, repo: repoPart, subpath}
 }
 
+/** YAML `>` and `|` scalars keep newlines. Store the description as one line. */
+function collapseSkillDescription(description: string): string {
+  return description
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join(' ')
+}
+
 export function parseSkillMarkdown(text: string): ParsedSkill | null {
   const cleaned = text.replace(/^\uFEFF/, '')
   const match = cleaned.match(FRONTMATTER_RE)
@@ -158,8 +167,8 @@ export function parseSkillMarkdown(text: string): ParsedSkill | null {
   const name = record.name
   const description = record.description
   if (typeof name !== 'string' || !isValidSkillName(name)) return null
-  if (typeof description !== 'string' || description.includes('\n') || description.includes('\r')) return null
-  const oneLine = description.trim()
+  if (typeof description !== 'string') return null
+  const oneLine = collapseSkillDescription(description)
   if (!oneLine) return null
   return {name, description: oneLine, body: match[2]}
 }
