@@ -5,6 +5,27 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.4.0] - 2026-10-12
+
+### Added
+
+- The docs site shows a version picker beside the logo. Each published release that contains the docs is frozen at `/vX.Y.Z/`. The current release stays at the site root ([#92](https://github.com/scott/castagent/pull/92)).
+- `/import` and `cast clone` copy a Cast agent from GitHub or a local directory into `~/.cast/agents/` ([#88](https://github.com/scott/castagent/pull/88)).
+- `/shutdown` lists deployments and runs `cast shutdown` for the selected one ([#85](https://github.com/scott/castagent/pull/85)).
+- `cast model` and `/model` write `defaults.builder_model`. The builder reads that value when it starts ([#89](https://github.com/scott/castagent/pull/89)).
+- Inference providers register by model prefix. Deployed agents receive the API keys that registry declares ([#91](https://github.com/scott/castagent/pull/91)).
+- Deployment providers register by key. Built-ins stay railway, fly, digitalocean, microvm, sprites, docker, and local ([#93](https://github.com/scott/castagent/pull/93)).
+
+### Changed
+
+- Connecting to an agent starts a new session. Resuming a previous session stays an explicit action ([#90](https://github.com/scott/castagent/pull/90)).
+
+### Fixed
+
+- Chat streams send an SSE keepalive every 5 seconds so a quiet tool step survives the MicroVM edge timeout ([#83](https://github.com/scott/castagent/pull/83)).
+- Folded and literal YAML skill descriptions load as one line ([#86](https://github.com/scott/castagent/pull/86)).
+- Skill install accepts `SKILL.md` or `skill.md`, an empty body, and optional license and metadata fields ([#87](https://github.com/scott/castagent/pull/87)).
+
 ## [2.3.0] - 2026-10-11
 
 ### Added
