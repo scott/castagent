@@ -1,5 +1,51 @@
 # cast-tui
 
+## 2.4.0
+
+### Minor Changes
+
+- The docs site shows a version picker beside the logo. Each published release that contains the docs is frozen at `/vX.Y.Z/`. The current release stays at the site root.
+
+  - PR #92
+
+- `/import` and `cast clone` copy a Cast agent from GitHub or a local directory into `~/.cast/agents/`.
+
+  - PR #88
+
+- `/shutdown` lists deployments and runs `cast shutdown` for the selected one.
+
+  - PR #85
+
+- `cast model` and `/model` write `defaults.builder_model`. The builder reads that value when it starts.
+
+  - PR #89
+
+- Connecting to an agent starts a new session. Resuming a previous session stays an explicit action.
+
+  - PR #90
+
+- Inference providers register by model prefix. Deployed agents receive the API keys that registry declares.
+
+  - PR #91
+
+- Deployment providers register by key. Built-ins stay railway, fly, digitalocean, microvm, sprites, docker, and local.
+
+  - PR #93
+
+### Patch Changes
+
+- Chat streams send an SSE keepalive every 5 seconds so a quiet tool step survives the MicroVM edge timeout.
+
+  - PR #83
+
+- Folded and literal YAML skill descriptions load as one line.
+
+  - PR #86
+
+- Skill install accepts `SKILL.md` or `skill.md`, an empty body, and optional license and metadata fields.
+
+  - PR #87
+
 ## 2.3.0
 
 ### Minor Changes
