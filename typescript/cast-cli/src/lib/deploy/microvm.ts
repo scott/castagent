@@ -11,8 +11,7 @@ import {
   generateAuthToken,
   generateDeploymentId,
   getAgentPath,
-  getOpenRouterApiKey,
-  getDigitalOceanInferenceKey,
+  inferenceEnv,
   prepareHostTuiBuildContext,
   resolveDigitalOceanToken,
   saveDeployment,
@@ -138,8 +137,7 @@ export function parseIdleTimeout(input?: string): string {
 export function deploymentEnv(opts: {
   agentName: string
   authToken?: string
-  openrouterKey?: string
-  digitaloceanInferenceKey?: string
+  inference?: Record<string, string>
   edgeAuthOnly: boolean
 }): Record<string, string> {
   const env: Record<string, string> = {
@@ -150,11 +148,8 @@ export function deploymentEnv(opts: {
   if (!opts.edgeAuthOnly && opts.authToken) {
     env.AUTH_TOKEN = opts.authToken
   }
-  if (opts.openrouterKey) {
-    env.OPENROUTER_API_KEY = opts.openrouterKey
-  }
-  if (opts.digitaloceanInferenceKey) {
-    env.DIGITALOCEAN_MODEL_ACCESS_KEY = opts.digitaloceanInferenceKey
+  if (opts.inference) {
+    Object.assign(env, opts.inference)
   }
   return env
 }
@@ -498,8 +493,7 @@ export default class MicrovmDeploy extends Command {
     const env = deploymentEnv({
       agentName,
       authToken,
-      openrouterKey: getOpenRouterApiKey(),
-      digitaloceanInferenceKey: getDigitalOceanInferenceKey(),
+      inference: inferenceEnv(),
       edgeAuthOnly: config.authMode === 'edge-only',
     })
 
@@ -579,8 +573,7 @@ export default class MicrovmDeploy extends Command {
     const env = deploymentEnv({
       agentName,
       authToken,
-      openrouterKey: getOpenRouterApiKey(),
-      digitaloceanInferenceKey: getDigitalOceanInferenceKey(),
+      inference: inferenceEnv(),
       edgeAuthOnly,
     })
 

@@ -32,14 +32,13 @@ async function runCommand(Cmd: any, args: any, flags: any): Promise<{logs: strin
   return {logs, errors}
 }
 
-function knownIdsFromUpdate(): string[] {
-  const source = fs.readFileSync(
-    path.join(__dirname, '../../../typescript/cast-cli/src/commands/update.ts'),
+function knownIdsFromRegistry(): string[] {
+  const manifest = JSON.parse(fs.readFileSync(
+    path.join(__dirname, '../../../python/cast/providers/manifest.json'),
     'utf8',
-  )
-  const start = source.indexOf('const KNOWN_MODELS = [')
-  const end = source.indexOf(']', start)
-  return [...source.slice(start, end).matchAll(/'([^']+)'/g)].map(match => match[1])
+  )) as Array<{key: string; knownModels?: string[]}>
+  const openrouter = manifest.find(provider => provider.key === 'openrouter')
+  return openrouter?.knownModels ?? []
 }
 
 describe('cast model', () => {
@@ -62,8 +61,8 @@ describe('cast model', () => {
 
   const configPath = () => path.join(home, '.cast', 'config.yaml')
 
-  it('lists the same ids as KNOWN_MODELS with provider and family', () => {
-    const ids = knownIdsFromUpdate()
+  it('lists the same ids as the OpenRouter registry with provider and family', () => {
+    const ids = knownIdsFromRegistry()
     expect(MODELS.map(model => model.id).sort()).to.deep.equal([...ids].sort())
     const sonnet = MODELS.find(model => model.id === 'anthropic/claude-3.5-sonnet')
     expect(sonnet).to.deep.equal({

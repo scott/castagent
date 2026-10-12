@@ -5,7 +5,7 @@ import pytest
 
 from cast.providers.digitalocean_inference import DigitalOceanInferenceProvider
 from cast.providers.openrouter import MODEL_ALIASES
-from cast.providers.select import api_key_env_for_model, select_provider_class
+from cast.providers.registry import get_provider
 
 
 class TestDigitalOceanInferenceProvider:
@@ -111,20 +111,22 @@ class TestDigitalOceanInferenceProvider:
 
 
 class TestProviderSelection:
-    def test_prefix_selects_digitalocean_class(self):
-        selected = select_provider_class(
-            "digitalocean/llama3.3-70b-instruct",
-            digitalocean_cls="do",
-            openrouter_cls="or",
-        )
-        assert selected == "do"
-        assert api_key_env_for_model("digitalocean/llama3.3-70b-instruct") == "DIGITALOCEAN_MODEL_ACCESS_KEY"
+    def test_prefix_selects_digitalocean(self):
+        selected = get_provider("digitalocean/llama3.3-70b-instruct")
+        assert selected.key == "digitalocean"
+        assert selected.env_var == "DIGITALOCEAN_MODEL_ACCESS_KEY"
 
     def test_openrouter_and_bare_alias_stay_on_openrouter(self):
-        for model in ("openrouter/minimax/minimax-m2.5", "claude-3-7-sonnet", None):
-            selected = select_provider_class(model, digitalocean_cls="do", openrouter_cls="or")
-            assert selected == "or"
-            assert api_key_env_for_model(model) == "OPENROUTER_API_KEY"
+        for model in (
+            "openrouter/minimax/minimax-m2.5",
+            "anthropic/claude-sonnet-4.6",
+            "openai/gpt-4o",
+            "claude-3-7-sonnet",
+            None,
+        ):
+            selected = get_provider(model)
+            assert selected.key == "openrouter"
+            assert selected.env_var == "OPENROUTER_API_KEY"
 
 
 class TestBuilderProviderSelection:
@@ -187,7 +189,7 @@ class TestBuilderProviderSelection:
 
 class TestReflectionProviderSelection:
     @patch("cast.providers.digitalocean_inference.ChatOpenAI")
-    @patch("cast.memory.reflection.OpenRouterProvider")
+    @patch("cast.providers.openrouter.OpenRouterProvider")
     def test_digitalocean_model_does_not_use_openrouter(self, mock_openrouter, mock_chat):
         from cast.memory.reflection import ReflectionAgent
 

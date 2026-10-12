@@ -7,7 +7,7 @@ import * as path from 'path'
 
 import {keychain} from '../keychain'
 import {db} from '../sqlite'
-import {execCommand, getOpenRouterApiKey, getDigitalOceanInferenceKey, generateDeploymentId, getVolumeName, createMemoryVolume, deleteMemoryVolume, createDockerignore} from './deploy-utils'
+import {execCommand, inferenceEnv, generateDeploymentId, getVolumeName, createMemoryVolume, deleteMemoryVolume, createDockerignore} from './deploy-utils'
 
 // Helper to run a shell command and return its exit code
 function runCommand(command: string, args: string[], options?: {stdio?: any; cwd?: string; silent?: boolean}): Promise<number> {
@@ -153,14 +153,8 @@ export default class DockerDeploy extends Command {
       '-v', `${volumeId}:/app/agent/memory`,
     ]
 
-    const openrouterKey = getOpenRouterApiKey()
-    if (openrouterKey) {
-      dockerRunArgs.push('-e', `OPENROUTER_API_KEY=${openrouterKey}`)
-    }
-
-    const digitaloceanInferenceKey = getDigitalOceanInferenceKey()
-    if (digitaloceanInferenceKey) {
-      dockerRunArgs.push('-e', `DIGITALOCEAN_MODEL_ACCESS_KEY=${digitaloceanInferenceKey}`)
+    for (const [key, value] of Object.entries(inferenceEnv())) {
+      dockerRunArgs.push('-e', `${key}=${value}`)
     }
 
     dockerRunArgs.push(imageName)
@@ -333,6 +327,9 @@ xxhash>=3.7.0
     authToken: string,
     volumeId: string,
   ): void {
+    const inferenceLines = Object.entries(inferenceEnv())
+      .map(([key, value]) => `      - ${key}=${value}`)
+      .join('\n')
     const compose = `version: '3.8'
 
 services:
@@ -348,8 +345,7 @@ services:
       - CAST_AGENT_PATH=/app/agent
       - AUTH_TOKEN=${authToken}
       - PYTHONPATH=/app
-      - OPENROUTER_API_KEY=\${OPENROUTER_API_KEY}
-      - DIGITALOCEAN_MODEL_ACCESS_KEY=\${DIGITALOCEAN_MODEL_ACCESS_KEY}
+${inferenceLines}
     volumes:
       - ${volumeId}:/app/agent/memory
     restart: unless-stopped

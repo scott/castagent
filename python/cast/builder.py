@@ -847,31 +847,20 @@ def create_llm() -> BaseChatModel:
     """Create an LLM instance, falling back to echo mode if no API key.
 
     The model string is the raw ``defaults.builder_model`` (default
-    ``openrouter/minimax/minimax-m2.5``). ``digitalocean/`` selects
-    DigitalOcean serverless inference. Anything else stays on OpenRouter.
-    A missing key for that provider does not fall back to the other one.
+    ``openrouter/minimax/minimax-m2.5``). ``get_provider`` selects the
+    provider. A missing key does not fall back to another provider.
     """
-    from .providers.select import api_key_env_for_model, select_provider_class
+    from .providers.registry import get_provider
 
     model = get_builder_model_id()
-    env_name = api_key_env_for_model(model)
-    if not os.getenv(env_name):
-        print(f"Warning: No {env_name} found. Using echo mode.", file=sys.stderr)
+    provider = get_provider(model)
+    if not provider.is_available():
+        print(f"Warning: No {provider.env_var} found. Using echo mode.", file=sys.stderr)
         return EchoChatModel()
     try:
-        from .providers.digitalocean_inference import DigitalOceanInferenceProvider
-        from .providers.openrouter import OpenRouterProvider
-
-        provider_cls = select_provider_class(
-            model,
-            digitalocean_cls=DigitalOceanInferenceProvider,
-            openrouter_cls=OpenRouterProvider,
-        )
-        provider = provider_cls()
         return provider.create_llm(model=model, temperature=0.7)
     except Exception as e:
-        label = "DigitalOcean" if env_name == "DIGITALOCEAN_MODEL_ACCESS_KEY" else "OpenRouter"
-        print(f"Warning: Failed to create {label} LLM: {e}", file=sys.stderr)
+        print(f"Warning: Failed to create {provider.name} LLM: {e}", file=sys.stderr)
         return EchoChatModel()
 
 

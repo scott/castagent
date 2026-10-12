@@ -11,7 +11,7 @@ import SpritesDeploy from '../lib/deploy/sprites'
 import MicrovmDeploy from '../lib/deploy/microvm'
 import {getRelease, getCurrentRelease, listReleases, validateSemver} from '../lib/releases'
 import {db} from '../lib/sqlite'
-import {resolveDeploymentTarget, createDockerignore, execCommand, getDigitalOceanInferenceKey} from '../lib/deploy/deploy-utils'
+import {resolveDeploymentTarget, createDockerignore, execCommand, inferenceEnv} from '../lib/deploy/deploy-utils'
 import {writeHostMotdOverSsh} from '../lib/deploy/motd'
 
 const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'microvm', 'sprites', 'docker', 'local']
@@ -389,14 +389,8 @@ export default class Upgrade extends Command {
       dockerRunArgs.push('-v', `${existingVolumeId}:/app/agent/memory`)
     }
 
-    const openrouterKey = this.getOpenRouterApiKey()
-    if (openrouterKey) {
-      dockerRunArgs.push('-e', `OPENROUTER_API_KEY=${openrouterKey}`)
-    }
-
-    const digitaloceanInferenceKey = getDigitalOceanInferenceKey()
-    if (digitaloceanInferenceKey) {
-      dockerRunArgs.push('-e', `DIGITALOCEAN_MODEL_ACCESS_KEY=${digitaloceanInferenceKey}`)
+    for (const [key, value] of Object.entries(inferenceEnv())) {
+      dockerRunArgs.push('-e', `${key}=${value}`)
     }
 
     dockerRunArgs.push(`cast-${agentName}:latest`)
@@ -791,20 +785,6 @@ xxhash>=3.7.0
       .join('\n')
 
     fs.writeFileSync(path.join(agentPath, 'requirements.txt'), requirements)
-  }
-
-  private getOpenRouterApiKey(): string | undefined {
-    const configPath = path.join(os.homedir(), '.cast', 'config.yaml')
-    if (fs.existsSync(configPath)) {
-      try {
-        const YAML = require('yaml')
-        const config = YAML.parse(fs.readFileSync(configPath, 'utf-8'))
-        return config.providers?.openrouter?.api_key || process.env.OPENROUTER_API_KEY
-      } catch {
-        return process.env.OPENROUTER_API_KEY
-      }
-    }
-    return process.env.OPENROUTER_API_KEY
   }
 
   /**

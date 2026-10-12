@@ -171,12 +171,15 @@ castagent/                        # Project repo
 │       │   ├── permissions.py    # Permission checker
 │       │   └── principles.py     # Constitutional principles
 │       └── providers/
-│           ├── openrouter.py     # OpenRouter LLM provider
-│           ├── digitalocean_inference.py  # Serverless inference
-│           ├── select.py         # Model-string provider selection
-│           ├── anthropic.py      # Future
-│           ├── openai.py         # Future
-│           └── ollama.py         # Future
+│           ├── registry.py       # get_provider(model)
+│           ├── manifest.json     # Built-in catalog rows
+│           ├── catalog.py        # python -m cast.providers.catalog
+│           ├── openrouter.py     # Default inference provider
+│           ├── digitalocean.py   # digitalocean/ prefix binding
+│           ├── digitalocean_inference.py  # Serverless inference client
+│           ├── anthropic.py      # Placeholder
+│           ├── openai.py         # Placeholder
+│           └── ollama.py         # Placeholder
 ├── tests/                         # Test suites
 │   ├── ts/                       # TypeScript CLI tests
 │   │   ├── commands/
@@ -913,42 +916,59 @@ A `--welcome` string is still the first agent message in the chat when one is pa
 
 ## LLM Provider Architecture
 
-### Provider Interface
+Inference providers register themselves. The runtime agent, the builder, and memory reflection call `get_provider(model)`. They do not import a concrete provider class and they do not branch on the provider name.
 
-```python
-class LLMProvider(ABC):
-    @property
-    def name(self) -> str: ...
-    @property
-    def supported_models(self) -> list[str]: ...
-    def create_llm(self, model: str, **kwargs) -> BaseChatModel: ...
-```
+There is no `LLMProvider` ABC and no `<provider>:<model>` syntax. A model string uses a slash prefix (`digitalocean/<id>`, `example/<id>`) or, with no matching prefix, the default provider.
+
+### How a model string picks a provider
+
+Non-default providers match first. A provider matches when the model starts with one of its prefixes. The longest matching prefix wins. If none match, the default provider is used. OpenRouter is the only default.
+
+| Model string | Provider |
+|---|---|
+| `digitalocean/llama3.3-70b-instruct` | DigitalOcean serverless inference |
+| `openrouter/anthropic/claude-sonnet-4.6` | OpenRouter |
+| `anthropic/claude-sonnet-4.6` | OpenRouter |
+| `openai/gpt-4o` | OpenRouter |
+| `claude-sonnet-4` | OpenRouter, then the alias table |
+| `example/my-model` | The external provider that registered `example/` |
+
+`openai/`, `anthropic/`, `google/`, `meta-llama/`, `kimi/`, `minimax/`, `deepseek/`, `mistralai/`, `cohere/`, `x-ai/`, and `perplexity/` are OpenRouter model ids, not provider prefixes.
+
+Both API keys may be set. The prefix wins. If the selected provider's environment variable is missing, Cast stays in echo mode and names that variable. It does not try the other provider.
+
+### Registration
+
+Built-ins are a module under `python/cast/providers/<key>.py` that exports `provider`, one row in `python/cast/providers/manifest.json`, and one binding in `BUILTIN_MODULES`. OpenRouter (`https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`) is the default. DigitalOcean (`https://inference.do-ai.run/v1`, `DIGITALOCEAN_MODEL_ACCESS_KEY`, config key `providers.digitalocean_inference.api_key`) accepts any catalog id and does not rewrite it. `providers.digitalocean` remains the Droplet and MicroVM deploy token.
+
+External providers load after built-ins, with no edit to this repository:
+
+1. `cast.inference` entry points, sorted by key.
+2. `~/.cast/inference-providers/<key>/` (`provider.json` and `provider.py`), sorted by directory name.
+3. `inferenceProviders` paths or module names in `~/.cast/config.yaml`, in listed order.
+
+An external key or prefix that collides with a provider loaded earlier fails at load and names both sources. An external cannot set `default`. A provider file that fails to import is reported with its path. Built-ins still register.
+
+`python -m cast.providers.catalog` prints the loaded catalog as JSON. `knownModels` is not in that payload. Deploy code calls `inferenceEnv()`, which runs the catalog, resolves each `envVar` from the environment and then from `configKey`, and returns only the pairs that have a value.
 
 ### Provider Implementations
 
 | Provider | File | Status |
 |----------|------|--------|
-| OpenRouter | `providers/openrouter.py` | v1 |
-| DigitalOcean serverless inference | `providers/digitalocean_inference.py` | v1 |
-| Anthropic | `providers/anthropic.py` | Future |
-| OpenAI | `providers/openai.py` | Future |
-| Ollama | `providers/ollama.py` | Future |
+| OpenRouter | `providers/openrouter.py` | v1, default |
+| DigitalOcean serverless inference | `providers/digitalocean.py` | v1 |
+| Anthropic | `providers/anthropic.py` | Placeholder |
+| OpenAI | `providers/openai.py` | Placeholder |
+| Ollama | `providers/ollama.py` | Placeholder |
 
-DigitalOcean serverless inference is not deployment. The key is `DIGITALOCEAN_MODEL_ACCESS_KEY` (or `providers.digitalocean_inference.api_key`). The base URL is `https://inference.do-ai.run/v1`. `providers.digitalocean` and `deployment.digitalocean` remain the deploy token.
+### Model string examples
 
-### Model String Format
-
-Format: `<provider>:<model>` or `<provider>/<model>`
-
-Examples:
-- `openrouter:anthropic/claude-4-sonnet`
 - `openrouter/minimax/minimax-m2.5` (default builder model)
 - `digitalocean/llama3.3-70b-instruct`
 - `digitalocean/deepseek-v3.2`
-- `anthropic:claude-3-5-sonnet`
-- `ollama:llama3`
+- `example/my-model` (external provider)
 
-A `digitalocean/<model-id>` string selects DigitalOcean and sends `<model-id>` unchanged. `openrouter/...` and bare aliases stay on OpenRouter. The prefix wins when both keys are set.
+A `digitalocean/<model-id>` string selects DigitalOcean and sends `<model-id>` unchanged. `openrouter/...`, bare aliases, `anthropic/...`, and `openai/...` stay on OpenRouter. Alias and vendor-prefix rewrites stay inside the OpenRouter module.
 
 ---
 
@@ -1397,12 +1417,15 @@ python/cast/
 │   ├── permissions.py        # Permission checker
 │   └── principles.py         # Constitutional principles
 └── providers/
-    ├── openrouter.py         # OpenRouter provider
-    ├── digitalocean_inference.py  # Serverless inference
-    ├── select.py             # Model-string provider selection
-    ├── anthropic.py          # Future
-    ├── openai.py             # Future
-    └── ollama.py             # Future
+    ├── registry.py           # get_provider(model)
+    ├── manifest.json         # Built-in catalog rows
+    ├── catalog.py            # python -m cast.providers.catalog
+    ├── openrouter.py         # Default inference provider
+    ├── digitalocean.py       # digitalocean/ prefix binding
+    ├── digitalocean_inference.py  # Serverless inference client
+    ├── anthropic.py          # Placeholder
+    ├── openai.py             # Placeholder
+    └── ollama.py             # Placeholder
 ```
 
 ---

@@ -58,6 +58,45 @@ describe('update command', () => {
       expect(result.warning).to.include('OpenRouter')
     })
 
+    it('accepts an external acceptsAnyModel id without an OpenRouter warning', () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-update-model-'))
+      const folder = path.join(home, '.cast', 'inference-providers', 'example')
+      fs.mkdirSync(folder, {recursive: true})
+      fs.writeFileSync(path.join(folder, 'provider.json'), JSON.stringify({
+        key: 'example',
+        name: 'Example Inference',
+        prefixes: ['example/'],
+        envVar: 'EXAMPLE_API_KEY',
+        configKey: 'providers.example.api_key',
+        baseUrl: 'https://example.invalid/v1',
+        acceptsAnyModel: true,
+        knownModels: [],
+      }))
+      fs.writeFileSync(path.join(folder, 'provider.py'), [
+        'class Example:',
+        '    key = "example"',
+        '    env_var = "EXAMPLE_API_KEY"',
+        '    prefixes = ("example/",)',
+        '    def is_available(self):',
+        '        return False',
+        '    def create_llm(self, model=None, **kwargs):',
+        '        return {"model": model}',
+        'provider = Example()',
+        '',
+      ].join('\n'))
+      const previous = process.env.HOME
+      process.env.HOME = home
+      try {
+        const update = new Update(['update', 'agent'], {} as any)
+        const result = (update as any).validateModel('example/my-model')
+        expect(result).to.deep.equal({valid: true})
+        expect(result.warning).to.equal(undefined)
+      } finally {
+        if (previous === undefined) delete process.env.HOME
+        else process.env.HOME = previous
+      }
+    })
+
     it('should warn for unknown models', () => {
       const knownModels = [
         'anthropic/claude-3.7-sonnet',

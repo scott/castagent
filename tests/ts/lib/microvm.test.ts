@@ -53,7 +53,7 @@ describe('DigitalOcean MicroVM helpers', () => {
     const env = deploymentEnv({
       agentName: 'demo',
       authToken: 'secret',
-      openrouterKey: 'sk',
+      inference: {OPENROUTER_API_KEY: 'sk'},
       edgeAuthOnly: false,
     })
     expect(env.AUTH_TOKEN).to.equal('secret')

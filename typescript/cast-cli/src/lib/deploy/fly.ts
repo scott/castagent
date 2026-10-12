@@ -8,8 +8,7 @@ import {
   getAgentPath,
   execCommand,
   saveDeployment,
-  getOpenRouterApiKey,
-  getDigitalOceanInferenceKey,
+  inferenceEnv,
   generateDeploymentId,
   getVolumeName,
 } from './deploy-utils'
@@ -85,17 +84,10 @@ export default class FlyDeploy extends Command {
 
     // Set secrets
     this.log('Setting secrets...')
-    const openrouterKey = getOpenRouterApiKey()
     const secrets: Record<string, string> = {
       CAST_AGENT_NAME: agentName,
       AUTH_TOKEN: authToken,
-    }
-    if (openrouterKey) {
-      secrets.OPENROUTER_API_KEY = openrouterKey
-    }
-    const digitaloceanInferenceKey = getDigitalOceanInferenceKey()
-    if (digitaloceanInferenceKey) {
-      secrets.DIGITALOCEAN_MODEL_ACCESS_KEY = digitaloceanInferenceKey
+      ...inferenceEnv(),
     }
 
     const secretPairs = Object.entries(secrets).map(([k, v]) => `${k}=${v}`)

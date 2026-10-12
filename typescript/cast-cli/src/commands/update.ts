@@ -5,86 +5,9 @@ import * as os from 'os'
 import * as yaml from 'yaml'
 import {db} from '../lib/sqlite'
 import {createVersion} from '../lib/versioning'
+import {inferenceModelStatus} from '../lib/deploy/deploy-utils'
 
 const VALID_TOOLS = ['bash', 'read', 'glob']
-
-// Known models that OpenRouter supports (for validation warnings)
-// Any valid OpenRouter model ID will work
-const KNOWN_MODELS = [
-  // Anthropic - Claude 4 series
-  'anthropic/claude-opus-4.5',
-  'anthropic/claude-sonnet-4.6',
-  'anthropic/claude-haiku-4',
-  // Anthropic - Claude 3.7 series
-  'anthropic/claude-3.7-sonnet',
-  'anthropic/claude-3.7-sonnet:thinking',
-  // Anthropic - Claude 3.5 series
-  'anthropic/claude-3.5-sonnet',
-  'anthropic/claude-3.5-haiku',
-  // Anthropic - Claude 3 series
-  'anthropic/claude-3-opus',
-  'anthropic/claude-3-sonnet',
-  'anthropic/claude-3-haiku',
-  // OpenAI - GPT-4o series
-  'openai/gpt-4o',
-  'openai/gpt-4o-mini',
-  'openai/gpt-4o-search-preview',
-  'openai/gpt-4o-mini-search',
-  // OpenAI - GPT-4.5
-  'openai/gpt-4.5-turbo',
-  // OpenAI - GPT-4 series
-  'openai/gpt-4-turbo',
-  'openai/gpt-4',
-  // Google - Gemini 2 series
-  'google/gemini-2.5-pro',
-  'google/gemini-2.5-flash',
-  'google/gemini-2.0-flash',
-  // Google - Gemini 1.5 series
-  'google/gemini-1.5-pro',
-  'google/gemini-1.5-flash',
-  'google/gemini-1.5-flash-8b',
-  // Meta - Llama 4 series
-  'meta-llama/llama-4-scout',
-  'meta-llama/llama-4-maverick',
-  'meta-llama/llama-4-17b-16e-instruct',
-  // Meta - Llama 3.3/3.2/3.1 series
-  'meta-llama/llama-3.3-70b-instruct',
-  'meta-llama/llama-3.2-90b-vision-instruct',
-  'meta-llama/llama-3.2-11b-vision-instruct',
-  'meta-llama/llama-3.1-405b-instruct',
-  'meta-llama/llama-3.1-70b-instruct',
-  'meta-llama/llama-3.1-8b-instruct',
-  // Kimi
-  'kimi/k2.5',
-  'kimi/k2',
-  'kimi/kimi-2.5',
-  'kimi/kimi-2',
-  // Minimax
-  'minimax/minimax-m4',
-  'minimax/minimax-m2.5',
-  'minimax/minimax-m2',
-  // DeepSeek
-  'deepseek/deepseek-chat-v3-0324',
-  'deepseek/deepseek-chat',
-  'deepseek/deepseek-coder',
-  // Mistral
-  'mistralai/mistral-large',
-  'mistralai/mistral-medium',
-  'mistralai/mistral-small',
-  'mistralai/mistral-nemo',
-  // Cohere
-  'cohere/command-r-plus-08-2024',
-  'cohere/command-r-plus',
-  'cohere/command-r7b-12-2024',
-  'cohere/command-r',
-  // xAI
-  'x-ai/grok-2',
-  'x-ai/grok-2-mini',
-  'x-ai/grok-beta',
-  // Perplexity
-  'perplexity/llama-3.1-sonar-large-128k-online',
-  'perplexity/llama-3.1-sonar-huge-128k-online',
-]
 
 export default class Update extends Command {
   static description = 'Update agent configuration'
@@ -166,24 +89,7 @@ export default class Update extends Command {
   }
 
   private validateModel(model: string): {valid: boolean; warning?: string} {
-    // DigitalOcean catalog ids are not OpenRouter models. Accept any
-    // digitalocean/<model-id>, including ids that are not in the starter list.
-    if (model.startsWith('digitalocean/')) {
-      return {valid: true}
-    }
-
-    // Strip openrouter/ prefix if present
-    const cleanModel = model.startsWith('openrouter/') ? model.slice('openrouter/'.length) : model
-    if (KNOWN_MODELS.includes(cleanModel)) {
-      return {valid: true}
-    }
-
-    return {
-      valid: true,
-      warning: `Model '${model}' is not in the known model list. ` +
-        `If you get a 404 error, the model may not be available on OpenRouter. ` +
-        `Known models: ${KNOWN_MODELS.join(', ')}`,
-    }
+    return inferenceModelStatus(model)
   }
 
   private parsePermission(perm: string): {tool: string; level: string} | null {

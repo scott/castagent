@@ -242,7 +242,7 @@ class TestBuiltinTools:
 class TestRuntimeAgentLLMMode:
     """Tests for RuntimeAgent in LLM mode (with mocked API key)."""
 
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     def test_init_with_api_key(self, mock_create_react_agent, mock_provider_class, agent_config):
         """Agent should initialize LLM when API key is present."""
@@ -261,7 +261,7 @@ class TestRuntimeAgentLLMMode:
             )
             mock_create_react_agent.assert_called_once()
 
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     def test_tools_loaded_from_config(self, mock_create_react_agent, mock_provider_class, agent_config):
         """Agent should load tools specified in config."""
@@ -278,7 +278,7 @@ class TestRuntimeAgentLLMMode:
             assert read_tool in agent.tools
             assert glob_tool in agent.tools
 
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     @pytest.mark.asyncio
     async def test_process_message_llm_mode(self, mock_create_react_agent, mock_provider_class, agent_config):
@@ -301,17 +301,22 @@ class TestRuntimeAgentLLMMode:
             assert response == "LLM response"
             mock_graph.ainvoke.assert_called_once()
 
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     def test_fallback_on_init_error(self, mock_create_react_agent, mock_provider_class, agent_config):
         """Agent should fall back to echo mode if LLM init fails."""
-        mock_provider_class.side_effect = Exception("Provider init failed")
+        mock_provider = MagicMock()
+        mock_provider.is_available.return_value = True
+        mock_provider.create_llm.side_effect = Exception("Provider init failed")
+        mock_provider.name = "OpenRouter"
+        mock_provider.env_var = "OPENROUTER_API_KEY"
+        mock_provider_class.return_value = mock_provider
 
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
             agent = RuntimeAgent(agent_config)
             assert agent.graph is None
 
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     def test_fallback_on_graph_error(self, mock_create_react_agent, mock_provider_class, agent_config):
         """Agent should fall back to echo mode if graph creation fails."""
@@ -331,7 +336,7 @@ class TestRuntimeAgentMemoryIntegration:
     def test_memory_initialized_with_api_key(self, agent_config):
         """Agent should initialize memory when API key is available."""
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
-            with patch("cast.agent.runtime.OpenRouterProvider") as mock_provider:
+            with patch("cast.agent.runtime.get_provider") as mock_provider:
                 mock_provider.is_available.return_value = True
                 mock_provider_instance = MagicMock()
                 mock_provider_instance.create_llm.return_value = MagicMock()
@@ -354,7 +359,7 @@ class TestRuntimeAgentMemoryIntegration:
 class TestRuntimeAgentProcessMessageErrors:
     """Tests for error handling in process_message."""
 
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     @pytest.mark.asyncio
     async def test_process_message_handles_404_error(self, mock_create_react_agent, mock_provider_class, agent_config):
@@ -374,7 +379,7 @@ class TestRuntimeAgentProcessMessageErrors:
             assert "404" in response or "model" in response.lower()
             assert "OPENROUTER_API_KEY" in response
 
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     @pytest.mark.asyncio
     async def test_process_message_handles_generic_error(self, mock_create_react_agent, mock_provider_class, agent_config):
@@ -397,7 +402,7 @@ class TestRuntimeAgentProcessMessageErrors:
 class TestRuntimeAgentStreamingMode:
     """Tests for streaming mode."""
 
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     @pytest.mark.asyncio
     async def test_process_message_stream_echo_mode(self, mock_create_react_agent, mock_provider_class, agent_config):
@@ -411,7 +416,7 @@ class TestRuntimeAgentStreamingMode:
 
             assert isinstance(chunks, list)
 
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     @pytest.mark.asyncio
     async def test_process_message_stream_llm_mode(self, mock_create_react_agent, mock_provider_class, agent_config):
@@ -437,7 +442,7 @@ class TestRuntimeAgentStreamingMode:
             # Should yield chunks from LLM
             assert len(chunks) >= 0  # May be empty if streaming format differs
 
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     @pytest.mark.asyncio
     async def test_process_message_stream_error_handling(self, mock_create_react_agent, mock_provider_class, agent_config):
@@ -477,7 +482,7 @@ class TestRuntimeAgentChatHistory:
             # Chat history may or may not be updated depending on implementation
             assert isinstance(agent.chat_history, list)
 
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     @pytest.mark.asyncio
     async def test_chat_history_with_memory_context(self, mock_create_react_agent, mock_provider_class, agent_config):
@@ -511,7 +516,7 @@ class TestRuntimeAgentTools:
     def test_agent_has_tools_attribute(self, agent_config):
         """Agent should have tools attribute when LLM is configured."""
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
-            with patch("cast.agent.runtime.OpenRouterProvider") as mock_provider:
+            with patch("cast.agent.runtime.get_provider") as mock_provider:
                 mock_provider.is_available.return_value = True
                 mock_provider_instance = MagicMock()
                 mock_provider_instance.create_llm.return_value = MagicMock()

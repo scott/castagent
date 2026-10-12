@@ -59,6 +59,23 @@ string; the default remains `openrouter/minimax/minimax-m2.5`. Change the
 curated OpenRouter ids with `cast model` or `/model` in the builder TUI.
 The running builder keeps its current model until the next launch.
 
+## External inference providers
+
+`inferenceProviders` in `~/.cast/config.yaml` lists extra LLM providers.
+Each entry is a path to a `provider.py` or an importable module name:
+
+```yaml
+inferenceProviders:
+  - ~/src/acme/provider.py
+```
+
+A folder at `~/.cast/inference-providers/<key>/` with `provider.json` and
+`provider.py` is loaded the same way, as is a package entry point group
+named `cast.inference`. The model prefix (for example `example/my-model`)
+selects that provider. These providers are included when Cast forwards
+API keys into a deployment. They are not deployment providers, and
+`providers.digitalocean.token` is still only the Droplet and MicroVM token.
+
 ## Environment variables
 
 | Variable | Used for |

@@ -4,8 +4,7 @@ import {
   getAgentPath,
   generateDeploymentId,
   getVolumeName,
-  getOpenRouterApiKey,
-  getDigitalOceanInferenceKey,
+  inferenceEnv,
   getProviderToken,
   checkCli,
   getMemoryMountPath,
@@ -78,58 +77,111 @@ describe('Deploy Utils', () => {
     })
   })
 
-  describe('getOpenRouterApiKey', () => {
-    it('should return undefined when env var not set', () => {
-      // Clear the env var if set
-      const apiKey = getOpenRouterApiKey()
-      // Result depends on env - just ensure function returns a value
-      expect(apiKey === undefined || typeof apiKey === 'string').to.be.true
-    })
-  })
-
-  describe('getDigitalOceanInferenceKey', () => {
-    const original = process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
+  describe('inferenceEnv', () => {
+    const originalOpenRouter = process.env.OPENROUTER_API_KEY
+    const originalDigitalOcean = process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
+    const originalExample = process.env.EXAMPLE_API_KEY
+    const originalHome = process.env.HOME
 
     afterEach(() => {
-      if (original === undefined) {
-        delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
-      } else {
-        process.env.DIGITALOCEAN_MODEL_ACCESS_KEY = original
-      }
+      restoreEnv('OPENROUTER_API_KEY', originalOpenRouter)
+      restoreEnv('DIGITALOCEAN_MODEL_ACCESS_KEY', originalDigitalOcean)
+      restoreEnv('EXAMPLE_API_KEY', originalExample)
+      restoreEnv('HOME', originalHome)
     })
 
-    it('prefers DIGITALOCEAN_MODEL_ACCESS_KEY over config', () => {
-      process.env.DIGITALOCEAN_MODEL_ACCESS_KEY = 'env-key'
-      const key = getDigitalOceanInferenceKey({
+    it('returns keys that resolve and omits keys that do not', () => {
+      process.env.OPENROUTER_API_KEY = 'or-env'
+      delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
+      const env = inferenceEnv({})
+      expect(env.OPENROUTER_API_KEY).to.equal('or-env')
+      expect(env).to.not.have.property('DIGITALOCEAN_MODEL_ACCESS_KEY')
+    })
+
+    it('prefers the environment over configKey', () => {
+      process.env.OPENROUTER_API_KEY = 'or-env'
+      process.env.DIGITALOCEAN_MODEL_ACCESS_KEY = 'do-env'
+      const env = inferenceEnv({
         providers: {
-          digitalocean_inference: {api_key: 'config-key'},
+          openrouter: {api_key: 'or-config'},
+          digitalocean_inference: {api_key: 'do-config'},
           digitalocean: {token: 'deploy-token'},
         },
       })
-      expect(key).to.equal('env-key')
+      expect(env.OPENROUTER_API_KEY).to.equal('or-env')
+      expect(env.DIGITALOCEAN_MODEL_ACCESS_KEY).to.equal('do-env')
+      expect(JSON.stringify(env)).to.not.include('deploy-token')
     })
 
-    it('reads providers.digitalocean_inference.api_key when env is unset', () => {
+    it('reads configKey when the environment variable is unset', () => {
+      delete process.env.OPENROUTER_API_KEY
       delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
-      const key = getDigitalOceanInferenceKey({
+      const env = inferenceEnv({
         providers: {
-          digitalocean_inference: {api_key: 'config-key'},
+          openrouter: {api_key: 'or-config'},
+          digitalocean_inference: {api_key: 'do-config'},
         },
       })
-      expect(key).to.equal('config-key')
+      expect(env.OPENROUTER_API_KEY).to.equal('or-config')
+      expect(env.DIGITALOCEAN_MODEL_ACCESS_KEY).to.equal('do-config')
     })
 
-    it('does not read the digitalocean deploy token', () => {
+    it('does not read providers.digitalocean.token', () => {
+      delete process.env.OPENROUTER_API_KEY
       delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
-      const key = getDigitalOceanInferenceKey({
+      const env = inferenceEnv({
         providers: {
           digitalocean: {token: 'deploy-token', api_key: 'also-deploy'},
         },
       })
-      expect(key).to.equal(undefined)
+      expect(env).to.not.have.property('DIGITALOCEAN_MODEL_ACCESS_KEY')
+      expect(JSON.stringify(env)).to.not.include('deploy-token')
+      expect(JSON.stringify(env)).to.not.include('also-deploy')
+    })
+
+    it('includes an external provider variable', () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-inference-env-'))
+      const folder = path.join(home, '.cast', 'inference-providers', 'example')
+      fs.mkdirSync(folder, {recursive: true})
+      fs.writeFileSync(path.join(folder, 'provider.json'), JSON.stringify({
+        key: 'example',
+        name: 'Example Inference',
+        prefixes: ['example/'],
+        envVar: 'EXAMPLE_API_KEY',
+        configKey: 'providers.example.api_key',
+        baseUrl: 'https://example.invalid/v1',
+        acceptsAnyModel: true,
+        knownModels: [],
+      }))
+      fs.writeFileSync(path.join(folder, 'provider.py'), [
+        'class Example:',
+        '    key = "example"',
+        '    env_var = "EXAMPLE_API_KEY"',
+        '    prefixes = ("example/",)',
+        '    def is_available(self):',
+        '        return False',
+        '    def create_llm(self, model=None, **kwargs):',
+        '        raise RuntimeError("not called")',
+        'provider = Example()',
+        '',
+      ].join('\n'))
+      process.env.HOME = home
+      delete process.env.OPENROUTER_API_KEY
+      delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
+      process.env.EXAMPLE_API_KEY = 'example-env'
+      const env = inferenceEnv({
+        providers: {digitalocean: {token: 'deploy-token'}},
+      })
+      expect(env.EXAMPLE_API_KEY).to.equal('example-env')
+      expect(JSON.stringify(env)).to.not.include('deploy-token')
     })
   })
 })
+
+function restoreEnv(name: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[name]
+  else process.env[name] = value
+}
 
 describe('getProviderToken', () => {
   it('should check custom env var names first', () => {

@@ -4,6 +4,8 @@ from typing import Optional
 
 from langchain_openai import ChatOpenAI
 
+from ._manifest import row_for
+
 
 # Model ID mappings for common models
 # Format: "claude-sonnet-4" -> "anthropic/claude-sonnet-4.6"
@@ -216,3 +218,28 @@ class OpenRouterProvider:
     def is_available(cls) -> bool:
         """Check if OpenRouter API key is configured."""
         return bool(os.getenv("OPENROUTER_API_KEY"))
+
+
+class OpenRouterInference:
+    """Registry binding. Alias rewrites stay on ``OpenRouterProvider``."""
+
+    def __init__(self):
+        row = row_for("openrouter")
+        self.key = row["key"]
+        self.name = row["name"]
+        self.prefixes = tuple(row["prefixes"])
+        self.default = bool(row["default"])
+        self.env_var = row["envVar"]
+        self.config_key = row["configKey"]
+        self.base_url = row["baseUrl"]
+        self.accepts_any_model = bool(row["acceptsAnyModel"])
+        self.known_models = tuple(row.get("knownModels") or ())
+
+    def is_available(self) -> bool:
+        return bool(os.getenv(self.env_var))
+
+    def create_llm(self, model: Optional[str] = None, **kwargs):
+        return OpenRouterProvider().create_llm(model=model, **kwargs)
+
+
+provider = OpenRouterInference()

@@ -4,7 +4,7 @@ import * as path from 'path'
 import * as yaml from 'yaml'
 
 /**
- * Curated builder models. Copied from the KNOWN_MODELS list that
+ * Curated builder models. Copied from the OpenRouter knownModels list that
  * docs-site/scripts/extract-providers.ts turns into data/models.json.
  * Ids are validated against this list. There is no custom-id escape hatch.
  */
