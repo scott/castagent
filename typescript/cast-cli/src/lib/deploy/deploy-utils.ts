@@ -1,4 +1,4 @@
-import { spawn } from 'child_process'
+import { execFileSync, spawn } from 'child_process'
 import * as path from 'path'
 import * as os from 'os'
 import * as fs from 'fs'
@@ -713,21 +713,92 @@ export function saveDeployment(
   return deployment?.id || ''
 }
 
-export function getOpenRouterApiKey(): string | undefined {
-  return (
-    process.env.OPENROUTER_API_KEY ||
-    loadConfig().providers?.openrouter?.api_key
-  )
+export interface InferenceCatalogEntry {
+  key: string
+  name: string
+  default: boolean
+  prefixes: string[]
+  envVar: string
+  configKey: string
+  baseUrl: string
+  acceptsAnyModel: boolean
 }
 
-// Model access key for DigitalOcean serverless inference.
-// Does not read providers.digitalocean (that token is for deploys).
-export function getDigitalOceanInferenceKey(config: any = loadConfig()): string | undefined {
-  return (
-    process.env.DIGITALOCEAN_MODEL_ACCESS_KEY ||
-    config?.providers?.digitalocean_inference?.api_key ||
-    undefined
-  )
+function findCastRoot(): string {
+  const markers = ['python/cast/providers/manifest.json', 'typescript/cast-cli']
+  const candidates = [
+    process.cwd(),
+    path.resolve(__dirname, '..'),
+    path.resolve(__dirname, '../..'),
+    path.resolve(__dirname, '../../..'),
+    path.resolve(__dirname, '../../../..'),
+    path.resolve(__dirname, '../../../../..'),
+  ]
+  for (const candidate of candidates) {
+    if (markers.every(marker => fs.existsSync(path.join(candidate, marker)))) {
+      return candidate
+    }
+  }
+  return process.cwd()
+}
+
+function castPython(): {command: string; env: NodeJS.ProcessEnv} {
+  const pythonDir = path.join(findCastRoot(), 'python')
+  const venvPython = path.join(pythonDir, '.venv', 'bin', 'python3')
+  let command = process.platform === 'win32' ? 'python' : 'python3'
+  if (fs.existsSync(venvPython)) command = venvPython
+  const env = {...process.env}
+  env.PYTHONPATH = env.PYTHONPATH ? `${pythonDir}${path.delimiter}${env.PYTHONPATH}` : pythonDir
+  return {command, env}
+}
+
+export function loadInferenceCatalog(): InferenceCatalogEntry[] {
+  const {command, env} = castPython()
+  const stdout = execFileSync(command, ['-m', 'cast.providers.catalog'], {
+    encoding: 'utf8',
+    env,
+  })
+  const parsed = JSON.parse(stdout)
+  if (!Array.isArray(parsed)) {
+    throw new Error('cast.providers.catalog did not print a JSON array')
+  }
+  return parsed
+}
+
+function configValue(config: any, dotted: string | undefined): string | undefined {
+  if (!dotted) return undefined
+  let current = config
+  for (const part of dotted.split('.')) {
+    if (!current || typeof current !== 'object' || !(part in current)) return undefined
+    current = current[part]
+  }
+  if (typeof current !== 'string' || current.length === 0) return undefined
+  return current
+}
+
+// Env first, then configKey. Omits pairs with no value.
+// Does not read providers.digitalocean.token; that key is not in the catalog.
+export function inferenceEnv(config: any = loadConfig()): Record<string, string> {
+  const out: Record<string, string> = {}
+  for (const entry of loadInferenceCatalog()) {
+    if (!entry.envVar) continue
+    const fromEnv = process.env[entry.envVar]
+    const value = fromEnv || configValue(config, entry.configKey)
+    if (value) out[entry.envVar] = value
+  }
+  return out
+}
+
+export function inferenceModelStatus(model: string): {valid: boolean; warning?: string} {
+  const {command, env} = castPython()
+  const stdout = execFileSync(command, [
+    '-c',
+    'import json,sys\nfrom cast.providers.registry import model_status\njson.dump(model_status(sys.argv[1]), sys.stdout)\n',
+    model,
+  ], {encoding: 'utf8', env})
+  const parsed = JSON.parse(stdout) as {valid?: boolean; warning?: string | null}
+  if (parsed.warning) return {valid: true, warning: parsed.warning}
+  return {valid: true}
 }
 
 export async function execCommandIgnoreError(

@@ -214,8 +214,8 @@ describe('DigitalOcean Deploy Provider', () => {
       } else {
         execStub.resolves({stdout: '', stderr: '', exitCode: 0})
       }
-      sandbox.stub(deployUtils, 'getOpenRouterApiKey').returns(
-        extra?.openRouterKey ?? undefined,
+      sandbox.stub(deployUtils, 'inferenceEnv').returns(
+        extra?.openRouterKey ? {OPENROUTER_API_KEY: extra.openRouterKey} : {},
       )
       sandbox.stub(motd, 'buildHostMotd').returns(extra?.buildMotdReturn ?? 'Welcome!\n')
       const motdStub = sandbox.stub(motd, 'writeHostMotdOverSsh')

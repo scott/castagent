@@ -113,10 +113,6 @@ describe('Upgrade Command', () => {
       expect(typeof instance.confirm).to.equal('function')
     })
 
-    it('should have getOpenRouterApiKey method', () => {
-      expect(typeof instance.getOpenRouterApiKey).to.equal('function')
-    })
-
     it('should have detectOnHostTui method', () => {
       expect(typeof instance.detectOnHostTui).to.equal('function')
     })

@@ -109,7 +109,7 @@ class TestRuntimeAgentEchoMode:
 class TestRuntimeAgentLLMMode:
     """Tests for RuntimeAgent in LLM mode (with API key)."""
     
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     def test_init_with_api_key(self, mock_create_react_agent, mock_provider_class, agent_config):
         """Agent should initialize LLM when API key is present."""
@@ -128,7 +128,7 @@ class TestRuntimeAgentLLMMode:
             )
             mock_create_react_agent.assert_called_once()
     
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     def test_tools_loaded_from_config(self, mock_create_react_agent, mock_provider_class, agent_config):
         """Agent should load tools specified in config."""
@@ -145,7 +145,7 @@ class TestRuntimeAgentLLMMode:
             assert read_tool in agent.tools
             assert glob_tool in agent.tools
     
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     @pytest.mark.asyncio
     async def test_process_message_llm_mode(self, mock_create_react_agent, mock_provider_class, agent_config):
@@ -169,11 +169,16 @@ class TestRuntimeAgentLLMMode:
             assert response == "LLM response"
             mock_graph.ainvoke.assert_called_once()
     
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     def test_fallback_on_init_error(self, mock_create_react_agent, mock_provider_class, agent_config):
         """Agent should fall back to echo mode if LLM init fails."""
-        mock_provider_class.side_effect = Exception("Provider init failed")
+        mock_provider = MagicMock()
+        mock_provider.is_available.return_value = True
+        mock_provider.create_llm.side_effect = Exception("Provider init failed")
+        mock_provider.name = "OpenRouter"
+        mock_provider.env_var = "OPENROUTER_API_KEY"
+        mock_provider_class.return_value = mock_provider
         
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
             agent = RuntimeAgent(agent_config)
@@ -189,7 +194,7 @@ class TestRuntimeAgentProviderSelection:
 
     @patch("cast.agent.runtime.create_react_agent")
     @patch("cast.providers.digitalocean_inference.ChatOpenAI")
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.providers.openrouter.OpenRouterProvider")
     def test_digitalocean_model_never_constructs_openrouter(
         self, mock_openrouter, mock_chat, mock_graph, agent_config
     ):
@@ -210,7 +215,7 @@ class TestRuntimeAgentProviderSelection:
         assert mock_chat.call_args.kwargs["base_url"] == "https://inference.do-ai.run/v1"
         assert mock_chat.call_args.kwargs["api_key"] == "do-key"
 
-    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
     def test_openrouter_model_does_not_require_digitalocean_key(
         self, mock_graph, mock_provider_class, agent_config

@@ -787,7 +787,7 @@ class TestReflectionAgent:
         """ReflectionAgent should initialize LLM when API key available."""
         from cast.memory.reflection import ReflectionAgent
 
-        with patch('cast.memory.reflection.OpenRouterProvider') as mock_provider:
+        with patch('cast.memory.reflection.get_provider') as mock_provider:
             mock_provider.is_available.return_value = True
             mock_provider_instance = MagicMock()
             mock_provider_instance.create_llm.return_value = MagicMock()
@@ -808,7 +808,7 @@ class TestReflectionAgent:
         """reflect should return None when no LLM is available."""
         from cast.memory.reflection import ReflectionAgent
 
-        with patch('cast.memory.reflection.OpenRouterProvider') as mock_provider:
+        with patch('cast.memory.reflection.get_provider') as mock_provider:
             mock_provider.is_available.return_value = False
 
             agent = ReflectionAgent()
@@ -822,7 +822,7 @@ class TestReflectionAgent:
         """reflect async should return None when no LLM is available."""
         from cast.memory.reflection import ReflectionAgent
 
-        with patch('cast.memory.reflection.OpenRouterProvider') as mock_provider:
+        with patch('cast.memory.reflection.get_provider') as mock_provider:
             mock_provider.is_available.return_value = False
 
             agent = ReflectionAgent()
@@ -841,7 +841,7 @@ class TestReflectionAgent:
         mock_response.content = '{"notable": true, "category": "learned", "content": "User prefers TypeScript", "tags": ["preference"], "reasoning": "User stated preference"}'
         mock_llm.ainvoke.return_value = mock_response
 
-        with patch('cast.memory.reflection.OpenRouterProvider') as mock_provider:
+        with patch('cast.memory.reflection.get_provider') as mock_provider:
             mock_provider.is_available.return_value = True
             mock_provider_instance = MagicMock()
             mock_provider_instance.create_llm.return_value = mock_llm
@@ -863,7 +863,7 @@ class TestReflectionAgent:
         mock_response.content = '{"notable": true, "category": "decision", "content": "Using microservices", "tags": ["architecture"], "reasoning": "User stated decision"}'
         mock_llm.invoke.return_value = mock_response
 
-        with patch('cast.memory.reflection.OpenRouterProvider') as mock_provider:
+        with patch('cast.memory.reflection.get_provider') as mock_provider:
             mock_provider.is_available.return_value = True
             mock_provider_instance = MagicMock()
             mock_provider_instance.create_llm.return_value = mock_llm
@@ -885,7 +885,7 @@ class TestReflectionAgent:
         mock_response.content = '{"notable": false, "category": null, "content": "", "tags": [], "reasoning": "Generic conversation"}'
         mock_llm.ainvoke.return_value = mock_response
 
-        with patch('cast.memory.reflection.OpenRouterProvider') as mock_provider:
+        with patch('cast.memory.reflection.get_provider') as mock_provider:
             mock_provider.is_available.return_value = True
             mock_provider_instance = MagicMock()
             mock_provider_instance.create_llm.return_value = mock_llm
@@ -906,7 +906,7 @@ class TestReflectionAgent:
         mock_response.content = "Not valid JSON"
         mock_llm.ainvoke.return_value = mock_response
 
-        with patch('cast.memory.reflection.OpenRouterProvider') as mock_provider:
+        with patch('cast.memory.reflection.get_provider') as mock_provider:
             mock_provider.is_available.return_value = True
             mock_provider_instance = MagicMock()
             mock_provider_instance.create_llm.return_value = mock_llm
@@ -927,7 +927,7 @@ class TestReflectionAgent:
         mock_response.content = '```json\n{"notable": true, "category": "learned", "content": "Important info", "tags": [], "reasoning": "..."}\n```'
         mock_llm.invoke.return_value = mock_response
 
-        with patch('cast.memory.reflection.OpenRouterProvider') as mock_provider:
+        with patch('cast.memory.reflection.get_provider') as mock_provider:
             mock_provider.is_available.return_value = True
             mock_provider_instance = MagicMock()
             mock_provider_instance.create_llm.return_value = mock_llm
@@ -950,7 +950,7 @@ class TestReflectionAgent:
         mock_response.content = '{"notable": true, "category": "learned", "content": "api_key=secret123", "tags": [], "reasoning": "..."}'
         mock_llm.invoke.return_value = mock_response
 
-        with patch('cast.memory.reflection.OpenRouterProvider') as mock_provider:
+        with patch('cast.memory.reflection.get_provider') as mock_provider:
             mock_provider.is_available.return_value = True
             mock_provider_instance = MagicMock()
             mock_provider_instance.create_llm.return_value = mock_llm
@@ -974,7 +974,7 @@ class TestReflectionAgent:
         mock_response.content = '```json\n{"notable": true, "category": "test", "content": "content", "tags": [], "reasoning": "..."}\n```'
         mock_llm.invoke.return_value = mock_response
 
-        with patch('cast.memory.reflection.OpenRouterProvider') as mock_provider:
+        with patch('cast.memory.reflection.get_provider') as mock_provider:
             mock_provider.is_available.return_value = True
             mock_provider_instance = MagicMock()
             mock_provider_instance.create_llm.return_value = mock_llm
@@ -994,7 +994,7 @@ class TestReflectionAgent:
         mock_llm = MagicMock()
         mock_llm.ainvoke.side_effect = Exception("API error")
 
-        with patch('cast.memory.reflection.OpenRouterProvider') as mock_provider:
+        with patch('cast.memory.reflection.get_provider') as mock_provider:
             mock_provider.is_available.return_value = True
             mock_provider_instance = MagicMock()
             mock_provider_instance.create_llm.return_value = mock_llm
@@ -1014,7 +1014,7 @@ class TestReflectionAgent:
         mock_llm = MagicMock()
         mock_llm.ainvoke.side_effect = Exception("API error")
 
-        with patch('cast.memory.reflection.OpenRouterProvider') as mock_provider:
+        with patch('cast.memory.reflection.get_provider') as mock_provider:
             mock_provider.is_available.return_value = True
             mock_provider_instance = MagicMock()
             mock_provider_instance.create_llm.return_value = mock_llm

@@ -8,8 +8,7 @@ import {
   getAgentPath,
   execCommand,
   saveDeployment,
-  getOpenRouterApiKey,
-  getDigitalOceanInferenceKey,
+  inferenceEnv,
   getProviderToken,
   generateDeploymentId,
   getVolumeName,
@@ -74,18 +73,11 @@ export default class RailwayDeploy extends Command {
 
     // Set environment variables
     this.log('Setting environment variables...')
-    const openrouterKey = getOpenRouterApiKey()
     const envVars: Record<string, string> = {
       CAST_AGENT_NAME: agentName,
       AUTH_TOKEN: authToken,
       CAST_MEMORY_PATH: `/var/runtime/data/${volumeId}`,
-    }
-    if (openrouterKey) {
-      envVars.OPENROUTER_API_KEY = openrouterKey
-    }
-    const digitaloceanInferenceKey = getDigitalOceanInferenceKey()
-    if (digitaloceanInferenceKey) {
-      envVars.DIGITALOCEAN_MODEL_ACCESS_KEY = digitaloceanInferenceKey
+      ...inferenceEnv(),
     }
 
     for (const [key, value] of Object.entries(envVars)) {

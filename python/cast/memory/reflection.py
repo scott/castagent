@@ -1,13 +1,12 @@
 import json
+import sys
 from datetime import datetime, timezone
 from typing import Optional
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from .store import MemoryHighlight
 from .filter import PrivacyFilter
-from ..providers.digitalocean_inference import DigitalOceanInferenceProvider
-from ..providers.openrouter import OpenRouterProvider
-from ..providers.select import select_provider_class
+from ..providers.registry import get_provider
 
 
 REFLECTION_PROMPT = """You are a reflection agent that identifies notable moments worth remembering.
@@ -52,20 +51,24 @@ Only mark as notable if it provides genuine future value to remember."""
 
 class ReflectionAgent:
     def __init__(self, model_name: str = "claude-haiku-4", api_key: Optional[str] = None):
-        provider_cls = select_provider_class(
-            model_name,
-            digitalocean_cls=DigitalOceanInferenceProvider,
-            openrouter_cls=OpenRouterProvider,
-        )
-        if not provider_cls.is_available():
-            self.llm = None
-            self.filter = PrivacyFilter()
-            return
-
-        provider = provider_cls()
-        self.llm = provider.create_llm(model=model_name)
+        # Callers still pass api_key. Selection uses the model string, and
+        # availability is only the selected provider's environment variable.
+        self.api_key = api_key
         self.filter = PrivacyFilter()
         self.system_message = SystemMessage(content=REFLECTION_PROMPT)
+        self.llm = None
+        provider = get_provider(model_name)
+        if not provider.is_available():
+            print(
+                f"Warning: No {provider.env_var} found. Using echo mode.",
+                file=sys.stderr,
+            )
+            return
+        try:
+            self.llm = provider.create_llm(model=model_name)
+        except Exception as exc:
+            print(f"Warning: Failed to create {provider.name} LLM: {exc}", flush=True)
+            self.llm = None
 
     async def reflect(self, user_message: str, agent_response: str, source: str) -> Optional[MemoryHighlight]:
         if not self.llm:

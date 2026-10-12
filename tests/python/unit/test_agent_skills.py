@@ -155,7 +155,7 @@ def test_all_missing_skills_fall_back_to_the_synthetic_card(tmp_path):
     assert card["skills"][0]["id"] == "email-agent-skill"
 
 
-@patch("cast.agent.runtime.OpenRouterProvider")
+@patch("cast.agent.runtime.get_provider")
 @patch("cast.agent.runtime.create_react_agent")
 def test_runtime_prompt_includes_skills(mock_create_react_agent, mock_provider_class, tmp_path):
     agent_dir = _write_agent(tmp_path)

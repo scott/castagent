@@ -510,6 +510,10 @@ providers:
     default_base_url: https://inference.do-ai.run/v1
   digitalocean:
     token: ${DIGITALOCEAN_API_TOKEN}   # deploy only; not used for inference
+
+# Optional external inference providers (paths or importable modules).
+inferenceProviders:
+  - ~/src/acme/provider.py
 ```
 
 Set environment variables:
@@ -536,7 +540,9 @@ The `digitalocean/` prefix is stripped and the catalog id is sent unchanged. It 
 cast update demo-agent --model digitalocean/llama3.3-70b-instruct
 ```
 
-`cast model <id>` writes `defaults.builder_model` from the curated list (`cast model --list`). The builder reads that value when it starts. A running builder does not hot-swap; run `cast dev <agent>` again. `digitalocean/<model-id>` still selects DigitalOcean when that string is already in the file. The default remains `openrouter/minimax/minimax-m2.5`. Deployed agents receive `DIGITALOCEAN_MODEL_ACCESS_KEY` when it is set, the same way they receive `OPENROUTER_API_KEY`.
+`cast model <id>` writes `defaults.builder_model` from the curated list (`cast model --list`). The builder reads that raw value when it starts. A running builder does not hot-swap; run `cast dev <agent>` again. `digitalocean/<model-id>` still selects DigitalOcean. The default remains `openrouter/minimax/minimax-m2.5`. The runtime, the builder, and memory reflection call `get_provider(model)` instead of naming a provider class.
+
+Another inference provider can register without editing those callers. Put a folder at `~/.cast/inference-providers/<key>/` (`provider.json` and `provider.py`), list a module path under `inferenceProviders` in `~/.cast/config.yaml`, or publish a `cast.inference` entry point. Deployed agents receive whatever API keys the registry declares (`inferenceEnv()`), including external providers. `providers.digitalocean.token` is still only the deploy token.
 
 ## Documentation
 
