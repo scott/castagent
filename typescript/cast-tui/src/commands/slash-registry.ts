@@ -23,8 +23,16 @@ import {
   type Session,
 } from '../lib/sessions.js'
 import {createModal} from '../components/modal.js'
-import {runDeployInTerminal} from '../components/terminal.js'
-import {DEPLOYMENT_PROVIDERS} from '../lib/deployment-providers.js'
+import {runDeployInTerminal, runShutdownInTerminal} from '../components/terminal.js'
+import {DEPLOYMENT_PROVIDERS, providerDisplayName} from '../lib/deployment-providers.js'
+import {
+  CAST_CLI_NOT_FOUND_MESSAGE,
+  NO_DEPLOYED_AGENTS_MESSAGE,
+  deploymentVersionLabel,
+  formatRelativeTime as formatDeploymentAge,
+  shortDeploymentSha,
+  shutdownConfirmationLines,
+} from '../lib/shutdown-flow.js'
 import {openBuilderSkillsCommand} from './builder-skills-modal.js'
 import {addSkillFromSource, openSkillsModal} from './skills-modal.js'
 import {
@@ -1495,6 +1503,174 @@ async function loadImportAgent(): Promise<
   return mod.importAgent
 }
 
+function openShutdownPicker(ctx: CommandContext, rows: any[], castBinary: string): void {
+  const modal = createModal(ctx.renderer, ctx.input, {
+    title: 'Shut Down Agent',
+    overlay: true,
+  })
+
+  if (modal.overlay) {
+    ctx.renderer.root.add(modal.overlay)
+  }
+
+  const contentBox = new BoxRenderable(ctx.renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+    gap: 0,
+    paddingTop: 2,
+    paddingLeft: 2,
+    paddingRight: 2,
+  })
+
+  let selectedIndex = 0
+  let step: 'list' | 'confirm' = 'list'
+
+  function render(): void {
+    for (const child of contentBox.getChildren()) {
+      contentBox.remove(child.id)
+    }
+
+    if (rows.length === 0) {
+      modal.setTitle('Shut Down Agent')
+      contentBox.add(new TextRenderable(ctx.renderer, {
+        content: new StyledText([white(NO_DEPLOYED_AGENTS_MESSAGE)]),
+      }))
+      const footer = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim('ESC Close')]),
+      })
+      const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+      footerBox.add(footer)
+      contentBox.add(footerBox)
+      return
+    }
+
+    if (step === 'confirm') {
+      modal.setTitle('Confirm Shutdown')
+      const row = rows[selectedIndex]
+      const lines = shutdownConfirmationLines({
+        agentName: row.agent_name || '-',
+        provider: row.provider,
+        id: row.id,
+        deployedVersion: row.deployed_version,
+        deployedAt: row.deployed_at,
+      })
+      for (const line of lines) {
+        const text = line.length > 0 ? line : ' '
+        const isWarning = line.includes('destroy the remote droplet') || line.includes('cannot be undone')
+        contentBox.add(new TextRenderable(ctx.renderer, {
+          content: new StyledText([isWarning ? yellow(text) : white(text)]),
+        }))
+      }
+      return
+    }
+
+    modal.setTitle('Shut Down Agent')
+    contentBox.add(new TextRenderable(ctx.renderer, {
+      content: new StyledText([white('Active deployments:')]),
+    }))
+    contentBox.add(new TextRenderable(ctx.renderer, {
+      content: new StyledText([dim('───────────────────────────────────────────────────────────────')]),
+    }))
+
+    const tableData: (TextChunk[] | null)[][] = []
+    tableData.push([
+      [white('')],
+      [white('Agent')],
+      [white('Provider')],
+      [white('SHA')],
+      [white('Version')],
+      [white('Deployed')],
+    ])
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i]
+      const isSelected = i === selectedIndex
+      const nameColor = isSelected ? cyan : white
+      const sha = shortDeploymentSha(row.id)
+      tableData.push([
+        isSelected ? [cyan('▸ ')] : [dim('  ')],
+        [nameColor(row.agent_name || '-')],
+        [white(providerDisplayName(row.provider))],
+        [isSelected ? cyan(sha) : dim(sha)],
+        [cyan(deploymentVersionLabel(row.deployed_version))],
+        [dim(formatDeploymentAge(row.deployed_at))],
+      ])
+    }
+    contentBox.add(new TextTableRenderable(ctx.renderer, {
+      content: tableData,
+      columnWidthMode: 'content',
+      showBorders: false,
+      columnGap: 1,
+      cellPadding: 0,
+    }))
+
+    const footer = new TextRenderable(ctx.renderer, {
+      content: new StyledText([
+        white('↑↓ '), dim('Navigate  '),
+        white('Enter '), dim('Select  '),
+        white('ESC '), dim('Cancel'),
+      ]),
+    })
+    const footerBox = new BoxRenderable(ctx.renderer, {width: '100%', alignItems: 'center'})
+    footerBox.add(footer)
+    contentBox.add(footerBox)
+  }
+
+  render()
+  modal.setContent(contentBox)
+  ctx.renderer.root.add(modal.box)
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+  modal.box.handleKeyPress = (key: KeyEvent) => {
+    if (key.name === 'escape') {
+      modal.hide()
+      ctx.input.focus()
+      return true
+    }
+    if (rows.length === 0) {
+      return true
+    }
+    if (step === 'confirm') {
+      const name = (key.name || '').toLowerCase()
+      if (!key.ctrl && !key.meta && name === 'y') {
+        const agentName = rows[selectedIndex].agent_name
+        if (!agentName) return true
+        modal.hide()
+        void runShutdownInTerminal(ctx.renderer, ctx.input, agentName, castBinary)
+        return true
+      }
+      if (!key.ctrl && !key.meta && name === 'n') {
+        step = 'list'
+        render()
+        ctx.renderer.requestRender?.()
+        return true
+      }
+      return true
+    }
+    if (key.name === 'up') {
+      selectedIndex = (selectedIndex - 1 + rows.length) % rows.length
+      render()
+      ctx.renderer.requestRender?.()
+      return true
+    }
+    if (key.name === 'down') {
+      selectedIndex = (selectedIndex + 1) % rows.length
+      render()
+      ctx.renderer.requestRender?.()
+      return true
+    }
+    if (key.name === 'return' || key.name === 'enter') {
+      step = 'confirm'
+      render()
+      ctx.renderer.requestRender?.()
+      return true
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+
+  modal.show()
+}
+
 const commands: SlashCommand[] = [
   {
     name: 'help',
@@ -2960,6 +3136,50 @@ const commands: SlashCommand[] = [
     },
   },
 
+  {
+    name: 'shutdown',
+    description: 'Shut down a deployed agent and destroy its remote resources',
+    category: 'agent',
+    modes: ['dev', 'production'],
+    handler: async (ctx) => {
+      const db = await getDb()
+      if (!db) {
+        ctx.messages.addAgentMessage('Unable to access agent database.', ctx.mode)
+        return
+      }
+
+      let rows: any[]
+      try {
+        const listed = db.listActiveDeployments()
+        if (!Array.isArray(listed)) {
+          ctx.messages.addAgentMessage('Unable to list deployments.', ctx.mode)
+          return
+        }
+        rows = listed
+      } catch (err) {
+        ctx.messages.addAgentMessage(
+          `Unable to list deployments: ${err instanceof Error ? err.message : String(err)}`,
+          ctx.mode,
+        )
+        return
+      }
+
+      // The empty state is a database fact and does not need the CLI.
+      // A missing binary only blocks an actual shutdown.
+      if (rows.length === 0) {
+        openShutdownPicker(ctx, rows, '')
+        return
+      }
+
+      const binary = findCastBinary()
+      if (!binary) {
+        ctx.messages.addAgentMessage(CAST_CLI_NOT_FOUND_MESSAGE, ctx.mode)
+        return
+      }
+
+      openShutdownPicker(ctx, rows, binary)
+    },
+  },
 
   {
     name: 'releases',

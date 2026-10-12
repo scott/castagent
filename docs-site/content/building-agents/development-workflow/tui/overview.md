@@ -89,6 +89,7 @@ on day one:
 - `{% ref "slash:save" %}` — save the transcript to a Markdown file.
 - `{% ref "slash:copy" %}` — copy the last agent reply to the clipboard.
 - `{% ref "slash:clear" %}` — clear the chat (keeps the agent connection).
+- `{% ref "slash:shutdown" %}` — shut down a deployed agent (dev and production).
 
 Highlighting text with the mouse copies that selection to the clipboard
 in dev, production, and on-host. On-host reaches the local clipboard

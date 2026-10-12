@@ -347,9 +347,9 @@ cast session export <id> --out backup.json
 
 In the TUI, use `/undo` and `/redo` for iteration, `/sessions` to
 browse saved conversations (with a modal picker that follows the
-AGENTS.md design standards), and `/release`, `/deploy`, and `/upgrade`
-to manage releases and deployments interactively. Restore a local
-agent with `cast restore <agent> --release <version>`.
+AGENTS.md design standards), and `/release`, `/deploy`, `/upgrade`,
+and `/shutdown` to manage releases and deployments interactively.
+Restore a local agent with `cast restore <agent> --release <version>`.
 
 To upgrade an existing deployment to a new release:
 
@@ -381,6 +381,7 @@ Highlighting text with the mouse copies that selection to the clipboard.
 | `/release` | agent | Opens a modal to create a new semantic release. Suggests patch/minor/major versions based on the current release. |
 | `/deploy` | agent | Release picker → provider picker → live deploy with SHA shown on success. |
 | `/upgrade` | agent | Operates on the current agent. Modal lists releases to upgrade to. |
+| `/shutdown` | agent | Lists active deployments (every provider) and shuts one down after Y/N. Streams `cast shutdown --force`. Dev and production only. |
 | `/registry` | session | Modal table of all releases across all agents, with deployment status. |
 | `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a SHA directly. |
 | `/import [source] [name]` | agent | Import a Cast agent from GitHub or a local path. |

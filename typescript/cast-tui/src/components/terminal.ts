@@ -2,6 +2,13 @@ import {BoxRenderable, TextRenderable, ScrollBoxRenderable, StyledText, white, d
 import type {RenderContext, KeyEvent, Renderable} from '@opentui/core'
 import {createModal} from './modal.js'
 import {DEPLOYMENT_PROVIDERS, providerIndexForNumberKey} from '../lib/deployment-providers.js'
+import {
+  SHUTDOWN_SUCCESS_STATUS,
+  shouldKillShutdownOnEscape,
+  shutdownFailureStatus,
+  shutdownSpawnArgs,
+  shutdownStageFromLine,
+} from '../lib/shutdown-flow.js'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -688,4 +695,215 @@ export async function runDeployInTerminal(
   messagesComponent: any,
 ): Promise<void> {
   return handleDeployModal(renderer, previouslyFocused, agentName, provider, messagesComponent)
+}
+
+export async function runShutdownInTerminal(
+  renderer: any,
+  previouslyFocused: Renderable,
+  agentName: string,
+  castBinary: string,
+): Promise<void> {
+  const prevFocused = previouslyFocused
+  const args = shutdownSpawnArgs(agentName)
+
+  const modal = createModal(renderer, prevFocused, {
+    title: `Shutting down ${agentName}...`,
+    width: '90%',
+    height: '90%',
+    overlay: true,
+  })
+
+  if (modal.overlay) {
+    renderer.root.add(modal.overlay)
+  }
+
+  const contentBox = new BoxRenderable(renderer, {
+    width: '100%',
+    height: '100%',
+    flexDirection: 'column',
+  })
+
+  const outputScroll = new ScrollBoxRenderable(renderer, {
+    width: '100%',
+    flexGrow: 1,
+    scrollY: true,
+    stickyScroll: true,
+    stickyStart: 'bottom',
+    contentOptions: {
+      flexDirection: 'column',
+      gap: 0,
+      padding: 1,
+    },
+  })
+
+  const outputLines: string[] = []
+
+  const statusBar = new BoxRenderable(renderer, {
+    width: '100%',
+    flexDirection: 'row',
+    height: 3,
+  })
+
+  const statusText = new TextRenderable(renderer, {
+    content: new StyledText([dim('Running...'), yellow('  Press ESC to close')]),
+  })
+  statusBar.add(statusText)
+
+  contentBox.add(outputScroll)
+  contentBox.add(statusBar)
+
+  modal.setContent(contentBox)
+  renderer.root.add(modal.box)
+
+  let child: any = null
+  let currentStage = 'initializing'
+  let totalElapsedSeconds = 0
+  const startTime = Date.now()
+  let elapsedInterval: NodeJS.Timeout | null = null
+
+  function addOutput(line: string): void {
+    outputLines.push(line)
+    if (!modal.isVisible()) return
+    try {
+      const lineText = new TextRenderable(renderer, {
+        content: new StyledText([white(line)]),
+        wrapMode: 'word',
+      })
+      outputScroll.add(lineText)
+    } catch (e: any) {
+      console.error('addOutput error:', e.message)
+    }
+  }
+
+  function updateStatus(text: string, color: typeof green | typeof yellow | typeof red, extra?: string): void {
+    if (!modal.isVisible()) return
+    try {
+      const chunks = [color(text)]
+      if (extra) chunks.push(dim(`  ${extra}`))
+      chunks.push(dim('  Press ESC to close'))
+      statusText.content = new StyledText(chunks)
+    } catch (e: any) {
+      console.error('updateStatus error:', e.message)
+    }
+  }
+
+  function startElapsedTimer(): void {
+    elapsedInterval = setInterval(() => {
+      if (!modal.isVisible()) {
+        if (elapsedInterval) clearInterval(elapsedInterval)
+        elapsedInterval = null
+        return
+      }
+      const elapsed = Math.floor((Date.now() - startTime) / 1000)
+      totalElapsedSeconds = elapsed
+      const mins = Math.floor(elapsed / 60)
+      const secs = elapsed % 60
+      const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`
+      const stageDisplay = currentStage !== 'initializing' ? ` | ${currentStage}` : ''
+      try {
+        statusText.content = new StyledText([
+          yellow(`Running${stageDisplay} (${timeStr})`),
+          dim('  Press ESC to close'),
+        ])
+      } catch {
+        // Modal may have been torn down between the visibility check and the write.
+      }
+    }, 1000)
+  }
+
+  const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+
+  // Installed before spawn so ESC during streaming is this handler, not a later one.
+  // shouldKillShutdownOnEscape() is false: closing the modal leaves the child running.
+  modal.box.handleKeyPress = (key: KeyEvent) => {
+    if (key.name === 'escape') {
+      if (shouldKillShutdownOnEscape() && child && child.exitCode == null && !child.killed) {
+        child.kill()
+      }
+      modal.hide()
+      prevFocused.focus()
+      return true
+    }
+    if (key.ctrl && key.shift && (key.name === 'c' || key.name === 'C')) {
+      try {
+        clipboardy.write(outputLines.join('\n'))
+        updateStatus('Output copied to clipboard!', green)
+      } catch {
+        updateStatus('Failed to copy output', red)
+      }
+      return true
+    }
+    return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+  }
+
+  modal.show()
+
+  try {
+    const {spawn} = require('child_process')
+
+    addOutput(`$ ${castBinary} ${args.join(' ')}`)
+    addOutput('')
+    addOutput('Executing command...')
+    startElapsedTimer()
+
+    await new Promise<void>((resolve) => {
+      let settled = false
+      const finish = (render: () => void) => {
+        if (settled) return
+        settled = true
+        if (elapsedInterval) clearInterval(elapsedInterval)
+        elapsedInterval = null
+        totalElapsedSeconds = Math.floor((Date.now() - startTime) / 1000)
+        render()
+        resolve()
+      }
+
+      child = spawn(castBinary, args, {
+        cwd: os.homedir(),
+        env: {...process.env},
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+
+      const consume = (data: Buffer) => {
+        const text = data.toString()
+        for (const line of text.split('\n')) {
+          if (!line.trim()) continue
+          addOutput(line)
+          const detected = shutdownStageFromLine(line)
+          if (detected) currentStage = detected
+        }
+      }
+
+      child.stdout?.on('data', consume)
+      child.stderr?.on('data', consume)
+
+      child.on('error', (err: any) => {
+        finish(() => {
+          addOutput(`Error: ${err.message}`)
+          updateStatus(shutdownFailureStatus(null), red)
+        })
+      })
+
+      child.on('close', (code: number | null) => {
+        finish(() => {
+          const mins = Math.floor(totalElapsedSeconds / 60)
+          const secs = totalElapsedSeconds % 60
+          const timeStr = `${mins}:${secs.toString().padStart(2, '0')}`
+          if (code === 0) {
+            updateStatus(SHUTDOWN_SUCCESS_STATUS, green, timeStr)
+          } else {
+            updateStatus(shutdownFailureStatus(code), red)
+          }
+        })
+      })
+    })
+  } catch (err: any) {
+    if (elapsedInterval) clearInterval(elapsedInterval)
+    elapsedInterval = null
+    addOutput(`Error: ${err.message}`)
+    updateStatus(shutdownFailureStatus(null), red)
+  }
+
+  modal.box.focus()
+  renderer.requestRender?.()
 }

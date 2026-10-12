@@ -56,6 +56,13 @@ remote resources are gone.
 exist" check — useful in scripts where you want to tear down everything
 matching a name.
 
+In the TUI, `{% ref "slash:shutdown" %}` lists every active deployment
+(including DigitalOcean MicroVM and local) and shuts one down after a
+Y/N confirmation. It runs in dev and production, not in the
+[on-host TUI](building-agents/development-workflow/tui/on-host-tui).
+ESC while output is streaming closes the modal and leaves the shutdown
+running.
+
 ## upgrade
 
 ```bash

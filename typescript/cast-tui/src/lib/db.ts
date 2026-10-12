@@ -1,5 +1,8 @@
+import {createRequire} from 'node:module'
 import * as path from 'path'
 import * as os from 'os'
+
+const require = createRequire(import.meta.url)
 
 const DB_PATH = path.join(os.homedir(), '.cast', 'cast.db')
 const isBun = typeof (globalThis as any).Bun !== 'undefined'
@@ -12,6 +15,7 @@ export interface DbApi {
   getDeploymentBySha(sha: string): any | null
   getActiveDeployment(name: string): any | null
   listDeployments(name: string): any[]
+  listActiveDeployments(): any[]
   listAllDeploymentsForAgent(name: string): any[]
   removeLocalAgent(name: string): void
   listAllReleases(): any[]
@@ -52,6 +56,9 @@ async function createBunDb(): Promise<DbApi> {
     },
     listDeployments(name: string) {
       return db.query('SELECT * FROM deployments WHERE agent_name = ? AND deleted_at IS NULL ORDER BY deployed_at DESC').all(name)
+    },
+    listActiveDeployments() {
+      return db.query('SELECT * FROM deployments WHERE deleted_at IS NULL ORDER BY agent_name, deployed_at DESC').all()
     },
     listAllDeploymentsForAgent(name: string) {
       return db.query(`
@@ -126,9 +133,27 @@ async function createBunDb(): Promise<DbApi> {
   }
 }
 
+const ACTIVE_DEPLOYMENTS_SQL =
+  'SELECT * FROM deployments WHERE deleted_at IS NULL ORDER BY agent_name, deployed_at DESC'
+
+// Used when cast-cli dist predates CastDatabase.listActiveDeployments.
+function listActiveDeploymentsWithBetterSqlite(): any[] {
+  const Database = require('better-sqlite3')
+  const raw = new Database(DB_PATH, {readonly: true})
+  try {
+    return raw.prepare(ACTIVE_DEPLOYMENTS_SQL).all()
+  } finally {
+    raw.close()
+  }
+}
+
 async function createNodeDb(): Promise<DbApi> {
   const mod = await import('../../../cast-cli/dist/lib/sqlite.js')
-  return mod.db
+  const database = mod.db as DbApi
+  if (typeof database.listActiveDeployments !== 'function') {
+    database.listActiveDeployments = listActiveDeploymentsWithBetterSqlite
+  }
+  return database
 }
 
 export async function getDb(): Promise<DbApi | null> {

@@ -25,6 +25,8 @@ describe('SQLite', () => {
   })
 
   it('should add and remove a deployment', () => {
+    db.createAgent('test-agent', '/path/to/agent.yaml')
+    createdAgents.push('test-agent')
     db.setDeployment('test-agent', 'docker', 'http://localhost:8080', 'hash123')
     const deployment = db.getDeployment('test-agent')
     expect(deployment).to.exist
@@ -41,6 +43,8 @@ describe('SQLite', () => {
     const deployment = db.getDeployment('non-existent-agent')
     // The column exists if we can query it (even with no rows)
     // We verify the schema by checking a deployment record structure
+    db.createAgent('migration-test-agent', '/path/to/agent.yaml')
+    createdAgents.push('migration-test-agent')
     db.setDeployment('migration-test-agent', 'docker', 'http://localhost:9000', 'token456')
     const deployed = db.getDeployment('migration-test-agent')
     expect(deployed).to.exist
@@ -428,5 +432,88 @@ describe('SQLite - Releases table', () => {
     const releases = db.listReleases(agentName)
     expect(releases).to.have.length(1)
     expect(releases[0].message).to.equal('Updated')
+  })
+})
+
+describe('SQLite - listActiveDeployments', () => {
+  let db: CastDatabase
+  const createdAgents: string[] = []
+
+  beforeEach(() => {
+    db = new CastDatabase()
+    createdAgents.length = 0
+  })
+
+  afterEach(() => {
+    for (const name of createdAgents) {
+      try { db.deleteAgent(name) } catch {}
+    }
+  })
+
+  function setDeployedAt(id: string, deployedAt: string): void {
+    const raw = (db as unknown as {db: {prepare: (sql: string) => {run: (...args: unknown[]) => void}}}).db
+    raw.prepare('UPDATE deployments SET deployed_at = ? WHERE id = ?').run(deployedAt, id)
+  }
+
+  it('returns active deployments across agents, newest first within each name, and skips soft-deletes', () => {
+    const suffix = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+    const alpha = `shutdown-agent-a-${suffix}`
+    const mid = `shutdown-agent-m-${suffix}`
+    const zeta = `shutdown-agent-z-${suffix}`
+    createdAgents.push(alpha, mid, zeta)
+    for (const name of [alpha, mid, zeta]) {
+      db.createAgent(name, `/path/${name}.yaml`)
+    }
+
+    const alphaNew = `anew${Math.random().toString(16).slice(2, 8)}`
+    const alphaOld = `aold${Math.random().toString(16).slice(2, 8)}`
+    const alphaDeleted = `adel${Math.random().toString(16).slice(2, 8)}`
+    const midLocal = `mloc${Math.random().toString(16).slice(2, 8)}`
+    const midVm = `mvmx${Math.random().toString(16).slice(2, 8)}`
+    const zetaRow = `zeta${Math.random().toString(16).slice(2, 8)}`
+
+    db.createDeployment(alphaNew, alpha, 'fly', 'http://fly', 'h', null, null, '1.2.0')
+    db.createDeployment(alphaOld, alpha, 'digitalocean', 'http://do', 'h', null, null, null)
+    db.createDeployment(alphaDeleted, alpha, 'railway', 'http://rw', 'h', null, null, '9.9.9')
+    db.createDeployment(midLocal, mid, 'local', 'http://local', 'h')
+    db.createDeployment(midVm, mid, 'microvm', 'http://vm', 'h', null, null, 'v3')
+    db.createDeployment(zetaRow, zeta, 'docker', 'http://docker', 'h')
+
+    setDeployedAt(alphaNew, '2026-06-01 00:00:00')
+    setDeployedAt(alphaOld, '2026-01-01 00:00:00')
+    setDeployedAt(alphaDeleted, '2026-12-01 00:00:00')
+    setDeployedAt(midLocal, '2026-05-01 00:00:00')
+    setDeployedAt(midVm, '2026-02-01 00:00:00')
+    setDeployedAt(zetaRow, '2026-03-01 00:00:00')
+    db.removeDeploymentBySha(alphaDeleted)
+
+    const names = new Set([alpha, mid, zeta])
+    const rows = db.listActiveDeployments().filter((row: any) => names.has(row.agent_name))
+
+    expect(rows.map((row: any) => row.id)).to.deep.equal([
+      alphaNew,
+      alphaOld,
+      midLocal,
+      midVm,
+      zetaRow,
+    ])
+    expect(rows.map((row: any) => row.provider)).to.deep.equal([
+      'fly',
+      'digitalocean',
+      'local',
+      'microvm',
+      'docker',
+    ])
+    expect(rows.map((row: any) => row.deployed_at)).to.deep.equal([
+      '2026-06-01 00:00:00',
+      '2026-01-01 00:00:00',
+      '2026-05-01 00:00:00',
+      '2026-02-01 00:00:00',
+      '2026-03-01 00:00:00',
+    ])
+    expect(rows.every((row: any) => row.deleted_at == null)).to.equal(true)
+    expect(rows.find((row: any) => row.id === alphaNew).deployed_version).to.equal('1.2.0')
+    expect(rows.find((row: any) => row.id === alphaOld).deployed_version).to.equal(null)
+    expect(rows.some((row: any) => row.id === alphaDeleted)).to.equal(false)
   })
 })
