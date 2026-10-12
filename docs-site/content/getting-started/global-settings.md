@@ -43,8 +43,10 @@ providers:
     token: ${DIGITALOCEAN_API_TOKEN}
 ```
 
-The file is re-read on every command, so changes take effect without
-restarting anything.
+The file is re-read when a command or a new builder process starts.
+`defaults.builder_model` does not hot-swap into a builder that is already
+running. Start `cast dev`, `cast new`, or `cast edit` again to apply it.
+See [Changing the builder model](building-agents/builder-model).
 
 `providers.digitalocean` is the **deploy** token for Droplets and MicroVMs.
 It is not an inference credential. Serverless inference uses
@@ -53,7 +55,9 @@ Set an agent's model to `digitalocean/llama3.3-70b-instruct` or
 `digitalocean/deepseek-v3.2` to call `https://inference.do-ai.run/v1`.
 OpenRouter stays the default when the model is `openrouter/...` or has no
 provider prefix. `defaults.builder_model` can be a `digitalocean/<model-id>`
-string; the default remains `openrouter/minimax/minimax-m2.5`.
+string; the default remains `openrouter/minimax/minimax-m2.5`. Change the
+curated OpenRouter ids with `cast model` or `/model` in the builder TUI.
+The running builder keeps its current model until the next launch.
 
 ## Environment variables
 

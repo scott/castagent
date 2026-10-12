@@ -166,11 +166,12 @@ def load_global_config() -> dict:
     return {}
 
 
-def get_raw_builder_model() -> str:
-    """Return ``defaults.builder_model`` without stripping a provider prefix.
+def get_builder_model_id() -> str:
+    """Return the stored ``defaults.builder_model`` without stripping a prefix.
 
-    ``get_builder_model`` strips ``openrouter/`` for display. Provider
-    selection and the API call must use this raw string instead.
+    ``get_builder_model`` strips a leading ``openrouter/`` for the welcome
+    banner. Provider selection and the API call must use this raw string.
+    The default is ``openrouter/minimax/minimax-m2.5``.
     """
     config = load_global_config()
     defaults = config.get("defaults") or {}
@@ -180,10 +181,15 @@ def get_raw_builder_model() -> str:
     return model
 
 
+def get_raw_builder_model() -> str:
+    """Alias of :func:`get_builder_model_id`."""
+    return get_builder_model_id()
+
+
 def get_builder_model() -> str:
     """Get the builder model from config, defaulting to a sensible fallback."""
-    model = get_raw_builder_model()
-    # Strip openrouter/ prefix for display
+    model = get_builder_model_id()
+    # Strip openrouter/ prefix for display. Do not use this for the API call.
     if model.startswith("openrouter/"):
         model = model[len("openrouter/"):]
     return model
@@ -847,7 +853,7 @@ def create_llm() -> BaseChatModel:
     """
     from .providers.select import api_key_env_for_model, select_provider_class
 
-    model = get_raw_builder_model()
+    model = get_builder_model_id()
     env_name = api_key_env_for_model(model)
     if not os.getenv(env_name):
         print(f"Warning: No {env_name} found. Using echo mode.", file=sys.stderr)

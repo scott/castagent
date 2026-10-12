@@ -34,6 +34,7 @@ import {
   shutdownConfirmationLines,
 } from '../lib/shutdown-flow.js'
 import {openBuilderSkillsCommand} from './builder-skills-modal.js'
+import {openBuilderModelModal} from './builder-model-modal.js'
 import {addSkillFromSource, openSkillsModal} from './skills-modal.js'
 import {
   handleImportCommand,
@@ -4232,6 +4233,16 @@ cast dev ${agentName}
     args: '[add <github-or-folder>]',
     handler: async (ctx, args) => {
       openBuilderSkillsCommand(ctx, args)
+    },
+  },
+
+  {
+    name: 'model',
+    description: 'Change the model the builder uses',
+    category: 'agent',
+    modes: ['dev'],
+    handler: async (ctx) => {
+      openBuilderModelModal(ctx, findCastBinary)
     },
   },
 ]
