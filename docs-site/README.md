@@ -66,13 +66,45 @@ env:
 ```
 
 `docs-site/public/CNAME` contains `castagent.dev`, which GitHub Pages reads
-from the deployed files and keeps as the custom domain.
+from the deployed files and keeps as the custom domain. `CNAME` stays only at
+the site root. Snapshot archives do not include it.
+
+`/` is the current docs, built from `master` and labeled with the version in
+the root `package.json`. `/vX.Y.Z/` is a frozen snapshot of a published product
+release (`vX.Y.Z`, not `cast-cli@*` or `cast-tui@*`). The snapshot is built
+once when that GitHub release is published, attached as `docs-vX.Y.Z.tar.gz`,
+and copied back into the site on every docs deploy. Later deploys do not
+rebuild it. While a version is still the latest package version, it is served
+at `/` and is not also copied to `/vX.Y.Z/`.
+
+Every master deploy also writes two files at the site root, not under a
+version prefix:
+
+- `/versions.json` — the current version, then frozen releases newest first
+- `/version-picker.js` — the version control next to the logo
+
+The picker reads `/versions.json` at runtime and navigates with the absolute
+`href` values in that file. Archived pages load the script from
+`/version-picker.js` for the same reason: a relative URL would be rewritten by
+`<base href="/vX.Y.Z/">`.
+
+`.github/workflows/docs-snapshot.yml` runs when a release is published. For a
+tag matching `vX.Y.Z` whose commit contains `docs-site/`, it checks out the
+tag, builds with `PUBLIC_SITE_URL=https://castagent.dev` and
+`PUBLIC_SITE_BASE=/vX.Y.Z/`, drops `CNAME`, and uploads `docs-vX.Y.Z.tar.gz`.
+That workflow needs `contents: write` so it can attach the asset. The master
+docs workflow only reads those assets. After it builds the current site into
+`dist/`, it downloads every retained `docs-v*.tar.gz` and unpacks it to
+`dist/vX.Y.Z/`, skipping the version that is currently latest. A docs-only
+push still deploys the current site and the frozen snapshots. Dropping the
+unpack step would erase history.
 
 The layout (`src/layouts/Docs.astro`) emits a `<base href={BASE_URL}>` tag and
 all internal links are written as **base-relative** paths (e.g.
 `href="getting-started/install"`, not `href="/getting-started/install"`).
 Keep new links base-relative. A sub-path deploy still works by setting
-`PUBLIC_SITE_BASE` to that path, for example `/castagent/`.
+`PUBLIC_SITE_BASE` to that path, for example `/castagent/`. The version picker
+is the exception: its script and its version links are absolute site paths.
 
 ## CI sync
 
@@ -98,7 +130,7 @@ docs-site/
 ├── tsconfig.json
 ├── public/                 # static assets (logo, etc.)
 ├── src/
-│   ├── components/         # CommandRef, SlashRef, ProviderCard, Sidebar, …
+│   ├── components/         # CommandRef, SlashRef, ProviderCard, Sidebar, VersionPicker, …
 │   ├── content.config.ts   # content collection schemas
 │   ├── layouts/Docs.astro  # sidebar + content + footer
 │   ├── lib/                # manifest loader, link resolver, proseLoader

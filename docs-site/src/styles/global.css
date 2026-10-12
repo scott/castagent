@@ -132,7 +132,17 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: 2rem 0; }
 
 @media (max-width: 800px) {
   .layout { grid-template-columns: 1fr; }
-  .sidebar { display: none; }
+  /* Nav can hide. The logo, wordmark, and version control stay on screen. */
+  .sidebar {
+    border-right: none;
+    border-bottom: 1px solid var(--color-border);
+    padding: 0.75rem 0;
+    position: static;
+    max-height: none;
+    overflow: visible;
+  }
+  .sidebar nav { display: none; }
+  .brand-row { margin-bottom: 0; }
 }
 
 .sidebar {
@@ -140,8 +150,26 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: 2rem 0; }
   padding: 1.5rem 1rem 4rem 0;
   position: sticky;
   top: 0;
+  z-index: 3;
   max-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  overflow: visible;
+}
+
+.sidebar nav {
   overflow-y: auto;
+  min-height: 0;
+}
+
+.brand-row {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  margin-bottom: 1.5rem;
+  position: relative;
+  z-index: 2;
+  flex: none;
 }
 
 .sidebar a.brand {
@@ -151,7 +179,7 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: 2rem 0; }
   font-weight: 700;
   font-size: 1.1rem;
   color: var(--color-fg);
-  margin-bottom: 1.5rem;
+  margin-bottom: 0;
 }
 
 .sidebar a.brand:hover { text-decoration: none; }
@@ -202,6 +230,8 @@ hr { border: none; border-top: 1px solid var(--color-border); margin: 2rem 0; }
 }
 
 main.content {
+  position: relative;
+  z-index: 1;
   padding: 1.5rem 0 4rem 1.5rem;
   min-width: 0;
 }
@@ -336,7 +366,16 @@ body:has(.landing) { overflow-x: clip; }
 }
 
 .landing-header {
-  height: 3.5rem;
+  position: relative;
+  z-index: 2;
+  min-height: 3.5rem;
+}
+
+.landing-brand-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  min-width: 0;
 }
 
 .landing-brand {
@@ -604,3 +643,84 @@ body:has(.landing) { overflow-x: clip; }
 }
 
 .provider-name { font-weight: 600; }
+
+/* Version picker. Uses the existing type and colors; no new accent. */
+.version-picker {
+  position: relative;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
+.version-picker-button {
+  margin: 0;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.4;
+  color: var(--color-fg);
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0.12rem 0.45rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  white-space: nowrap;
+}
+
+.version-picker-latest {
+  color: var(--color-fg-muted);
+  font-weight: 400;
+}
+
+.version-picker-menu {
+  position: absolute;
+  z-index: 30;
+  top: calc(100% + 4px);
+  left: 0;
+  min-width: 12rem;
+  margin: 0;
+  padding: 0.25rem 0;
+  list-style: none;
+  background: var(--color-bg-elevated);
+  color: var(--color-fg);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+}
+
+.version-picker-menu[hidden] { display: none; }
+
+.version-picker-menu li { margin: 0; }
+
+.version-picker-menu a,
+.sidebar .version-picker-menu a {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.3rem 0.65rem;
+  color: var(--color-fg);
+  text-decoration: none;
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  white-space: nowrap;
+  background: transparent;
+}
+
+.version-picker-menu a:hover,
+.sidebar .version-picker-menu a:hover,
+.version-picker-menu li.is-highlighted a,
+.sidebar .version-picker-menu li.is-highlighted a {
+  background: var(--color-bg-muted);
+  color: var(--color-fg);
+  text-decoration: none;
+}
+
+.version-picker-menu li.is-current a { font-weight: 700; }
+
+.version-picker-mark {
+  color: var(--color-fg);
+  font-weight: 700;
+}

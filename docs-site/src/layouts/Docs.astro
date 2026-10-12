@@ -6,6 +6,8 @@
 import '../styles/global.css'
 import Sidebar from '../components/Sidebar.astro'
 
+const docsVersion = String(import.meta.env.PUBLIC_DOCS_VERSION || '').replace(/^v/, '')
+
 interface Props {
   title: string
   description?: string
@@ -16,7 +18,7 @@ const fullTitle = title === 'Cast Agent' ? title : `${title} · Cast Agent`
 ---
 
 <!doctype html>
-<html lang="en">
+<html lang="en" data-docs-version={docsVersion}>
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />

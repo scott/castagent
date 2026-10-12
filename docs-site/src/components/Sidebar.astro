@@ -9,6 +9,7 @@
  * group they belong to.
  */
 import { getCollection } from 'astro:content'
+import VersionPicker from './VersionPicker.astro'
 
 interface NavItem {
   title: string
@@ -130,10 +131,13 @@ const sections: NavSection[] = SECTIONS.map((s) => {
 ---
 
 <aside class="sidebar">
-  <a href="" class="brand">
-    <img src="logo.svg" alt="" width="22" height="22" />
-    <span>Cast Agent</span>
-  </a>
+  <div class="brand-row">
+    <a href="" class="brand">
+      <img src="logo.svg" alt="" width="22" height="22" />
+      <span>Cast Agent</span>
+    </a>
+    <VersionPicker />
+  </div>
 
   <nav>
     <ul style="list-style:none;padding:0;margin:0;">
