@@ -364,6 +364,8 @@ Slash commands in the TUI use interactive modals for input — no need
 to remember flag syntax. Every command works with no arguments; if
 parameters are needed, a modal prompts for them.
 
+Highlighting text with the mouse copies that selection to the clipboard.
+
 | Command | Category | What it does |
 |---------|----------|--------------|
 | `/undo [steps]` | agent | Step back one (or N) changes. Shells out to `cast undo`. |

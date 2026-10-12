@@ -1,10 +1,12 @@
 import {createCliRenderer} from '@opentui/core'
 import type {CliRenderer} from '@opentui/core'
+import clipboardy from 'clipboardy'
 import {fileURLToPath} from 'node:url'
 import * as fs from 'node:fs'
 import * as path from 'node:path'
 import * as os from 'node:os'
 import {showChatScreen} from './screens/chat.js'
+import {copyHighlightedText} from './lib/selection-clipboard.js'
 import type {UiMode} from './components/header.js'
 
 // Log file for crash diagnostics (written synchronously so it survives
@@ -33,6 +35,15 @@ export async function startTui(options: TuiOptions): Promise<void> {
     if (!renderer.isRunning) {
       renderer.start()
     }
+
+    // finishSelection emits "selection" once on mouse-up, not on drag frames.
+    renderer.on('selection', (selection) => {
+      if (!renderer) return
+      copyHighlightedText(selection.getSelectedText(), {
+        osc52: renderer.copyToClipboardOSC52.bind(renderer),
+        write: clipboardy.write.bind(clipboardy),
+      })
+    })
 
     await showChatScreen(renderer, options.agent, options.url, options.token, options.mode, options.welcome, options.session, options.edgeToken)
   } catch (err) {
