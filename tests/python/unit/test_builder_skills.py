@@ -5,8 +5,28 @@ from langchain_core.messages import SystemMessage
 from cast.builder import (
     DEFAULT_SYSTEM_PROMPT,
     BuilderAgent,
+    _parse_skill_markdown,
     load_system_prompt,
 )
+
+FOLDED_SKILL = """---
+name: triage
+description: >
+  Sort incoming mail into buckets
+---
+
+# Triage
+"""
+
+LITERAL_SKILL = """---
+name: inbox
+description: |
+  Sort incoming mail into buckets.
+  Use when the user asks to triage an inbox.
+---
+
+# Inbox
+"""
 
 
 def _skill(directory, name, description, body):
@@ -20,6 +40,35 @@ def _use_home(monkeypatch, home):
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
     return home
+
+
+class TestParseSkillMarkdown:
+    def test_folded_description_is_one_line(self):
+        parsed = _parse_skill_markdown(FOLDED_SKILL)
+        assert parsed is not None
+        assert parsed[0] == "triage"
+        assert parsed[1] == "Sort incoming mail into buckets"
+        assert "\n" not in parsed[1]
+
+    def test_literal_description_joins_sentences(self):
+        parsed = _parse_skill_markdown(LITERAL_SKILL)
+        assert parsed is not None
+        assert parsed[1] == (
+            "Sort incoming mail into buckets. Use when the user asks to triage an inbox."
+        )
+
+    def test_one_line_description_is_unchanged(self):
+        parsed = _parse_skill_markdown(
+            "---\nname: triage\ndescription: Sort incoming mail into buckets\n---\n# Triage\n"
+        )
+        assert parsed is not None
+        assert parsed[1] == "Sort incoming mail into buckets"
+
+    def test_blank_or_missing_description_is_rejected(self):
+        assert _parse_skill_markdown("---\nname: triage\ndescription: ''\n---\n# Triage\n") is None
+        assert _parse_skill_markdown("---\nname: triage\ndescription: >\n---\n# Triage\n") is None
+        assert _parse_skill_markdown('---\nname: triage\ndescription: "   "\n---\n# Triage\n') is None
+        assert _parse_skill_markdown("---\nname: triage\n---\n# Triage\n") is None
 
 
 class TestLoadSystemPromptSkills:
@@ -73,6 +122,41 @@ class TestLoadSystemPromptSkills:
         assert prompt.index("### alpha") < prompt.index("### zeta")
         assert "Alpha body." in prompt
         assert "Zeta body." in prompt
+
+    def test_folded_and_literal_descriptions_load_as_one_line(self, monkeypatch, tmp_path, capsys):
+        home = _use_home(monkeypatch, tmp_path / "home")
+        skills = home / ".cast" / "builder" / "skills"
+        folded = skills / "triage"
+        literal = skills / "inbox"
+        folded.mkdir(parents=True)
+        literal.mkdir(parents=True)
+        (folded / "SKILL.md").write_text(FOLDED_SKILL)
+        (literal / "SKILL.md").write_text(LITERAL_SKILL)
+
+        prompt = load_system_prompt()
+        err = capsys.readouterr().err
+
+        assert "### triage\nSort incoming mail into buckets\n" in prompt
+        assert (
+            "### inbox\nSort incoming mail into buckets. "
+            "Use when the user asks to triage an inbox.\n"
+        ) in prompt
+        assert "invalid frontmatter" not in err
+        assert not (home / ".cast" / "agents").exists()
+
+    def test_blank_description_is_skipped(self, monkeypatch, tmp_path, capsys):
+        home = _use_home(monkeypatch, tmp_path / "home")
+        skills = home / ".cast" / "builder" / "skills"
+        blank = skills / "blank"
+        blank.mkdir(parents=True)
+        (blank / "SKILL.md").write_text("---\nname: triage\ndescription: ''\n---\nDo not keep this.\n")
+
+        prompt = load_system_prompt()
+        err = capsys.readouterr().err
+
+        assert "Do not keep this." not in prompt
+        assert "invalid frontmatter" in err
+        assert not (home / ".cast" / "agents").exists()
 
     def test_invalid_frontmatter_is_skipped(self, monkeypatch, tmp_path, capsys):
         home = _use_home(monkeypatch, tmp_path / "home")

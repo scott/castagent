@@ -2,9 +2,11 @@ import {expect} from 'chai'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import * as yaml from 'yaml'
 import {
   GITHUB_SOURCE_HINT,
   SkillError,
+  assertSkillIdentity,
   duplicateSkillMessage,
   installFromGitHub,
   parseGitHubSource,
@@ -13,6 +15,29 @@ import {
   renderSkillMarkdown,
   resolveFolderInput,
 } from '../../../typescript/cast-cli/src/lib/skills'
+
+const FOLDED_DESCRIPTION = [
+  '---',
+  'name: triage-fold',
+  'description: >',
+  '  Sort incoming mail into buckets',
+  '---',
+  '',
+  '# Triage',
+  '',
+].join('\n')
+
+const LITERAL_DESCRIPTION = [
+  '---',
+  'name: triage-lit',
+  'description: |',
+  '  Sort incoming mail into buckets.',
+  '  Use when the user asks to triage an inbox.',
+  '---',
+  '',
+  '# Triage',
+  '',
+].join('\n')
 
 function skillMarkdown(name: string, description: string, body: string): string {
   return renderSkillMarkdown(name, description, body)
@@ -79,6 +104,44 @@ describe('skill folder paths and markdown', () => {
       description: 'Sort incoming mail into buckets',
       body: '# Triage\n\nSort it.',
     })
+  })
+
+  it('keeps a one-line description unchanged', () => {
+    const markdown = [
+      '---',
+      'name: triage',
+      'description: Sort incoming mail into buckets',
+      '---',
+      '',
+      '# Triage',
+      '',
+    ].join('\n')
+    expect(parseSkillMarkdown(markdown).description).to.equal('Sort incoming mail into buckets')
+    expect(parseSkillMarkdown(renderSkillMarkdown('triage', 'Sort  incoming mail', '# Triage')).description).to.equal(
+      'Sort  incoming mail',
+    )
+  })
+
+  it('collapses a folded description to one line', () => {
+    expect(parseSkillMarkdown(FOLDED_DESCRIPTION).description).to.equal('Sort incoming mail into buckets')
+  })
+
+  it('joins a literal description into one line', () => {
+    expect(parseSkillMarkdown(LITERAL_DESCRIPTION).description).to.equal(
+      'Sort incoming mail into buckets. Use when the user asks to triage an inbox.',
+    )
+  })
+
+  it('rejects a missing or blank description', () => {
+    const missing = '---\nname: triage\n---\n\n# Triage\n'
+    const blank = '---\nname: triage\ndescription: ""\n---\n\n# Triage\n'
+    const foldedBlank = '---\nname: triage\ndescription: >\n---\n\n# Triage\n'
+    const spaces = '---\nname: triage\ndescription: "   "\n---\n\n# Triage\n'
+    for (const markdown of [missing, blank, foldedBlank, spaces]) {
+      expect(() => parseSkillMarkdown(markdown)).to.throw(SkillError, 'Skill description is required.')
+    }
+    expect(() => assertSkillIdentity('triage', '\n', '# Triage')).to.throw(SkillError, 'Skill description is required.')
+    expect(() => assertSkillIdentity('triage', '   ', '# Triage')).to.throw(SkillError, 'Skill description is required.')
   })
 
   it('rejects a bad skill name', () => {
@@ -200,6 +263,47 @@ describe('installFromGitHub', () => {
       agentsDir,
       clone: (_url, dest) => fs.cpSync(src, dest, {recursive: true}),
     })).to.throw(SkillError, 'No SKILL.md in owner/repo.')
+    fs.rmSync(src, {recursive: true, force: true})
+  })
+
+  it('installs a folded description from a local github fixture', () => {
+    const src = fixture((root) => {
+      fs.writeFileSync(path.join(root, 'SKILL.md'), FOLDED_DESCRIPTION)
+    })
+    const entry = installFromGitHub({
+      agentName,
+      repo: 'owner/fold',
+      sourceLabel: 'owner/fold',
+      agentsDir,
+      clone: (_url, dest) => fs.cpSync(src, dest, {recursive: true}),
+    })
+    expect(entry.description).to.equal('Sort incoming mail into buckets')
+    const config = yaml.parse(fs.readFileSync(path.join(agentsDir, agentName, 'agent.yaml'), 'utf8'))
+    const stored = config.skills.find((skill: {name: string}) => skill.name === 'triage-fold')
+    expect(stored.description).to.equal('Sort incoming mail into buckets')
+    expect(stored.description).to.not.include('\n')
+    fs.rmSync(src, {recursive: true, force: true})
+  })
+
+  it('installs a literal description as one line from a local github fixture', () => {
+    const src = fixture((root) => {
+      fs.writeFileSync(path.join(root, 'SKILL.md'), LITERAL_DESCRIPTION)
+    })
+    const entry = installFromGitHub({
+      agentName,
+      repo: 'owner/literal',
+      sourceLabel: 'owner/literal',
+      agentsDir,
+      clone: (_url, dest) => fs.cpSync(src, dest, {recursive: true}),
+    })
+    expect(entry.description).to.equal(
+      'Sort incoming mail into buckets. Use when the user asks to triage an inbox.',
+    )
+    const config = yaml.parse(fs.readFileSync(path.join(agentsDir, agentName, 'agent.yaml'), 'utf8'))
+    const stored = config.skills.find((skill: {name: string}) => skill.name === 'triage-lit')
+    expect(stored.description).to.equal(
+      'Sort incoming mail into buckets. Use when the user asks to triage an inbox.',
+    )
     fs.rmSync(src, {recursive: true, force: true})
   })
 })

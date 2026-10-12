@@ -59,10 +59,12 @@ description: Sort incoming mail into buckets
 Sort the mail.
 ```
 
-`name` matches `[a-z0-9][a-z0-9-]*`. `description` is one line. Installing the
-same name again does not overwrite; remove it with `{% ref "slash:skills" %}`
-first. A path whose real location is already inside that agent's `skills/`
-directory is rejected.
+`name` matches `[a-z0-9][a-z0-9-]*`. Cast stores `description` as one line.
+A folded (`>`) or literal (`|`) description is joined into that line. A missing
+or blank description is rejected. The modal still asks for one line of typed
+text. Installing the same name again does not overwrite; remove it with
+`{% ref "slash:skills" %}` first. A path whose real location is already inside
+that agent's `skills/` directory is rejected.
 
 `agent.yaml` then looks like:
 

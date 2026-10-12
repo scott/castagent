@@ -174,15 +174,21 @@ function isGitHubSegment(value: string): boolean {
   return /^[A-Za-z0-9_.-]+$/.test(value) && value !== '.' && value !== '..'
 }
 
+/** YAML `>` and `|` scalars keep newlines. Store the description as one line. */
+function collapseSkillDescription(description: string): string {
+  return description
+    .split(/\r\n|\r|\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join(' ')
+}
+
 export function assertSkillIdentity(name: string, description: string, body: string): SkillDocument {
   const skillName = name.trim()
   if (!SKILL_NAME.test(skillName)) {
     throw new SkillError(`Skill name '${skillName}' is invalid. Names must match [a-z0-9][a-z0-9-]*.`)
   }
-  if (description.includes('\n') || description.includes('\r')) {
-    throw new SkillError('Skill description must be one line.')
-  }
-  const skillDescription = description.trim()
+  const skillDescription = collapseSkillDescription(description)
   if (!skillDescription) throw new SkillError('Skill description is required.')
   const skillBody = body.replace(/^\n+/, '').replace(/\s+$/, '')
   if (!skillBody.trim()) throw new SkillError('Skill body is required.')
@@ -214,7 +220,6 @@ export function parseSkillMarkdown(content: string): SkillDocument {
   const name = typeof record.name === 'string' ? record.name : ''
   const description = typeof record.description === 'string' ? record.description : ''
   if (!name.trim()) throw new SkillError('SKILL.md is missing a name.')
-  if (!description.trim()) throw new SkillError('SKILL.md is missing a description.')
   return assertSkillIdentity(name, description, match[2] ?? '')
 }
 
