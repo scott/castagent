@@ -10,6 +10,7 @@ import {
   execCommand,
   saveDeployment,
   getOpenRouterApiKey,
+  getDigitalOceanInferenceKey,
   generateDeploymentId,
   getVolumeName,
 } from './deploy-utils'
@@ -329,6 +330,7 @@ export default class SpritesDeploy extends Command {
 
   private async setupBackgroundService(spriteName: string, agentName: string, authToken: string): Promise<void> {
     const openrouterKey = getOpenRouterApiKey()
+    const digitaloceanInferenceKey = getDigitalOceanInferenceKey()
 
     // Kill any existing agent process
     this.log('  Stopping any existing agent process...')
@@ -344,6 +346,7 @@ export CAST_AGENT_NAME=${agentName}
 export CAST_AGENT_PATH=${AGENT_DIR}
 export AUTH_TOKEN="${authToken.replace(/"/g, '\\"')}"
 ${openrouterKey ? `export OPENROUTER_API_KEY="${openrouterKey}"` : ''}
+${digitaloceanInferenceKey ? `export DIGITALOCEAN_MODEL_ACCESS_KEY="${digitaloceanInferenceKey}"` : ''}
 # Start agent in background, redirect all output, write PID, then exit
 nohup ${AGENT_DIR}/venv/bin/python -m cast.runtime --agent-path ${AGENT_DIR} --port 8080 --host 0.0.0.0 > ${AGENT_DIR}/agent.log 2>&1 &
 echo $! > ${AGENT_DIR}/agent.pid

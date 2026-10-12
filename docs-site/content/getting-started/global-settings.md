@@ -32,6 +32,9 @@ providers:
   openrouter:
     api_key: ${OPENROUTER_API_KEY}
     default_base_url: https://openrouter.ai/api/v1
+  digitalocean_inference:
+    api_key: ${DIGITALOCEAN_MODEL_ACCESS_KEY}
+    default_base_url: https://inference.do-ai.run/v1
   railway:
     api_token: ${RAILWAY_API_TOKEN}
   fly:
@@ -43,11 +46,21 @@ providers:
 The file is re-read on every command, so changes take effect without
 restarting anything.
 
+`providers.digitalocean` is the **deploy** token for Droplets and MicroVMs.
+It is not an inference credential. Serverless inference uses
+`providers.digitalocean_inference` (or `DIGITALOCEAN_MODEL_ACCESS_KEY`).
+Set an agent's model to `digitalocean/llama3.3-70b-instruct` or
+`digitalocean/deepseek-v3.2` to call `https://inference.do-ai.run/v1`.
+OpenRouter stays the default when the model is `openrouter/...` or has no
+provider prefix. `defaults.builder_model` can be a `digitalocean/<model-id>`
+string; the default remains `openrouter/minimax/minimax-m2.5`.
+
 ## Environment variables
 
 | Variable | Used for |
 |---|---|
 | `OPENROUTER_API_KEY` | Default LLM provider auth. |
+| `DIGITALOCEAN_MODEL_ACCESS_KEY` | DigitalOcean serverless inference. Not the deploy token. |
 | `RAILWAY_API_TOKEN` | Railway deploys (alternative to `railway login`). |
 | `FLY_API_TOKEN` | Fly.io deploys (alternative to `flyctl auth login`). |
 | `DIGITALOCEAN_ACCESS_TOKEN` | DigitalOcean deploys (also accepts `DIGITALOCEAN_API_TOKEN`, `DIGITALOCEAN_API_KEY`). |

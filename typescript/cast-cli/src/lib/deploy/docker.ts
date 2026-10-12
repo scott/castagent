@@ -7,7 +7,7 @@ import * as path from 'path'
 
 import {keychain} from '../keychain'
 import {db} from '../sqlite'
-import {execCommand, getOpenRouterApiKey, generateDeploymentId, getVolumeName, createMemoryVolume, deleteMemoryVolume, createDockerignore} from './deploy-utils'
+import {execCommand, getOpenRouterApiKey, getDigitalOceanInferenceKey, generateDeploymentId, getVolumeName, createMemoryVolume, deleteMemoryVolume, createDockerignore} from './deploy-utils'
 
 // Helper to run a shell command and return its exit code
 function runCommand(command: string, args: string[], options?: {stdio?: any; cwd?: string; silent?: boolean}): Promise<number> {
@@ -156,6 +156,11 @@ export default class DockerDeploy extends Command {
     const openrouterKey = getOpenRouterApiKey()
     if (openrouterKey) {
       dockerRunArgs.push('-e', `OPENROUTER_API_KEY=${openrouterKey}`)
+    }
+
+    const digitaloceanInferenceKey = getDigitalOceanInferenceKey()
+    if (digitaloceanInferenceKey) {
+      dockerRunArgs.push('-e', `DIGITALOCEAN_MODEL_ACCESS_KEY=${digitaloceanInferenceKey}`)
     }
 
     dockerRunArgs.push(imageName)
@@ -344,6 +349,7 @@ services:
       - AUTH_TOKEN=${authToken}
       - PYTHONPATH=/app
       - OPENROUTER_API_KEY=\${OPENROUTER_API_KEY}
+      - DIGITALOCEAN_MODEL_ACCESS_KEY=\${DIGITALOCEAN_MODEL_ACCESS_KEY}
     volumes:
       - ${volumeId}:/app/agent/memory
     restart: unless-stopped

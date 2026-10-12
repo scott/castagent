@@ -9,6 +9,7 @@ import {
   execCommand,
   saveDeployment,
   getOpenRouterApiKey,
+  getDigitalOceanInferenceKey,
   getProviderToken,
   generateDeploymentId,
   getVolumeName,
@@ -81,6 +82,10 @@ export default class RailwayDeploy extends Command {
     }
     if (openrouterKey) {
       envVars.OPENROUTER_API_KEY = openrouterKey
+    }
+    const digitaloceanInferenceKey = getDigitalOceanInferenceKey()
+    if (digitaloceanInferenceKey) {
+      envVars.DIGITALOCEAN_MODEL_ACCESS_KEY = digitaloceanInferenceKey
     }
 
     for (const [key, value] of Object.entries(envVars)) {

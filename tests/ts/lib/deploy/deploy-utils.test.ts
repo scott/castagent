@@ -5,6 +5,7 @@ import {
   generateDeploymentId,
   getVolumeName,
   getOpenRouterApiKey,
+  getDigitalOceanInferenceKey,
   getProviderToken,
   checkCli,
   getMemoryMountPath,
@@ -83,6 +84,49 @@ describe('Deploy Utils', () => {
       const apiKey = getOpenRouterApiKey()
       // Result depends on env - just ensure function returns a value
       expect(apiKey === undefined || typeof apiKey === 'string').to.be.true
+    })
+  })
+
+  describe('getDigitalOceanInferenceKey', () => {
+    const original = process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
+
+    afterEach(() => {
+      if (original === undefined) {
+        delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
+      } else {
+        process.env.DIGITALOCEAN_MODEL_ACCESS_KEY = original
+      }
+    })
+
+    it('prefers DIGITALOCEAN_MODEL_ACCESS_KEY over config', () => {
+      process.env.DIGITALOCEAN_MODEL_ACCESS_KEY = 'env-key'
+      const key = getDigitalOceanInferenceKey({
+        providers: {
+          digitalocean_inference: {api_key: 'config-key'},
+          digitalocean: {token: 'deploy-token'},
+        },
+      })
+      expect(key).to.equal('env-key')
+    })
+
+    it('reads providers.digitalocean_inference.api_key when env is unset', () => {
+      delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
+      const key = getDigitalOceanInferenceKey({
+        providers: {
+          digitalocean_inference: {api_key: 'config-key'},
+        },
+      })
+      expect(key).to.equal('config-key')
+    })
+
+    it('does not read the digitalocean deploy token', () => {
+      delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
+      const key = getDigitalOceanInferenceKey({
+        providers: {
+          digitalocean: {token: 'deploy-token', api_key: 'also-deploy'},
+        },
+      })
+      expect(key).to.equal(undefined)
     })
   })
 })

@@ -180,6 +180,83 @@ class TestRuntimeAgentLLMMode:
             assert agent.graph is None
 
 
+class TestRuntimeAgentProviderSelection:
+    """Model prefix selects the provider. Keys do not fall back."""
+
+    def _set_model(self, agent_config, model: str) -> None:
+        brain = agent_config.config.setdefault("brain", {})
+        brain["model"] = model
+
+    @patch("cast.agent.runtime.create_react_agent")
+    @patch("cast.providers.digitalocean_inference.ChatOpenAI")
+    @patch("cast.agent.runtime.OpenRouterProvider")
+    def test_digitalocean_model_never_constructs_openrouter(
+        self, mock_openrouter, mock_chat, mock_graph, agent_config
+    ):
+        """A digitalocean/ model does not construct OpenRouterProvider."""
+        self._set_model(agent_config, "digitalocean/llama3.3-70b-instruct")
+        mock_graph.return_value = MagicMock()
+
+        with patch.dict(os.environ, {
+            "OPENROUTER_API_KEY": "or-key",
+            "DIGITALOCEAN_MODEL_ACCESS_KEY": "do-key",
+        }):
+            agent = RuntimeAgent(agent_config)
+
+        assert mock_openrouter.called is False
+        assert mock_openrouter.is_available.called is False
+        assert agent.graph is not None
+        assert mock_chat.call_args.kwargs["model"] == "llama3.3-70b-instruct"
+        assert mock_chat.call_args.kwargs["base_url"] == "https://inference.do-ai.run/v1"
+        assert mock_chat.call_args.kwargs["api_key"] == "do-key"
+
+    @patch("cast.agent.runtime.OpenRouterProvider")
+    @patch("cast.agent.runtime.create_react_agent")
+    def test_openrouter_model_does_not_require_digitalocean_key(
+        self, mock_graph, mock_provider_class, agent_config
+    ):
+        mock_provider = MagicMock()
+        mock_provider.create_llm.return_value = MagicMock()
+        mock_provider_class.return_value = mock_provider
+        mock_graph.return_value = MagicMock()
+
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}, clear=True):
+            agent = RuntimeAgent(agent_config)
+
+        assert agent.graph is not None
+        mock_provider_class.assert_called_once()
+
+    def test_neither_key_stays_in_echo_mode(self, agent_config):
+        with patch.dict(os.environ, {}, clear=True):
+            agent = RuntimeAgent(agent_config)
+            assert agent.graph is None
+            response = agent._echo_response("random message")
+            assert "OPENROUTER_API_KEY" in response
+
+    @patch("cast.agent.runtime.create_react_agent")
+    @patch("cast.providers.digitalocean_inference.ChatOpenAI")
+    def test_only_digitalocean_key_uses_digitalocean_not_echo(
+        self, mock_chat, mock_graph, agent_config
+    ):
+        self._set_model(agent_config, "digitalocean/llama3.3-70b-instruct")
+        mock_graph.return_value = MagicMock()
+
+        with patch.dict(os.environ, {"DIGITALOCEAN_MODEL_ACCESS_KEY": "do-key"}, clear=True):
+            agent = RuntimeAgent(agent_config)
+
+        assert agent.graph is not None
+        assert mock_chat.call_args.kwargs["model"] == "llama3.3-70b-instruct"
+
+    def test_digitalocean_model_does_not_fall_back_to_openrouter(self, agent_config):
+        self._set_model(agent_config, "digitalocean/llama3.3-70b-instruct")
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-key"}, clear=True):
+            agent = RuntimeAgent(agent_config)
+            assert agent.graph is None
+            response = agent._echo_response("random message")
+            assert "DIGITALOCEAN_MODEL_ACCESS_KEY" in response
+            assert "OPENROUTER_API_KEY" not in response
+
+
 class TestRuntimeAgentCard:
     """Tests for AgentCard generation."""
     
