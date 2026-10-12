@@ -124,7 +124,7 @@ async function loadSessionIntoChat(ctx: CommandContext, sessionId: string): Prom
     await ctx.loadSession(sessionId)
     ctx.currentSessionId = sessionId
     ctx.messages.addAgentMessage(
-      `Resumed session ${sessionId}. Future messages will be appended to this session.`,
+      `Resumed session ${sessionId}. The model is using this transcript. Future messages append to this session.`,
       ctx.mode,
     )
   } catch (err: any) {
@@ -697,7 +697,7 @@ function promptForkSession(ctx: CommandContext, sess: SessionMeta): void {
       }
       const label = forked.name ? `'${forked.name}'` : forked.id
       ctx.messages.addAgentMessage(
-        `Forked ${title} into ${label}. Future messages will be appended to the fork.`,
+        `Forked ${title} into ${label}. The model continues from the fork. The original session is unchanged.`,
         ctx.mode,
       )
     },
@@ -3427,7 +3427,7 @@ const commands: SlashCommand[] = [
             name,
           })
           ctx.messages.addAgentMessage(
-            `Started new session ${sess.id}${sess.name ? ` ('${sess.name}')` : ''}. The new session will take over on your next message.`,
+            `Started new session ${sess.id}${sess.name ? ` ('${sess.name}')` : ''}. The next message starts a fresh model context in this session.`,
             ctx.mode,
           )
           const previousId = ctx.currentSessionId

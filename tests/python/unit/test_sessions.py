@@ -137,6 +137,23 @@ class TestSessionList:
         assert len(items) == 2
         assert all(m.agent_name == "alpha" for m in items)
 
+    def test_new_session_does_not_rewrite_an_earlier_one(self, store):
+        """A later session does not delete, end, or rewrite the earlier transcript."""
+        first = store.create("alpha", name="earlier")
+        store.append_message(first.id, "user", "keep me")
+        store.append_message(first.id, "agent", "kept")
+        second = store.create("alpha", name="later")
+        store.append_message(second.id, "user", "other chat")
+
+        listed = {item.id for item in store.list(agent_name="alpha")}
+        assert first.id in listed
+        assert second.id in listed
+        reloaded = store.get(first.id)
+        assert reloaded is not None
+        assert reloaded.name == "earlier"
+        assert reloaded.ended_at is None
+        assert [m.text for m in reloaded.messages] == ["keep me", "kept"]
+
     def test_list_excludes_ended_when_requested(self, store):
         s = store.create("alpha")
         store.create("alpha")

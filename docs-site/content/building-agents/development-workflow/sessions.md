@@ -19,6 +19,28 @@ appends every user/agent message to it. You can resume, rename, fork,
 or delete sessions with `cast session …` (or the TUI slash commands
 listed below).
 
+## Connecting starts a new session
+
+`cast connect` (by agent name, by deployment SHA, or to a local agent),
+`/connect`, and opening the on-host TUI all start a new session. The
+transcript is empty, and the model has no messages from any earlier
+session. Turns inside that connection still share context with each
+other. Connecting does not delete, end, or rewrite the previous
+session — `cast session list` still shows it.
+
+Continuing an old conversation is an explicit resume. Use
+`cast session resume`, `/session resume`, or `Enter` / `R` in
+`/sessions`. The resumed transcript is what the model sees, and later
+turns append to that session. A fork (`cast session fork`, or `F` in
+`/sessions`) continues from the copy; the original session's messages
+stay as they were. `/session new` also starts a fresh model context
+instead of carrying the chat you were just in. Switching agents with
+`/connect` starts a new session for the agent you land on and does not
+carry the previous agent's conversation across.
+
+Persistent memory is separate from the session transcript and still
+applies on a new session.
+
 ## Listing sessions
 
 ```bash
@@ -57,8 +79,10 @@ cast session resume <id|name>
 cast session resume                     # opens a picker
 ```
 
-The TUI opens with the session's full transcript preloaded. Future
-chat turns are appended to the resumed session.
+The TUI opens with the session's full transcript preloaded. That
+transcript is the model's context, and future chat turns are appended
+to the resumed session. Connecting again does not reopen it — resume
+is how you continue the old conversation.
 
 ## Forking a session
 
@@ -126,7 +150,7 @@ sessions accumulate over time.
 
 ```
 /sessions                    # list sessions and open the modal picker
-/session new [name]          # start a fresh session
+/session new [name]          # start a fresh session and model context
 /session resume [id|name]    # resume; opens the picker if no argument
 ```
 

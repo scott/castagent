@@ -15,6 +15,22 @@ export interface StreamChunk {
   uiAction?: Record<string, unknown>
 }
 
+/** One saved turn. Sent once when resuming or forking a session. */
+export interface SessionHistoryTurn {
+  role: 'user' | 'agent'
+  text: string
+}
+
+/**
+ * Pairs this message with the server's model context.
+ * Omit sessionId only for old callers; the Cast TUI always sends one.
+ * history is the saved transcript and is sent once, not on later turns.
+ */
+export interface SendMessageOptions {
+  sessionId?: string
+  history?: SessionHistoryTurn[]
+}
+
 export class A2AClientError extends Error {
   constructor(
     message: string,
@@ -217,20 +233,38 @@ export class A2AClient {
     return data.result as AgentCard
   }
 
-  async sendMessage(text: string): Promise<AgentResponse> {
+  private messageParams(text: string, options?: SendMessageOptions): {
+    message: A2AMessage
+    metadata: Record<string, unknown>
+  } {
     const message: A2AMessage = {
       role: 'user',
       parts: [{kind: 'text', text}],
       messageId: this.generateId(),
     }
+    const metadata: Record<string, unknown> = {}
+    if (options?.sessionId) {
+      metadata.sessionId = options.sessionId
+    }
+    if (options?.history && options.history.length > 0) {
+      metadata.history = options.history.map((turn) => ({
+        role: turn.role,
+        text: turn.text,
+      }))
+    }
+    return {message, metadata}
+  }
+
+  async sendMessage(text: string, options?: SendMessageOptions): Promise<AgentResponse> {
+    const built = this.messageParams(text, options)
 
     const data = await this.requestWithRetry<A2AResponse>({
       jsonrpc: '2.0',
       id: this.generateId(),
       method: 'message/send',
       params: {
-        message,
-        metadata: {},
+        message: built.message,
+        metadata: built.metadata,
       },
     })
 
@@ -258,20 +292,16 @@ export class A2AClient {
     }
   }
 
-  async *sendMessageStream(text: string): AsyncGenerator<StreamChunk> {
-    const message: A2AMessage = {
-      role: 'user',
-      parts: [{kind: 'text', text}],
-      messageId: this.generateId(),
-    }
+  async *sendMessageStream(text: string, options?: SendMessageOptions): AsyncGenerator<StreamChunk> {
+    const built = this.messageParams(text, options)
 
     const response = await this.withTransientRetry(() => this.http.post('/', {
       jsonrpc: '2.0',
       id: this.generateId(),
       method: 'message/send',
       params: {
-        message,
-        metadata: {},
+        message: built.message,
+        metadata: built.metadata,
       },
     }, {
       headers: {
