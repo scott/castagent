@@ -10,6 +10,8 @@ function loadHelper(): {
   sortBuilderModels: <T extends {id: string}>(models: readonly T[]) => T[]
   initialBuilderModelIndex: (models: readonly {id: string}[], currentId: string) => number
   wrapBuilderModelIndex: (index: number, delta: number, length: number) => number
+  builderModelWindow: (length: number, selected: number, maxRows: number) => {start: number; end: number}
+  isSameBuilderModel: (currentId: string, selectedId: string) => boolean
   shouldApplyBuilderModel: (currentId: string, selectedId: string) => boolean
   builderModelApplyArgv: (id: string) => string[]
   builderModelListArgv: () => string[]
@@ -60,6 +62,23 @@ describe('builder model picker', () => {
       'minimax/minimax-m2.5',
       'openrouter/openai/gpt-4o',
     ])
+  })
+
+  it('selects the catalog row for a stored openrouter id and keeps it on screen', () => {
+    const models = [
+      {id: 'anthropic/claude-3-haiku'},
+      {id: 'google/gemini-2.5-pro'},
+      {id: 'minimax/minimax-m2.5'},
+      {id: 'openai/gpt-4o'},
+    ]
+    const index = helper.initialBuilderModelIndex(models, 'openrouter/minimax/minimax-m2.5')
+    expect(models[index].id).to.equal('minimax/minimax-m2.5')
+    expect(helper.isSameBuilderModel('openrouter/minimax/minimax-m2.5', 'minimax/minimax-m2.5')).to.equal(true)
+    expect(helper.shouldApplyBuilderModel('openrouter/minimax/minimax-m2.5', 'minimax/minimax-m2.5')).to.equal(false)
+    const window = helper.builderModelWindow(models.length, index, 2)
+    expect(window.start).to.be.at.most(index)
+    expect(window.end).to.be.greaterThan(index)
+    expect(window.end - window.start).to.equal(2)
   })
 
   it('does not apply when the selected row is already current', () => {

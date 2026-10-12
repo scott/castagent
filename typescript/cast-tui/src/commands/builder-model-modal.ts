@@ -11,8 +11,10 @@ import {
   builderModelFocusReturnTarget,
   builderModelListArgv,
   builderModelSuccessMessage,
+  builderModelWindow,
   formatBuilderModelRow,
   initialBuilderModelIndex,
+  isSameBuilderModel,
   shouldApplyBuilderModel,
   sortBuilderModels,
   wrapBuilderModelIndex,
@@ -158,9 +160,19 @@ export function openBuilderModelModal(
 
     addLine(`Current: ${currentId || '(unset)'}`)
     addLine('────────────────────────────────────────────────────────', 'hint')
-    models.forEach((model, index) => {
-      addLine(formatBuilderModelRow(model.id, index === selected, model.id === currentId))
-    })
+    const height = typeof ctx.renderer?.height === 'number' ? ctx.renderer.height : 24
+    const maxRows = Math.max(5, Math.floor(height * 0.8) - 6)
+    const window = builderModelWindow(models.length, selected, maxRows)
+    if (window.start > 0) addLine('  …', 'hint')
+    for (let index = window.start; index < window.end; index++) {
+      const model = models[index]
+      addLine(formatBuilderModelRow(
+        model.id,
+        index === selected,
+        isSameBuilderModel(model.id, currentId),
+      ))
+    }
+    if (window.end < models.length) addLine('  …', 'hint')
     if (inlineError) {
       addLine(' ')
       addLine(inlineError, 'error')
@@ -182,6 +194,7 @@ export function openBuilderModelModal(
 
   const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
   modal.box.handleKeyPress = (key: KeyEvent): boolean => {
+    if (key.eventType === 'release') return true
     if (key.name === 'escape') {
       close()
       return true

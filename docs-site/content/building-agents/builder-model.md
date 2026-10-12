@@ -76,9 +76,13 @@ production and on-host. See
 
 Typing `/model` opens a modal titled "Builder Model". The list comes from
 `cast model --list --json`, sorted alphabetically by the full id. The
-current row is marked `(current)` and starts selected. Up and down wrap.
-Enter on a different model runs `cast model <id>`. Enter on the current
-model does nothing. ESC closes the modal and returns focus to the input.
+modal shows a window of that list and keeps the selected row on screen.
+The current row is marked `(current)` and starts selected. A stored id
+with a leading `openrouter/` matches the same catalog id, so the default
+`openrouter/minimax/minimax-m2.5` selects `minimax/minimax-m2.5`. Up and
+down wrap. Enter on a different model runs `cast model <id>`. Enter on
+the current model does nothing. ESC closes the modal and returns focus
+to the input.
 
 On success the chat shows:
 
