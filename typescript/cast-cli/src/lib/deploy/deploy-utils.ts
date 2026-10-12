@@ -720,6 +720,16 @@ export function getOpenRouterApiKey(): string | undefined {
   )
 }
 
+// Model access key for DigitalOcean serverless inference.
+// Does not read providers.digitalocean (that token is for deploys).
+export function getDigitalOceanInferenceKey(config: any = loadConfig()): string | undefined {
+  return (
+    process.env.DIGITALOCEAN_MODEL_ACCESS_KEY ||
+    config?.providers?.digitalocean_inference?.api_key ||
+    undefined
+  )
+}
+
 export async function execCommandIgnoreError(
   command: string,
   args: string[],

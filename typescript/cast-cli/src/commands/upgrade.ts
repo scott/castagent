@@ -11,7 +11,7 @@ import SpritesDeploy from '../lib/deploy/sprites'
 import MicrovmDeploy from '../lib/deploy/microvm'
 import {getRelease, getCurrentRelease, listReleases, validateSemver} from '../lib/releases'
 import {db} from '../lib/sqlite'
-import {resolveDeploymentTarget, createDockerignore, execCommand} from '../lib/deploy/deploy-utils'
+import {resolveDeploymentTarget, createDockerignore, execCommand, getDigitalOceanInferenceKey} from '../lib/deploy/deploy-utils'
 import {writeHostMotdOverSsh} from '../lib/deploy/motd'
 
 const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'microvm', 'sprites', 'docker', 'local']
@@ -392,6 +392,11 @@ export default class Upgrade extends Command {
     const openrouterKey = this.getOpenRouterApiKey()
     if (openrouterKey) {
       dockerRunArgs.push('-e', `OPENROUTER_API_KEY=${openrouterKey}`)
+    }
+
+    const digitaloceanInferenceKey = getDigitalOceanInferenceKey()
+    if (digitaloceanInferenceKey) {
+      dockerRunArgs.push('-e', `DIGITALOCEAN_MODEL_ACCESS_KEY=${digitaloceanInferenceKey}`)
     }
 
     dockerRunArgs.push(`cast-${agentName}:latest`)

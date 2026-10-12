@@ -5,7 +5,9 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from .store import MemoryHighlight
 from .filter import PrivacyFilter
+from ..providers.digitalocean_inference import DigitalOceanInferenceProvider
 from ..providers.openrouter import OpenRouterProvider
+from ..providers.select import select_provider_class
 
 
 REFLECTION_PROMPT = """You are a reflection agent that identifies notable moments worth remembering.
@@ -50,12 +52,17 @@ Only mark as notable if it provides genuine future value to remember."""
 
 class ReflectionAgent:
     def __init__(self, model_name: str = "claude-haiku-4", api_key: Optional[str] = None):
-        if not OpenRouterProvider.is_available():
+        provider_cls = select_provider_class(
+            model_name,
+            digitalocean_cls=DigitalOceanInferenceProvider,
+            openrouter_cls=OpenRouterProvider,
+        )
+        if not provider_cls.is_available():
             self.llm = None
             self.filter = PrivacyFilter()
             return
 
-        provider = OpenRouterProvider()
+        provider = provider_cls()
         self.llm = provider.create_llm(model=model_name)
         self.filter = PrivacyFilter()
         self.system_message = SystemMessage(content=REFLECTION_PROMPT)

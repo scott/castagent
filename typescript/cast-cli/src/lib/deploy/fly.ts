@@ -9,6 +9,7 @@ import {
   execCommand,
   saveDeployment,
   getOpenRouterApiKey,
+  getDigitalOceanInferenceKey,
   generateDeploymentId,
   getVolumeName,
 } from './deploy-utils'
@@ -91,6 +92,10 @@ export default class FlyDeploy extends Command {
     }
     if (openrouterKey) {
       secrets.OPENROUTER_API_KEY = openrouterKey
+    }
+    const digitaloceanInferenceKey = getDigitalOceanInferenceKey()
+    if (digitaloceanInferenceKey) {
+      secrets.DIGITALOCEAN_MODEL_ACCESS_KEY = digitaloceanInferenceKey
     }
 
     const secretPairs = Object.entries(secrets).map(([k, v]) => `${k}=${v}`)

@@ -166,6 +166,12 @@ export default class Update extends Command {
   }
 
   private validateModel(model: string): {valid: boolean; warning?: string} {
+    // DigitalOcean catalog ids are not OpenRouter models. Accept any
+    // digitalocean/<model-id>, including ids that are not in the starter list.
+    if (model.startsWith('digitalocean/')) {
+      return {valid: true}
+    }
+
     // Strip openrouter/ prefix if present
     const cleanModel = model.startsWith('openrouter/') ? model.slice('openrouter/'.length) : model
     if (KNOWN_MODELS.includes(cleanModel)) {
