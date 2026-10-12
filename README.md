@@ -379,6 +379,7 @@ Highlighting text with the mouse copies that selection to the clipboard.
 | `/upgrade` | agent | Operates on the current agent. Modal lists releases to upgrade to. |
 | `/registry` | session | Modal table of all releases across all agents, with deployment status. |
 | `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a SHA directly. |
+| `/builder-skills [add <github-or-folder>]` | agent | Add or remove skills the builder uses when creating agents. Dev mode only. Applies on the next `cast new` or `cast edit`. |
 
 ### Git Integration
 

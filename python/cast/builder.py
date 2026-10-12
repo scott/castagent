@@ -233,11 +233,126 @@ Through conversation, understand what the user wants their agent to do, then:
 """
 
 
+_SKILL_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
+_SKILL_FRONTMATTER_RE = re.compile(r"^---\r?\n(.*?)\r?\n---\r?\n?(.*)$", re.DOTALL)
+_SKILLS_INTRO = (
+    "## Skills\n"
+    "\n"
+    "Follow these skills while you help the developer create or edit a Cast agent.\n"
+    "They describe how you do the work. Do not copy a skill into\n"
+    "~/.cast/agents/<name>/ unless the developer asks."
+)
+
+
+def _builder_dir() -> Path:
+    """Return ~/.cast/builder, resolved when called so tests can isolate HOME."""
+    return Path.home() / ".cast" / "builder"
+
+
+def ensure_builder_skills_dir() -> None:
+    """Create ~/.cast/builder/skills/ when it is missing.
+
+    An empty folder is valid. This does not create instructions.md.
+    """
+    path = _builder_dir() / "skills"
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        print(f"Warning: could not create builder skills directory: {exc}", file=sys.stderr)
+
+
+def _parse_skill_markdown(text: str) -> Optional[tuple[str, str, str]]:
+    """Return (name, description, body) or None when frontmatter is invalid."""
+    cleaned = text.lstrip("\ufeff")
+    match = _SKILL_FRONTMATTER_RE.match(cleaned)
+    if not match:
+        return None
+    try:
+        data = yaml.safe_load(match.group(1))
+    except yaml.YAMLError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    name = data.get("name")
+    description = data.get("description")
+    if not isinstance(name, str) or _SKILL_NAME_RE.fullmatch(name) is None:
+        return None
+    if not isinstance(description, str) or "\n" in description or "\r" in description:
+        return None
+    description = description.strip()
+    if not description:
+        return None
+    return name, description, match.group(2)
+
+
+def _load_builder_skills() -> List[tuple[str, str, str]]:
+    """Load valid builder skills, skipping bad ones. Sorted by frontmatter name."""
+    skills_dir = _builder_dir() / "skills"
+    if not skills_dir.is_dir():
+        return []
+    try:
+        children = sorted(skills_dir.iterdir(), key=lambda path: path.name)
+    except OSError as exc:
+        print(f"Warning: could not read builder skills: {exc}", file=sys.stderr)
+        return []
+
+    loaded: List[tuple[str, str, str]] = []
+    for child in children:
+        if not child.is_dir() or child.name.startswith("."):
+            continue
+        skill_md = child / "SKILL.md"
+        if not skill_md.is_file():
+            print(
+                f"Skipping builder skill '{child.name}': SKILL.md is missing",
+                file=sys.stderr,
+            )
+            continue
+        try:
+            text = skill_md.read_text()
+        except OSError as exc:
+            print(f"Skipping builder skill '{child.name}': {exc}", file=sys.stderr)
+            continue
+        parsed = _parse_skill_markdown(text)
+        if parsed is None:
+            print(
+                f"Skipping builder skill '{child.name}': invalid frontmatter",
+                file=sys.stderr,
+            )
+            continue
+        loaded.append(parsed)
+    loaded.sort(key=lambda item: item[0])
+    return loaded
+
+
+def _render_skills_section(skills: Sequence[tuple[str, str, str]]) -> str:
+    """Format the ## Skills section appended to the builder prompt."""
+    chunks = [_SKILLS_INTRO]
+    for name, description, body in skills:
+        text = body[1:] if body.startswith("\n") else body
+        text = text.replace("\r\n", "\n").rstrip("\n")
+        block = f"### {name}\n{description}"
+        if text:
+            block += f"\n\n{text}"
+        chunks.append(block)
+    return "\n\n".join(chunks) + "\n"
+
+
 def load_system_prompt() -> str:
-    """Load the builder agent system prompt from disk."""
-    if SYSTEM_PROMPT_PATH.exists():
-        return SYSTEM_PROMPT_PATH.read_text()
-    return DEFAULT_SYSTEM_PROMPT
+    """Load the builder prompt, then append builder skills when any are valid.
+
+    The base text is ~/.cast/builder/instructions.md when that file exists,
+    otherwise DEFAULT_SYSTEM_PROMPT. A missing or empty skills folder leaves
+    that text unchanged. The running builder reads this once, at startup.
+    """
+    instructions = _builder_dir() / "instructions.md"
+    if instructions.is_file():
+        base = instructions.read_text()
+    else:
+        base = DEFAULT_SYSTEM_PROMPT
+    skills = _load_builder_skills()
+    if not skills:
+        return base
+    return base.rstrip("\n") + "\n\n" + _render_skills_section(skills)
 
 
 class EchoChatModel(BaseChatModel):
@@ -714,6 +829,7 @@ class BuilderAgent:
     """LangGraph-based builder agent with tool support."""
 
     def __init__(self):
+        ensure_builder_skills_dir()
         self.system_prompt = load_system_prompt()
         self.llm = create_llm()
         self.tools: List[BaseTool] = [

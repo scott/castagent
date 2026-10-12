@@ -47,6 +47,7 @@ head, the rest of the documentation is just a list of which knob does what.
 | **Tools** | `create_agent`, `update_config`, `install_mcp`, `recommend_model`, `list_agents` | `bash`, `read`, `glob`, plus MCP servers and custom tools you've added |
 | **Auth** | none (local only) | bearer token in production, none locally |
 | **User interface** | the TUI you see during `cast new` / `cast edit` | the TUI you see during `cast dev` / `cast connect` |
+| **Skills** | `~/.cast/builder/skills/<name>/SKILL.md` is appended to the builder prompt. These skills guide creation and editing. They apply on the next `cast new` or `cast edit`. | Builder skills are not runtime skills. The runtime agent does not load them. |
 
 ## A2A, briefly
 
@@ -112,6 +113,10 @@ is stable for the life of that deployment.
 ├── vault/<agent>/             # OAuth credentials (filesystem, mode 0600)
 ├── tokens/<agent>.token       # bearer tokens (keychain)
 ├── builder/                   # Builder Agent's instructions and tools
+│   ├── instructions.md        # builder system prompt
+│   ├── tools/
+│   └── skills/                # skills that guide creation; not runtime skills
+│       └── <name>/SKILL.md
 └── agents/<name>/
     ├── agent.yaml             # the agent's config
     ├── instructions.md        # the agent's system prompt
