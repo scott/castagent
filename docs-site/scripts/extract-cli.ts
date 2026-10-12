@@ -98,6 +98,58 @@ function evalLiteral(node: any): unknown {
   return text
 }
 
+/** Property declarations have getInitializer. A getter, such as deploy's computed flags, does not. */
+function initializerOf(member: Node | undefined): Node | undefined {
+  if (!member) return undefined
+  const callable = member as {getInitializer?: unknown}
+  if (typeof callable.getInitializer === 'function') {
+    return (callable.getInitializer as () => Node | undefined)()
+  }
+  if (!Node.isGetAccessorDeclaration(member)) return undefined
+  for (const stmt of member.getStatements()) {
+    if (!Node.isReturnStatement(stmt)) continue
+    const expr = stmt.getExpression()
+    if (!expr) continue
+    if (Node.isObjectLiteralExpression(expr)) return expr
+    if (Node.isCallExpression(expr) && Node.isIdentifier(expr.getExpression())) {
+      const fn = member.getSourceFile().getFunction(expr.getExpression().getText())
+      const literal = fn?.getDescendantsOfKind(SyntaxKind.ObjectLiteralExpression)[0]
+      if (literal) return literal
+    }
+  }
+  return undefined
+}
+
+/** Flags registered on deployment providers and merged into `cast deploy` at runtime. */
+function providerFlagObjects(project: Project): ObjectLiteralExpression[] {
+  const dir = join(REPO, 'typescript', 'cast-cli', 'src', 'lib', 'deploy', 'providers')
+  if (!existsSync(dir)) return []
+  const objects: ObjectLiteralExpression[] = []
+  for (const file of walk(dir)) {
+    const sf = project.getSourceFile(file) ?? project.addSourceFileAtPath(file)
+    for (const prop of sf.getDescendantsOfKind(SyntaxKind.PropertyAssignment)) {
+      if (prop.getName() !== 'flags') continue
+      const init = prop.getInitializer()
+      if (init && Node.isObjectLiteralExpression(init)) objects.push(init)
+    }
+  }
+  return objects
+}
+
+function flagsForCommand(member: Node | undefined, project: Project): FlagSpec[] {
+  const flags = parseFlagsObject(initializerOf(member))
+  if (!member || !Node.isGetAccessorDeclaration(member)) return flags
+  const seen = new Set(flags.map((flag) => flag.name))
+  for (const extra of providerFlagObjects(project)) {
+    for (const flag of parseFlagsObject(extra)) {
+      if (seen.has(flag.name)) continue
+      seen.add(flag.name)
+      flags.push(flag)
+    }
+  }
+  return flags
+}
+
 function readObjectProps(obj: ObjectLiteralExpression): PropertyAssignment[] {
   return obj.getProperties().filter((p): p is PropertyAssignment => Node.isPropertyAssignment(p))
 }
@@ -177,7 +229,7 @@ function parseFlagsObject(init: any): FlagSpec[] {
   if (!init || !Node.isObjectLiteralExpression(init)) return []
   const out: FlagSpec[] = []
   for (const prop of readObjectProps(init)) {
-    const name = prop.getName()
+    const name = unquote(prop.getName())
     if (name === 'help' || name === 'parsed' || name === 'aliases' || name === 'dependsOn' || name === 'relationships' || name === 'deprecateAliases' || name === 'enableJsonFlag' || name === 'allowUnknownFlags') continue
     const val = prop.getInitializer()
     if (!val) continue
@@ -269,10 +321,9 @@ for (const file of files) {
     continue
   }
 
-  const desc = unquote(cls.getStaticProperty('description')?.getInitializer()?.getText() ?? '')
-  const exInit   = cls.getStaticProperty('examples')?.getInitializer()
-  const flagsInit= cls.getStaticProperty('flags')?.getInitializer()
-  const argsInit = cls.getStaticProperty('args')?.getInitializer()
+  const desc = unquote(initializerOf(cls.getStaticProperty('description'))?.getText() ?? '')
+  const exInit = initializerOf(cls.getStaticProperty('examples'))
+  const argsInit = initializerOf(cls.getStaticProperty('args'))
   const path = derivePath(file)
 
   commands.push({
@@ -281,7 +332,7 @@ for (const file of files) {
     full: path.full,
     description: desc,
     examples: parseExamples(exInit, path.id),
-    flags: parseFlagsObject(flagsInit),
+    flags: flagsForCommand(cls.getStaticProperty('flags'), project),
     args: parseArgsObject(argsInit),
     source: relative(REPO, file),
   })
