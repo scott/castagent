@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-12T01:28:17Z",
+  "generatedAt": "2026-10-12T19:09:05Z",
   "cli": [
     {
       "id": "builder-skills",
@@ -9,7 +9,7 @@
     {
       "id": "clone",
       "full": "cast clone",
-      "description": "Clone an agent from a Git repository"
+      "description": "Clone an agent from a Git repository or a local directory"
     },
     {
       "id": "connect",
@@ -279,6 +279,11 @@
       "description": "Show all available slash commands"
     },
     {
+      "name": "import",
+      "category": "agent",
+      "description": "Import a Cast agent from GitHub or a local path"
+    },
+    {
       "name": "list",
       "category": "agent",
       "description": "List all agents with their status"
@@ -349,14 +354,14 @@
       "description": "List saved sessions and open the picker modal"
     },
     {
-      "name": "skills",
-      "category": "agent",
-      "description": "Add or remove skills on this agent"
-    },
-    {
       "name": "shutdown",
       "category": "agent",
       "description": "Shut down a deployed agent and destroy its remote resources"
+    },
+    {
+      "name": "skills",
+      "category": "agent",
+      "description": "Add or remove skills on this agent"
     },
     {
       "name": "stop",
