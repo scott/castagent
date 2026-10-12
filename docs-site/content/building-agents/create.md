@@ -30,7 +30,9 @@ The Builder Agent asks four things in order:
    or API token.
 4. **Model.** Defaults to `openrouter/minimax/minimax-m2.5` (configurable
    in `~/.cast/config.yaml`); the Builder recommends alternatives based on
-   the agent's likely workload.
+   the agent's likely workload. That recommendation is the new agent's
+   model, not the model the Builder itself runs on. To change the Builder,
+   see [Changing the builder model](building-agents/builder-model).
 
 When the conversation ends, the agent lives at `~/.cast/agents/<name>/`
 with everything wired up. Cast prints a final summary and offers to start

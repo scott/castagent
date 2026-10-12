@@ -163,6 +163,11 @@ cast connect demo-agent
 # Update agent configuration
 cast update demo-agent --model openrouter/anthropic/claude-3.7-sonnet
 
+# Show or set the builder's model (not the model of an agent being created).
+# A running builder does not hot-swap; start it again to apply.
+cast model
+cast model anthropic/claude-3.5-sonnet
+
 # Delete agent
 cast delete demo-agent --force
 
@@ -386,6 +391,7 @@ Highlighting text with the mouse copies that selection to the clipboard.
 | `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a SHA directly. |
 | `/import [source] [name]` | agent | Import a Cast agent from GitHub or a local path. |
 | `/builder-skills [add <github-or-folder>]` | agent | Add or remove skills the builder uses when creating agents. Dev mode only. Applies on the next `cast new` or `cast edit`. |
+| `/model` | agent | Change the model the builder uses. Dev mode only. Hidden in production and on-host. Applies on the next `cast dev`. |
 
 ### Git Integration
 
@@ -526,7 +532,7 @@ The `digitalocean/` prefix is stripped and the catalog id is sent unchanged. It 
 cast update demo-agent --model digitalocean/llama3.3-70b-instruct
 ```
 
-`defaults.builder_model: digitalocean/<model-id>` makes the builder call DigitalOcean. The default remains `openrouter/minimax/minimax-m2.5`. Deployed agents receive `DIGITALOCEAN_MODEL_ACCESS_KEY` when it is set, the same way they receive `OPENROUTER_API_KEY`.
+`cast model <id>` writes `defaults.builder_model` from the curated list (`cast model --list`). The builder reads that value when it starts. A running builder does not hot-swap; run `cast dev <agent>` again. `digitalocean/<model-id>` still selects DigitalOcean when that string is already in the file. The default remains `openrouter/minimax/minimax-m2.5`. Deployed agents receive `DIGITALOCEAN_MODEL_ACCESS_KEY` when it is set, the same way they receive `OPENROUTER_API_KEY`.
 
 ## Documentation
 

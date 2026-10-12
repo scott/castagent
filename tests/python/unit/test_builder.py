@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 import yaml
 import os
+from unittest.mock import patch
 
 
 class TestStdioJsonRpcServer:
@@ -506,3 +507,59 @@ class TestStdioServerMessageValidation:
 
         result = server._make_error_response("id", -32602, "Invalid params", {"extra": "info"})
         assert result["error"]["data"] == {"extra": "info"}
+
+
+class TestBuilderModelConfig:
+    """The builder LLM uses the raw configured model id. No network."""
+
+    def _write_config(self, tmp_path, monkeypatch, model: str):
+        home = tmp_path / "home"
+        cast_dir = home / ".cast"
+        cast_dir.mkdir(parents=True)
+        (cast_dir / "config.yaml").write_text(
+            f"defaults:\n  builder_model: {model}\n"
+        )
+        monkeypatch.setenv("HOME", str(home))
+        monkeypatch.delenv("DIGITALOCEAN_MODEL_ACCESS_KEY", raising=False)
+        return home
+
+    def test_create_llm_uses_configured_raw_model_id(self, tmp_path, monkeypatch):
+        from cast.builder import create_llm
+
+        self._write_config(tmp_path, monkeypatch, "anthropic/claude-3.5-sonnet")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+        with patch("cast.providers.openrouter.ChatOpenAI") as mock_chat:
+            llm = create_llm()
+
+        kwargs = mock_chat.call_args.kwargs
+        assert kwargs["model"] == "anthropic/claude-3.5-sonnet"
+        assert kwargs["base_url"] == "https://openrouter.ai/api/v1"
+        assert kwargs["base_url"] + "/chat/completions" == "https://openrouter.ai/api/v1/chat/completions"
+        assert kwargs["api_key"] == "or-key"
+        assert kwargs["temperature"] == 0.7
+        assert llm is mock_chat.return_value
+
+    def test_create_llm_echo_when_openrouter_key_is_absent(self, tmp_path, monkeypatch):
+        from cast.builder import EchoChatModel, create_llm
+
+        self._write_config(tmp_path, monkeypatch, "anthropic/claude-3.5-sonnet")
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        with patch("cast.providers.openrouter.ChatOpenAI") as mock_chat:
+            llm = create_llm()
+
+        mock_chat.assert_not_called()
+        assert isinstance(llm, EchoChatModel)
+
+    def test_welcome_banner_uses_display_model(self, tmp_path, monkeypatch):
+        from cast.builder import BuilderAgent, get_builder_model, get_builder_model_id
+
+        self._write_config(tmp_path, monkeypatch, "openrouter/minimax/minimax-m2.5")
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        assert get_builder_model_id() == "openrouter/minimax/minimax-m2.5"
+        assert get_builder_model() == "minimax/minimax-m2.5"
+
+        agent = BuilderAgent()
+        agent.new_mode = True
+        welcome = agent.get_welcome_message()
+        assert "**minimax/minimax-m2.5**" in welcome
+        assert "openrouter/minimax/minimax-m2.5" not in welcome

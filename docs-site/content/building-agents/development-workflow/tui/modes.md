@@ -26,8 +26,10 @@ a dynamic port. The header is **purple** and shows just the agent name.
 
 - The runtime is killed when you quit the TUI.
 - `/undo`, `/redo`, `/sessions`, `/session …`, `/releases`, `/release`,
-  `/deploy`, `/upgrade`, `/import`, and `/shutdown` are all available — you're
-  working on the agent on this machine. `/import` is also available in production.
+  `/deploy`, `/upgrade`, `/import`, `/shutdown`, and `/model` are available —
+  you're working on the agent on this machine. `/import` is also available in
+  production. `/model` changes the builder's model only. It is hidden from
+  `/help` in production and on-host, and the running builder does not hot-swap.
 - `/connect` switches to a *different* deployed agent (useful for
   comparing local behaviour to production).
 - No bearer token is required.

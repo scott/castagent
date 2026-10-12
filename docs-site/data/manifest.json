@@ -97,6 +97,11 @@
       "description": "Migrate to the new versioning system"
     },
     {
+      "id": "model",
+      "full": "cast model",
+      "description": "Show or set the model the builder agent uses"
+    },
+    {
       "id": "new",
       "full": "cast new",
       "description": "Create a new agent through an interactive TUI wizard"
@@ -287,6 +292,11 @@
       "name": "mode?",
       "category": "chat",
       "description": "Show current mode"
+    },
+    {
+      "name": "model",
+      "category": "agent",
+      "description": "Change the model the builder uses"
     },
     {
       "name": "quit",
