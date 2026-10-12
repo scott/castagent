@@ -6,6 +6,7 @@ import {createMessages} from '../components/messages.js'
 import {createInput} from '../components/input.js'
 import {createAutocomplete} from '../components/autocomplete.js'
 import {executeSlashCommand, getSlashCommands} from '../commands/slash-registry.js'
+import {slashKeyAction} from '../lib/input-focus.js'
 import {getDb} from '../lib/db.js'
 import {
   createSession as createSessionStore,
@@ -124,6 +125,8 @@ export async function showChatScreen(
     layout.add(header.box)
 
     const messages = createMessages(renderer, currentUiMode)
+    // Scroll boxes are focusable by default. A click would blur the textarea.
+    messages.scrollBox.focusable = false
     layout.add(messages.scrollBox)
 
     if (currentUiMode === 'production') {
@@ -178,7 +181,7 @@ export async function showChatScreen(
     const autocomplete = createAutocomplete(renderer, autocompleteOptions, (option) => {
       autocompleteJustSelected = true
       inputComp.input.setText(`/${option.name} `)
-      inputComp.input.focus()
+      focusInput()
       // Brief timeout so the input event handler sees the flag
       setTimeout(() => {
         autocompleteJustSelected = false
@@ -292,6 +295,7 @@ export async function showChatScreen(
             mode,
           )
         }
+        focusInput()
         return
       }
 
@@ -360,10 +364,12 @@ export async function showChatScreen(
             messages.addAgentMessage(`Deploy error: ${err.message}`, mode)
           }
         }
+        focusInput()
       } catch (err) {
         stream?.cancel()
         const errorMsg = `Error: ${err instanceof Error ? err.message : String(err)}`
         messages.addAgentMessage(errorMsg, mode)
+        focusInput()
       }
     })
     layout.add(inputComp.box)
@@ -372,7 +378,28 @@ export async function showChatScreen(
     renderer.root.add(autocomplete.box)
 
     renderer.root.add(layout)
-    inputComp.input.focus()
+
+    // A modal is a visible root child at zIndex >= 100. Autocomplete is 50.
+    function isModalOpen(): boolean {
+      for (const child of renderer.root.getChildren()) {
+        if (child.visible && child.zIndex >= 100) return true
+      }
+      return false
+    }
+
+    function focusInput(): void {
+      if (isModalOpen()) return
+      inputComp.input.focus()
+    }
+
+    focusInput()
+
+    // Clicks on the transcript and header bubble here. Skip when the textarea
+    // is already focused so a click inside it does not move the cursor.
+    layout.onMouseUp = () => {
+      if (inputComp.input.focused) return
+      focusInput()
+    }
 
     // Keyboard handler
     const onKey = (key: KeyEvent) => {
@@ -383,6 +410,22 @@ export async function showChatScreen(
           currentSessionId = null
         }
         resolve()
+        return
+      }
+
+      const plainSlash = key.sequence === '/' || key.name === '/'
+      const slashAction = slashKeyAction({
+        key: plainSlash ? '/' : key.name,
+        ctrl: key.ctrl,
+        meta: key.meta,
+        alt: key.option,
+        inputFocused: inputComp.input.focused,
+        modalOpen: isModalOpen(),
+      })
+      if (slashAction === 'insert') {
+        key.stopPropagation()
+        focusInput()
+        inputComp.input.editBuffer.insertText('/')
         return
       }
 

@@ -41,6 +41,8 @@ export function createMessages(ctx: any, uiMode: UiMode): MessagesComponent {
       padding: 1,
     },
   })
+  // Class field initializer forces focusable back on after construction.
+  scrollBox.focusable = false
 
   function addUserMessage(text: string) {
     const row = new BoxRenderable(ctx, {
