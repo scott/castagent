@@ -628,3 +628,90 @@ describe('A2AClient resume retries', () => {
     expect(post.callCount).to.equal(4)
   })
 })
+
+describe('A2AClient session metadata', () => {
+  const sandbox = sinon.createSandbox()
+  let post: sinon.SinonStub
+
+  beforeEach(() => {
+    post = sandbox.stub()
+    sandbox.stub(axios, 'create').returns({post} as never)
+  })
+
+  afterEach(() => {
+    sandbox.restore()
+  })
+
+  function jsonResult(text: string) {
+    return {
+      data: {
+        jsonrpc: '2.0',
+        id: '1',
+        result: {parts: [{kind: 'text', text}]},
+      },
+    }
+  }
+
+  it('sends no session metadata when the caller omits an id', async () => {
+    post.resolves(jsonResult('ok'))
+    const client = new A2AClient('http://localhost:8080')
+    const response = await client.sendMessage('hello')
+    expect(response.text).to.equal('ok')
+    const payload = post.firstCall.args[1]
+    expect(payload.method).to.equal('message/send')
+    expect(payload.params.metadata).to.deep.equal({})
+  })
+
+  it('sends the session id on message/send without a transcript', async () => {
+    post.resolves(jsonResult('ok'))
+    const client = new A2AClient('http://localhost:8080')
+    await client.sendMessage('hello', {sessionId: 'sess-1'})
+    expect(post.firstCall.args[1].params.metadata).to.deep.equal({sessionId: 'sess-1'})
+    expect(post.firstCall.args[1].params.message.parts[0].text).to.equal('hello')
+  })
+
+  it('sends a resumed transcript in metadata', async () => {
+    post.resolves(jsonResult('ok'))
+    const client = new A2AClient('http://localhost:8080')
+    const history = [
+      {role: 'user' as const, text: 'earlier'},
+      {role: 'agent' as const, text: 'reply'},
+    ]
+    await client.sendMessage('next', {sessionId: 'sess-1', history})
+    expect(post.firstCall.args[1].params.metadata).to.deep.equal({
+      sessionId: 'sess-1',
+      history,
+    })
+  })
+
+  it('omits an empty transcript', async () => {
+    post.resolves(jsonResult('ok'))
+    const client = new A2AClient('http://localhost:8080')
+    await client.sendMessage('hi', {sessionId: 'sess-1', history: []})
+    expect(post.firstCall.args[1].params.metadata).to.deep.equal({sessionId: 'sess-1'})
+  })
+
+  it('sends the same session metadata on a streamed message', async () => {
+    post.resolves({
+      data: Readable.from([
+        'data: {"jsonrpc":"2.0","result":{"parts":[{"kind":"text","text":"pong"}]}}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    })
+    const client = new A2AClient('http://localhost:8080')
+    const chunks: string[] = []
+    for await (const chunk of client.sendMessageStream('hi', {
+      sessionId: 'sess-stream',
+      history: [{role: 'user', text: 'before'}],
+    })) {
+      chunks.push(chunk.text)
+    }
+    expect(chunks).to.deep.equal(['pong'])
+    const payload = post.firstCall.args[1]
+    expect(payload.params.metadata).to.deep.equal({
+      sessionId: 'sess-stream',
+      history: [{role: 'user', text: 'before'}],
+    })
+    expect(post.firstCall.args[2].headers.Accept).to.equal('text/event-stream')
+  })
+})

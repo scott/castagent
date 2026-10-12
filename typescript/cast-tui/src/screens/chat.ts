@@ -1,3 +1,4 @@
+import {randomUUID} from 'node:crypto'
 import {BoxRenderable} from '@opentui/core'
 import type {CliRenderer, KeyEvent} from '@opentui/core'
 import {createHeader} from '../components/header.js'
@@ -15,6 +16,7 @@ import {
   endSession,
   type Session,
 } from '../lib/sessions.js'
+import {SessionContext} from '../lib/session-context.js'
 import type {A2AClient} from '../../../cast-cli/dist/lib/a2a/client.js'
 
 /**
@@ -93,7 +95,10 @@ export async function showChatScreen(
     let lastAgentMessage: string | undefined
     // Bound to an active session id once /session new or the first chat
     // message creates one. Slash commands can swap this out.
-    let currentSessionId: string | null = initialSessionId ?? null
+    // Connecting does not reuse an earlier id: the model context for a
+    // new id starts empty on the server.
+    let currentSessionId: string | null = null
+    const sessionContext = new SessionContext()
 
     // Get deployed version for initial agent
     let deployedVersion: string | null = null
@@ -150,6 +155,8 @@ export async function showChatScreen(
     // If launched with --session <id>, load the transcript before the
     // user sees the empty chat. We replay the messages into the chat
     // and bind the session id so future turns get appended to it.
+    // The saved transcript is sent once with the next message, because
+    // the agent process cannot read ~/.cast/sessions.
     if (initialSessionId) {
       try {
         const sess: Session | null = await getSession(initialSessionId)
@@ -166,6 +173,7 @@ export async function showChatScreen(
             }
           }
           currentSessionId = sess.id
+          sessionContext.load(sess.id, sess.messages.map((m) => ({role: m.role, text: m.text})))
         }
       } catch {
         // ignore — start a fresh session on first message
@@ -222,10 +230,10 @@ export async function showChatScreen(
             client = new A2AClient(newUrl, newToken, nextEdge)
             messageHistory = []
             lastAgentMessage = undefined
-            if (currentSessionId) {
-              void endSession(currentSessionId)
-              currentSessionId = null
-            }
+            // Leave the previous session saved. Connecting starts a new
+            // one and does not end or rewrite the earlier transcript.
+            currentSessionId = null
+            sessionContext.start(null)
             header.setAgentName(agentName)
 
             // Update deployed version for new agent
@@ -261,7 +269,12 @@ export async function showChatScreen(
             return currentSessionId
           },
           set currentSessionId(v: string | null) {
+            // loadSession already armed this id's transcript. Setting the
+            // same id again must not drop it. A different id (/session new)
+            // starts an empty model context.
+            if (v === currentSessionId) return
             currentSessionId = v
+            sessionContext.start(v)
           },
           loadSession: async (sessionId: string) => {
             const sess: Session | null = await getSession(sessionId)
@@ -285,6 +298,7 @@ export async function showChatScreen(
               lastAgentMessage = m.role === 'agent' ? m.text : lastAgentMessage
             }
             currentSessionId = sess.id
+            sessionContext.load(sess.id, sess.messages.map((m) => ({role: m.role, text: m.text})))
           },
         }
 
@@ -304,22 +318,28 @@ export async function showChatScreen(
       messageHistory.push({role: 'user', text})
 
       // Lazily create a session for this conversation. Best-effort: a
-      // failure to create or append must not break the chat.
-      if (!currentSessionId) {
-        try {
-          const sess = await createSessionStore({
-            agentName: agentName,
-            mode: mode,
-            uiMode: currentUiMode,
-          })
-          currentSessionId = sess.id
-        } catch {
-          // ignore — chat continues without session persistence
+      // failure to create or append must not break the chat. The TUI
+      // always sends an id, even when the session file could not be written.
+      if (!sessionContext.id) {
+        if (!currentSessionId) {
+          try {
+            const sess = await createSessionStore({
+              agentName: agentName,
+              mode: mode,
+              uiMode: currentUiMode,
+            })
+            currentSessionId = sess.id
+          } catch {
+            currentSessionId = randomUUID()
+          }
         }
+        sessionContext.bind(currentSessionId)
       }
       if (currentSessionId) {
         void appendSessionMessage(currentSessionId, 'user', text)
       }
+      // Resume and fork attach the saved transcript once. Later turns send only the id.
+      const outbound = sessionContext.peek()
 
       let stream: ReturnType<typeof messages.addStreamingAgentMessage> | undefined
       try {
@@ -327,7 +347,7 @@ export async function showChatScreen(
         let fullResponse = ''
         let uiAction: Record<string, unknown> | undefined
 
-        for await (const chunk of client.sendMessageStream(text)) {
+        for await (const chunk of client.sendMessageStream(text, outbound)) {
           stream.update(chunk.text)
           fullResponse += chunk.text
           if (chunk.uiAction) {
@@ -335,6 +355,7 @@ export async function showChatScreen(
           }
         }
         stream.done()
+        sessionContext.commit()
         lastAgentMessage = fullResponse
         messageHistory.push({role: 'agent', text: fullResponse})
 

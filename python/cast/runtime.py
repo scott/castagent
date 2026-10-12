@@ -98,6 +98,31 @@ def request_auth_error(auth_token_hash: Optional[str], headers) -> Optional[str]
     return None
 
 
+def session_context_from_params(
+    params: Dict[str, Any],
+) -> tuple[Optional[str], Optional[List[Dict[str, Any]]]]:
+    """Session id and one-time transcript from a message/send.
+
+    A missing id is not a new session. Callers keep the legacy shared
+    history so an old client that omits the id still appends to it.
+    """
+    if not isinstance(params, dict):
+        return None, None
+    metadata = params.get("metadata")
+    if not isinstance(metadata, dict):
+        return None, None
+    raw_id = metadata.get("sessionId")
+    if raw_id is None:
+        raw_id = metadata.get("session_id")
+    session_id = raw_id.strip() if isinstance(raw_id, str) else None
+    if not session_id:
+        session_id = None
+    history = metadata.get("history")
+    if not isinstance(history, list):
+        history = None
+    return session_id, history
+
+
 # JSON-RPC 2.0 error codes
 JSONRPC_PARSE_ERROR = -32700
 JSONRPC_INVALID_REQUEST = -32600
@@ -221,9 +246,14 @@ class A2AServer:
         if not text.strip():
             return self._make_error_response(msg_id, JSONRPC_INVALID_PARAMS, "No text content found in message")
 
-        # Process with agent
+        # Process with agent. The client session id selects that
+        # connection's model context. History is the saved transcript,
+        # sent once on resume or fork.
+        session_id, history = session_context_from_params(params)
         try:
-            response_text = await self.agent.process_message(text)
+            response_text = await self.agent.process_message(
+                text, session_id=session_id, history=history,
+            )
             return {
                 "jsonrpc": "2.0",
                 "id": msg_id,
@@ -281,9 +311,12 @@ class A2AServer:
             yield "data: [DONE]\n\n"
             return
 
-        # Stream tokens from agent
+        # Stream tokens from agent. Same session pairing as message/send.
+        session_id, history = session_context_from_params(params)
         try:
-            async for chunk in self.agent.process_message_stream(text):
+            async for chunk in self.agent.process_message_stream(
+                text, session_id=session_id, history=history,
+            ):
                 event = {
                     "jsonrpc": "2.0",
                     "id": request_id,

@@ -80,11 +80,14 @@ single most important idea to internalise.
   `cast release <agent> 1.6` and the agent's tarball is stamped with a
   semantic version. Releases are the *deployment artifact* — when you
   `cast deploy`, you're shipping a release. See [Releases](building-agents/deployment/releases).
-- **Sessions** are saved conversations. Cast auto-saves every chat
-  turn into a session, so you can `cast session resume` (or
-  `/session resume` in the TUI) to pick up where you left off,
-  `cast session fork` to branch into a parallel thread, or
-  `cast session export` to back up the transcript. See
+- **Sessions** are saved conversations. Connecting to an agent
+  (`cast connect`, `/connect`, or the on-host TUI) starts a new
+  session with an empty model context. Cast auto-saves every chat
+  turn into that session. Continuing an old conversation is an
+  explicit resume: `cast session resume` (or `/session resume`, or
+  `Enter` / `R` in `/sessions`) loads that transcript back into the
+  model. `cast session fork` branches into a parallel thread, and
+  `cast session export` backs up the transcript. See
   [Sessions](building-agents/development-workflow/sessions).
 
 ## Multi-deployment and the deployment SHA

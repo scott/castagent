@@ -2,7 +2,7 @@ import asyncio
 import os
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
-from langchain_core.messages import AIMessageChunk, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langgraph.prebuilt import create_react_agent
 
 from .base import AgentConfig
@@ -35,7 +35,10 @@ class RuntimeAgent:
     def __init__(self, config: AgentConfig, agent_path: str = None):
         self.config = config
         self.agent_path = agent_path or os.environ.get("AGENT_PATH", ".")
+        # Callers that omit a session id keep appending to this one list.
+        # A missing id is not a new session.
         self.chat_history = []
+        self.session_histories: Dict[str, list] = {}
         self.graph = None
         self.llm = None
         self.memory = None
@@ -91,36 +94,107 @@ class RuntimeAgent:
             # Log error but don't crash - fall back to echo mode
             print(f"Warning: Failed to initialize LLM: {e}", flush=True)
             self.graph = None
-    
-    async def process_message(self, message: str) -> str:
+
+    def _normalize_session_id(self, session_id: Optional[str]) -> Optional[str]:
+        if session_id is None:
+            return None
+        if not isinstance(session_id, str):
+            session_id = str(session_id)
+        session_id = session_id.strip()
+        return session_id or None
+
+    def _messages_from_transcript(self, transcript: Optional[List[Dict[str, Any]]]) -> list:
+        """Turn a client transcript into model messages. Unknown roles are skipped."""
+        messages = []
+        if not transcript:
+            return messages
+        for turn in transcript:
+            if not isinstance(turn, dict):
+                continue
+            role = turn.get("role")
+            text = turn.get("text")
+            if text is None:
+                text = turn.get("content", "")
+            if not isinstance(text, str):
+                continue
+            if role == "user":
+                messages.append(HumanMessage(content=text))
+            elif role in ("agent", "assistant"):
+                messages.append(AIMessage(content=text))
+        return messages
+
+    def _history_for(
+        self,
+        session_id: Optional[str],
+        transcript: Optional[List[Dict[str, Any]]],
+    ) -> list:
+        """Mutable model context for this turn.
+
+        No session id uses the legacy shared list. An unknown id starts
+        empty. A transcript is applied only then, so resume can seed a
+        process that cannot read ~/.cast/sessions without duplicating a
+        context this process already has.
+        """
+        session_id = self._normalize_session_id(session_id)
+        if session_id is None:
+            return self.chat_history
+        existing = self.session_histories.get(session_id)
+        if existing is None:
+            existing = self._messages_from_transcript(transcript)
+            self.session_histories[session_id] = existing
+        return existing
+
+    def _store_history(self, session_id: Optional[str], messages: list) -> None:
+        session_id = self._normalize_session_id(session_id)
+        if session_id is None:
+            self.chat_history = messages
+        else:
+            self.session_histories[session_id] = messages
+
+    def _append_user_turn(
+        self,
+        message: str,
+        session_id: Optional[str],
+        history: Optional[List[Dict[str, Any]]],
+    ) -> list:
+        memory_context = self.memory.format_memories(message)
+        messages = self._history_for(session_id, history)
+        if memory_context:
+            messages.append(HumanMessage(content=f"{memory_context}\n\nUser: {message}"))
+        else:
+            messages.append(HumanMessage(content=message))
+        return messages
+
+    async def process_message(
+        self,
+        message: str,
+        session_id: Optional[str] = None,
+        history: Optional[List[Dict[str, Any]]] = None,
+    ) -> str:
         """Process a user message and return the response."""
         
         # If no LLM available, use echo mode
         if self.graph is None:
             return self._echo_response(message)
         
-        # Enrich message with relevant memories
-        memory_context = self.memory.format_memories(message)
+        # Enrich message with relevant memories and append to this session.
+        messages = self._append_user_turn(message, session_id, history)
         
         # Process through LLM
         try:
-            if memory_context:
-                self.chat_history.append(HumanMessage(content=f"{memory_context}\n\nUser: {message}"))
-            else:
-                self.chat_history.append(HumanMessage(content=message))
-            
-            response = await self.graph.ainvoke({"messages": self.chat_history})
+            response = await self.graph.ainvoke({"messages": messages})
             
             # Update chat history with full conversation
-            self.chat_history = response["messages"]
+            messages = response["messages"]
+            self._store_history(session_id, messages)
             
             # Extract the last AI message content
-            last_message = self.chat_history[-1]
+            last_message = messages[-1]
             agent_response = last_message.content
             
             # Record this exchange for future memory
             asyncio.create_task(
-                self.memory.record(message, agent_response, f"exchange_{len(self.chat_history)//2}")
+                self.memory.record(message, agent_response, f"exchange_{len(messages)//2}")
             )
             
             return agent_response
@@ -146,7 +220,12 @@ class RuntimeAgent:
                 f"{self._llm_key_hint()}"
             )
     
-    async def process_message_stream(self, message: str) -> AsyncGenerator[str, None]:
+    async def process_message_stream(
+        self,
+        message: str,
+        session_id: Optional[str] = None,
+        history: Optional[List[Dict[str, Any]]] = None,
+    ) -> AsyncGenerator[str, None]:
         """Process a user message and yield response tokens as they're generated."""
         
         # If no LLM available, use echo mode with streaming simulation
@@ -155,19 +234,14 @@ class RuntimeAgent:
                 yield chunk
             return
         
-        # Enrich message with relevant memories
-        memory_context = self.memory.format_memories(message)
+        # Enrich message with relevant memories and append to this session.
+        messages = self._append_user_turn(message, session_id, history)
         
         # Process through LLM with streaming
         try:
-            if memory_context:
-                self.chat_history.append(HumanMessage(content=f"{memory_context}\n\nUser: {message}"))
-            else:
-                self.chat_history.append(HumanMessage(content=message))
-            
             full_content = ""
             async for msg, metadata in self.graph.astream(
-                {"messages": self.chat_history},
+                {"messages": messages},
                 stream_mode="messages",
             ):
                 if isinstance(msg, AIMessageChunk) and msg.content:
@@ -183,12 +257,11 @@ class RuntimeAgent:
                                     full_content += text
             
             # Update chat history with the final accumulated message
-            from langchain_core.messages import AIMessage
-            self.chat_history.append(AIMessage(content=full_content))
+            messages.append(AIMessage(content=full_content))
             
             # Record this exchange for future memory
             asyncio.create_task(
-                self.memory.record(message, full_content, f"stream_exchange_{len(self.chat_history)//2}")
+                self.memory.record(message, full_content, f"stream_exchange_{len(messages)//2}")
             )
         except Exception as e:
             yield f"Error processing message: {str(e)}"

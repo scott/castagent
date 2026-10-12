@@ -326,7 +326,7 @@ Cast Agent tracks an agent with three independent concepts:
 
 - **Undo log (internal)** — automatic, sequential snapshots taken on every edit. You don't manage this directly; you interact with it through `cast undo` / `cast redo`. The log also feeds `cast release`'s auto-changelog.
 - **Releases** — intentional semantic versions (1.0, 1.5, 2.0) you create when you're ready to ship. Releases are the deployment artifact.
-- **Sessions** — saved conversations tied to an agent. Cast Agent auto-saves every chat turn into a session so you can resume, fork, rename, or audit conversations.
+- **Sessions** — saved conversations tied to an agent. Connecting (`cast connect`, `/connect`, or the on-host TUI) starts a new session with an empty model context. Cast Agent auto-saves every chat turn into that session. Continuing an old conversation is an explicit resume (`cast session resume`, `/session resume`, or `/sessions`). You can also fork, rename, or audit conversations.
 
 ```bash
 # Undo and redo (the user-facing surface of the change log)
@@ -349,6 +349,10 @@ cast session resume <id|name>
 cast session fork <id>
 cast session export <id> --out backup.json
 ```
+
+`cast connect` starts a new session. It does not continue the previous
+conversation. Resume a saved session when you want the model to see
+that transcript again.
 
 In the TUI, use `/undo` and `/redo` for iteration, `/sessions` to
 browse saved conversations (with a modal picker that follows the
@@ -380,15 +384,15 @@ Highlighting text with the mouse copies that selection to the clipboard.
 | `/redo [steps]` | agent | Step forward one (or N) changes. |
 | `/skills [add <github-or-folder>]` | agent | Add or remove skills on this agent. Hidden in on-host. |
 | `/sessions` | session | Modal picker over saved sessions. `Enter` or `R` resumes, `F` forks, `N` renames, `D` deletes. |
-| `/session new [name]` | session | Start a fresh session and switch the chat to it. |
-| `/session resume [id\|name]` | session | Replay a session's transcript into the chat. Opens the picker if no argument. |
+| `/session new [name]` | session | Start a fresh session and model context, and switch the chat to it. |
+| `/session resume [id\|name]` | session | Replay a session's transcript into the chat and the model context. Opens the picker if no argument. |
 | `/releases` | session | Shows semantic releases with `C` (Create Release) and `U` (Upgrade, if deployed) shortcuts. |
 | `/release` | agent | Opens a modal to create a new semantic release. Suggests patch/minor/major versions based on the current release. |
 | `/deploy` | agent | Release picker → provider picker → live deploy with SHA shown on success. |
 | `/upgrade` | agent | Operates on the current agent. Modal lists releases to upgrade to. |
 | `/shutdown` | agent | Lists active deployments (every provider) and shuts one down after Y/N. Streams `cast shutdown --force`. Dev and production only. |
 | `/registry` | session | Modal table of all releases across all agents, with deployment status. |
-| `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a SHA directly. |
+| `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a SHA directly. Connecting starts a new session for that agent. |
 | `/import [source] [name]` | agent | Import a Cast agent from GitHub or a local path. |
 | `/builder-skills [add <github-or-folder>]` | agent | Add or remove skills the builder uses when creating agents. Dev mode only. Applies on the next `cast new` or `cast edit`. |
 | `/model` | agent | Change the model the builder uses. Dev mode only. Hidden in production and on-host. Applies on the next `cast dev`. |
