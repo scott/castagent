@@ -1,6 +1,6 @@
 {
   "name": "cast-cli",
-  "version": "2.2.0",
+  "version": "2.3.0",
   "description": "Cast - Agent Building & Deployment Platform CLI",
   "author": "Cast Team",
   "bin": {

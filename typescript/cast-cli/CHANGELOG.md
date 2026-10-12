@@ -1,5 +1,21 @@
 # cast-cli
 
+## 2.3.0
+
+### Minor Changes
+
+- `/builder-skills` and `cast builder-skills` install skills the builder reads from `~/.cast/builder/skills/` when creating or editing an agent.
+
+  - PR #76
+
+- DigitalOcean serverless inference is a peer LLM provider. A `digitalocean/<model-id>` model uses `DIGITALOCEAN_MODEL_ACCESS_KEY` and `https://inference.do-ai.run/v1`. OpenRouter stays the default. Deploy paths forward the inference key when it is set.
+
+  - PR #74
+
+- `/skills` and `cast skills` install a skill directory on the user agent open in the TUI. The runtime appends each `SKILL.md` to that agent's prompt and AgentCard. Scripts in the skill are copied and not run.
+
+  - PR #75
+
 ## 2.2.0
 
 ### Minor Changes
