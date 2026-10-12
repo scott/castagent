@@ -14,6 +14,13 @@ export const DEPLOYMENT_PROVIDERS: DeploymentProviderChoice[] = [
   {key: 'local', name: 'Local (no container)', desc: 'Run the agent directly without Docker'},
 ]
 
+/** Display name for a stored provider key. Unknown keys are shown as stored. */
+export function providerDisplayName(key: string | null | undefined): string {
+  if (!key) return '-'
+  const match = DEPLOYMENT_PROVIDERS.find((provider) => provider.key === key)
+  return match ? match.name : key
+}
+
 /** Map a number key to a provider index. 1 selects the first entry. */
 export function providerIndexForNumberKey(keyName: string | undefined, count = DEPLOYMENT_PROVIDERS.length): number | null {
   if (!keyName || !/^[0-9]+$/.test(keyName)) return null

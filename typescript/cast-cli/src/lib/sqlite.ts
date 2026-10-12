@@ -330,6 +330,11 @@ export class CastDatabase {
     return stmt.all(agentName)
   }
 
+  public listActiveDeployments(): any[] {
+    const stmt = this.db.prepare('SELECT * FROM deployments WHERE deleted_at IS NULL ORDER BY agent_name, deployed_at DESC')
+    return stmt.all()
+  }
+
   public createDeployment(id: string, agentName: string, provider: string, url: string, tokenHash: string, volumeId?: string | null, volumeConfig?: string | null, deployedVersion?: string | null): void {
     const stmt = this.db.prepare(`
       INSERT INTO deployments

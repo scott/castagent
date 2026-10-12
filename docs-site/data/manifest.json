@@ -344,6 +344,11 @@
       "description": "Add or remove skills on this agent"
     },
     {
+      "name": "shutdown",
+      "category": "agent",
+      "description": "Shut down a deployed agent and destroy its remote resources"
+    },
+    {
       "name": "stop",
       "category": "agent",
       "description": "Stop the current local agent"

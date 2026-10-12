@@ -26,8 +26,8 @@ a dynamic port. The header is **purple** and shows just the agent name.
 
 - The runtime is killed when you quit the TUI.
 - `/undo`, `/redo`, `/sessions`, `/session …`, `/releases`, `/release`,
-  `/deploy`, `/upgrade`, and `/import` are all available — you're working on the
-  agent on this machine. `/import` is also available in production.
+  `/deploy`, `/upgrade`, `/import`, and `/shutdown` are all available — you're
+  working on the agent on this machine. `/import` is also available in production.
 - `/connect` switches to a *different* deployed agent (useful for
   comparing local behaviour to production).
 - No bearer token is required.
@@ -48,7 +48,8 @@ deployed version.
   the token, but the underlying A2A client carries it.
 - The same slash commands work, but the destructive ones
   (`/release`, `/deploy`, `/upgrade`) are scoped to the
-  *currently-connected* deployment's agent.
+  *currently-connected* deployment's agent. `/shutdown` lists every
+  active deployment and can tear one down.
 - `/connect` lets you jump to a different deployment or to a different
   agent's deployment without exiting the TUI.
 
