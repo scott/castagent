@@ -27,6 +27,13 @@ import {runDeployInTerminal} from '../components/terminal.js'
 import {DEPLOYMENT_PROVIDERS} from '../lib/deployment-providers.js'
 import {openBuilderSkillsCommand} from './builder-skills-modal.js'
 import {addSkillFromSource, openSkillsModal} from './skills-modal.js'
+import {
+  handleImportCommand,
+  importModalSpec,
+  initialImportModalFields,
+  reduceImportModal,
+  type ImportModalFields,
+} from '../lib/import-command.js'
 import type {UiMode} from '../components/header.js'
 
 // Get agent description from agent.yaml
@@ -1351,9 +1358,142 @@ function executeUpgrade(ctx: CommandContext, agent: DeployedAgent, targetVersion
   process.exit(0)
 }
 
+function openImportModal(ctx: CommandContext): Promise<
+  | {type: 'submit'; source: string; name?: string}
+  | {type: 'cancel'; focus: 'input'}
+> {
+  const spec = importModalSpec()
+  return new Promise((resolve) => {
+    let settled = false
+    const modal = createModal(ctx.renderer, ctx.input, {
+      title: spec.title,
+      overlay: spec.overlay,
+    })
 
+    if (modal.overlay) {
+      ctx.renderer.root.add(modal.overlay)
+    }
 
+    const contentBox = new BoxRenderable(ctx.renderer, {
+      width: '100%',
+      height: '100%',
+      flexDirection: 'column',
+      gap: 1,
+      paddingTop: 2,
+      paddingLeft: 2,
+      paddingRight: 2,
+    })
 
+    let fields: ImportModalFields = initialImportModalFields()
+    let errorMessage = ''
+
+    function finish(result: {type: 'submit'; source: string; name?: string} | {type: 'cancel'; focus: 'input'}): void {
+      if (settled) return
+      settled = true
+      modal.hide()
+      ctx.input.focus()
+      resolve(result)
+    }
+
+    function fieldLine(value: string, placeholder: string, active: boolean) {
+      if (value.length === 0) {
+        return active
+          ? [dim(placeholder), white(' [_]')]
+          : [dim(placeholder)]
+      }
+      return [white(`[${value}${active ? '_' : ''}]`)]
+    }
+
+    function renderForm(): void {
+      for (const child of contentBox.getChildren()) {
+        contentBox.remove(child.id)
+      }
+
+      const sourceLabel = new TextRenderable(ctx.renderer, {
+        content: new StyledText([fields.active === 'source' ? cyan('▸ Source') : white('  Source')]),
+      })
+      contentBox.add(sourceLabel)
+      const sourceValue = new TextRenderable(ctx.renderer, {
+        content: new StyledText(fieldLine(fields.source, spec.fields[0].placeholder, fields.active === 'source')),
+      })
+      contentBox.add(sourceValue)
+
+      const nameLabel = new TextRenderable(ctx.renderer, {
+        content: new StyledText([fields.active === 'name' ? cyan('▸ Name') : white('  Name')]),
+      })
+      contentBox.add(nameLabel)
+      const nameValue = new TextRenderable(ctx.renderer, {
+        content: new StyledText(fieldLine(fields.name, spec.fields[1].placeholder, fields.active === 'name')),
+      })
+      contentBox.add(nameValue)
+
+      const errorText = new TextRenderable(ctx.renderer, {
+        content: new StyledText([errorMessage ? red(errorMessage) : dim(' ')]),
+      })
+      contentBox.add(errorText)
+
+      const footer = new TextRenderable(ctx.renderer, {
+        content: new StyledText([dim(spec.footer)]),
+      })
+      const footerBox = new BoxRenderable(ctx.renderer, {
+        width: '100%',
+        alignItems: 'center',
+      })
+      footerBox.add(footer)
+      contentBox.add(footerBox)
+      ctx.renderer.requestRender?.()
+    }
+
+    renderForm()
+    modal.setContent(contentBox)
+    ctx.renderer.root.add(modal.box)
+
+    const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
+    modal.box.handleKeyPress = (key: KeyEvent) => {
+      const effect = reduceImportModal(fields, {
+        name: key.name,
+        ctrl: key.ctrl,
+        meta: key.meta,
+        sequence: typeof (key as {sequence?: unknown}).sequence === 'string'
+          ? (key as {sequence?: string}).sequence
+          : undefined,
+      })
+      if (effect.type === 'close') {
+        finish({type: 'cancel', focus: effect.focus})
+        return true
+      }
+      if (effect.type === 'submit') {
+        finish({type: 'submit', source: effect.source, name: effect.name})
+        return true
+      }
+      if (effect.type === 'invalid') {
+        fields = effect.fields
+        errorMessage = effect.message
+        renderForm()
+        return true
+      }
+      if (effect.type === 'update') {
+        fields = effect.fields
+        errorMessage = ''
+        renderForm()
+        return true
+      }
+      return originalHandleKeyPress ? originalHandleKeyPress(key) : false
+    }
+
+    modal.show()
+  })
+}
+
+async function loadImportAgent(): Promise<
+  (source: string, options?: {name?: string; force?: boolean}) => Promise<{name: string; source: string}>
+> {
+  const specifier = '../../../cast-cli/dist/lib/agent-import.js'
+  const mod = await import(specifier) as {
+    importAgent: (source: string, options?: {name?: string; force?: boolean}) => Promise<{name: string; source: string}>
+  }
+  return mod.importAgent
+}
 
 const commands: SlashCommand[] = [
   {
@@ -2275,6 +2415,27 @@ const commands: SlashCommand[] = [
         }
         return originalHandleKeyPress ? originalHandleKeyPress(key) : false
       }
+    },
+  },
+
+  {
+    name: 'import',
+    description: 'Import a Cast agent from GitHub or a local path',
+    category: 'agent',
+    modes: ['dev', 'production'],
+    args: '[source] [name]',
+    handler: async (ctx, args) => {
+      await handleImportCommand(args, {
+        openModal: () => openImportModal(ctx),
+        addAgentMessage: (text) => {
+          ctx.messages.addAgentMessage(text, ctx.mode)
+        },
+        importAgent: async (source, options) => {
+          const importAgent = await loadImportAgent()
+          const result = await importAgent(source, options)
+          return {name: result.name, source: result.source}
+        },
+      })
     },
   },
 

@@ -84,6 +84,7 @@ The input line accepts `/` commands. The full list is on the
 on day one:
 
 - `{% ref "slash:help" %}` — list all commands available in the current mode.
+- `{% ref "slash:import" %}` — import an agent from GitHub or a local path.
 - `{% ref "slash:mode" %}` — toggle PLAN/BUILD.
 - `{% ref "slash:save" %}` — save the transcript to a Markdown file.
 - `{% ref "slash:copy" %}` — copy the last agent reply to the clipboard.
