@@ -73,7 +73,7 @@ class RuntimeAgent:
             self.graph = create_react_agent(
                 model=self.llm,
                 tools=self.tools,
-                prompt=self.config.instructions,
+                prompt=self.config.rendered_prompt(),
             )
         except Exception as e:
             # Log error but don't crash - fall back to echo mode
@@ -227,11 +227,5 @@ class RuntimeAgent:
             },
             "defaultInputModes": ["text/plain"],
             "defaultOutputModes": ["text/plain"],
-            "skills": [
-                {
-                    "id": f"{self.config.name}-skill",
-                    "name": self.config.name,
-                    "description": self.config.description,
-                }
-            ],
+            "skills": self.config.agent_card_skills(),
         }

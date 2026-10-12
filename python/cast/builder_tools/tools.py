@@ -155,7 +155,7 @@ def suggest_name(description: str) -> str:
 def create_agent(name: str, description: str = "") -> str:
     """
     Create a new agent scaffold in ~/.cast/agents/<name>/.
-    Creates agent.yaml, instructions.md, tools/, mcp/, and tests/ directories.
+    Creates agent.yaml, instructions.md, skills/, tools/, mcp/, and tests/ directories.
     
     Args:
         name: The name of the agent to create. Use lowercase with hyphens.
@@ -167,6 +167,7 @@ def create_agent(name: str, description: str = "") -> str:
         return f"Agent '{name}' already exists at {agent_path}"
     
     # Create directories
+    (agent_path / "skills").mkdir(parents=True)
     (agent_path / "tools").mkdir(parents=True)
     (agent_path / "mcp").mkdir(parents=True)
     (agent_path / "memory").mkdir(parents=True)
