@@ -1,12 +1,19 @@
 import {Args, Command, Flags} from '@oclif/core'
-import {spawn} from 'child_process'
+import {spawn, type ChildProcess} from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
 import {db} from '../lib/sqlite'
 import {keychain} from '../lib/keychain'
 import {A2AClient, A2AClientError} from '../lib/a2a/client'
-import {resolveDeploymentTarget, resolveDigitalOceanToken} from '../lib/deploy/deploy-utils'
+import {resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
+import {deploymentProviderLoadErrors, getDeploymentProvider} from '../lib/deploy/registry'
+import {
+  checkNeedsProxy as spriteNeedsProxy,
+  findAvailablePort as spriteFindAvailablePort,
+  resolveSprite as spriteResolveSprite,
+  startSpriteProxy as spriteStartProxy,
+} from '../lib/deploy/providers/sprites'
 
 export default class Connect extends Command {
   static description = 'Connect to deployed agent'
@@ -26,6 +33,11 @@ export default class Connect extends Command {
   }
 
   async run(): Promise<void> {
+    const loadErrors = deploymentProviderLoadErrors()
+    if (loadErrors.length > 0) {
+      this.error(loadErrors.map(error => error.message).join('\n'))
+    }
+
     const {args, flags} = await this.parse(Connect)
     const target = args.agent
 
@@ -65,50 +77,34 @@ export default class Connect extends Command {
 
     let deploymentUrl = deployment.deployment_url
     const provider = deployment.provider
-    let token = await keychain.getToken(agentName)
+    let token: string | null = await keychain.getToken(agentName)
     let edgeToken: string | undefined
-    let proxyProcess: ReturnType<typeof spawn> | undefined
+    let proxyProcess: ChildProcess | undefined
+    let timeoutHint = ''
 
-    if (provider === 'microvm') {
-      edgeToken = resolveDigitalOceanToken()
-      if (!edgeToken) {
-        this.error(
-          `DigitalOcean API token not found for MicroVM '${agentName}'.\n` +
-          `Set DIGITALOCEAN_ACCESS_TOKEN or run doctl auth init.\n` +
-          `The first request can take longer while a paused MicroVM resumes.`
-        )
-      }
-      let authMode = 'dual'
-      try {
-        authMode = JSON.parse(deployment.volume_config || '{}').authMode || 'dual'
-      } catch {
-        authMode = 'dual'
-      }
-      if (authMode === 'edge-only') token = null
-      else if (!token) {
-        this.warn(`No agent auth token in the keychain for '${agentName}'. The MicroVM may reject the connection.`)
+    const registered = getDeploymentProvider(provider)
+    if (registered?.connect) {
+      const result = await registered.connect({
+        agentName,
+        deployment,
+        url: deploymentUrl,
+        token: token ?? undefined,
+        flags: {proxy: flags.proxy},
+        log: message => this.log(message),
+        warn: message => this.warn(message),
+        error: (message: string): never => this.error(message),
+      })
+      if (result) {
+        if (result.url) deploymentUrl = result.url
+        if (result.proxyProcess) proxyProcess = result.proxyProcess
+        if (result.edgeToken) edgeToken = result.edgeToken
+        if (result.timeoutHint) timeoutHint = result.timeoutHint
+        if ('token' in result) token = result.token ?? null
       }
     }
 
     if (!token && !edgeToken) {
       this.warn(`No auth token found for agent '${agentName}'. Connecting without authentication...`)
-    }
-
-    // For sprites deployments, use proxy if public access is blocked
-    if (provider === 'sprites') {
-      // Check if sprite proxy is available and if public access works
-      const needsProxy = await this.checkNeedsProxy(deploymentUrl)
-      if (needsProxy || flags.proxy) {
-        this.log('Sprites auth detected. Starting local proxy...')
-        const proxyResult = await this.startSpriteProxy(agentName, deploymentUrl)
-        if (proxyResult) {
-          deploymentUrl = proxyResult.url
-          proxyProcess = proxyResult.process
-          this.log(`Proxy started at ${deploymentUrl}`)
-        } else {
-          this.warn('Failed to start sprite proxy. Trying direct connection...')
-        }
-      }
     }
 
     // Verify connection before launching TUI
@@ -131,12 +127,9 @@ export default class Connect extends Command {
             `Check the deployment status with your provider.`
           )
         } else if (error.code === 'TIMEOUT') {
-          const resumeHint = provider === 'microvm'
-            ? `\nThe MicroVM may be resuming from pause. Try again in a moment.`
-            : ''
           this.error(
             `Connection to ${deploymentUrl} timed out.\n` +
-            `The agent may be starting up or unresponsive. Try again in a moment.${resumeHint}`
+            `The agent may be starting up or unresponsive. Try again in a moment.${timeoutHint}`
           )
         } else {
           this.warn(`Could not verify connection: ${error.message}`)
@@ -150,85 +143,20 @@ export default class Connect extends Command {
   }
 
   private async checkNeedsProxy(url: string): Promise<boolean> {
-    try {
-      const client = new A2AClient(url)
-      await client.getAgentCard()
-      return false
-    } catch (error: any) {
-      // If we get a redirect, auth error, or unsupported protocol, we need proxy
-      if (error instanceof A2AClientError) {
-        // 302 = redirect (Sprites auth page)
-        // 401/403 = authentication required
-        // ECONNREFUSED may mean Sprites is blocking direct access
-        if (
-          error.statusCode === 302 ||
-          error.statusCode === 401 ||
-          error.statusCode === 403 ||
-          error.code === 'ECONNREFUSED' ||
-          error.message?.includes('Unsupported protocol')
-        ) {
-          return true
-        }
-      }
-      return false
-    }
+    return spriteNeedsProxy(url)
   }
 
   private async startSpriteProxy(agentName: string, deploymentUrl: string): Promise<{url: string; process: ReturnType<typeof spawn>} | null> {
-    const localPort = await this.findAvailablePort(8500, 9000)
-    const spriteName = `cast-${agentName}`
-
-    this.log(`Starting sprite proxy for ${spriteName} on port ${localPort}...`)
-
-    // Resolve sprite path - try common locations
-    const spritePath = this.resolveSprite()
-
-    // Use LOCAL:REMOTE syntax to map localhost:${localPort} -> remote:8080
-    const proxyProcess = spawn(spritePath, ['proxy', `${localPort}:8080`, '-s', spriteName], {
-      stdio: 'pipe',
-    })
-
-    let proxyError = ''
-    proxyProcess.stderr?.on('data', (data: Buffer) => {
-      proxyError += data.toString()
-    })
-
-    // Wait for proxy to be ready (or fail)
-    await new Promise((resolve) => setTimeout(resolve, 3000))
-
-    // Check if proxy failed
-    if (proxyError.includes('address already in use')) {
-      this.warn(`Port ${localPort} is already in use. Killing old proxy...`)
-      proxyProcess.kill()
-      // Try one more time with a different port
-      return this.startSpriteProxy(agentName, deploymentUrl)
-    }
-
-    if (proxyError.includes('Error:') || proxyError.includes('failed')) {
-      this.warn(`Proxy failed: ${proxyError.trim()}`)
-      proxyProcess.kill()
-      return null
-    }
-
-    return {url: `http://localhost:${localPort}`, process: proxyProcess}
+    return spriteStartProxy(
+      agentName,
+      deploymentUrl,
+      message => this.log(message),
+      message => this.warn(message),
+    )
   }
 
   private async findAvailablePort(startPort: number, endPort: number): Promise<number> {
-    const net = await import('net')
-    return new Promise((resolve, reject) => {
-      const tryPort = (port: number) => {
-        if (port > endPort) {
-          reject(new Error('No available ports found'))
-          return
-        }
-        const server = net.createServer()
-        server.listen(port, '127.0.0.1', () => {
-          server.close(() => resolve(port))
-        })
-        server.on('error', () => tryPort(port + 1))
-      }
-      tryPort(startPort)
-    })
+    return spriteFindAvailablePort(startPort, endPort)
   }
 
   private async launchTui(agentName: string, url: string, token?: string, proxyProcess?: ReturnType<typeof spawn>, edgeToken?: string): Promise<void> {
@@ -306,20 +234,6 @@ export default class Connect extends Command {
   }
 
   private resolveSprite(): string {
-    const candidates = [
-      'sprite',
-      path.join(os.homedir(), '.local', 'bin', 'sprite'),
-      '/usr/local/bin/sprite',
-      '/opt/homebrew/bin/sprite',
-    ]
-
-    for (const candidate of candidates) {
-      if (fs.existsSync(candidate)) {
-        return candidate
-      }
-    }
-
-    // Default to 'sprite' and let it fail with proper error
-    return 'sprite'
+    return spriteResolveSprite()
   }
 }

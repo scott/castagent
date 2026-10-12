@@ -35,6 +35,7 @@ function loadTsModule(file: string, cache = new Map<string, any>()): any {
     __dirname: dirname,
     __filename: resolved,
     console,
+    process,
   }
   vm.createContext(sandbox)
   vm.runInContext(js, sandbox, {filename: resolved})

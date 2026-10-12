@@ -7,6 +7,11 @@ import {Command} from '@oclif/core'
 
 // Import the deploy command to test its structure
 import DeployCommand from '../../../typescript/cast-cli/src/commands/deploy'
+import {resetDeploymentProviderRegistry} from '../../../typescript/cast-cli/src/lib/deploy/registry'
+
+beforeEach(() => {
+  resetDeploymentProviderRegistry()
+})
 
 describe('Deploy Command', () => {
   const VALID_PROVIDERS = ['railway', 'fly', 'digitalocean', 'microvm', 'sprites', 'docker', 'local']

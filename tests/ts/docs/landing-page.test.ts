@@ -9,15 +9,12 @@ function read(rel: string): string {
 }
 
 /**
- * Keys of the PROVIDERS object in deploy.ts. The landing page does not
- * list these itself; it renders whatever extract wrote to providers.json.
+ * Built-in provider keys. The landing page does not list these itself;
+ * it renders whatever extract wrote to providers.json from the manifest.
  */
 function deployProviderKeys(): string[] {
-  const source = read('typescript/cast-cli/src/commands/deploy.ts')
-  const start = source.indexOf('const PROVIDERS')
-  const end = source.indexOf('export default class Deploy')
-  const block = source.slice(start, end)
-  return [...block.matchAll(/^ {2}([a-z]+): \{$/gm)].map(match => match[1])
+  const manifest = JSON.parse(read('typescript/cast-cli/src/lib/deploy/providers.manifest.json')) as Array<{key: string}>
+  return manifest.map(provider => provider.key)
 }
 
 describe('landing page', () => {

@@ -3,21 +3,36 @@ import * as readline from 'readline'
 import {db} from '../lib/sqlite'
 import {keychain} from '../lib/keychain'
 import {resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
-import DockerDeploy from '../lib/deploy/docker'
-import FlyDeploy from '../lib/deploy/fly'
-import RailwayDeploy from '../lib/deploy/railway'
-import DigitalOceanDeploy from '../lib/deploy/digitalocean'
-import SpritesDeploy from '../lib/deploy/sprites'
-import MicrovmDeploy from '../lib/deploy/microvm'
+import {
+  deploymentProviderLoadErrors,
+  getDeploymentProvider,
+  listDeploymentProviders,
+} from '../lib/deploy/registry'
+import type {DeploymentRow} from '../lib/deploy/types'
 
-export const PROVIDER_DESTROYERS: Record<string, (agentName: string) => Promise<void>> = {
-  docker: DockerDeploy.destroy,
-  fly: FlyDeploy.destroy,
-  railway: RailwayDeploy.destroy,
-  digitalocean: DigitalOceanDeploy.destroy,
-  sprites: SpritesDeploy.destroy,
-  microvm: MicrovmDeploy.destroy,
+export const PROVIDER_DESTROYERS: Record<string, (agentName: string) => Promise<void>> = {}
+
+/** Fill missing keys only. Tests replace entries; a later sync must leave those in place. */
+function syncDestroyers(): void {
+  for (const provider of listDeploymentProviders()) {
+    if (!provider.destroy) continue
+    if (PROVIDER_DESTROYERS[provider.key]) continue
+    const key = provider.key
+    PROVIDER_DESTROYERS[key] = async (agentName: string) => {
+      const current = getDeploymentProvider(key)
+      if (!current?.destroy) return
+      const deployment: DeploymentRow = {
+        id: '',
+        agent_name: agentName,
+        provider: key,
+        deployment_url: '',
+      }
+      await current.destroy({agentName, deployment, log: () => {}})
+    }
+  }
 }
+
+syncDestroyers()
 
 export default class Shutdown extends Command {
   static description = 'Shut down a deployed agent (destroy remote resources)'
@@ -51,6 +66,12 @@ export default class Shutdown extends Command {
   }
 
   async run(): Promise<void> {
+    const loadErrors = deploymentProviderLoadErrors()
+    if (loadErrors.length > 0) {
+      this.error(loadErrors.map(error => error.message).join('\n'))
+    }
+    syncDestroyers()
+
     const {args, flags} = await this.parse(Shutdown)
     const target = args.agent
 

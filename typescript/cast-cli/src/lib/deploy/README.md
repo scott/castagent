@@ -1,0 +1,228 @@
+# Deployment providers
+
+A deployment provider hosts a Cast agent. `cast deploy`, `cast upgrade`, `cast shutdown`, and `cast connect` look up a provider by its `key` and call it. They do not contain a switch per host.
+
+The seven built-ins (`railway`, `fly`, `digitalocean`, `microvm`, `sprites`, `docker`, `local`) live in this directory. Another host can add itself without editing those commands.
+
+## Add a built-in
+
+1. Add `providers/<key>.ts` that exports a `DeploymentProvider`.
+2. Import it once from the built-in registry, in picker order.
+3. Add a row to `providers.manifest.json` with the same `key`. A test fails if the module and the manifest disagree.
+4. Add tests for `deploy`, `destroy`, and any `upgrade` or `connect` hook.
+5. Update `docs-site/content/building-agents/deployment/overview.md` if the public comparison table changes.
+
+Do not add the key to `deploy.ts`, `upgrade.ts`, `shutdown.ts`, `connect.ts`, or `cast-tui/src/lib/deployment-providers.ts`. Those read the registry.
+
+## Add an external provider
+
+Create `~/.cast/providers/<key>/provider.cjs`:
+
+```js
+module.exports = {
+  key: 'my-host',
+  name: 'My Host',
+  description: 'One line shown in the picker.',
+  cli: {
+    command: 'myhost',
+    installUrl: 'https://example.com/install',
+    installHints: ['brew install myhost'],
+  },
+  auth: {
+    command: 'myhost login',
+    envVars: ['MYHOST_TOKEN'],
+    configKey: 'providers.myhost.token',
+  },
+  async deploy(ctx) {
+    ctx.log(`Deploying ${ctx.agentName} to My Host...`)
+    // Create the host resource, then record it:
+    const {saveDeployment} = require('cast-cli/dist/lib/deploy/deploy-utils.js')
+    saveDeployment(ctx.agentName, 'my-host', 'https://example.invalid', ctx.tokenHash)
+  },
+  async destroy(ctx) {
+    ctx.log(`Removing ${ctx.agentName} from My Host.`)
+  },
+}
+```
+
+Or list a CommonJS file or package in `~/.cast/config.yaml`:
+
+```yaml
+deploymentProviders:
+  - ~/src/my-host/provider.cjs
+  - my-cast-provider
+```
+
+Cast loads built-ins first, then every `~/.cast/providers/<key>/provider.cjs` in directory order, then `deploymentProviders` in the order written. The `key` must match `[a-z0-9-]+`, must be unique, and must not reuse a built-in key. The folder name and the `key` must match.
+
+External providers appear in `cast deploy` and in the TUI picker after the built-ins. Number keys run from 1 through the full list. They are not written into the docs site. The docs site lists built-ins only.
+
+`provider.cjs` has to be CommonJS. Cast loads it with `require` while it builds `cast deploy` flags.
+
+## Provider object
+
+```ts
+interface DeploymentProvider {
+  key: string
+  name: string
+  description: string
+
+  cli?: {
+    command: string
+    installUrl: string
+    installHints?: string[]
+    minVersion?: string
+  }
+  auth?: {
+    command?: string
+    envVars?: string[]
+    configKey?: string
+    tokenHelp?: string[]
+  }
+  requiresDocker?: boolean
+
+  // 'supported' forwards --with-tui (digitalocean).
+  // 'rejected' errors with withTuiRejectMessage (microvm).
+  // omitted or 'ignored' accepts the flag and does not forward it.
+  withTui?: 'supported' | 'rejected' | 'ignored'
+  withTuiRejectMessage?: string
+
+  // Merged onto `cast deploy`. Prefix each description with the provider
+  // name. Flags you do not declare are ignored when this provider runs.
+  flags?: Record<string, unknown>
+
+  prepare?(ctx: ProviderContext): Promise<void>
+  deploy(ctx: DeployContext): Promise<void>
+  destroy?(ctx: DestroyContext): Promise<void>
+  upgrade?(ctx: UpgradeContext): Promise<void>
+  memory?: {
+    mountPath: string
+    create?(ctx: MemoryContext): Promise<void>
+    delete?(ctx: MemoryContext): Promise<void>
+  }
+  connect?(ctx: ConnectContext): Promise<ConnectResult | void>
+}
+```
+
+`deploy` is required. `destroy` is required for any provider that creates a remote resource. If `destroy` is omitted, `cast shutdown` warns `No shutdown handler for provider '<key>'. Removing local records only.` and still removes the local deployment rows and the keychain token.
+
+If `upgrade` is omitted, `cast upgrade` errors with `Upgrade not supported for provider '<key>'. Please use 'cast shutdown' and 'cast deploy' instead.`
+
+## What Cast does before `deploy`
+
+The provider does not repeat this work:
+
+- Checks that `~/.cast/agents/<agent>` exists.
+- Prompts to commit a dirty agent git repo. `--force` commits without asking.
+- Extracts the requested release tarball when `--version` is not `latest`.
+- Generates the 6-character deployment SHA and sets `CAST_DEPLOYMENT_SHA`.
+- Runs the generic CLI, auth, and Docker checks from `cli`, `auth`, and `requiresDocker`.
+- Calls `prepare` after those checks, for anything the generic walkthrough cannot express.
+- After `deploy` resolves, stores the deployed version on the deployment row.
+
+`deploy` must call `saveDeployment` (or the db helper it wraps) so `cast connect` and `cast shutdown` can find the row. Use `ctx.deploymentSha` as the row id. `ctx.tokenHash` is the hash of the agent auth token Cast generated. The raw token is `ctx.authToken`. Put it in the host environment. Do not log it.
+
+## Context
+
+```ts
+interface ProviderContext {
+  agentName: string
+  agentPath: string
+  force: boolean
+  token?: string          // first hit from auth.envVars, then auth.configKey
+  authToken: string       // per-agent bearer token
+  tokenHash: string
+  log(message: string): void
+  warn(message: string): void
+  error(message: string): never
+  confirm(message: string): Promise<boolean>
+}
+
+interface DeployContext extends ProviderContext {
+  flags: Record<string, unknown>
+  version: string         // 'latest' or a semver; tarball already extracted
+  deploymentSha: string
+  port: number            // --port, default 8080
+  withTui: boolean
+}
+
+interface DestroyContext {
+  agentName: string
+  deployment: DeploymentRow
+  log(message: string): void
+}
+
+interface UpgradeContext extends DeployContext {
+  versionTarballPath: string | null
+  deployment: DeploymentRow
+}
+
+interface MemoryContext {
+  agentName: string
+  deploymentId: string
+  volumeId: string
+  mountPath: string
+}
+
+interface ConnectContext {
+  agentName: string
+  deployment: DeploymentRow
+  url: string
+  token?: string
+  log(message: string): void
+  warn(message: string): void
+  error(message: string): never
+}
+
+interface ConnectResult {
+  url?: string
+  token?: string | null
+  edgeToken?: string
+  proxyProcess?: import('child_process').ChildProcess
+  timeoutHint?: string
+}
+```
+
+`DeploymentRow` is the sqlite deployments row: `id`, `agent_name`, `provider`, `deployment_url`, `volume_id`, `volume_config`, `deployed_version`.
+
+`connect` runs after the row is loaded and before the A2A client is built. Return `edgeToken` to send it as `Authorization` while the agent token goes out as `X-Cast-Authorization`. Return `token: null` to omit the agent token. Return `url` and `proxyProcess` to point the TUI at a local proxy. Cast kills `proxyProcess` when the TUI exits. `timeoutHint` is appended to a connect timeout.
+
+`memory.create` and `memory.delete` replace the switches in `deploy-utils.ts`. `delete` is best-effort: a missing volume is not a failure. `mountPath` is what `getMemoryMountPath` returns.
+
+## Rules
+
+- `key` is stable. Do not rename a shipped key.
+- `description` is one line. The TUI truncates it to 50 characters plus `...`.
+- `destroy` should log and return when the remote resource is already gone. Throw only when the host rejects a real delete.
+- Do not delete a container registry, an account-level resource, or the agent directory under `~/.cast/agents/` from `destroy`.
+- Do not read `providers.digitalocean.token` for anything except DigitalOcean deploys. Inference keys stay on `DIGITALOCEAN_MODEL_ACCESS_KEY`.
+- A provider that needs Docker sets `requiresDocker: true` instead of checking Docker itself.
+- Keep provider-specific flags on the provider object. Do not add them to the shared `Deploy` flag list by hand.
+
+## Metadata manifest
+
+`providers.manifest.json` is the docs-site source. Each built-in has one object:
+
+| Field | Used for |
+|---|---|
+| `key`, `name`, `description` | Picker, TUI, docs |
+| `cliCommand`, `cliInstallUrl` | Docs provider card. Empty string if there is no CLI |
+| `authCommand`, `authEnvVar` | Docs provider card. Omit if unused |
+| `supportsWithTui` | `true` only when `withTui` is `'supported'` |
+| `order` | Picker order. Built-ins use 10, 20, 30, … so a new host can slot in |
+
+`docs-site/scripts/extract-providers.ts` reads this file with `JSON.parse`. It does not parse `deploy.ts` and it does not infer `--with-tui` from a switch. The TUI catalog is this file plus external providers discovered at runtime. Do not keep a second hand-written list of names.
+
+## Built-in notes
+
+These behaviors move behind the interface. They do not change.
+
+| Key | Notes |
+|---|---|
+| `railway` | `railway` CLI, `railway login`. Memory is a Railway volume. `destroy` runs `railway down --yes`. |
+| `fly` | `flyctl`, `flyctl auth login`. Memory is a fly volume. |
+| `digitalocean` | Droplet plus `docker load`. `withTui: 'supported'`. Token from `DIGITALOCEAN_ACCESS_TOKEN` or `providers.digitalocean.token`. Requires Docker and `doctl`. |
+| `microvm` | `withTui: 'rejected'` with the existing error sentence. Flags `--size` (default `1:2048`), `--idle-timeout` (default `15m`), `--edge-auth-only`. `doctl` >= 1.173.0. `connect` sets the edge token and the resume hint. `destroy` deletes the MicroVM, not the registry. |
+| `sprites` | `sprite`, `sprite login`, `SPRITES_TOKEN`. `connect` may start the local proxy. |
+| `docker` | Requires a running Docker daemon. Reads `--port`. |
+| `local` | `deploy` logs that it is not implemented and tells the user to use `--provider docker`. No `destroy`. |

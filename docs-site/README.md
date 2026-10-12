@@ -15,7 +15,7 @@ Two kinds of pages:
 1. **Reference** — auto-generated from the Cast Agent source code.
    - `/cli/reference` — every `cast <command>`, parsed from `typescript/cast-cli/src/commands/`.
    - `/tui/slash-commands` — every `/command`, parsed from `typescript/cast-tui/src/commands/slash-registry.ts`.
-   - `/deployment/providers` — every provider, parsed from `typescript/cast-cli/src/commands/deploy.ts`.
+   - `/deployment/providers` — every built-in provider, read from `typescript/cast-cli/src/lib/deploy/providers.manifest.json`.
    - `/changelog` — every release, parsed from `CHANGELOG.md`.
 
    These regenerate on every build and cannot drift from the code.
