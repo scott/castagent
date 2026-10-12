@@ -542,6 +542,48 @@ describe('A2AClient resume retries', () => {
     expect(post.secondCall.args[2].headers.Accept).to.equal('text/event-stream')
   })
 
+  it('ignores keepalive comments on a chat stream', async () => {
+    const keepalive = `: ${'keepalive '.repeat(20)}\n\n`
+    post.resolves({
+      data: Readable.from([
+        keepalive,
+        'data: {"jsonrpc":"2.0","result":{"parts":[{"kind":"text","text":"pong"}]}}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    })
+
+    const client = new A2AClient('https://vm.mkc1.microvm.ondigitalocean.com', 'agent', 'edge')
+    const chunks: string[] = []
+    for await (const chunk of client.sendMessageStream('hi')) {
+      chunks.push(chunk.text)
+    }
+
+    expect(chunks).to.deep.equal(['pong'])
+  })
+
+  it('explains a MicroVM stream that the edge closes', async () => {
+    const stream = new Readable({
+      read() {
+        const error = new Error('The socket connection was closed unexpectedly. For more information, pass `verbose: true` in the second argument to fetch()') as NodeJS.ErrnoException
+        error.code = 'ECONNRESET'
+        this.destroy(error)
+      },
+    })
+    post.resolves({data: stream})
+
+    const client = new A2AClient('https://vm.mkc1.microvm.ondigitalocean.com', 'agent', 'edge')
+    try {
+      for await (const chunk of client.sendMessageStream('install the skill')) {
+        expect(chunk).to.equal(undefined)
+      }
+      expect.fail('expected the edge to close the stream')
+    } catch (error) {
+      expect(error).to.be.instanceOf(A2AClientError)
+      expect((error as Error).message).to.include('15 seconds')
+      expect((error as Error).message).to.include('installing a skill')
+    }
+  })
+
   it('does not retry HTTP 401', async () => {
     post.rejects(statusError(401))
     const client = new A2AClient('https://vm.mkc1.microvm.ondigitalocean.com', 'agent', 'edge')
