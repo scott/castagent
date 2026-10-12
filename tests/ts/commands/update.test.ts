@@ -4,6 +4,7 @@ import * as path from 'path'
 import * as os from 'os'
 import * as yaml from 'yaml'
 import {db} from '../../../typescript/cast-cli/src/lib/sqlite'
+import Update from '../../../typescript/cast-cli/src/commands/update'
 
 describe('update command', () => {
   const testDir = path.join(os.tmpdir(), `cast-update-test-${Date.now()}`)
@@ -39,6 +40,22 @@ describe('update command', () => {
         expect(model).to.include('/')
         expect(model).to.not.be.empty
       }
+    })
+
+    it('should accept digitalocean models without an OpenRouter warning', () => {
+      const update = new Update(['update', 'agent'], {} as any)
+      const known = (update as any).validateModel('digitalocean/llama3.3-70b-instruct')
+      const catalog = (update as any).validateModel('digitalocean/some-new-catalog-id')
+      expect(known).to.deep.equal({valid: true})
+      expect(catalog).to.deep.equal({valid: true})
+      expect(known.warning).to.equal(undefined)
+    })
+
+    it('should still warn for unknown OpenRouter models', () => {
+      const update = new Update(['update', 'agent'], {} as any)
+      const result = (update as any).validateModel('unknown/model')
+      expect(result.valid).to.equal(true)
+      expect(result.warning).to.include('OpenRouter')
     })
 
     it('should warn for unknown models', () => {

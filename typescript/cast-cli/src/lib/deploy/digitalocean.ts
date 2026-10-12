@@ -10,6 +10,7 @@ import {
   getAgentPath,
   saveDeployment,
   getOpenRouterApiKey,
+  getDigitalOceanInferenceKey,
   getProviderToken,
   execCommand,
   execCommandIgnoreError,
@@ -679,6 +680,10 @@ export default class DigitalOceanDeploy extends Command {
     const openrouterKey = getOpenRouterApiKey()
     if (openrouterKey) {
       envArgs.push(`-e OPENROUTER_API_KEY=${openrouterKey}`)
+    }
+    const digitaloceanInferenceKey = getDigitalOceanInferenceKey()
+    if (digitaloceanInferenceKey) {
+      envArgs.push(`-e DIGITALOCEAN_MODEL_ACCESS_KEY=${digitaloceanInferenceKey}`)
     }
 
     // Build the host MOTD. We pass it base64-encoded so it can be safely

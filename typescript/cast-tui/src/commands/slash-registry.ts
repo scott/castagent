@@ -26,6 +26,7 @@ import {createModal} from '../components/modal.js'
 import {runDeployInTerminal} from '../components/terminal.js'
 import {DEPLOYMENT_PROVIDERS} from '../lib/deployment-providers.js'
 import {openBuilderSkillsCommand} from './builder-skills-modal.js'
+import {addSkillFromSource, openSkillsModal} from './skills-modal.js'
 import type {UiMode} from '../components/header.js'
 
 // Get agent description from agent.yaml
@@ -1476,6 +1477,30 @@ const commands: SlashCommand[] = [
         const msg = String(err?.stderr || err?.message || err)
         ctx.messages.addAgentMessage(`Redo failed: ${msg.split('\n').pop() ?? 'unknown error'}`, ctx.mode)
       }
+    },
+  },
+
+  {
+    name: 'skills',
+    description: 'Add or remove skills on this agent',
+    category: 'agent',
+    modes: ['dev', 'production'],
+    args: '[add <github-or-folder>]',
+    handler: async (ctx, args) => {
+      if (args.length === 0) {
+        openSkillsModal(ctx, {kind: 'list'})
+        return
+      }
+      if (args[0] !== 'add') {
+        ctx.messages.addAgentMessage('Usage: /skills [add <github-or-folder>]', ctx.mode)
+        return
+      }
+      const source = args.slice(1).join(' ').trim()
+      if (!source) {
+        openSkillsModal(ctx, {kind: 'source'})
+        return
+      }
+      addSkillFromSource(ctx, source)
     },
   },
 

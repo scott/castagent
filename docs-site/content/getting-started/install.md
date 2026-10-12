@@ -18,8 +18,15 @@ terminal UI. The CLI and the TUI always share the same version.
 - **Bun** — only required to render the TUI; install with `curl -fsSL https://bun.sh/install | bash`.
 - **git**, **tar**, and the usual Unix tools.
 
-You will also need an **OpenRouter API key** to actually run any agent — get
-one at [openrouter.ai](https://openrouter.ai).
+You will also need an LLM API key to actually run an agent. Either is enough:
+
+- an **OpenRouter** key (`OPENROUTER_API_KEY`) from [openrouter.ai](https://openrouter.ai) — the default, or
+- a **DigitalOcean serverless inference** model access key (`DIGITALOCEAN_MODEL_ACCESS_KEY`).
+
+OpenRouter stays the default. To call DigitalOcean, set the model to
+`digitalocean/<model-id>` (for example `digitalocean/llama3.3-70b-instruct`
+or `digitalocean/deepseek-v3.2`). Requests go to
+`https://inference.do-ai.run/v1`. That key is not the DigitalOcean deploy token.
 
 ## One-liner install (recommended)
 

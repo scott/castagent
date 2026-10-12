@@ -370,6 +370,7 @@ Highlighting text with the mouse copies that selection to the clipboard.
 |---------|----------|--------------|
 | `/undo [steps]` | agent | Step back one (or N) changes. Shells out to `cast undo`. |
 | `/redo [steps]` | agent | Step forward one (or N) changes. |
+| `/skills [add <github-or-folder>]` | agent | Add or remove skills on this agent. Hidden in on-host. |
 | `/sessions` | session | Modal picker over saved sessions. `Enter` or `R` resumes, `F` forks, `N` renames, `D` deletes. |
 | `/session new [name]` | session | Start a fresh session and switch the chat to it. |
 | `/session resume [id\|name]` | session | Replay a session's transcript into the chat. Opens the picker if no argument. |
@@ -489,15 +490,38 @@ providers:
   openrouter:
     api_key: ${OPENROUTER_API_KEY}
     default_base_url: https://openrouter.ai/api/v1
+  digitalocean_inference:
+    api_key: ${DIGITALOCEAN_MODEL_ACCESS_KEY}
+    default_base_url: https://inference.do-ai.run/v1
+  digitalocean:
+    token: ${DIGITALOCEAN_API_TOKEN}   # deploy only; not used for inference
 ```
 
 Set environment variables:
 ```bash
 export OPENROUTER_API_KEY="your-key"
+export DIGITALOCEAN_MODEL_ACCESS_KEY="your-model-access-key"
 export RAILWAY_API_TOKEN="your-token"
 export FLY_API_TOKEN="your-token"
-export DO_API_TOKEN="your-token"  # DigitalOcean
+export DO_API_TOKEN="your-token"  # DigitalOcean deploy token
 ```
+
+### LLM providers
+
+OpenRouter stays the default. The model string selects the inference provider. Both keys may be set; the prefix wins, and a missing key does not fall back to the other provider.
+
+| Model string | Provider | API key | Base URL |
+|---|---|---|---|
+| `openrouter/...` or a bare alias | OpenRouter | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
+| `digitalocean/<model-id>` | DigitalOcean serverless inference | `DIGITALOCEAN_MODEL_ACCESS_KEY` | `https://inference.do-ai.run/v1` |
+
+The `digitalocean/` prefix is stripped and the catalog id is sent unchanged. It is not rewritten and is not given an `anthropic/` or `openai/` prefix. Starter ids: `llama3.3-70b-instruct`, `deepseek-v3.2`. Any other catalog id is accepted. `providers.digitalocean` is the deploy token for Droplets and MicroVMs, not this key.
+
+```bash
+cast update demo-agent --model digitalocean/llama3.3-70b-instruct
+```
+
+`defaults.builder_model: digitalocean/<model-id>` makes the builder call DigitalOcean. The default remains `openrouter/minimax/minimax-m2.5`. Deployed agents receive `DIGITALOCEAN_MODEL_ACCESS_KEY` when it is set, the same way they receive `OPENROUTER_API_KEY`.
 
 ## Documentation
 

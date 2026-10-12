@@ -310,6 +310,9 @@ providers:
   openrouter:
     api_key: ${OPENROUTER_API_KEY}
     default_base_url: https://openrouter.ai/api/v1
+  digitalocean_inference:
+    api_key: ${DIGITALOCEAN_MODEL_ACCESS_KEY}
+    default_base_url: https://inference.do-ai.run/v1
 
 deployment:
   railway:
@@ -368,27 +371,11 @@ echo ""
 # ============================================
 log_info "Checking environment variables..."
 
-# Check for required env vars
-MISSING_VARS=()
+if [ -z "$OPENROUTER_API_KEY" ] && [ -z "$DIGITALOCEAN_MODEL_ACCESS_KEY" ]; then
+    log_warn "No LLM API key is set. Either key is enough to run an agent:"
+    log_info "  export OPENROUTER_API_KEY='your-key-here'"
+    log_info "  export DIGITALOCEAN_MODEL_ACCESS_KEY='your-model-access-key'"
 
-if [ -z "$OPENROUTER_API_KEY" ]; then
-    MISSING_VARS+=("OPENROUTER_API_KEY")
-fi
-
-if [ ${#MISSING_VARS[@]} -gt 0 ]; then
-    log_warn "Some environment variables are not set:"
-    for var in "${MISSING_VARS[@]}"; do
-        log_warn "  - $var"
-    done
-    
-    echo ""
-    log_info "Add these to your shell profile (e.g., ~/.bashrc, ~/.zshrc):"
-    for var in "${MISSING_VARS[@]}"; do
-        if [ "$var" = "OPENROUTER_API_KEY" ]; then
-            log_info "  export OPENROUTER_API_KEY='your-key-here'"
-        fi
-    done
-    
     echo ""
     log_info "For deployment, you'll also need:"
     log_info "  export RAILWAY_API_TOKEN='your-token'"
@@ -493,10 +480,6 @@ echo "  1. Set up your API keys in ~/.cast/config.yaml or as env vars"
 echo "  2. Create your first agent: cast my-first-agent"
 echo "  3. Start developing: cast my-first-agent dev"
 echo ""
-
-if [ ${#MISSING_VARS[@]} -gt 0 ]; then
-    log_warn "Don't forget to set your environment variables!"
-fi
 
 log_info "For more information, see: $SCRIPT_DIR/docs/SPEC.md"
 echo ""

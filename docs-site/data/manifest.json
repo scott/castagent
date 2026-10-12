@@ -192,6 +192,11 @@
       "description": "Shut down a deployed agent (destroy remote resources)"
     },
     {
+      "id": "skills",
+      "full": "cast skills",
+      "description": "List, add, or remove skills on a user agent"
+    },
+    {
       "id": "stop",
       "full": "cast stop",
       "description": "Stop a running agent"
@@ -332,6 +337,11 @@
       "name": "sessions",
       "category": "session",
       "description": "List saved sessions and open the picker modal"
+    },
+    {
+      "name": "skills",
+      "category": "agent",
+      "description": "Add or remove skills on this agent"
     },
     {
       "name": "stop",

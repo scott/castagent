@@ -36,6 +36,7 @@ class TestCreateAgent:
                 agent_path = Path(tmpdir) / "test-agent"
                 assert (agent_path / "agent.yaml").exists()
                 assert (agent_path / "instructions.md").exists()
+                assert (agent_path / "skills").exists()
                 assert (agent_path / "tools").exists()
                 assert (agent_path / "mcp").exists()
             finally:

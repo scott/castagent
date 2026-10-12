@@ -97,6 +97,9 @@ Cast is a CLI+TUI application that helps developers create, test, and deploy AI 
 └── <agent-name>/
     ├── agent.yaml                 # Agent definition
     ├── instructions.md            # Agent's brain (system prompt)
+    ├── skills/                    # Installed skills (SKILL.md at each skill root)
+    │   └── <skill-name>/
+    │       └── SKILL.md
     ├── tools/                     # Custom Python tools
     │   └── my_tool.py
     ├── tests/
@@ -169,6 +172,8 @@ castagent/                        # Project repo
 │       │   └── principles.py     # Constitutional principles
 │       └── providers/
 │           ├── openrouter.py     # OpenRouter LLM provider
+│           ├── digitalocean_inference.py  # Serverless inference
+│           ├── select.py         # Model-string provider selection
 │           ├── anthropic.py      # Future
 │           ├── openai.py         # Future
 │           └── ollama.py         # Future
@@ -306,6 +311,9 @@ providers:
   openrouter:
     api_key: ${OPENROUTER_API_KEY}
     default_base_url: https://openrouter.ai/api/v1
+  digitalocean_inference:
+    api_key: ${DIGITALOCEAN_MODEL_ACCESS_KEY}
+    default_base_url: https://inference.do-ai.run/v1
   # Future:
   # anthropic:
   #   api_key: ${ANTHROPIC_API_KEY}
@@ -921,9 +929,12 @@ class LLMProvider(ABC):
 | Provider | File | Status |
 |----------|------|--------|
 | OpenRouter | `providers/openrouter.py` | v1 |
+| DigitalOcean serverless inference | `providers/digitalocean_inference.py` | v1 |
 | Anthropic | `providers/anthropic.py` | Future |
 | OpenAI | `providers/openai.py` | Future |
 | Ollama | `providers/ollama.py` | Future |
+
+DigitalOcean serverless inference is not deployment. The key is `DIGITALOCEAN_MODEL_ACCESS_KEY` (or `providers.digitalocean_inference.api_key`). The base URL is `https://inference.do-ai.run/v1`. `providers.digitalocean` and `deployment.digitalocean` remain the deploy token.
 
 ### Model String Format
 
@@ -931,8 +942,13 @@ Format: `<provider>:<model>` or `<provider>/<model>`
 
 Examples:
 - `openrouter:anthropic/claude-4-sonnet`
+- `openrouter/minimax/minimax-m2.5` (default builder model)
+- `digitalocean/llama3.3-70b-instruct`
+- `digitalocean/deepseek-v3.2`
 - `anthropic:claude-3-5-sonnet`
 - `ollama:llama3`
+
+A `digitalocean/<model-id>` string selects DigitalOcean and sends `<model-id>` unchanged. `openrouter/...` and bare aliases stay on OpenRouter. The prefix wins when both keys are set.
 
 ---
 
@@ -1382,6 +1398,8 @@ python/cast/
 │   └── principles.py         # Constitutional principles
 └── providers/
     ├── openrouter.py         # OpenRouter provider
+    ├── digitalocean_inference.py  # Serverless inference
+    ├── select.py             # Model-string provider selection
     ├── anthropic.py          # Future
     ├── openai.py             # Future
     └── ollama.py             # Future

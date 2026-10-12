@@ -7,7 +7,9 @@ from langgraph.prebuilt import create_react_agent
 
 from .base import AgentConfig
 from ..memory import MemoryMiddleware
+from ..providers.digitalocean_inference import DigitalOceanInferenceProvider
 from ..providers.openrouter import OpenRouterProvider
+from ..providers.select import api_key_env_for_model, select_provider_class
 from ..tools.bash import bash_tool
 from ..tools.read import read_tool
 from ..tools.glob import glob_tool
@@ -28,7 +30,7 @@ BUILTIN_TOOLS = {
 
 
 class RuntimeAgent:
-    """Runtime agent with optional LLM integration via OpenRouter."""
+    """Runtime agent with optional LLM integration via the selected provider."""
     
     def __init__(self, config: AgentConfig, agent_path: str = None):
         self.config = config
@@ -38,22 +40,32 @@ class RuntimeAgent:
         self.llm = None
         self.memory = None
         
-        # Set up LLM if OpenRouter API key is available
-        if OpenRouterProvider.is_available():
+        # Set up LLM only when the selected provider's key is set.
+        # A missing key stays in echo mode and does not fall back.
+        if self._llm_provider_class().is_available():
             self._setup_llm()
         
-        # Initialize memory with the model being used
-        model_name = None
-        if self.llm:
-            model_name = self.config.model
-        
-        api_key = os.environ.get("OPENROUTER_API_KEY")
+        # Pass the raw model so reflection uses the same provider.
+        model_name = self.config.model
+        api_key = os.environ.get(api_key_env_for_model(model_name))
         self.memory = MemoryMiddleware(self.agent_path, model_name=model_name, api_key=api_key)
+
+    def _llm_provider_class(self):
+        return select_provider_class(
+            self.config.model,
+            digitalocean_cls=DigitalOceanInferenceProvider,
+            openrouter_cls=OpenRouterProvider,
+        )
+
+    def _llm_key_hint(self) -> str:
+        env_name = api_key_env_for_model(self.config.model)
+        return f"(Set {env_name} for full LLM capabilities)"
     
     def _setup_llm(self):
         """Initialize the LLM and ReAct agent graph."""
         try:
-            provider = OpenRouterProvider()
+            provider_cls = self._llm_provider_class()
+            provider = provider_cls()
             
             # Parse model from config (e.g., "openrouter/anthropic/claude-3-7-sonnet")
             model = self.config.model
@@ -73,7 +85,7 @@ class RuntimeAgent:
             self.graph = create_react_agent(
                 model=self.llm,
                 tools=self.tools,
-                prompt=self.config.instructions,
+                prompt=self.config.rendered_prompt(),
             )
         except Exception as e:
             # Log error but don't crash - fall back to echo mode
@@ -126,12 +138,12 @@ class RuntimeAgent:
                     f"- Your API key doesn't have access to this model\n"
                     f"- The model is temporarily unavailable\n\n"
                     f"Error: {error_msg}\n\n"
-                    f"(Set OPENROUTER_API_KEY for full LLM capabilities)"
+                    f"{self._llm_key_hint()}"
                 )
             
             return (
                 f"I encountered an error: {error_msg}\n\n"
-                f"(Set OPENROUTER_API_KEY for full LLM capabilities)"
+                f"{self._llm_key_hint()}"
             )
     
     async def process_message_stream(self, message: str) -> AsyncGenerator[str, None]:
@@ -209,7 +221,8 @@ class RuntimeAgent:
                 f"\nWhat would you like me to do?"
             )
         
-        return f"You said: {message}\n\n(I'm a demo agent - set OPENROUTER_API_KEY for full LLM capabilities)"
+        env_name = api_key_env_for_model(self.config.model)
+        return f"You said: {message}\n\n(I'm a demo agent - set {env_name} for full LLM capabilities)"
     
     def get_agent_card(self) -> Dict[str, Any]:
         """Return AgentCard for A2A discoverability."""
@@ -227,11 +240,5 @@ class RuntimeAgent:
             },
             "defaultInputModes": ["text/plain"],
             "defaultOutputModes": ["text/plain"],
-            "skills": [
-                {
-                    "id": f"{self.config.name}-skill",
-                    "name": self.config.name,
-                    "description": self.config.description,
-                }
-            ],
+            "skills": self.config.agent_card_skills(),
         }

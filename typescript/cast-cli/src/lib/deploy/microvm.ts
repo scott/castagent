@@ -12,6 +12,7 @@ import {
   generateDeploymentId,
   getAgentPath,
   getOpenRouterApiKey,
+  getDigitalOceanInferenceKey,
   prepareHostTuiBuildContext,
   resolveDigitalOceanToken,
   saveDeployment,
@@ -138,6 +139,7 @@ export function deploymentEnv(opts: {
   agentName: string
   authToken?: string
   openrouterKey?: string
+  digitaloceanInferenceKey?: string
   edgeAuthOnly: boolean
 }): Record<string, string> {
   const env: Record<string, string> = {
@@ -150,6 +152,9 @@ export function deploymentEnv(opts: {
   }
   if (opts.openrouterKey) {
     env.OPENROUTER_API_KEY = opts.openrouterKey
+  }
+  if (opts.digitaloceanInferenceKey) {
+    env.DIGITALOCEAN_MODEL_ACCESS_KEY = opts.digitaloceanInferenceKey
   }
   return env
 }
@@ -494,6 +499,7 @@ export default class MicrovmDeploy extends Command {
       agentName,
       authToken,
       openrouterKey: getOpenRouterApiKey(),
+      digitaloceanInferenceKey: getDigitalOceanInferenceKey(),
       edgeAuthOnly: config.authMode === 'edge-only',
     })
 
@@ -574,6 +580,7 @@ export default class MicrovmDeploy extends Command {
       agentName,
       authToken,
       openrouterKey: getOpenRouterApiKey(),
+      digitaloceanInferenceKey: getDigitalOceanInferenceKey(),
       edgeAuthOnly,
     })
 
