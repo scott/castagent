@@ -88,7 +88,10 @@ Cast is a CLI+TUI application that helps developers create, test, and deploy AI 
 │   └── <agent-name>.token
 └── builder/
     ├── instructions.md            # Builder Agent system prompt
-    └── tools/                     # Builder Agent's tools (Python)
+    ├── tools/                     # Builder Agent's tools (Python)
+    └── skills/                    # Skills the builder follows while creating or editing agents
+        └── <skill-name>/
+            └── SKILL.md           # name, one-line description, and instructions
 
 ~/.cast/agents/                    # User's agents
 └── <agent-name>/

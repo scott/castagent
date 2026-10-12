@@ -1,6 +1,11 @@
 {
-  "generatedAt": "2026-10-12T01:25:02Z",
+  "generatedAt": "2026-10-12T01:28:17Z",
   "cli": [
+    {
+      "id": "builder-skills",
+      "full": "cast builder-skills",
+      "description": "List, add, or remove skills the builder uses when creating agents"
+    },
     {
       "id": "clone",
       "full": "cast clone",
@@ -219,6 +224,11 @@
   ],
   "slash": [
     {
+      "name": "builder-skills",
+      "category": "agent",
+      "description": "Add or remove skills the builder uses when creating agents"
+    },
+    {
       "name": "clear",
       "category": "chat",
       "description": "Clear all messages from the chat"
@@ -358,6 +368,10 @@
     {
       "key": "digitalocean",
       "name": "DigitalOcean"
+    },
+    {
+      "key": "microvm",
+      "name": "DigitalOcean MicroVM"
     },
     {
       "key": "docker",

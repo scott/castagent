@@ -25,6 +25,7 @@ import {
 import {createModal} from '../components/modal.js'
 import {runDeployInTerminal} from '../components/terminal.js'
 import {DEPLOYMENT_PROVIDERS} from '../lib/deployment-providers.js'
+import {openBuilderSkillsCommand} from './builder-skills-modal.js'
 import {addSkillFromSource, openSkillsModal} from './skills-modal.js'
 import type {UiMode} from '../components/header.js'
 
@@ -1387,8 +1388,9 @@ const commands: SlashCommand[] = [
         git: 'Git',
       }
 
+      const visible = getSlashCommands(ctx.uiMode ?? 'dev')
       for (const [cat, label] of Object.entries(categories)) {
-        const cmds = commands.filter((c) => c.category === cat)
+        const cmds = visible.filter((c) => c.category === cat)
         if (cmds.length > 0) {
           lines.push(`${label}:`)
           for (const cmd of cmds) {
@@ -3838,6 +3840,17 @@ cast dev ${agentName}
         }
         return originalHandleKeyPress ? originalHandleKeyPress(key) : false
       }
+    },
+  },
+
+  {
+    name: 'builder-skills',
+    description: 'Add or remove skills the builder uses when creating agents',
+    category: 'agent',
+    modes: ['dev'],
+    args: '[add <github-or-folder>]',
+    handler: async (ctx, args) => {
+      openBuilderSkillsCommand(ctx, args)
     },
   },
 ]
