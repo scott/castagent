@@ -22,8 +22,21 @@ export function sortBuilderModels<T extends {id: string}>(models: readonly T[]):
   return [...models].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
 
+/**
+ * Catalog ids have no provider prefix. The default config stores
+ * `openrouter/minimax/minimax-m2.5`, which is the same catalog row.
+ */
+export function builderModelCatalogId(id: string): string {
+  const prefix = 'openrouter/'
+  return id.startsWith(prefix) ? id.slice(prefix.length) : id
+}
+
+export function isSameBuilderModel(currentId: string, selectedId: string): boolean {
+  return builderModelCatalogId(currentId) === builderModelCatalogId(selectedId)
+}
+
 export function initialBuilderModelIndex(models: readonly {id: string}[], currentId: string): number {
-  const index = models.findIndex(model => model.id === currentId)
+  const index = models.findIndex(model => isSameBuilderModel(model.id, currentId))
   return index >= 0 ? index : 0
 }
 
@@ -33,9 +46,25 @@ export function wrapBuilderModelIndex(index: number, delta: number, length: numb
   return next < 0 ? next + length : next
 }
 
+/**
+ * Slice of the catalog that keeps `selected` on screen. The modal is
+ * shorter than the catalog, so rendering every row hides the cursor.
+ */
+export function builderModelWindow(
+  length: number,
+  selected: number,
+  maxRows: number,
+): {start: number; end: number} {
+  if (length <= 0 || maxRows <= 0) return {start: 0, end: 0}
+  const size = Math.min(maxRows, length)
+  let start = Math.max(0, selected - Math.floor((size - 1) / 2))
+  if (start + size > length) start = Math.max(0, length - size)
+  return {start, end: start + size}
+}
+
 /** Enter on the current row does not call the CLI. */
 export function shouldApplyBuilderModel(currentId: string, selectedId: string): boolean {
-  return selectedId !== currentId
+  return !isSameBuilderModel(currentId, selectedId)
 }
 
 export function builderModelListArgv(): string[] {
