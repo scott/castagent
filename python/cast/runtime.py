@@ -2,19 +2,26 @@ import argparse
 import asyncio
 import json
 import os
+import re
 import socket
 import sys
+import time
 import traceback
-from typing import Any, AsyncGenerator, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from .agent.base import AgentConfig
 from .agent.runtime import RuntimeAgent
 
-# The MicroVM edge closes a response that sends no bytes for about 15 seconds.
-# A tool call that installs a skill is quiet for longer than that. A padded
-# comment forces a buffering proxy to flush, which resets the idle timer.
+# Proxies that idle out a quiet response still need bytes on the wire.
+# The MicroVM edge is different: it closes the response about 15 seconds
+# after the request starts, even while these comments are arriving. A client
+# that sends metadata.streamId keeps the reply running and reconnects with
+# metadata.streamOffset. A request with no stream id still uses the one-shot
+# wrapper below, which stops the reply when that connection closes.
 STREAM_KEEPALIVE_INTERVAL = 5
 STREAM_KEEPALIVE = ": " + ("keepalive " * 400) + "\n\n"
+STREAM_RESUME_TTL = 120
+_STREAM_ID_RE = re.compile(r"^[A-Za-z0-9_.:-]{1,128}$")
 
 
 async def with_stream_keepalive(
@@ -54,6 +61,133 @@ async def with_stream_keepalive(
                 await task
             except asyncio.CancelledError:
                 pass
+
+
+def stream_resume_marker(stream_id: str) -> str:
+    """SSE comment that tells the client this reply can be resumed."""
+    return f": cast-stream {stream_id}\n\n"
+
+
+def stream_cursor(params: Any) -> tuple[Optional[str], int]:
+    """Resume id and data-event offset from message/send metadata.
+
+    A missing or invalid id keeps the one-shot stream. The offset counts
+    stored `data:` events, not keepalive comments.
+    """
+    if not isinstance(params, dict):
+        return None, 0
+    metadata = params.get("metadata")
+    if not isinstance(metadata, dict):
+        return None, 0
+    raw_id = metadata.get("streamId")
+    if not isinstance(raw_id, str) or _STREAM_ID_RE.fullmatch(raw_id) is None:
+        return None, 0
+    raw_offset = metadata.get("streamOffset", 0)
+    if isinstance(raw_offset, bool) or not isinstance(raw_offset, (int, float)):
+        offset = 0
+    else:
+        offset = int(raw_offset)
+    if offset < 0:
+        offset = 0
+    return raw_id, offset
+
+
+class _StreamRun:
+    def __init__(self) -> None:
+        self.events: List[str] = []
+        self.done = False
+        self.error: Optional[BaseException] = None
+        self.changed = asyncio.Event()
+        self.generation = 0
+        self.producer: Optional[asyncio.Task] = None
+        self.finished_at: Optional[float] = None
+
+
+class StreamHub:
+    """Keep one chat reply running across HTTP connections.
+
+    The MicroVM edge closes each response on a wall clock. Followers come
+    and go. Closing one does not cancel the producer. A second follow with
+    the same id yields only the events after `offset`.
+    """
+
+    def __init__(self, ttl: float = STREAM_RESUME_TTL) -> None:
+        self._ttl = ttl
+        self._runs: Dict[str, _StreamRun] = {}
+
+    def _purge(self) -> None:
+        now = time.monotonic()
+        expired = [
+            key
+            for key, run in self._runs.items()
+            if run.done and run.finished_at is not None and now - run.finished_at >= self._ttl
+        ]
+        for key in expired:
+            self._runs.pop(key, None)
+
+    async def _produce(self, run: _StreamRun, events: AsyncGenerator[str, None]) -> None:
+        try:
+            async for event in events:
+                run.events.append(event)
+                run.generation += 1
+                run.changed.set()
+        except asyncio.CancelledError:
+            run.error = asyncio.CancelledError()
+            raise
+        except Exception as exc:
+            run.error = exc
+        finally:
+            run.done = True
+            run.finished_at = time.monotonic()
+            run.generation += 1
+            run.changed.set()
+
+    async def follow(
+        self,
+        stream_id: str,
+        offset: int,
+        events_factory: Callable[[], AsyncGenerator[str, None]],
+        interval: float = STREAM_KEEPALIVE_INTERVAL,
+        keepalive: str = STREAM_KEEPALIVE,
+    ) -> AsyncGenerator[str, None]:
+        """Yield the resume marker, then stored events from `offset`.
+
+        A quiet wait yields `keepalive` and leaves the producer running.
+        """
+        self._purge()
+        run = self._runs.get(stream_id)
+        if run is None:
+            run = _StreamRun()
+            self._runs[stream_id] = run
+            run.producer = asyncio.create_task(self._produce(run, events_factory()))
+
+        index = offset
+        # The marker is not a stored event, so it does not move the offset.
+        yield stream_resume_marker(stream_id)
+        while True:
+            if index < len(run.events):
+                event = run.events[index]
+                index += 1
+                yield event
+                continue
+            if run.error is not None:
+                raise run.error
+            if run.done:
+                return
+            seen = run.generation
+            run.changed.clear()
+            if (
+                run.generation != seen
+                or index < len(run.events)
+                or run.done
+                or run.error is not None
+            ):
+                continue
+            try:
+                await asyncio.wait_for(run.changed.wait(), interval)
+            except TimeoutError:
+                yield keepalive
+
 
 def request_auth_error(auth_token_hash: Optional[str], headers) -> Optional[str]:
     """Return an error message when a request must be rejected, else None.
@@ -140,6 +274,7 @@ class A2AServer:
         self.host = host
         self.port = port or self._find_free_port()
         self.auth_token_hash: Optional[str] = None
+        self.stream_hub = StreamHub()
 
     def _find_free_port(self, start: int = 10000, end: int = 65535) -> int:
         for port in range(start, end):
@@ -335,6 +470,37 @@ class A2AServer:
 
         yield "data: [DONE]\n\n"
 
+    def iter_chat_stream(
+        self,
+        request: Dict[str, Any],
+        interval: float = STREAM_KEEPALIVE_INTERVAL,
+        keepalive: str = STREAM_KEEPALIVE,
+    ) -> AsyncGenerator[str, None]:
+        """SSE body for one chat POST.
+
+        A stream id detaches the reply from this connection. Without one,
+        the body is the one-shot keepalive wrapper.
+        """
+        params = request.get("params") if isinstance(request, dict) else None
+        stream_id, offset = stream_cursor(params)
+        if not stream_id:
+            return with_stream_keepalive(
+                self.handle_streaming_request(request),
+                interval=interval,
+                keepalive=keepalive,
+            )
+
+        def start() -> AsyncGenerator[str, None]:
+            return self.handle_streaming_request(request)
+
+        return self.stream_hub.follow(
+            stream_id,
+            offset,
+            start,
+            interval=interval,
+            keepalive=keepalive,
+        )
+
     async def run(self):
         try:
             from starlette.applications import Starlette
@@ -364,12 +530,8 @@ class A2AServer:
 
                 # Check if client requests streaming
                 if "text/event-stream" in accept:
-                    async def event_generator():
-                        async for event in with_stream_keepalive(self.handle_streaming_request(data)):
-                            yield event
-
                     return StreamingResponse(
-                        event_generator(),
+                        self.iter_chat_stream(data),
                         media_type="text/event-stream",
                         headers={
                             "Cache-Control": "no-cache",

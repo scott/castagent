@@ -7,6 +7,8 @@ from cast.agent.base import AgentConfig
 from cast.agent.runtime import RuntimeAgent
 from cast.runtime import (
     A2AServer,
+    StreamHub,
+    stream_cursor,
     with_stream_keepalive,
     JSONRPC_PARSE_ERROR,
     JSONRPC_INVALID_REQUEST,
@@ -642,7 +644,7 @@ class TestA2AServerStreaming:
 
 
 class TestStreamKeepalive:
-    """The MicroVM edge closes a stream that is quiet for about 15 seconds."""
+    """Idle proxies still need a comment while a one-shot stream is quiet."""
 
     @pytest.mark.asyncio
     async def test_emits_a_comment_while_the_agent_is_quiet(self):
@@ -686,6 +688,166 @@ class TestStreamKeepalive:
         first = await generator.__anext__()
         assert first == ": keepalive\n\n"
         await generator.aclose()
+        await asyncio.wait_for(cancelled.wait(), timeout=1)
+
+
+class TestStreamResume:
+    """The MicroVM edge closes a response about 15 seconds after it starts."""
+
+    def test_cursor_reads_a_stream_id_and_offset(self):
+        stream_id, offset = stream_cursor({
+            "metadata": {"streamId": "msg_1", "streamOffset": 4, "sessionId": "s"},
+        })
+        assert stream_id == "msg_1"
+        assert offset == 4
+
+    def test_cursor_ignores_a_missing_or_invalid_id(self):
+        assert stream_cursor({"metadata": {"sessionId": "s"}}) == (None, 0)
+        assert stream_cursor({"metadata": {"streamId": "has space", "streamOffset": 3}}) == (None, 0)
+        assert stream_cursor({"metadata": {"streamId": "ok", "streamOffset": True}}) == ("ok", 0)
+        assert stream_cursor("nope") == (None, 0)
+
+    @pytest.mark.asyncio
+    async def test_producer_survives_the_follower_closing(self):
+        calls = 0
+        release = asyncio.Event()
+
+        async def events():
+            nonlocal calls
+            calls += 1
+            yield "data: one\n\n"
+            await release.wait()
+            yield "data: two\n\n"
+            yield "data: [DONE]\n\n"
+
+        hub = StreamHub()
+        gen = hub.follow("s1", 0, events, interval=0.05, keepalive=": keepalive\n\n")
+        marker = await asyncio.wait_for(gen.__anext__(), timeout=1)
+        assert marker == ": cast-stream s1\n\n"
+        first = await asyncio.wait_for(gen.__anext__(), timeout=1)
+        assert first == "data: one\n\n"
+        await gen.aclose()
+
+        assert calls == 1
+        run = hub._runs["s1"]
+        assert run.producer is not None
+        assert not run.producer.done()
+
+        release.set()
+        tail = []
+        async for chunk in hub.follow("s1", 1, events, interval=0.05, keepalive=": keepalive\n\n"):
+            if chunk.startswith(": "):
+                continue
+            tail.append(chunk)
+        assert tail == ["data: two\n\n", "data: [DONE]\n\n"]
+        assert calls == 1
+
+    @pytest.mark.asyncio
+    async def test_follower_sends_keepalive_while_the_reply_is_quiet(self):
+        release = asyncio.Event()
+
+        async def events():
+            yield "data: one\n\n"
+            await release.wait()
+            yield "data: [DONE]\n\n"
+
+        hub = StreamHub()
+        gen = hub.follow("s", 1, events, interval=0.05, keepalive=": keepalive\n\n")
+        marker = await asyncio.wait_for(gen.__anext__(), timeout=1)
+        assert marker == ": cast-stream s\n\n"
+        nxt = await asyncio.wait_for(gen.__anext__(), timeout=1)
+        assert nxt == ": keepalive\n\n"
+        release.set()
+        rest = []
+        async for chunk in gen:
+            if chunk.startswith(": "):
+                continue
+            rest.append(chunk)
+        assert rest == ["data: [DONE]\n\n"]
+
+    @pytest.mark.asyncio
+    async def test_finished_run_is_dropped_after_the_ttl(self):
+        calls = 0
+
+        async def events():
+            nonlocal calls
+            calls += 1
+            yield f"data: {calls}\n\n"
+            yield "data: [DONE]\n\n"
+
+        hub = StreamHub(ttl=0.05)
+        async for _chunk in hub.follow("s", 0, events, interval=1, keepalive=": k\n\n"):
+            pass
+        assert calls == 1
+        await asyncio.sleep(0.12)
+        seen = []
+        async for chunk in hub.follow("s", 0, events, interval=1, keepalive=": k\n\n"):
+            seen.append(chunk)
+        assert calls == 2
+        assert "data: 2\n\n" in seen
+
+    @pytest.mark.asyncio
+    async def test_same_stream_id_does_not_start_a_second_reply(self, a2a_server):
+        calls = 0
+        release = asyncio.Event()
+
+        async def fake(_request):
+            nonlocal calls
+            calls += 1
+            yield 'data: {"jsonrpc":"2.0","result":{"parts":[{"kind":"text","text":"hi"}]}}\n\n'
+            await release.wait()
+            yield "data: [DONE]\n\n"
+
+        a2a_server.handle_streaming_request = fake
+        request = {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "message/send",
+            "params": {
+                "message": {"parts": [{"kind": "text", "text": "hello"}]},
+                "metadata": {"streamId": "s1", "streamOffset": 0},
+            },
+        }
+        gen = a2a_server.iter_chat_stream(request)
+        first = await asyncio.wait_for(gen.__anext__(), timeout=1)
+        assert first == ": cast-stream s1\n\n"
+        data = await asyncio.wait_for(gen.__anext__(), timeout=1)
+        assert '"hi"' in data
+        await gen.aclose()
+
+        request["params"]["metadata"]["streamOffset"] = 1
+        tail = []
+        release.set()
+        async for chunk in a2a_server.iter_chat_stream(request):
+            if chunk.startswith(": "):
+                continue
+            tail.append(chunk)
+        assert calls == 1
+        assert tail == ["data: [DONE]\n\n"]
+
+    @pytest.mark.asyncio
+    async def test_missing_stream_id_stops_when_the_client_leaves(self, a2a_server):
+        cancelled = asyncio.Event()
+
+        async def fake(_request):
+            try:
+                await asyncio.sleep(30)
+                yield "data: late\n\n"
+            except asyncio.CancelledError:
+                cancelled.set()
+                raise
+
+        a2a_server.handle_streaming_request = fake
+        request = {
+            "jsonrpc": "2.0",
+            "id": "1",
+            "method": "message/send",
+            "params": {"message": {"parts": [{"kind": "text", "text": "hello"}]}},
+        }
+        gen = a2a_server.iter_chat_stream(request, interval=0.05, keepalive=": keepalive\n\n")
+        first = await asyncio.wait_for(gen.__anext__(), timeout=1)
+        assert first == ": keepalive\n\n"
+        await gen.aclose()
         await asyncio.wait_for(cancelled.wait(), timeout=1)
 
 

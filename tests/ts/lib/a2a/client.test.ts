@@ -1,7 +1,7 @@
 import {expect} from 'chai'
 import axios, {AxiosError} from 'axios'
 import {Readable} from 'stream'
-import {A2AClient, A2AClientError} from '../../../../typescript/cast-cli/dist/lib/a2a/client'
+import {A2AClient, A2AClientError, STREAM_RESUME_LIMIT} from '../../../../typescript/cast-cli/dist/lib/a2a/client'
 import * as protocol from '../../../../typescript/cast-cli/dist/lib/a2a/protocol'
 
 // Re-export interfaces for TypeScript type checking
@@ -582,6 +582,130 @@ describe('A2AClient resume retries', () => {
       expect((error as Error).message).to.include('15 seconds')
       expect((error as Error).message).to.include('installing a skill')
     }
+    // No resume marker means this server cannot continue the reply.
+    expect(post.callCount).to.equal(1)
+  })
+
+  function textEvent(text: string): string {
+    return `data: ${JSON.stringify({
+      jsonrpc: '2.0',
+      result: {parts: [{kind: 'text', text}]},
+    })}\n\n`
+  }
+
+  function closingAfter(chunks: string[]): Readable {
+    let index = 0
+    return new Readable({
+      read() {
+        if (index < chunks.length) {
+          this.push(chunks[index])
+          index++
+          return
+        }
+        const error = new Error('socket hang up') as NodeJS.ErrnoException
+        error.code = 'ECONNRESET'
+        this.destroy(error)
+      },
+    })
+  }
+
+  it('continues a MicroVM reply after the edge closes the socket', async () => {
+    post.callsFake(async (_url: string, payload: {params: {metadata: {streamId: string, streamOffset: number, sessionId?: string}}}) => {
+      const id = payload.params.metadata.streamId
+      const offset = payload.params.metadata.streamOffset
+      if (offset === 0) {
+        return {
+          data: closingAfter([
+            `: cast-stream ${id}\n\n`,
+            textEvent('Based'),
+            textEvent(''),
+          ]),
+        }
+      }
+      return {
+        data: Readable.from([
+          `: cast-stream ${id}\n\n`,
+          textEvent(' on my current'),
+          'data: [DONE]\n\n',
+        ]),
+      }
+    })
+
+    const client = new A2AClient('https://vm.mkc1.microvm.ondigitalocean.com', 'agent', 'edge')
+    const chunks: string[] = []
+    for await (const chunk of client.sendMessageStream('do you have access to gander?', {sessionId: 'sess-1'})) {
+      chunks.push(chunk.text)
+    }
+
+    expect(chunks).to.deep.equal(['Based', ' on my current'])
+    expect(post.callCount).to.equal(2)
+    const first = post.firstCall.args[1].params.metadata
+    const second = post.secondCall.args[1].params.metadata
+    expect(first.streamId).to.be.a('string')
+    expect(second.streamId).to.equal(first.streamId)
+    expect(first.streamOffset).to.equal(0)
+    // The empty text event counts. Skipping it would repeat "Based".
+    expect(second.streamOffset).to.equal(2)
+    expect(second.sessionId).to.equal('sess-1')
+  })
+
+  it('does not reconnect after the reply is done', async () => {
+    post.callsFake(async (_url: string, payload: {params: {metadata: {streamId: string}}}) => {
+      const id = payload.params.metadata.streamId
+      return {
+        data: Readable.from([
+          `: cast-stream ${id}\n\n`,
+          textEvent('pong'),
+          'data: [DONE]\n\n',
+        ]),
+      }
+    })
+
+    const client = new A2AClient('https://vm.mkc1.microvm.ondigitalocean.com', 'agent', 'edge')
+    const chunks: string[] = []
+    for await (const chunk of client.sendMessageStream('hi')) {
+      chunks.push(chunk.text)
+    }
+
+    expect(chunks).to.deep.equal(['pong'])
+    expect(post.callCount).to.equal(1)
+  })
+
+  it('stops resuming after the edge keeps closing the stream', async () => {
+    post.callsFake(async (_url: string, payload: {params: {metadata: {streamId: string}}}) => {
+      const id = payload.params.metadata.streamId
+      return {data: closingAfter([`: cast-stream ${id}\n\n`])}
+    })
+
+    const client = new A2AClient('https://vm.mkc1.microvm.ondigitalocean.com', 'agent', 'edge')
+    try {
+      for await (const chunk of client.sendMessageStream('install the skill')) {
+        expect(chunk).to.equal(undefined)
+      }
+      expect.fail('expected the edge to keep closing the stream')
+    } catch (error) {
+      expect(error).to.be.instanceOf(A2AClientError)
+      expect((error as Error).message).to.include('15 seconds')
+    }
+    expect(post.callCount).to.equal(STREAM_RESUME_LIMIT + 1)
+  })
+
+  it('does not resume a stream on a host that is not a MicroVM', async () => {
+    post.callsFake(async () => ({data: closingAfter([textEvent('partial')])}))
+    const client = new A2AClient('http://localhost:8080', 'agent')
+
+    try {
+      for await (const chunk of client.sendMessageStream('hi')) {
+        expect(chunk.text).to.equal('partial')
+      }
+      expect.fail('expected the socket to close')
+    } catch (error) {
+      expect(error).to.be.instanceOf(A2AClientError)
+      expect((error as Error).message).to.include('connection closed')
+      expect((error as Error).message).to.not.include('15 seconds')
+    }
+    expect(post.callCount).to.equal(1)
+    expect(post.firstCall.args[1].params.metadata.streamId).to.equal(undefined)
   })
 
   it('does not retry HTTP 401', async () => {
