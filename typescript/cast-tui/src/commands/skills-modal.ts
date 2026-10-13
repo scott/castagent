@@ -2,8 +2,9 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import {execFileSync} from 'child_process'
-import {BoxRenderable, TextRenderable, StyledText, white, dim, cyan, red} from '@opentui/core'
-import type {KeyEvent} from '@opentui/core'
+import {BoxRenderable, TextRenderable, StyledText, white, dim, cyan, red, decodePasteBytes} from '@opentui/core'
+import type {KeyEvent, PasteEvent} from '@opentui/core'
+import clipboardy from 'clipboardy'
 import {createModal} from '../components/modal.js'
 import {
   ADD_SOURCE_LABELS,
@@ -14,6 +15,17 @@ import {
   type SkillListItem,
   wrapIndex,
 } from '../lib/skill-list.js'
+import {
+  applyEntryKey,
+  clipFieldError,
+  createTextEntry,
+  insertText,
+  modalContentColumns,
+  previewField,
+  recordFailedSubmit,
+  type TextEntry,
+  type TextFieldKind,
+} from '../lib/text-entry.js'
 
 const RESTART_LINE = 'Restart the agent so the running prompt picks it up.'
 
@@ -154,16 +166,6 @@ function isDirectory(input: string): boolean {
   }
 }
 
-function typedChar(key: KeyEvent): string | null {
-  if (key.ctrl || key.meta || key.option) return null
-  if (key.name === 'space') return ' '
-  if (key.sequence && key.sequence.length === 1 && key.sequence >= ' ' && key.sequence !== '\x7f') {
-    return key.sequence
-  }
-  if (key.name && key.name.length === 1 && key.name >= ' ' && key.name <= '~') return key.name
-  return null
-}
-
 function letterKey(key: KeyEvent): string {
   if (key.ctrl || key.meta || key.option) return ''
   const name = key.name || ''
@@ -177,10 +179,15 @@ function nextField(field: EntryField): EntryField {
   return 'name'
 }
 
-function bodyPreview(body: string, active: boolean): string {
-  const shown = active ? `${body}_` : body || ' '
-  const lines = shown.split('\n')
-  return lines.slice(-12).join('\n')
+const BODY_LINES = 8
+const BODY_LINES_WITH_ERROR = 4
+const PROMPT_MAX = 500
+const NAME_MAX = 64
+const DESCRIPTION_MAX = 200
+const BODY_MAX = 200000
+
+function readClipboard(): string {
+  return clipboardy.readSync()
 }
 
 export function addSkillFromSource(ctx: SkillsModalContext, source: string): void {
@@ -209,6 +216,7 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
   })
   if (modal.overlay) ctx.renderer.root.add(modal.overlay)
 
+  modal.box.overflow = 'hidden'
   const contentBox = new BoxRenderable(ctx.renderer, {
     width: '100%',
     height: '100%',
@@ -217,24 +225,43 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
     paddingTop: 2,
     paddingLeft: 2,
     paddingRight: 2,
+    overflow: 'hidden',
   })
 
   const stack: SkillsStep[] = [initial]
   let selected = 0
   let error = ''
-  let draft = ''
+  let draft = createTextEntry()
   let installed: SkillListItem[] = []
-  let entry: {name: string; description: string; body: string; field: EntryField} = {
-    name: '',
-    description: '',
-    body: '',
+  let entry: {name: TextEntry; description: TextEntry; body: TextEntry; field: EntryField} = {
+    name: createTextEntry(),
+    description: createTextEntry(),
+    body: createTextEntry(),
     field: 'name',
   }
 
   const current = (): SkillsStep => stack[stack.length - 1]
 
+  function contentColumns(): number {
+    const width = typeof ctx.renderer?.width === 'number' ? ctx.renderer.width : 0
+    return modalContentColumns(width)
+  }
+
   function addLine(chunks: Array<ReturnType<typeof white>>): void {
     contentBox.add(new TextRenderable(ctx.renderer, {content: new StyledText(chunks)}))
+  }
+
+  function addBlock(text: string, color: typeof white): void {
+    contentBox.add(new TextRenderable(ctx.renderer, {
+      content: new StyledText([color(text)]),
+      width: '100%',
+      wrapMode: 'none',
+      flexShrink: 0,
+    }))
+  }
+
+  function addError(message: string): void {
+    addBlock(clipFieldError(message, contentColumns()), red)
   }
 
   function refreshInstalled(): void {
@@ -268,9 +295,9 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
     stack.push(step)
     selected = 0
     error = ''
-    draft = ''
+    draft = createTextEntry()
     if (step.kind === 'entry') {
-      entry = {name: '', description: '', body: '', field: 'name'}
+      entry = {name: createTextEntry(), description: createTextEntry(), body: createTextEntry(), field: 'name'}
     }
     if (step.kind === 'list') refreshInstalled()
     render()
@@ -284,7 +311,7 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
     stack.pop()
     selected = 0
     error = ''
-    draft = ''
+    draft = createTextEntry()
     if (current().kind === 'list') refreshInstalled()
     render()
   }
@@ -294,7 +321,9 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
     if (result.status === 2 && githubSource) {
       const choices = parseChoices(result.stdout)
       if (!choices || choices.length === 0) {
-        error = castErrorText(result.stderr, result.stdout) || 'Could not read skill choices.'
+        const failed = recordFailedSubmit(draft, castErrorText(result.stderr, result.stdout) || 'Could not read skill choices.')
+        draft = failed.entry
+        error = failed.error
         render()
         return
       }
@@ -302,7 +331,9 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
       return
     }
     if (!result.ok) {
-      error = castErrorText(result.stderr, result.stdout)
+      const failed = recordFailedSubmit(draft, castErrorText(result.stderr, result.stdout))
+      draft = failed.entry
+      error = failed.error
       render()
       return
     }
@@ -311,11 +342,16 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
 
   function submitEntry(): void {
     const result = runCastSkills(
-      ['add', ctx.agentName, '--name', entry.name, '--description', entry.description, '--body', '-'],
-      entry.body,
+      ['add', ctx.agentName, '--name', entry.name.text, '--description', entry.description.text, '--body', '-'],
+      entry.body.text,
     )
     if (!result.ok) {
-      error = castErrorText(result.stderr, result.stdout)
+      const active = entry.field === 'description' ? entry.description : entry.field === 'body' ? entry.body : entry.name
+      const failed = recordFailedSubmit(active, castErrorText(result.stderr, result.stdout))
+      if (entry.field === 'description') entry.description = failed.entry
+      else if (entry.field === 'body') entry.body = failed.entry
+      else if (entry.field === 'name') entry.name = failed.entry
+      error = failed.error
       render()
       return
     }
@@ -334,13 +370,12 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
     else if (step.kind === 'entry') renderEntry()
     else if (step.kind === 'confirm') renderConfirm()
     else renderPicker(step)
-    if (error && step.kind !== 'list') addLine([red(error)])
     ctx.renderer.requestRender?.()
   }
 
   function renderList(): void {
     modal.setTitle(`Skills: ${ctx.agentName}`)
-    if (error) addLine([red(error)])
+    if (error) addError(error)
     if (installed.length === 0) {
       addLine([white(`No skills on '${ctx.agentName}'.`)])
       addLine([dim(' ')])
@@ -369,24 +404,36 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
   function renderPrompt(title: string, hint: string): void {
     modal.setTitle(title)
     addLine([dim(hint)])
-    addLine([white(`${draft}_`)])
+    addBlock(previewField(draft, {multiline: false, columns: contentColumns(), showCursor: true}), cyan)
+    if (error) addError(error)
     addLine([dim(' ')])
     addLine([dim('Enter Confirm   ESC Back')])
   }
 
   function renderEntry(): void {
     modal.setTitle(`New skill on '${ctx.agentName}'`)
+    const columns = contentColumns()
+    const bodyLines = error && (entry.field === 'body' || entry.field === 'save') ? BODY_LINES_WITH_ERROR : BODY_LINES
     addLine([dim('Name')])
-    addLine([entry.field === 'name' ? cyan(`${entry.name}_`) : white(entry.name || ' ')])
+    addBlock(shownField(entry.name, columns, false, entry.field === 'name'), entry.field === 'name' ? cyan : white)
+    if (error && entry.field === 'name') addError(error)
     addLine([dim('Description')])
-    addLine([entry.field === 'description' ? cyan(`${entry.description}_`) : white(entry.description || ' ')])
+    addBlock(shownField(entry.description, columns, false, entry.field === 'description'), entry.field === 'description' ? cyan : white)
+    if (error && entry.field === 'description') addError(error)
     addLine([dim('Body')])
-    addLine([entry.field === 'body' ? cyan(bodyPreview(entry.body, true)) : white(bodyPreview(entry.body, false))])
+    addBlock(shownField(entry.body, columns, true, entry.field === 'body', bodyLines), entry.field === 'body' ? cyan : white)
+    if (error && entry.field === 'body') addError(error)
     addLine([dim(' ')])
     const save = entry.field === 'save' ? '▸ Save' : '  Save'
     addLine([entry.field === 'save' ? cyan(save) : white(save)])
+    if (error && entry.field === 'save') addError(error)
     addLine([dim(' ')])
     addLine([dim('Ctrl+S Save   Tab Next   ESC Cancel')])
+  }
+
+  function shownField(value: TextEntry, columns: number, multiline: boolean, active: boolean, maxLines?: number): string {
+    const shown = previewField(value, {multiline, columns, maxLines, showCursor: active})
+    return shown || (active ? '_' : ' ')
   }
 
   function renderConfirm(): void {
@@ -397,6 +444,7 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
     addLine([dim(' ')])
     addLine([white(`This deletes ~/.cast/agents/${ctx.agentName}/skills/${name}`)])
     addLine([white('and its entry in agent.yaml.')])
+    if (error) addError(error)
     addLine([dim(' ')])
     addLine([dim('Y  Remove    N  Cancel')])
   }
@@ -407,6 +455,7 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
       const line = formatSkillRow(skill, index === selected)
       addLine([index === selected ? cyan(line) : white(line)])
     })
+    if (error) addError(error)
     addLine([dim(' ')])
     addLine([dim('↑↓ Select   Enter Install   ESC Back')])
   }
@@ -462,18 +511,17 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
   }
 
   function onPromptKey(key: KeyEvent, kind: 'github' | 'folder'): void {
-    if (key.name === 'backspace' || (key.ctrl && key.name === 'h')) {
-      draft = draft.slice(0, -1)
-      error = ''
-      render()
-      return
-    }
     if (key.name === 'return' || key.name === 'enter') {
-      const value = draft.trim()
+      const value = draft.text.trim()
       if (!value) {
-        error = kind === 'github'
-          ? 'Give a GitHub repo (owner/name or https://github.com/owner/name).'
-          : 'Give an absolute path or a path starting with ~.'
+        const failed = recordFailedSubmit(
+          draft,
+          kind === 'github'
+            ? 'Give a GitHub repo (owner/name or https://github.com/owner/name).'
+            : 'Give an absolute path or a path starting with ~.',
+        )
+        draft = failed.entry
+        error = failed.error
         render()
         return
       }
@@ -481,10 +529,10 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
       else runAdd(['--folder', value])
       return
     }
-    const ch = typedChar(key)
-    if (!ch || draft.length >= 500) return
-    draft += ch
-    error = ''
+    const next = applyEntryKey(draft, key, {kind: 'single', maxLength: PROMPT_MAX}, readClipboard)
+    if (!next.handled) return
+    if (next.entry.text !== draft.text) error = ''
+    draft = next.entry
     render()
   }
 
@@ -498,32 +546,51 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
       render()
       return
     }
-    if (key.name === 'backspace' || (key.ctrl && key.name === 'h')) {
-      if (entry.field === 'name') entry.name = entry.name.slice(0, -1)
-      else if (entry.field === 'description') entry.description = entry.description.slice(0, -1)
-      else if (entry.field === 'body') entry.body = entry.body.slice(0, -1)
-      error = ''
-      render()
-      return
-    }
     if (key.name === 'return' || key.name === 'enter') {
       if (entry.field === 'name') entry.field = 'description'
       else if (entry.field === 'description') entry.field = 'body'
-      else if (entry.field === 'body') entry.body += '\n'
-      else {
+      else if (entry.field === 'body') {
+        const next = insertText(entry.body, '\n', 'body', BODY_MAX)
+        if (next.text !== entry.body.text) error = ''
+        entry.body = next
+      } else {
         submitEntry()
         return
       }
-      error = ''
       render()
       return
     }
-    const ch = typedChar(key)
-    if (!ch || entry.field === 'save') return
-    if (entry.field === 'name' && entry.name.length < 64) entry.name += ch
-    else if (entry.field === 'description' && entry.description.length < 200) entry.description += ch
-    else if (entry.field === 'body' && entry.body.length < 200000) entry.body += ch
-    error = ''
+    if (entry.field === 'save') return
+    const current = entry.field === 'name' ? entry.name : entry.field === 'description' ? entry.description : entry.body
+    const kind: TextFieldKind = entry.field === 'body' ? 'body' : 'single'
+    const maxLength = entry.field === 'name' ? NAME_MAX : entry.field === 'description' ? DESCRIPTION_MAX : BODY_MAX
+    const next = applyEntryKey(current, key, {kind, maxLength}, readClipboard)
+    if (!next.handled) return
+    if (next.entry.text !== current.text) error = ''
+    if (entry.field === 'name') entry.name = next.entry
+    else if (entry.field === 'description') entry.description = next.entry
+    else entry.body = next.entry
+    render()
+  }
+
+  function pasteIntoField(raw: string): void {
+    const step = current()
+    if (step.kind === 'github' || step.kind === 'folder') {
+      const next = insertText(draft, raw, 'single', PROMPT_MAX)
+      if (next.text !== draft.text) error = ''
+      draft = next
+      render()
+      return
+    }
+    if (step.kind !== 'entry' || entry.field === 'save') return
+    const currentEntry = entry.field === 'name' ? entry.name : entry.field === 'description' ? entry.description : entry.body
+    const kind: TextFieldKind = entry.field === 'body' ? 'body' : 'single'
+    const maxLength = entry.field === 'name' ? NAME_MAX : entry.field === 'description' ? DESCRIPTION_MAX : BODY_MAX
+    const next = insertText(currentEntry, raw, kind, maxLength)
+    if (next.text !== currentEntry.text) error = ''
+    if (entry.field === 'name') entry.name = next
+    else if (entry.field === 'description') entry.description = next
+    else entry.body = next
     render()
   }
 
@@ -585,5 +652,12 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
     else if (step.kind === 'confirm') onConfirmKey(key)
     else onPickerKey(key, step)
     return true
+  }
+
+  modal.box.handlePaste = (event: PasteEvent): void => {
+    const step = current()
+    if (step.kind !== 'github' && step.kind !== 'folder' && step.kind !== 'entry') return
+    event.preventDefault()
+    pasteIntoField(decodePasteBytes(event.bytes))
   }
 }
