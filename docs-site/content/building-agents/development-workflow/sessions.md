@@ -49,6 +49,14 @@ cast session list --agent my-agent
 cast session list --json
 ```
 
+An unnamed session in this list and in the `/sessions` picker shows a
+one-line topic from that agent's model (`brain.model` in `agent.yaml`).
+The picker opens immediately and fills in a missing or outdated topic
+in the background. Until that summary exists, the first user message
+remains the fallback, and then `(untitled)`. A name you set is never
+replaced by the topic. `--json` includes the stored `topic` and
+`topic_message_count`.
+
 Output:
 
 ```

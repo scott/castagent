@@ -17,7 +17,7 @@ import shutil
 import sqlite3
 import time
 import uuid
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict, field, fields
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -43,14 +43,26 @@ class SessionMeta:
     first_user_message: Optional[str]
     last_user_message: Optional[str]
     json_path: str
+    # Cached one-line topic. Null on rows written before the column existed.
+    topic: Optional[str] = None
+    topic_message_count: Optional[int] = None
 
     def to_db_row(self) -> Dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_db_row(cls, row: Dict[str, Any]) -> "SessionMeta":
-        # Coerce optional fields to None (SQLite may return empty strings)
-        cleaned = {k: (None if v == "" else v) for k, v in row.items()}
+        # SELECT * returns every column. Unknown keys are ignored so a newer
+        # database does not break this process. Missing topic keys default,
+        # which is how a row written before the column existed still lists.
+        known = {item.name for item in fields(cls)}
+        cleaned: Dict[str, Any] = {}
+        for key, value in row.items():
+            if key not in known:
+                continue
+            cleaned[key] = None if value == "" else value
+        cleaned.setdefault("topic", None)
+        cleaned.setdefault("topic_message_count", None)
         return cls(**cleaned)
 
 
@@ -90,9 +102,22 @@ class Session:
     files_in_context: List[str] = field(default_factory=list)
     parent_session_id: Optional[str] = None
     tags: List[str] = field(default_factory=list)
+    topic: Optional[str] = None
+    topic_message_count: Optional[int] = None
 
     @classmethod
     def from_json(cls, data: Dict[str, Any]) -> "Session":
+        raw_count = data.get("topic_message_count")
+        if raw_count is None or raw_count == "":
+            topic_message_count = None
+        else:
+            try:
+                topic_message_count = int(raw_count)
+            except (TypeError, ValueError):
+                topic_message_count = None
+        topic = data.get("topic")
+        if not isinstance(topic, str) or not topic.strip():
+            topic = None
         return cls(
             id=data["id"],
             name=data.get("name"),
@@ -107,6 +132,8 @@ class Session:
             files_in_context=data.get("files_in_context", []),
             parent_session_id=data.get("parent_session_id"),
             tags=data.get("tags", []),
+            topic=topic,
+            topic_message_count=topic_message_count,
         )
 
     def to_json(self) -> Dict[str, Any]:
@@ -124,6 +151,8 @@ class Session:
             "files_in_context": self.files_in_context,
             "parent_session_id": self.parent_session_id,
             "tags": self.tags,
+            "topic": self.topic,
+            "topic_message_count": self.topic_message_count,
         }
 
     def meta(self, json_path: str) -> SessionMeta:
@@ -146,6 +175,8 @@ class Session:
             first_user_message=first_user,
             last_user_message=last_user,
             json_path=json_path,
+            topic=self.topic,
+            topic_message_count=self.topic_message_count,
         )
 
 
@@ -170,17 +201,12 @@ def _new_session_id() -> str:
     return f"{ts:x}-{rand}"
 
 
-def _connect_db() -> sqlite3.Connection:
-    CAST_HOME.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(DB_PATH))
-    conn.row_factory = sqlite3.Row
-    return conn
-
-
-def _ensure_sessions_table() -> None:
+def _ensure_sessions_table(db_path: Optional[Path] = None) -> None:
     """Create the sessions table if it does not exist. Mirrors the schema
     declared in typescript/cast-cli/src/lib/sqlite.ts so both sides agree."""
-    conn = _connect_db()
+    path = Path(db_path) if db_path is not None else DB_PATH
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path))
     try:
         conn.executescript(
             """
@@ -197,15 +223,27 @@ def _ensure_sessions_table() -> None:
                 parent_session_id TEXT,
                 first_user_message TEXT,
                 last_user_message TEXT,
+                topic TEXT,
+                topic_message_count INTEGER,
                 json_path TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_sessions_agent_name ON sessions(agent_name);
             CREATE INDEX IF NOT EXISTS idx_sessions_updated_at ON sessions(updated_at DESC);
             """
         )
+        _ensure_session_topic_columns(conn)
         conn.commit()
     finally:
         conn.close()
+
+
+def _ensure_session_topic_columns(conn: sqlite3.Connection) -> None:
+    """Idempotent ALTER for databases that already have sessions."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(sessions)").fetchall()}
+    if "topic" not in cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN topic TEXT")
+    if "topic_message_count" not in cols:
+        conn.execute("ALTER TABLE sessions ADD COLUMN topic_message_count INTEGER")
 
 
 def _read_session_json(json_path: str) -> Optional[Dict[str, Any]]:
@@ -249,7 +287,7 @@ class SessionStore:
         self.db_path = db_path or DB_PATH
         self.sessions_dir.mkdir(parents=True, exist_ok=True)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        _ensure_sessions_table()
+        _ensure_sessions_table(self.db_path)
 
     # -- low-level db helpers -------------------------------------------------
 
@@ -266,8 +304,9 @@ class SessionStore:
                 INSERT OR REPLACE INTO sessions (
                     id, name, agent_name, mode, ui_mode, created_at, updated_at,
                     ended_at, message_count, parent_session_id,
-                    first_user_message, last_user_message, json_path
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    first_user_message, last_user_message, topic,
+                    topic_message_count, json_path
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     meta.id,
@@ -282,6 +321,8 @@ class SessionStore:
                     meta.parent_session_id,
                     meta.first_user_message,
                     meta.last_user_message,
+                    meta.topic,
+                    meta.topic_message_count,
                     meta.json_path,
                 ),
             )
@@ -329,6 +370,108 @@ class SessionStore:
             return _row_to_meta(row)
         finally:
             conn.close()
+
+    def _save_session(self, session: Session) -> str:
+        """Write the session JSON. Keep a topic already on disk if this copy lacks one."""
+        json_path = str(self.sessions_dir / f"{session.id}.json")
+        data = session.to_json()
+        if not data.get("topic"):
+            existing = _read_session_json(json_path)
+            if existing and isinstance(existing.get("topic"), str) and existing.get("topic").strip():
+                data["topic"] = existing.get("topic")
+                data["topic_message_count"] = existing.get("topic_message_count")
+                session.topic = data["topic"]
+                raw_count = data["topic_message_count"]
+                try:
+                    session.topic_message_count = None if raw_count is None else int(raw_count)
+                except (TypeError, ValueError):
+                    session.topic_message_count = None
+        _write_session_json(json_path, data)
+        return json_path
+
+    def _write_topic(self, session_id: str, topic: str, message_count: int) -> bool:
+        """Persist a topic only if the transcript length is still the one we summarized."""
+        meta = self._get_meta_row(session_id)
+        if meta is None:
+            return False
+        data = _read_session_json(meta.json_path)
+        if data is None:
+            return False
+        messages = data.get("messages") or []
+        if len(messages) != message_count:
+            return False
+        data["topic"] = topic
+        data["topic_message_count"] = message_count
+        _write_session_json(meta.json_path, data)
+        self._update_meta_fields(session_id, {
+            "topic": topic,
+            "topic_message_count": message_count,
+        })
+        return True
+
+    def refresh_topic(
+        self,
+        identifier: str,
+        *,
+        provider: Any = None,
+        completer: Optional[Any] = None,
+        agents_dir: Optional[Path] = None,
+    ) -> Optional[str]:
+        """Fill a missing or stale topic from that agent's model.
+
+        Returns the stored topic, or None when the call is skipped or fails.
+        A failure does not write a topic and does not change ``name``.
+        A fresh topic is returned without calling the model.
+        """
+        meta = self._resolve_meta(identifier)
+        if meta is None:
+            return None
+        session = self.get(meta.id)
+        if session is None:
+            return None
+        if isinstance(session.name, str) and session.name.strip():
+            return None
+        if not any(
+            message.role == "user" and isinstance(message.text, str) and message.text.strip()
+            for message in session.messages
+        ):
+            return None
+        if (
+            isinstance(session.topic, str)
+            and session.topic.strip()
+            and session.topic_message_count is not None
+            and session.topic_message_count == len(session.messages)
+        ):
+            return session.topic
+        from cast.providers.session_topic import (
+            bounded_transcript,
+            complete_session_topic,
+            resolve_agent_model,
+            sanitize_topic,
+        )
+        root = agents_dir if agents_dir is not None else (Path.home() / ".cast" / "agents")
+        model = resolve_agent_model(session.agent_name, root)
+        if not model:
+            return None
+        transcript = bounded_transcript(session.messages)
+        if not transcript.strip():
+            return None
+        if completer is None:
+            def completer(model_name: str, text: str) -> Optional[str]:
+                return complete_session_topic(model_name, text, provider=provider)
+        try:
+            raw = completer(model, transcript)
+        except Exception:
+            return None
+        if not isinstance(raw, str):
+            return None
+        topic = sanitize_topic(raw)
+        if not topic:
+            return None
+        message_count = len(session.messages)
+        if not self._write_topic(session.id, topic, message_count):
+            return None
+        return topic
 
     # -- public API ----------------------------------------------------------
 
@@ -382,6 +525,8 @@ class SessionStore:
                 mode=meta.mode,
                 ui_mode=meta.ui_mode,
                 parent_session_id=meta.parent_session_id,
+                topic=meta.topic,
+                topic_message_count=meta.topic_message_count,
             )
         return Session.from_json(data)
 
@@ -439,9 +584,10 @@ class SessionStore:
             SessionMessage(role=role, text=text, ts=ts, ui_action=ui_action)
         )
         session.updated_at = ts
-        _write_session_json(session.meta(str(self.sessions_dir / f"{session.id}.json")).json_path, session.to_json())
+        self._save_session(session)
 
-        # Refresh SQLite metadata fields
+        # Refresh SQLite metadata fields. Topic columns stay as they were:
+        # a new message makes topic_message_count stale instead of clearing it.
         new_meta = session.meta(str(self.sessions_dir / f"{session.id}.json"))
         self._update_meta_fields(
             session_id,
@@ -462,8 +608,7 @@ class SessionStore:
             raise SessionError(f"Session JSON missing: {meta.id}")
         session.name = name
         session.updated_at = _now_iso()
-        json_path = str(self.sessions_dir / f"{session.id}.json")
-        _write_session_json(json_path, session.to_json())
+        self._save_session(session)
         self._update_meta_fields(
             session_id=session.id,
             fields={"name": name, "updated_at": session.updated_at},
@@ -489,9 +634,10 @@ class SessionStore:
         forked.messages = list(original.messages)
         forked.files_in_context = list(original.files_in_context)
         forked.tags = list(original.tags)
+        forked.topic = original.topic
+        forked.topic_message_count = original.topic_message_count
         forked.updated_at = _now_iso()
-        json_path = str(self.sessions_dir / f"{forked.id}.json")
-        _write_session_json(json_path, forked.to_json())
+        json_path = self._save_session(forked)
         new_meta = forked.meta(json_path)
         self._update_meta_fields(
             forked.id,
@@ -500,6 +646,8 @@ class SessionStore:
                 "message_count": new_meta.message_count,
                 "first_user_message": new_meta.first_user_message,
                 "last_user_message": new_meta.last_user_message,
+                "topic": new_meta.topic,
+                "topic_message_count": new_meta.topic_message_count,
             },
         )
         return forked

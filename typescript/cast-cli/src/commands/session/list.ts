@@ -2,6 +2,7 @@ import {Command, Args, Flags} from '@oclif/core'
 import {
   listSessions,
 } from '../../lib/sessions'
+import {sessionDisplayTitle} from '../../lib/session-topic'
 
 function relativeTime(iso: string): string {
   if (!iso) return ''
@@ -19,12 +20,6 @@ function relativeTime(iso: string): string {
   const mo = Math.floor(day / 30)
   if (mo < 12) return `${mo}mo ago`
   return `${Math.floor(mo / 12)}y ago`
-}
-
-function truncate(s: string | null | undefined, n: number): string {
-  if (!s) return ''
-  const oneLine = s.replace(/\s+/g, ' ').trim()
-  return oneLine.length > n ? oneLine.slice(0, n - 1) + '…' : oneLine
 }
 
 export default class SessionList extends Command {
@@ -71,7 +66,7 @@ export default class SessionList extends Command {
     this.log('──────────────────────────────────────────────────────────────────────────────')
 
     for (const s of sessions) {
-      const title = s.name || truncate(s.first_user_message, 60) || '(untitled)'
+      const title = sessionDisplayTitle(s)
       const ended = s.ended_at ? ' (ended)' : ''
       this.log(
         `  ${s.id}  ${title}${ended}`,

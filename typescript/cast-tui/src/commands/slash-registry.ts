@@ -19,9 +19,11 @@ import {
   appendMessage,
   forkSession,
   renameSession,
+  refreshSessionTopic,
   type SessionMeta,
   type Session,
 } from '../lib/sessions.js'
+import {refreshStaleSessionTopics, sessionDisplayTitle} from '../lib/session-topic.js'
 import {createModal} from '../components/modal.js'
 import {runDeployInTerminal, runShutdownInTerminal} from '../components/terminal.js'
 import {DEPLOYMENT_PROVIDERS, providerDisplayName} from '../lib/deployment-providers.js'
@@ -368,17 +370,6 @@ function formatRelativeTime(iso: string): string {
 }
 
 /**
- * Truncate a string to a maximum length, collapsing whitespace and
- * adding an ellipsis when truncated. Used to fit user prompts into
- * session picker rows.
- */
-function truncatePreview(s: string | null | undefined, n: number): string {
-  if (!s) return ''
-  const oneLine = s.replace(/\s+/g, ' ').trim()
-  return oneLine.length > n ? oneLine.slice(0, n - 1) + '…' : oneLine
-}
-
-/**
  * Show a session picker modal. Renders the list of sessions for the
  * current agent, navigates with up/down, and invokes `onSelect` with
  * the chosen session id (or no-op on escape).
@@ -456,7 +447,7 @@ function showSessionPicker(
       const s = sessions[i]
       const isSelected = i === selectedIndex
       const titleColor = isSelected ? white : dim
-      const title = s.name || truncatePreview(s.first_user_message, 60) || '(untitled)'
+      const title = sessionDisplayTitle(s)
       const endedTag = s.ended_at ? ' (ended)' : ''
 
       const row = new TextRenderable(ctx.renderer, {
@@ -503,6 +494,13 @@ function showSessionPicker(
   ctx.renderer.root.add(modal.box)
   modal.show()
 
+  let closed = false
+  const closePicker = () => {
+    closed = true
+    modal.hide()
+    ctx.input.focus()
+  }
+
   const originalHandle = modal.box.handleKeyPress?.bind(modal.box)
   modal.box.handleKeyPress = (key: KeyEvent) => {
     if (key.name === 'up') {
@@ -518,14 +516,12 @@ function showSessionPicker(
       return true
     }
     if (key.name === 'escape') {
-      modal.hide()
-      ctx.input.focus()
+      closePicker()
       return true
     }
     if (key.name === 'return' || key.name === 'enter') {
       const chosen = sessions[selectedIndex]
-      modal.hide()
-      ctx.input.focus()
+      closePicker()
       void options.onSelect(chosen)
       return true
     }
@@ -533,14 +529,25 @@ function showSessionPicker(
       const k = (key.name ?? '').toLowerCase()
       if (k.length === 1 && options.extraActions[k]) {
         const chosen = sessions[selectedIndex]
-        modal.hide()
-        ctx.input.focus()
+        closePicker()
         void options.extraActions[k].run(chosen)
         return true
       }
     }
     return originalHandle ? originalHandle(key) : false
   }
+
+  // The modal is already visible. Topics that are missing or stale fill in
+  // a few at a time and the open rows repaint. Failures keep the fallback.
+  void refreshStaleSessionTopics(sessions, {
+    isCancelled: () => closed,
+    refreshOne: (session) => refreshSessionTopic(session.id),
+    onUpdated: () => {
+      if (closed) return
+      renderList()
+      ctx.renderer.requestRender?.()
+    },
+  })
 }
 
 function sessionTitle(sess: SessionMeta): string {
