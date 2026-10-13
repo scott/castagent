@@ -6,6 +6,7 @@ These tests cover the new releases module that supports semantic versioning
 import json
 import os
 import shutil
+import sqlite3
 import tarfile
 import tempfile
 import warnings
@@ -25,7 +26,9 @@ def temp_agents_dir(monkeypatch):
     module-level AGENTS_DIR constants used by both versioning and releases.
     """
     with tempfile.TemporaryDirectory() as tmpdir:
-        agents_path = Path(tmpdir)
+        # Match ~/.cast/agents so the SQLite file lands in <cast_home>/cast.db.
+        agents_path = Path(tmpdir) / ".cast" / "agents"
+        agents_path.mkdir(parents=True)
         # Patch both modules so any code path (including transitive calls
         # like create_version called from create_release) sees the tmpdir.
         monkeypatch.setattr(releases, "AGENTS_DIR", agents_path)
@@ -475,3 +478,295 @@ class TestReleaseInfo:
         assert info.changelog == ""
         assert info.created_at == "2024-01-01T00:00:00Z"
         assert info.tarball_path == "/tmp/1.0.tar.gz"
+
+
+def _sqlite_rows(agent_name: str):
+    conn = sqlite3.connect(str(releases._cast_db_path()))
+    try:
+        return conn.execute(
+            """
+            SELECT version, change_number, message, changelog, tarball_path, created_at
+            FROM releases WHERE agent_name = ?
+            """,
+            (agent_name,),
+        ).fetchall()
+    finally:
+        conn.close()
+
+
+def _sqlite_current(agent_name: str):
+    conn = sqlite3.connect(str(releases._cast_db_path()))
+    try:
+        row = conn.execute(
+            """
+            SELECT version FROM releases
+            WHERE agent_name = ?
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (agent_name,),
+        ).fetchone()
+        return row[0] if row else None
+    finally:
+        conn.close()
+
+
+def _plant_split_releases(agent_name: str, agents_dir: Path) -> None:
+    """JSON has 1.4 through 1.4.4; SQLite only has 1.4, with its own message."""
+    releases_dir = agents_dir / agent_name / ".cast" / "releases"
+    releases_dir.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "current": {"version": "1.4.4", "change_number": 8},
+        "releases": [
+            {
+                "version": "1.4",
+                "change_number": 4,
+                "message": "json-old",
+                "changelog": "json-log",
+                "created_at": "2026-06-09T12:00:00Z",
+                "tarball_path": "/tmp/json-1.4.tar.gz",
+            },
+            {
+                "version": "1.4.1",
+                "change_number": 5,
+                "message": "ssh",
+                "changelog": "ssh log",
+                "created_at": "2026-06-10T12:00:00Z",
+                "tarball_path": "/tmp/1.4.1.tar.gz",
+            },
+            {
+                "version": "1.4.2",
+                "change_number": 6,
+                "message": "tui2",
+                "changelog": "",
+                "created_at": "2026-06-11T12:00:00Z",
+                "tarball_path": "/tmp/1.4.2.tar.gz",
+            },
+            {
+                "version": "1.4.3",
+                "change_number": 7,
+                "message": "new-agent-runtime",
+                "changelog": "",
+                "created_at": "2026-06-12T12:00:00Z",
+                "tarball_path": "/tmp/1.4.3.tar.gz",
+            },
+            {
+                "version": "1.4.4",
+                "change_number": 8,
+                "message": "addedgander",
+                "changelog": "gander",
+                "created_at": "2026-06-13T12:00:00Z",
+                "tarball_path": "/tmp/1.4.4.tar.gz",
+            },
+        ],
+    }
+    (releases_dir / "releases.json").write_text(json.dumps(payload))
+    db_path = releases._cast_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path))
+    try:
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS releases (
+                agent_name TEXT,
+                version TEXT,
+                change_number INTEGER,
+                message TEXT,
+                changelog TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                tarball_path TEXT,
+                PRIMARY KEY (agent_name, version)
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO releases (
+                agent_name, version, change_number, message, changelog, created_at, tarball_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (agent_name, "1.4", 4, "db-original", "db-log", "2026-06-09 12:00:00", "/tmp/db-1.4.tar.gz"),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+# =============================================================================
+# SQLite sync
+# =============================================================================
+class TestReleaseSqliteSync:
+    """create_release writes releases.json and the SQLite releases row."""
+
+    def test_temp_home_create_writes_json_and_sqlite(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        agents = Path.home() / ".cast" / "agents"
+        agent = agents / "demo-agent"
+        agent.mkdir(parents=True)
+        (agent / "agent.yaml").write_text("name: demo-agent\nversion: '0.0'\n")
+        (agent / "instructions.md").write_text("# demo\n")
+        monkeypatch.setattr(releases, "AGENTS_DIR", agents)
+        monkeypatch.setattr(versioning, "AGENTS_DIR", agents)
+
+        versioning.create_version("demo-agent", source="cli", message="Added ssh")
+        info = releases.create_release("demo-agent", "1.5.0", "ship it")
+
+        db_path = home / ".cast" / "cast.db"
+        assert db_path.exists()
+        conn = sqlite3.connect(str(db_path))
+        try:
+            row = conn.execute(
+                """
+                SELECT version, change_number, message, changelog, tarball_path
+                FROM releases WHERE agent_name = ? AND version = ?
+                """,
+                ("demo-agent", "1.5.0"),
+            ).fetchone()
+            current = conn.execute(
+                """
+                SELECT version FROM releases WHERE agent_name = ?
+                ORDER BY created_at DESC LIMIT 1
+                """,
+                ("demo-agent",),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        assert row[0] == "1.5.0"
+        assert row[1] == info.change_number == 1
+        assert row[2] == "ship it"
+        assert "Added ssh" in row[3]
+        assert row[4] == info.tarball_path
+        assert current[0] == releases.get_current_release("demo-agent") == "1.5.0"
+        manifest = json.loads((agent / ".cast" / "releases" / "releases.json").read_text())
+        assert manifest["current"]["version"] == "1.5.0"
+
+    def test_second_create_does_not_overwrite_sqlite(self, test_agent, temp_agents_dir):
+        releases.create_release(test_agent, "1.0", "First")
+        conn = sqlite3.connect(str(releases._cast_db_path()))
+        try:
+            conn.execute(
+                """
+                UPDATE releases SET message = ?, changelog = ?
+                WHERE agent_name = ? AND version = ?
+                """,
+                ("keep-me", "original-log", test_agent, "1.0"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        releases.create_release(test_agent, "1.0", "Second")
+        rows = {row[0]: row for row in _sqlite_rows(test_agent)}
+        assert rows["1.0"][2] == "keep-me"
+        assert rows["1.0"][3] == "original-log"
+        assert len(rows) == 1
+
+    def test_backfill_on_list_and_get_current(self, test_agent, temp_agents_dir):
+        _plant_split_releases(test_agent, temp_agents_dir)
+        listed = releases.list_releases(test_agent)
+        assert [item.version for item in listed] == ["1.4.4", "1.4.3", "1.4.2", "1.4.1", "1.4"]
+        self._assert_backfill(test_agent)
+
+        # A second read, and get-current on a fresh split, must not clobber.
+        assert releases.get_current_release(test_agent) == "1.4.4"
+        self._assert_backfill(test_agent)
+
+    def test_get_current_backfill_without_list(self, test_agent, temp_agents_dir):
+        _plant_split_releases(test_agent, temp_agents_dir)
+        assert releases.get_current_release(test_agent) == "1.4.4"
+        self._assert_backfill(test_agent)
+        assert _sqlite_current(test_agent) == "1.4.4"
+
+    def test_create_backfills_missing_versions(self, test_agent, temp_agents_dir):
+        _plant_split_releases(test_agent, temp_agents_dir)
+        releases.create_release(test_agent, "1.5.0", "from any path")
+        rows = {row[0]: row for row in _sqlite_rows(test_agent)}
+        assert rows["1.4"][2] == "db-original"
+        assert rows["1.4"][3] == "db-log"
+        assert rows["1.4"][4] == "/tmp/db-1.4.tar.gz"
+        assert rows["1.4.1"][2] == "ssh"
+        assert rows["1.4.4"][2] == "addedgander"
+        assert rows["1.5.0"][2] == "from any path"
+        assert releases.get_current_release(test_agent) == _sqlite_current(test_agent) == "1.5.0"
+
+    def test_migration_adds_columns_without_filling_existing_row(self, test_agent, temp_agents_dir):
+        releases_dir = temp_agents_dir / test_agent / ".cast" / "releases"
+        releases_dir.mkdir(parents=True, exist_ok=True)
+        (releases_dir / "releases.json").write_text(json.dumps({
+            "current": {"version": "1.1", "change_number": 2},
+            "releases": [
+                {
+                    "version": "1.0",
+                    "change_number": 1,
+                    "message": "should-not-replace",
+                    "changelog": "nope",
+                    "created_at": "2026-01-01T00:00:00Z",
+                    "tarball_path": "/tmp/new-1.0.tar.gz",
+                },
+                {
+                    "version": "1.1",
+                    "change_number": 2,
+                    "message": "newer",
+                    "changelog": "notes",
+                    "created_at": "2026-02-01T00:00:00Z",
+                    "tarball_path": "/tmp/1.1.tar.gz",
+                },
+            ],
+        }))
+        db_path = releases._cast_db_path()
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute(
+                """
+                CREATE TABLE releases (
+                    agent_name TEXT,
+                    version TEXT,
+                    PRIMARY KEY (agent_name, version)
+                )
+                """
+            )
+            conn.execute(
+                "INSERT INTO releases (agent_name, version) VALUES (?, ?)",
+                (test_agent, "1.0"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        releases.list_releases(test_agent)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            columns = [row[1] for row in conn.execute("PRAGMA table_info(releases)")]
+            old = conn.execute(
+                "SELECT message, changelog, tarball_path, change_number FROM releases WHERE version = '1.0'"
+            ).fetchone()
+            new = conn.execute(
+                "SELECT message, changelog, tarball_path, change_number FROM releases WHERE version = '1.1'"
+            ).fetchone()
+        finally:
+            conn.close()
+
+        for column in ("change_number", "message", "changelog", "created_at", "tarball_path"):
+            assert column in columns
+        assert old[0] is None
+        assert old[1] is None
+        assert old[2] is None
+        assert new[0] == "newer"
+        assert new[1] == "notes"
+        assert new[2] == "/tmp/1.1.tar.gz"
+        assert new[3] == 2
+
+    def _assert_backfill(self, agent_name: str) -> None:
+        rows = {row[0]: row for row in _sqlite_rows(agent_name)}
+        assert set(rows) == {"1.4", "1.4.1", "1.4.2", "1.4.3", "1.4.4"}
+        assert rows["1.4"][2] == "db-original"
+        assert rows["1.4"][3] == "db-log"
+        assert rows["1.4"][4] == "/tmp/db-1.4.tar.gz"
+        assert rows["1.4.1"][1] == 5
+        assert rows["1.4.1"][2] == "ssh"
+        assert rows["1.4.1"][3] == "ssh log"
+        assert rows["1.4.1"][4] == "/tmp/1.4.1.tar.gz"
+        assert rows["1.4.4"][2] == "addedgander"
+        assert rows["1.4.4"][3] == "gander"
+        assert _sqlite_current(agent_name) == "1.4.4"

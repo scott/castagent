@@ -1,9 +1,12 @@
+import json
 import os
+import sqlite3
 import pytest
 import tempfile
 import yaml
 from pathlib import Path
 
+from cast import releases
 from cast.builder_tools import (
     create_agent,
     check_name_availability,
@@ -400,3 +403,48 @@ class TestReadFile:
                     os.environ["HOME"] = original_home
                 else:
                     del os.environ["HOME"]
+
+
+class TestCreateReleaseTool:
+    """Builder create_release uses the same SQLite writer as cast.releases."""
+
+    def test_create_release_tool_writes_sqlite(self, monkeypatch, tmp_path):
+        home = tmp_path / "home"
+        monkeypatch.setenv("HOME", str(home))
+        agents = home / ".cast" / "agents"
+        agent = agents / "builder-agent"
+        agent.mkdir(parents=True)
+        (agent / "agent.yaml").write_text("name: builder-agent\nversion: '0.0'\n")
+        (agent / "instructions.md").write_text("# builder\n")
+
+        from cast.builder_tools import tools
+        monkeypatch.setattr(tools, "AGENTS_DIR", agents)
+        monkeypatch.setattr(releases, "AGENTS_DIR", agents)
+
+        result = tools.create_release.invoke({
+            "name": "builder-agent",
+            "version": "1.5.0",
+            "message": "from builder",
+        })
+        assert "created successfully" in result
+        assert "1.5.0" in result
+
+        db_path = home / ".cast" / "cast.db"
+        assert db_path.exists()
+        conn = sqlite3.connect(str(db_path))
+        try:
+            row = conn.execute(
+                """
+                SELECT version, message, change_number, tarball_path
+                FROM releases WHERE agent_name = ?
+                """,
+                ("builder-agent",),
+            ).fetchone()
+        finally:
+            conn.close()
+        assert row[0] == "1.5.0"
+        assert row[1] == "from builder"
+        assert row[2] == 0
+        assert row[3].endswith("1.5.0.tar.gz")
+        manifest = json.loads((agent / ".cast" / "releases" / "releases.json").read_text())
+        assert manifest["current"]["version"] == "1.5.0"

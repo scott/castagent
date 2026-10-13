@@ -183,6 +183,23 @@ export class CastDatabase {
       `)
     }
 
+    // Migration: version, change number, message, changelog, tarball path.
+    // Existing rows are not rewritten.
+    if (this.tableExists('releases')) {
+      const releaseColumns: Array<[string, string]> = [
+        ['change_number', 'INTEGER'],
+        ['message', 'TEXT'],
+        ['changelog', 'TEXT'],
+        ['created_at', 'DATETIME'],
+        ['tarball_path', 'TEXT'],
+      ]
+      for (const [column, type] of releaseColumns) {
+        if (!this.columnExists('releases', column)) {
+          this.db.exec(`ALTER TABLE releases ADD COLUMN ${column} ${type}`)
+        }
+      }
+    }
+
     // Migration: Add sessions table (idempotent)
     if (!this.tableExists('sessions')) {
       this.db.exec(`
