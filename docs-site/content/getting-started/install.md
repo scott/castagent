@@ -51,7 +51,8 @@ cd castagent
 ```
 
 `install.sh` is idempotent — re-run it after pulling new commits to update the
-build and the symlink.
+build and the symlink. To fetch and rebuild in one step, use
+[`./upgrade.sh`](#updating).
 
 ## Quick setup
 
@@ -87,16 +88,25 @@ If you see the version banner and an empty list, you're ready for the
 
 ## Updating
 
+From the checkout:
+
 ```bash
-cd castagent
-git pull
-./install.sh
+./upgrade.sh
 ```
 
-`install.sh` is idempotent and safe to re-run at any time. As of the latest
-version it will also clean up any stale binaries left over from older Cast
-installs (for example the pre-TypeScript Go binary that used to live at
-`~/.cast/bin/cast`) so the freshly-built CLI always wins in your `$PATH`.
+`upgrade.sh` fetches the newest `master` commit (`main` when that is the only
+upstream branch), fast-forwards this checkout, and rebuilds the CLI, TUI, and
+Python runtime in place. Agents, config, and tokens in `~/.cast` stay where
+they are. A stale pre-TypeScript binary at `~/.cast/bin/cast` is removed so it
+cannot shadow the new CLI.
+
+The script stops without rebuilding when you have uncommitted changes, or when
+local commits on that upstream branch cannot fast-forward. It updates the
+local Cast installation only. A deployed agent is still updated with
+`cast upgrade <agent>`.
+
+`./install.sh` still rebuilds the checkout you already have, without fetching.
+Use `./upgrade.sh` to move to the newest version and rebuild.
 
 ## Troubleshooting
 
@@ -112,7 +122,7 @@ file "$(which cast)"
 ```
 
 If the result is a `Mach-O`/`ELF` executable (not a `bash` script), run
-`./install.sh` from the project root — it will remove the stale binary and
+`./upgrade.sh` from the project root — it will remove the stale binary and
 refresh the `~/.local/bin/cast` symlink.
 
 ## Uninstalling
