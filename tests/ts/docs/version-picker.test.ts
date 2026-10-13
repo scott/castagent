@@ -113,8 +113,8 @@ describe('docs version picker placement', () => {
 
   it('labels the button with the version and loads the picker by an absolute path', () => {
     expect(component).to.include('v{docsVersion}')
-    expect(component).to.include('version-picker-latest')
-    expect(component).to.include('Latest')
+    expect(component).to.not.include('version-picker-latest')
+    expect(component).to.not.include('Latest')
     expect(component).to.include('src="/version-picker.js"')
     expect(component).to.not.include('src="version-picker.js"')
     expect(component).to.not.include('src="./version-picker.js"')
@@ -122,8 +122,17 @@ describe('docs version picker placement', () => {
     expect(component).to.include('data-docs-version={docsVersion}')
     expect(read('docs-site/astro.config.mjs')).to.include('DOCS_VERSION')
     expect(read('docs-site/astro.config.mjs')).to.include("package.json")
-    expect(read('docs-site/public/version-picker.js')).to.include("'/versions.json'")
-    expect(read('docs-site/public/version-picker.js')).to.not.match(/fetch\(\s*['"]versions\.json['"]/)
+    const script = read('docs-site/public/version-picker.js')
+    expect(script).to.include("'/versions.json'")
+    expect(script).to.not.match(/fetch\(\s*['"]versions\.json['"]/)
+    const fill = script.slice(script.indexOf('function fillButton'), script.indexOf('function menuRows'))
+    expect(fill).to.include("'v' + version")
+    expect(fill).to.not.include('Latest')
+    expect(script).to.include('fillButton(button, version)')
+    expect(script).to.not.include('version === manifest.latest')
+    const menu = script.slice(script.indexOf('if (row.latest)'))
+    expect(menu).to.include("className = 'version-picker-latest'")
+    expect(menu).to.include("textContent = 'Latest'")
   })
 
   it('keeps the logo row visible below 800px and uses the existing colors', () => {
