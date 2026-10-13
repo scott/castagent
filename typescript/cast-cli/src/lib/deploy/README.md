@@ -223,6 +223,6 @@ These behaviors move behind the interface. They do not change.
 | `fly` | `flyctl`, `flyctl auth login`. Memory is a fly volume. |
 | `digitalocean` | Droplet plus `docker load`. `withTui: 'supported'`. Token from `DIGITALOCEAN_ACCESS_TOKEN` or `providers.digitalocean.token`. Requires Docker and `doctl`. |
 | `microvm` | `withTui: 'rejected'` with the existing error sentence. Flags `--size` (default `1:2048`), `--idle-timeout` (default `15m`), `--edge-auth-only`. `doctl` >= 1.173.0. `connect` sets the edge token and the resume hint. `destroy` deletes the MicroVM, not the registry. |
-| `sprites` | `sprite`, `sprite login`, `SPRITES_TOKEN`. `connect` may start the local proxy. |
+| `sprites` | `sprite`, `sprite login`, `SPRITES_TOKEN`. Deploy registers a `cast-agent` service on port 8080. `connect` starts that service, then may start the local proxy. |
 | `docker` | Requires a running Docker daemon. Reads `--port`. |
 | `local` | `deploy` logs that it is not implemented and tells the user to use `--provider docker`. No `destroy`. |

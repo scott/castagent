@@ -13,6 +13,12 @@ import {
   generateDeploymentId,
   getVolumeName,
 } from './deploy-utils'
+import {
+  SPRITE_SERVICE_NAME,
+  spriteAgentLaunchScript,
+  spriteInstallServiceCommand,
+  spriteServiceStatusArgs,
+} from './sprites-service'
 
 const AGENT_DIR = '/opt/cast-agent'
 const HOST_MOUNT_BASE = '/mnt/cast-memory'
@@ -128,23 +134,17 @@ export default class SpritesDeploy extends Command {
     this.log('Installing dependencies...')
     await this.execOnSprite(spriteName, `${AGENT_DIR}/venv/bin/pip install -r ${AGENT_DIR}/requirements.txt`, longTimeout)
 
-    // Setup and start background service
+    // Register a supervised service. A one-shot nohup dies with the exec
+    // session, and the sprite proxy then resets every chat connection.
     this.log('Starting agent service...')
     await this.setupBackgroundService(spriteName, agentName, authToken)
 
-    // Wait a moment for service to start
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-
-    // Verify service is running
-    const pidResult = await this.execOnSprite(spriteName, `cat ${AGENT_DIR}/agent.pid 2>/dev/null || echo 'no-pid'`)
-    const pid = pidResult.trim()
-    if (pid === 'no-pid' || !pid) {
-      this.warn('Agent service may not be running. Check logs with: sprite exec -s ' + spriteName + ` -- cat ${AGENT_DIR}/agent.log`)
-    } else {
-      const psResult = await this.execOnSprite(spriteName, `ps -p ${pid} > /dev/null 2>&1 && echo 'running' || echo 'not-running'`)
-      if (psResult.trim() !== 'running') {
-        this.warn('Agent service is not running. Check logs with: sprite exec -s ' + spriteName + ` -- cat ${AGENT_DIR}/agent.log`)
-      }
+    const status = await execCommand('sprite', spriteServiceStatusArgs(spriteName), {silent: true, shell: false})
+    if (status.exitCode !== 0 || !status.stdout.includes('"status":"running"')) {
+      this.warn(
+        'Agent service may not be running. Check logs with: sprite exec -s ' +
+        spriteName + ` -- cat /.sprite/logs/services/${SPRITE_SERVICE_NAME}.log`,
+      )
     }
 
     // Get URL
@@ -328,38 +328,19 @@ export default class SpritesDeploy extends Command {
   }
 
   private async setupBackgroundService(spriteName: string, agentName: string, authToken: string): Promise<void> {
-    const inferenceExports = Object.entries(inferenceEnv())
-      .map(([key, value]) => `export ${key}="${value.replace(/"/g, '\\"')}"`)
-      .join('\n')
-
-    // Kill any existing agent process
     this.log('  Stopping any existing agent process...')
     await this.execOnSprite(spriteName, `if [ -f ${AGENT_DIR}/agent.pid ]; then kill $(cat ${AGENT_DIR}/agent.pid) 2>/dev/null; rm -f ${AGENT_DIR}/agent.pid; fi`)
 
-    // Create startup script that backgrounds itself and exits immediately
-    // Use proper quoting for auth token to handle special characters
+    // stdin is the script. The remote bash -c string must stay one argument.
     this.log('  Creating startup script...')
-    const startScript = `#!/bin/bash
-cd ${AGENT_DIR}
-export PYTHONPATH=${AGENT_DIR}/.cast-runtime
-export CAST_AGENT_NAME=${agentName}
-export CAST_AGENT_PATH=${AGENT_DIR}
-export AUTH_TOKEN="${authToken.replace(/"/g, '\\"')}"
-${inferenceExports}
-# Start agent in background, redirect all output, write PID, then exit
-nohup ${AGENT_DIR}/venv/bin/python -m cast.runtime --agent-path ${AGENT_DIR} --port 8080 --host 0.0.0.0 > ${AGENT_DIR}/agent.log 2>&1 &
-echo $! > ${AGENT_DIR}/agent.pid
-`
-
-    await this.execOnSprite(spriteName, `cat > ${AGENT_DIR}/start.sh << 'EOF'\n${startScript}EOF`)
-    await this.execOnSprite(spriteName, `chmod +x ${AGENT_DIR}/start.sh`)
-
-    // Run the start script using execCommand (spawn) instead of execSync
-    // This avoids blocking on background processes that inherit stdio pipes
-    this.log('  Starting agent process...')
-    const startResult = await execCommand('sprite', ['exec', '-s', spriteName, '--', 'bash', '-c', `sudo bash ${AGENT_DIR}/start.sh`], {silent: true})
+    const startResult = await execCommand(
+      'sprite',
+      ['exec', '-s', spriteName, '--', 'bash', '-c', spriteInstallServiceCommand()],
+      {silent: true, shell: false, input: spriteAgentLaunchScript(agentName, authToken, inferenceEnv())},
+    )
     if (startResult.exitCode !== 0) {
-      this.warn(`Start script returned exit code ${startResult.exitCode}: ${startResult.stderr}`)
+      const detail = (startResult.stderr || startResult.stdout).trim()
+      this.warn(`Agent service returned exit code ${startResult.exitCode}${detail ? `: ${detail}` : ''}`)
     }
   }
 }

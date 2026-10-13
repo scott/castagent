@@ -3,7 +3,9 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import {A2AClient, A2AClientError} from '../../a2a/client'
+import {execCommand} from '../deploy-utils'
 import SpritesDeploy from '../sprites'
+import {spriteStartServiceArgs} from '../sprites-service'
 import type {DeploymentProvider} from '../types'
 import {upgradeSpritesDeployment} from '../upgrades'
 
@@ -148,6 +150,20 @@ export const spritesProvider: DeploymentProvider = {
     await upgradeSpritesDeployment(ctx, ctx.agentName, ctx.version, ctx.versionTarballPath)
   },
   async connect(ctx) {
+    // The TCP proxy does not start a stopped service. Start it before the
+    // first chat POST, or the proxy accepts the socket and then resets it.
+    const spriteName = `cast-${ctx.agentName}`
+    try {
+      const started = await execCommand('sprite', spriteStartServiceArgs(spriteName), {silent: true, shell: false})
+      if (started.exitCode !== 0) {
+        const detail = (started.stderr || started.stdout).trim()
+        ctx.warn(`Could not start the sprite agent service${detail ? `: ${detail}` : ''}`)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      ctx.warn(`Could not start the sprite agent service: ${message}`)
+    }
+
     const needsProxy = await checkNeedsProxy(ctx.url)
     if (!(needsProxy || ctx.flags?.proxy)) return
     ctx.log('Sprites auth detected. Starting local proxy...')

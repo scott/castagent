@@ -49,6 +49,13 @@ Each provider has its own CLI auth (`railway login`, `flyctl auth login`,
 `doctl auth init`, `sprite login`). `cast deploy` walks you through any
 prerequisites interactively if you haven't set them up.
 
+Sprites pause when idle. A process started only for the deploy command
+is gone on the next wake, and chat then fails as soon as the local proxy
+resets the socket. Cast registers the agent as a sprite service on port
+8080. That service starts again after a wake, and `cast connect` starts
+it before opening the proxy. Deploy the sprite again if it was created
+before that service existed.
+
 ## What gets shipped
 
 The deployment is a single Docker image that contains:
