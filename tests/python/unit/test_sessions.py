@@ -339,6 +339,187 @@ class TestSessionPrune:
         assert deleted == 0
 
 
+class TestSessionTopicStore:
+    def test_from_db_row_defaults_topic_and_ignores_unknown_columns(self):
+        meta = sessions.SessionMeta.from_db_row({
+            "id": "legacy",
+            "name": "",
+            "agent_name": "alpha",
+            "mode": "build",
+            "ui_mode": "dev",
+            "created_at": "2020-01-01T00:00:00Z",
+            "updated_at": "2020-01-01T00:00:00Z",
+            "ended_at": "",
+            "message_count": 1,
+            "parent_session_id": "",
+            "first_user_message": "Hello",
+            "last_user_message": "Hello",
+            "json_path": "/tmp/legacy.json",
+            "extra_future_column": "ignore-me",
+        })
+        assert meta.topic is None
+        assert meta.topic_message_count is None
+        assert meta.name is None
+        assert meta.first_user_message == "Hello"
+        assert not hasattr(meta, "extra_future_column")
+
+    def test_legacy_table_without_topic_columns_still_lists(self, temp_cast_home):
+        db_path = temp_cast_home / "cast.db"
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            """
+            CREATE TABLE sessions (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                agent_name TEXT NOT NULL,
+                mode TEXT,
+                ui_mode TEXT,
+                created_at DATETIME,
+                updated_at DATETIME,
+                ended_at DATETIME,
+                message_count INTEGER DEFAULT 0,
+                parent_session_id TEXT,
+                first_user_message TEXT,
+                last_user_message TEXT,
+                json_path TEXT NOT NULL
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO sessions (
+                id, name, agent_name, mode, ui_mode, created_at, updated_at,
+                message_count, first_user_message, json_path
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                "legacy-1",
+                None,
+                "alpha",
+                "build",
+                "dev",
+                "2020-01-01T00:00:00Z",
+                "2020-01-01T00:00:00Z",
+                1,
+                "Hello from before",
+                str(temp_cast_home / "missing.json"),
+            ),
+        )
+        conn.commit()
+        conn.close()
+
+        store = sessions.SessionStore()
+        items = store.list()
+        assert [item.id for item in items] == ["legacy-1"]
+        assert items[0].topic is None
+        assert items[0].topic_message_count is None
+        assert items[0].first_user_message == "Hello from before"
+        assert items[0].to_db_row()["topic"] is None
+
+        sessions._ensure_sessions_table(db_path)
+        cols = {
+            row[1]
+            for row in sqlite3.connect(db_path).execute("PRAGMA table_info(sessions)")
+        }
+        assert "topic" in cols
+        assert "topic_message_count" in cols
+        assert store._get_meta_row("legacy-1").agent_name == "alpha"
+
+    def test_topic_round_trip_sqlite_and_json(self, store, temp_cast_home):
+        session = store.create("alpha")
+        store.append_message(session.id, "user", "Hello")
+        assert store._write_topic(session.id, "Hello topic", 1) is True
+
+        meta = store._get_meta_row(session.id)
+        assert meta.topic == "Hello topic"
+        assert meta.topic_message_count == 1
+        assert meta.name is None
+        row = meta.to_db_row()
+        assert row["topic"] == "Hello topic"
+        assert row["topic_message_count"] == 1
+
+        data = json.loads((temp_cast_home / "sessions" / f"{session.id}.json").read_text())
+        assert data["topic"] == "Hello topic"
+        assert data["topic_message_count"] == 1
+        loaded = store.get(session.id)
+        assert loaded is not None
+        assert loaded.topic == "Hello topic"
+        assert loaded.topic_message_count == 1
+        assert store.list()[0].topic == "Hello topic"
+
+        assert store._write_topic(session.id, "stale write", 99) is False
+        assert store._get_meta_row(session.id).topic == "Hello topic"
+
+    def test_append_keeps_topic_but_makes_it_stale(self, store):
+        from cast.providers.session_topic import topic_is_fresh
+
+        session = store.create("alpha")
+        store.append_message(session.id, "user", "Hello")
+        updated_at = store._get_meta_row(session.id).updated_at
+        store._write_topic(session.id, "Hello topic", 1)
+        assert store._get_meta_row(session.id).updated_at == updated_at
+
+        store.append_message(session.id, "agent", "Hi")
+        meta = store._get_meta_row(session.id)
+        assert meta.topic == "Hello topic"
+        assert meta.topic_message_count == 1
+        assert meta.message_count == 2
+        assert topic_is_fresh(meta.topic, meta.topic_message_count, meta.message_count) is False
+        loaded = store.get(session.id)
+        assert loaded is not None
+        assert [message.text for message in loaded.messages] == ["Hello", "Hi"]
+        assert loaded.topic == "Hello topic"
+
+    def test_rename_does_not_change_topic(self, store):
+        session = store.create("alpha")
+        store.append_message(session.id, "user", "Hello")
+        store._write_topic(session.id, "Hello topic", 1)
+        store.rename(session.id, "Kept name")
+        meta = store._get_meta_row(session.id)
+        assert meta.name == "Kept name"
+        assert meta.topic == "Hello topic"
+        assert meta.topic_message_count == 1
+
+    def test_fork_copies_topic_and_later_messages_make_it_stale(self, store):
+        from cast.providers.session_topic import topic_is_fresh
+
+        session = store.create("alpha", name="original")
+        store.append_message(session.id, "user", "Hello")
+        store._write_topic(session.id, "Hello topic", 1)
+        forked = store.fork(session.id)
+        assert forked.name is None
+        assert forked.topic == "Hello topic"
+        assert forked.topic_message_count == 1
+        meta = store._get_meta_row(forked.id)
+        assert meta.topic == "Hello topic"
+        assert meta.topic_message_count == 1
+        assert meta.message_count == 1
+        assert topic_is_fresh(meta.topic, meta.topic_message_count, meta.message_count) is True
+
+        store.append_message(forked.id, "user", "diverge")
+        meta = store._get_meta_row(forked.id)
+        assert meta.topic == "Hello topic"
+        assert meta.topic_message_count == 1
+        assert meta.message_count == 2
+        assert topic_is_fresh(meta.topic, meta.topic_message_count, meta.message_count) is False
+        original = store.get(session.id)
+        assert original is not None
+        assert len(original.messages) == 1
+
+    def test_import_keeps_topic(self, store, temp_cast_home):
+        session = store.create("alpha")
+        store.append_message(session.id, "user", "Hello")
+        store._write_topic(session.id, "Hello topic", 1)
+        out = temp_cast_home / "exports" / "topic.json"
+        store.export(session.id, out)
+        imported = store.import_(out, new_id=True)
+        assert imported.topic == "Hello topic"
+        assert imported.topic_message_count == 1
+        meta = store._get_meta_row(imported.id)
+        assert meta.topic == "Hello topic"
+        assert meta.topic_message_count == 1
+
+
 class TestSessionDeleteForAgent:
     def test_cascade_delete_removes_all_sessions(self, store, temp_cast_home):
         store.create("alpha")

@@ -1,8 +1,9 @@
-import {execFileSync} from 'child_process'
+import {execFile, execFileSync} from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import {getDb, type DbApi} from './db.js'
+import {sessionMetaFromRow} from './session-topic.js'
 
 /**
  * Lightweight session metadata. Mirrors the shape of the SQLite `sessions`
@@ -21,6 +22,8 @@ export interface SessionMeta {
   parent_session_id: string | null
   first_user_message: string | null
   last_user_message: string | null
+  topic?: string | null
+  topic_message_count?: number | null
   json_path: string
 }
 
@@ -48,6 +51,8 @@ export interface Session {
   files_in_context: string[]
   parent_session_id: string | null
   tags: string[]
+  topic?: string | null
+  topic_message_count?: number | null
 }
 
 /**
@@ -83,6 +88,26 @@ function toJson(value: any): string {
   return JSON.stringify(value).replace(/'/g, "\\'")
 }
 
+function runPythonAsync(script: string): Promise<string> {
+  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
+  const tmp = path.join(
+    os.tmpdir(),
+    `cast_session_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.py`,
+  )
+  fs.writeFileSync(tmp, script)
+  return new Promise((resolve, reject) => {
+    execFile(pythonCmd, [tmp], {cwd: os.homedir(), encoding: 'utf-8'}, (err, stdout) => {
+      try {
+        fs.unlinkSync(tmp)
+      } catch {
+        // ignore
+      }
+      if (err) reject(err)
+      else resolve(String(stdout ?? '').trim())
+    })
+  })
+}
+
 /**
  * Read the metadata index via the local DB so the TUI can list sessions
  * without shelling out to Python. Falls back to an empty list if the DB
@@ -91,7 +116,36 @@ function toJson(value: any): string {
 export async function listSessions(agentName?: string, limit: number = 50, includeEnded: boolean = true): Promise<SessionMeta[]> {
   const db = (await getDb()) as DbApi | null
   if (!db) return []
-  return db.listSessions(agentName, limit, includeEnded) as SessionMeta[]
+  const rows = db.listSessions(agentName, limit, includeEnded) as SessionMeta[]
+  return rows.map((row) => sessionMetaFromRow(row))
+}
+
+/**
+ * Ask Python to summarize one session, then re-read the index row.
+ * A missing key or a failed call leaves the row unchanged.
+ */
+export async function refreshSessionTopic(sessionId: string): Promise<SessionMeta | null> {
+  const safeId = sessionId.replace(/'/g, "\\'")
+  try {
+    await runPythonAsync(`
+import sys
+sys.path.insert(0, '${pythonPath()}')
+from cast.sessions import SessionStore
+store = SessionStore()
+store.refresh_topic('${safeId}')
+`)
+  } catch {
+    return null
+  }
+  try {
+    const db = (await getDb()) as DbApi | null
+    if (!db) return null
+    const row = db.getSession(sessionId)
+    if (!row) return null
+    return sessionMetaFromRow(row)
+  } catch {
+    return null
+  }
 }
 
 /**

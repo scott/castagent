@@ -21,16 +21,33 @@ function generateShaFromExistingData(agentName: string, deployedAt: string, prov
   return hash.digest('hex').substring(0, 6).toLowerCase()
 }
 
+export function mapSessionRow(row: any): any {
+  if (!row || typeof row !== 'object') return row
+  const topicText = typeof row.topic === 'string' ? row.topic.trim() : ''
+  const rawCount = Object.prototype.hasOwnProperty.call(row, 'topic_message_count')
+    ? row.topic_message_count
+    : null
+  const topicMessageCount =
+    rawCount == null || rawCount === '' || !Number.isFinite(Number(rawCount))
+      ? null
+      : Number(rawCount)
+  return {
+    ...row,
+    topic: topicText ? row.topic : null,
+    topic_message_count: topicMessageCount,
+  }
+}
+
 export class CastDatabase {
   private db: Database.Database
 
-  constructor() {
-    // Ensure cast directory exists
-    if (!fs.existsSync(CAST_DIR)) {
-      fs.mkdirSync(CAST_DIR, {recursive: true})
+  constructor(dbPath: string = DB_PATH) {
+    const dir = path.dirname(dbPath)
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, {recursive: true})
     }
 
-    this.db = new Database(DB_PATH)
+    this.db = new Database(dbPath)
     this.initSchema()
   }
 
@@ -107,6 +124,8 @@ export class CastDatabase {
         parent_session_id TEXT,
         first_user_message TEXT,
         last_user_message TEXT,
+        topic TEXT,
+        topic_message_count INTEGER,
         json_path TEXT NOT NULL
       );
 
@@ -199,6 +218,8 @@ export class CastDatabase {
           parent_session_id TEXT,
           first_user_message TEXT,
           last_user_message TEXT,
+          topic TEXT,
+          topic_message_count INTEGER,
           json_path TEXT NOT NULL
         );
         CREATE INDEX idx_sessions_agent_name ON sessions(agent_name);
@@ -209,6 +230,19 @@ export class CastDatabase {
     // Migration: Drop legacy builder_sessions table (unused) if present
     if (this.tableExists('builder_sessions')) {
       this.db.exec('DROP TABLE IF EXISTS builder_sessions')
+    }
+
+    // Migration: topic columns on sessions (idempotent for existing databases)
+    this.ensureSessionTopicColumns()
+  }
+
+  private ensureSessionTopicColumns(): void {
+    if (!this.tableExists('sessions')) return
+    if (!this.columnExists('sessions', 'topic')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN topic TEXT')
+    }
+    if (!this.columnExists('sessions', 'topic_message_count')) {
+      this.db.exec('ALTER TABLE sessions ADD COLUMN topic_message_count INTEGER')
     }
   }
 
@@ -538,14 +572,16 @@ export class CastDatabase {
     parent_session_id: string | null
     first_user_message: string | null
     last_user_message: string | null
+    topic?: string | null
+    topic_message_count?: number | null
     json_path: string
   }): void {
     const stmt = this.db.prepare(`
       INSERT OR REPLACE INTO sessions (
         id, name, agent_name, mode, ui_mode, created_at, updated_at,
         ended_at, message_count, parent_session_id,
-        first_user_message, last_user_message, json_path
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        first_user_message, last_user_message, topic, topic_message_count, json_path
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `)
     stmt.run(
       meta.id,
@@ -560,6 +596,8 @@ export class CastDatabase {
       meta.parent_session_id,
       meta.first_user_message,
       meta.last_user_message,
+      meta.topic ?? null,
+      meta.topic_message_count ?? null,
       meta.json_path,
     )
   }
@@ -576,39 +614,42 @@ export class CastDatabase {
 
   public getSession(id: string): any {
     const stmt = this.db.prepare('SELECT * FROM sessions WHERE id = ?')
-    return stmt.get(id)
+    const row = stmt.get(id)
+    return row ? mapSessionRow(row) : undefined
   }
 
   public getSessionByName(name: string): any {
     const stmt = this.db.prepare(
       'SELECT * FROM sessions WHERE name = ? ORDER BY updated_at DESC LIMIT 1',
     )
-    return stmt.get(name)
+    const row = stmt.get(name)
+    return row ? mapSessionRow(row) : undefined
   }
 
   public listSessions(agentName?: string, limit: number = 50, includeEnded: boolean = true): any[] {
+    const map = (rows: unknown[]) => rows.map(mapSessionRow)
     if (agentName) {
       if (includeEnded) {
         const stmt = this.db.prepare(
           'SELECT * FROM sessions WHERE agent_name = ? ORDER BY updated_at DESC LIMIT ?',
         )
-        return stmt.all(agentName, limit)
+        return map(stmt.all(agentName, limit))
       }
       const stmt = this.db.prepare(
         'SELECT * FROM sessions WHERE agent_name = ? AND ended_at IS NULL ORDER BY updated_at DESC LIMIT ?',
       )
-      return stmt.all(agentName, limit)
+      return map(stmt.all(agentName, limit))
     }
     if (includeEnded) {
       const stmt = this.db.prepare(
         'SELECT * FROM sessions ORDER BY updated_at DESC LIMIT ?',
       )
-      return stmt.all(limit)
+      return map(stmt.all(limit))
     }
     const stmt = this.db.prepare(
       'SELECT * FROM sessions WHERE ended_at IS NULL ORDER BY updated_at DESC LIMIT ?',
     )
-    return stmt.all(limit)
+    return map(stmt.all(limit))
   }
 
   public deleteSession(id: string): void {

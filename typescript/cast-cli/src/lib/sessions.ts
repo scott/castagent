@@ -18,6 +18,8 @@ export interface SessionMeta {
   parent_session_id: string | null
   first_user_message: string | null
   last_user_message: string | null
+  topic?: string | null
+  topic_message_count?: number | null
   json_path: string
 }
 
@@ -48,6 +50,8 @@ export interface Session {
   files_in_context: string[]
   parent_session_id: string | null
   tags: string[]
+  topic?: string | null
+  topic_message_count?: number | null
 }
 
 /**

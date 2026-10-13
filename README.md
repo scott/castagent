@@ -362,7 +362,10 @@ cast session export <id> --out backup.json
 
 `cast connect` starts a new session. It does not continue the previous
 conversation. Resume a saved session when you want the model to see
-that transcript again.
+that transcript again. An unnamed session in `cast session list` and
+the `/sessions` picker shows a one-line topic from that agent's model.
+The first user message remains the fallback until that summary exists.
+A name you set still wins.
 
 In the TUI, use `/undo` and `/redo` for iteration, `/sessions` to
 browse saved conversations (with a modal picker that follows the
