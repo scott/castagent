@@ -28,10 +28,12 @@ export function deploymentVersionLabel(version: string | null | undefined): stri
 
 /**
  * Argv for the TUI-confirmed shutdown. --force skips the CLI y/N prompt.
- * The agent name is one argument so spawn does not go through a shell.
+ * Pass the deployment SHA when the picker selected one row, so shutdown
+ * does not treat every provider of that agent as the same remote.
+ * The value is one argument so spawn does not go through a shell.
  */
-export function shutdownSpawnArgs(agentName: string): string[] {
-  return ['shutdown', '--force', agentName]
+export function shutdownSpawnArgs(agentNameOrSha: string): string[] {
+  return ['shutdown', '--force', agentNameOrSha]
 }
 
 /**
@@ -49,7 +51,7 @@ export function shutdownFailureStatus(code: number | null): string {
 const SHUTDOWN_STAGES: Array<{includes: string; stage: string}> = [
   {includes: 'shutting down', stage: 'Destroying remote resources'},
   {includes: 'remote resources destroyed', stage: 'Removing local records'},
-  {includes: 'marked all deployments', stage: 'Updating database'},
+  {includes: 'as deleted in database', stage: 'Updating database'},
   {includes: 'removed auth token', stage: 'Removing credentials'},
   {includes: 'has been shut down', stage: 'Finished'},
 ]

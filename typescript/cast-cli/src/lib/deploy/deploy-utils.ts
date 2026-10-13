@@ -215,13 +215,125 @@ export async function checkCli(
   })
 }
 
+export function deploymentShaFromEnv(): string | undefined {
+  const envSha = process.env.CAST_DEPLOYMENT_SHA
+  return envSha && isShaPattern(envSha) ? envSha : undefined
+}
+
+/**
+ * Providers whose live remote is one record per deployment row.
+ * The others name a single remote after the agent (`cast-<agent>`), so
+ * shutting one row down destroys every row of that provider.
+ */
+const PER_DEPLOYMENT_REMOTE = new Set(['microvm'])
+
+export interface ShutdownTargetRow {
+  id: string
+  provider: string
+  volume_id?: string | null
+  auth_token_hash?: string | null
+}
+
+/**
+ * Rows a shutdown removes.
+ * By agent name, every live row is one target (the caller already rejected
+ * distinct provider/URL pairs). By SHA, remove only the remote that destroy
+ * actually deletes.
+ */
+export function deploymentIdsToRemove(
+  target: ShutdownTargetRow,
+  live: ShutdownTargetRow[],
+  bySha: boolean,
+): string[] {
+  if (!bySha) return live.map(row => row.id)
+
+  if (PER_DEPLOYMENT_REMOTE.has(target.provider)) {
+    if (target.volume_id) {
+      const matches = live.filter(row => row.provider === target.provider && row.volume_id === target.volume_id)
+      if (matches.length > 0) return matches.map(row => row.id)
+    }
+    return [target.id]
+  }
+
+  const sameProvider = live.filter(row => row.provider === target.provider)
+  if (sameProvider.length > 0) return sameProvider.map(row => row.id)
+  return [target.id]
+}
+
+/**
+ * Save the bearer token for this deployment.
+ * The agent-level keychain entry is only written when nothing else is live,
+ * so a second provider does not replace the token the first host still has.
+ */
+export async function storeAuthToken(
+  agentName: string,
+  authToken: string,
+  deploymentSha?: string,
+): Promise<void> {
+  const sha = deploymentSha || deploymentShaFromEnv()
+  if (sha) await keychain.setDeploymentToken(sha, authToken)
+  const others = db.listDeployments(agentName)
+  // No SHA means this caller cannot keep the tokens apart. Keep the previous
+  // single-entry behavior so the new host is still connectable.
+  if (!sha || others.length === 0) await keychain.setToken(agentName, authToken)
+}
+
 export async function generateAuthToken(
   agentName: string,
+  deploymentSha?: string,
 ): Promise<{ authToken: string; tokenHash: string }> {
   const authToken = crypto.randomBytes(32).toString('base64')
   const tokenHash = crypto.createHash('sha256').update(authToken).digest('hex')
-  await keychain.setToken(agentName, authToken)
+  await storeAuthToken(agentName, authToken, deploymentSha)
   return { authToken, tokenHash }
+}
+
+/**
+ * Bearer token for one deployment.
+ * A per-SHA keychain entry wins. The agent-level entry is used only when its
+ * hash is the one stored on this row, so connect does not send another
+ * deployment's token.
+ */
+export async function resolveDeploymentAuthToken(deployment: {
+  id?: string | null
+  agent_name: string
+  auth_token_hash?: string | null
+}): Promise<string | null> {
+  if (deployment.id) {
+    const bySha = await keychain.getDeploymentToken(deployment.id)
+    if (bySha) return bySha
+  }
+  const byAgent = await keychain.getToken(deployment.agent_name)
+  if (!byAgent) return null
+  if (!deployment.auth_token_hash) return byAgent
+  if (keychain.hashToken(byAgent) === deployment.auth_token_hash) return byAgent
+  return null
+}
+
+/** Drop keychain entries that belong to the rows just shut down. Leave tokens other live rows still need. */
+export async function forgetDeploymentTokens(
+  agentName: string,
+  removed: ShutdownTargetRow[],
+  remaining: ShutdownTargetRow[],
+): Promise<'agent' | 'deployment' | 'none'> {
+  let removedDeploymentToken = false
+  for (const row of removed) {
+    if (!row.id) continue
+    if (await keychain.deleteDeploymentToken(row.id)) removedDeploymentToken = true
+  }
+  if (remaining.length === 0) {
+    await keychain.deleteToken(agentName)
+    return 'agent'
+  }
+  const agentToken = await keychain.getToken(agentName)
+  if (!agentToken) return removedDeploymentToken ? 'deployment' : 'none'
+  const hash = keychain.hashToken(agentToken)
+  const owns = (row: ShutdownTargetRow) => Boolean(row.auth_token_hash) && row.auth_token_hash === hash
+  if (removed.some(owns) && !remaining.some(owns)) {
+    await keychain.deleteToken(agentName)
+    return 'agent'
+  }
+  return removedDeploymentToken ? 'deployment' : 'none'
 }
 
 export function ensureDockerfile(agentPath: string): void {
@@ -701,8 +813,8 @@ export function saveDeployment(
   deployedVersion?: string,
 ): string {
   // Check if SHA was passed via environment variable (from deploy.ts)
-  const envSha = process.env.CAST_DEPLOYMENT_SHA
-  if (envSha && isShaPattern(envSha)) {
+  const envSha = deploymentShaFromEnv()
+  if (envSha) {
     db.createDeployment(envSha, agentName, provider, url, tokenHash, volumeId, volumeConfig, deployedVersion)
     return envSha
   }

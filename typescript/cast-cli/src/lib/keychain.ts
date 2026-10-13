@@ -30,6 +30,33 @@ export class KeychainManager {
     }
   }
 
+  /** Token baked into one deployment. A later deploy of the same agent must not replace it. */
+  async getDeploymentToken(deploymentSha: string): Promise<string | null> {
+    try {
+      return await keytar.getPassword(SERVICE_NAME, `token:deployment:${deploymentSha}`)
+    } catch (error) {
+      console.error('Failed to get deployment token from keychain:', error)
+      return null
+    }
+  }
+
+  async setDeploymentToken(deploymentSha: string, token: string): Promise<void> {
+    try {
+      await keytar.setPassword(SERVICE_NAME, `token:deployment:${deploymentSha}`, token)
+    } catch (error) {
+      console.error('Failed to set deployment token in keychain:', error)
+    }
+  }
+
+  async deleteDeploymentToken(deploymentSha: string): Promise<boolean> {
+    try {
+      return await keytar.deletePassword(SERVICE_NAME, `token:deployment:${deploymentSha}`)
+    } catch (error) {
+      console.error('Failed to delete deployment token from keychain:', error)
+      return false
+    }
+  }
+
   generateToken(): string {
     return crypto.randomBytes(32).toString('base64')
   }

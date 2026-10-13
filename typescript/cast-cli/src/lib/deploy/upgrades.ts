@@ -7,6 +7,7 @@ import {
   execCommand,
   getProviderToken,
   inferenceEnv,
+  resolveDeploymentAuthToken,
 } from './deploy-utils'
 import {writeHostMotdOverSsh} from './motd'
 
@@ -253,8 +254,7 @@ export async function upgradeDockerDeployment(
 
   host.log('Starting Docker container...')
 
-  const {keychain} = await import('../keychain')
-  const authToken = await keychain.getToken(agentName)
+  const authToken = deployment ? await resolveDeploymentAuthToken(deployment) : null
 
   const dockerRunArgs = [
     'run',

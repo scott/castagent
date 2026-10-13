@@ -13,6 +13,7 @@ import {
   getAgentPath,
   inferenceEnv,
   prepareHostTuiBuildContext,
+  resolveDeploymentAuthToken,
   resolveDigitalOceanToken,
   saveDeployment,
 } from './deploy-utils'
@@ -438,9 +439,23 @@ export default class MicrovmDeploy extends Command {
     }),
   }
 
-  static async destroy(agentName: string): Promise<void> {
+  static async destroy(agentName: string, deployment?: {id?: string, volume_id?: string | null}): Promise<void> {
     const token = resolveDigitalOceanToken()
-    const deployments = db.listDeployments(agentName).filter(deployment => deployment.provider === 'microvm')
+    let deployments = db.listDeployments(agentName).filter(row => row.provider === 'microvm')
+    if (deployment?.volume_id || deployment?.id) {
+      const matched = deployments.filter(row =>
+        (deployment.volume_id && row.volume_id === deployment.volume_id) ||
+        (deployment.id && row.id === deployment.id)
+      )
+      if (deployment.volume_id) {
+        deployments = matched.length > 0 ? matched : [{volume_id: deployment.volume_id}]
+      } else if (matched.length === 0) {
+        console.log(`No MicroVM deployment recorded for '${agentName}' (${deployment.id}).`)
+        return
+      } else {
+        deployments = matched
+      }
+    }
     if (deployments.length === 0) {
       console.log(`No MicroVM deployment recorded for '${agentName}'.`)
       return
@@ -495,7 +510,7 @@ export default class MicrovmDeploy extends Command {
     const name = sanitizeMicrovmName(agentName, `${sha}-${stamp}`)
     let authToken: string | undefined
     if (config.authMode === 'dual') {
-      authToken = await currentAgentToken(agentName)
+      authToken = await currentAgentToken(deployment)
       if (!authToken) {
         throw new Error('No agent auth token in the keychain. Redeploy with cast deploy to generate one.')
       }
@@ -688,9 +703,8 @@ function requireToken(): string {
   return token
 }
 
-async function currentAgentToken(agentName: string): Promise<string | undefined> {
-  const {keychain} = await import('../keychain')
-  return (await keychain.getToken(agentName)) || undefined
+async function currentAgentToken(deployment: {id: string, agent_name: string, auth_token_hash?: string | null}): Promise<string | undefined> {
+  return (await resolveDeploymentAuthToken(deployment)) || undefined
 }
 
 function findProjectRoot(): string {

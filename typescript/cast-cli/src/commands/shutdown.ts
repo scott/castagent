@@ -1,8 +1,7 @@
 import {Args, Command, Flags} from '@oclif/core'
 import * as readline from 'readline'
 import {db} from '../lib/sqlite'
-import {keychain} from '../lib/keychain'
-import {resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
+import {deploymentIdsToRemove, forgetDeploymentTokens, resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
 import {
   deploymentProviderLoadErrors,
   getDeploymentProvider,
@@ -10,7 +9,7 @@ import {
 } from '../lib/deploy/registry'
 import type {DeploymentRow} from '../lib/deploy/types'
 
-export const PROVIDER_DESTROYERS: Record<string, (agentName: string) => Promise<void>> = {}
+export const PROVIDER_DESTROYERS: Record<string, (agentName: string, deployment?: DeploymentRow) => Promise<void>> = {}
 
 /** Fill missing keys only. Tests replace entries; a later sync must leave those in place. */
 function syncDestroyers(): void {
@@ -18,16 +17,18 @@ function syncDestroyers(): void {
     if (!provider.destroy) continue
     if (PROVIDER_DESTROYERS[provider.key]) continue
     const key = provider.key
-    PROVIDER_DESTROYERS[key] = async (agentName: string) => {
+    PROVIDER_DESTROYERS[key] = async (agentName: string, deployment?: DeploymentRow) => {
       const current = getDeploymentProvider(key)
       if (!current?.destroy) return
-      const deployment: DeploymentRow = {
-        id: '',
-        agent_name: agentName,
-        provider: key,
-        deployment_url: '',
-      }
-      await current.destroy({agentName, deployment, log: () => {}})
+      const row: DeploymentRow = deployment?.id
+        ? deployment
+        : {
+          id: '',
+          agent_name: agentName,
+          provider: key,
+          deployment_url: '',
+        }
+      await current.destroy({agentName, deployment: row, log: () => {}})
     }
   }
 }
@@ -97,8 +98,18 @@ export default class Shutdown extends Command {
 
     this.log(`Agent '${agentName}' (deployment: ${deploymentSha}) is deployed to ${provider} (${url})`)
 
+    const bySha = resolution.type === 'sha'
+    const live = db.listDeployments(agentName)
+    const ids = deploymentIdsToRemove(deployment, live, bySha)
+    const removed = live.filter(row => ids.includes(row.id))
+    const remaining = live.filter(row => !ids.includes(row.id))
+    const removesEveryLiveRow = ids.length === live.length
+
     if (!flags.force) {
-      const confirmed = await this.confirm(`Are you sure you want to shut down '${agentName}' and destroy all remote resources?`)
+      const targetLabel = bySha && !removesEveryLiveRow
+        ? `deployment ${deploymentSha} on ${provider}`
+        : `'${agentName}'`
+      const confirmed = await this.confirm(`Are you sure you want to shut down ${targetLabel} and destroy its remote resources?`)
       if (!confirmed) {
         this.log('Shutdown cancelled.')
         return
@@ -112,7 +123,7 @@ export default class Shutdown extends Command {
       this.warn(`No shutdown handler for provider '${provider}'. Removing local records only.`)
     } else {
       try {
-        await destroyer(agentName)
+        await destroyer(agentName, deployment)
         this.log(`Remote resources destroyed on ${provider}.`)
       } catch (error: any) {
         this.warn(`Failed to destroy remote resources: ${error.message || error}`)
@@ -120,28 +131,43 @@ export default class Shutdown extends Command {
       }
     }
 
-    // Soft delete all deployment records for this agent (set deleted_at)
+    // Soft-delete the remote this command destroyed.
     //
-    // When an agent has been deployed multiple times, only the most recent
-    // row was previously removed, leaving older records undeleted. This
-    // caused `cast list` to still show the agent as deployed (it finds the
-    // next most recent undeleted row). Remove all records so the agent
-    // correctly shows as shut down.
+    // An agent name with one live target still clears every row of that
+    // target, including older re-deploys. A SHA clears only that remote:
+    // another provider stays in the registry. Providers that name one
+    // remote after the agent (a sprite, a droplet, a Fly app) take their
+    // other rows with them, because that remote is gone.
     try {
-      db.removeAllDeployments(agentName)
-      this.log('Marked all deployments as deleted in database.')
+      if (removesEveryLiveRow) {
+        db.removeAllDeployments(agentName)
+        this.log('Marked all deployments as deleted in database.')
+      } else {
+        for (const id of ids) db.removeDeploymentBySha(id)
+        const label = ids.length === 1 ? `deployment ${ids[0]}` : `${ids.length} ${provider} deployments`
+        this.log(`Marked ${label} as deleted in database.`)
+      }
     } catch (error: any) {
       this.warn('Failed to update deployment records: ' + error.message)
     }
 
-    // Remove auth token from keychain
     try {
-      await keychain.deleteToken(agentName)
-      this.log('Removed auth token from keychain.')
+      const forgotten = await forgetDeploymentTokens(agentName, removed, remaining)
+      if (forgotten === 'agent') {
+        this.log('Removed auth token from keychain.')
+      } else if (forgotten === 'deployment') {
+        this.log(`Removed auth token for deployment ${deploymentSha} from keychain.`)
+      } else if (remaining.length > 0) {
+        this.log('Left the auth token in place for the remaining deployment.')
+      }
     } catch (error: any) {
       this.warn('Failed to remove auth token from keychain: ' + error.message)
     }
 
-    this.log(`Agent '${agentName}' has been shut down.`)
+    if (removesEveryLiveRow) {
+      this.log(`Agent '${agentName}' has been shut down.`)
+    } else {
+      this.log(`Deployment '${deploymentSha}' of '${agentName}' has been shut down.`)
+    }
   }
 }

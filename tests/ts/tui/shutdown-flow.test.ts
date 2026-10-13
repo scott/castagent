@@ -177,6 +177,7 @@ describe('shutdown flow helpers', () => {
     expect(shutdownStageFromLine("Shutting down email on fly...")).to.equal('Destroying remote resources')
     expect(shutdownStageFromLine('Remote resources destroyed on fly.')).to.equal('Removing local records')
     expect(shutdownStageFromLine('Marked all deployments as deleted in database.')).to.equal('Updating database')
+    expect(shutdownStageFromLine('Marked deployment d6b12f as deleted in database.')).to.equal('Updating database')
     expect(shutdownStageFromLine('Removed auth token from keychain.')).to.equal('Removing credentials')
     expect(shutdownStageFromLine("Agent 'email' has been shut down.")).to.equal('Finished')
     expect(shutdownStageFromLine('nothing to see')).to.equal(null)
@@ -196,6 +197,7 @@ describe('shutdown flow helpers', () => {
     expect(registry).to.include('NO_DEPLOYED_AGENTS_MESSAGE')
     expect(registry).to.include('CAST_CLI_NOT_FOUND_MESSAGE')
     expect(registry).to.include('runShutdownInTerminal')
+    expect(registry).to.include('row.id || row.agent_name')
 
     const terminal = fs.readFileSync(
       path.resolve(__dirname, '../../../typescript/cast-tui/src/components/terminal.ts'),

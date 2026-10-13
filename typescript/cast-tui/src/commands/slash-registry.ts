@@ -1634,10 +1634,11 @@ function openShutdownPicker(ctx: CommandContext, rows: any[], castBinary: string
     if (step === 'confirm') {
       const name = (key.name || '').toLowerCase()
       if (!key.ctrl && !key.meta && name === 'y') {
-        const agentName = rows[selectedIndex].agent_name
-        if (!agentName) return true
+        const row = rows[selectedIndex]
+        const target = row.id || row.agent_name
+        if (!target) return true
         modal.hide()
-        void runShutdownInTerminal(ctx.renderer, ctx.input, agentName, castBinary)
+        void runShutdownInTerminal(ctx.renderer, ctx.input, target, castBinary)
         return true
       }
       if (!key.ctrl && !key.meta && name === 'n') {

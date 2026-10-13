@@ -5,9 +5,8 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 
-import {keychain} from '../keychain'
 import {db} from '../sqlite'
-import {execCommand, inferenceEnv, generateDeploymentId, getVolumeName, createMemoryVolume, deleteMemoryVolume, createDockerignore} from './deploy-utils'
+import {execCommand, inferenceEnv, generateDeploymentId, getVolumeName, createMemoryVolume, deleteMemoryVolume, createDockerignore, storeAuthToken} from './deploy-utils'
 
 // Helper to run a shell command and return its exit code
 function runCommand(command: string, args: string[], options?: {stdio?: any; cwd?: string; silent?: boolean}): Promise<number> {
@@ -86,8 +85,8 @@ export default class DockerDeploy extends Command {
     const deploymentId = generateDeploymentId()
     const volumeId = getVolumeName(agentName, deploymentId)
 
-    // Store token in keychain
-    await keychain.setToken(agentName, authToken)
+    // Store token in keychain. A second provider must not replace this token.
+    await storeAuthToken(agentName, authToken)
 
     // Create memory volume
     this.log(`Creating memory volume: ${volumeId}`)
