@@ -13,6 +13,8 @@
     "check": "npm run validate",
     "dev": "astro dev",
     "build": "astro build",
+    "postbuild": "npm run build:search",
+    "build:search": "pagefind --site dist",
     "preview": "astro preview",
     "astro": "astro"
   },
@@ -25,6 +27,7 @@
     "@types/node": "^20",
     "gray-matter": "^4.0.3",
     "markdown-link-check": "^3.13.7",
+    "pagefind": "^1.5.2",
     "ts-morph": "^24.0.0",
     "tsx": "^4.19.0",
     "typescript": "^5.7.0"

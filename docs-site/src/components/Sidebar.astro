@@ -144,6 +144,9 @@ const sections: NavSection[] = SECTIONS.map((s) => {
       <li>
         <a href="overview" class={isOverview ? 'active' : ''}>Overview</a>
       </li>
+      <li>
+        <a href="search" class={isCurrent('search') ? 'active' : ''}>Search</a>
+      </li>
       {sections.map((section) => (
         <li>
           <h5>{section.title}</h5>
