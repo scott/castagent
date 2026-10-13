@@ -106,8 +106,21 @@ hold the agent's memory) are preserved across upgrades.
 ## Multi-deployment
 
 The same agent can be deployed to multiple providers simultaneously, each
-with its own SHA and its own `deployed_version`. `cast registry <name>`
-shows them all:
+with its own SHA and its own `deployed_version`. `cast registry` lists
+every live deployment, one row per row in `deployments` where `deleted_at`
+is null. A blank `deployed_version`, or one that does not match a release,
+is still listed. Soft-deleted deployments stay hidden. Release history
+stays on `cast releases`.
+
+```
+AGENT            SHA       PROVIDER         VERSION    DEPLOYED                 URL
+email-assistant  abc123    railway          1.6        5/12/2026 1:08:33 PM     https://email-assistant.up.railway.app
+email-assistant  def456    fly              1.5        5/9/2026 9:35:20 PM      https://email-assistant.fly.dev
+git-agent        ghi789    digitalocean     —          5/12/2026 1:08:33 PM     http://203.0.113.42:8080
+```
+
+`cast registry <name>` is that table filtered to one agent. The agent name
+is only in the heading.
 
 ```
 Local Agent Registry: email-assistant
@@ -115,7 +128,7 @@ Local Agent Registry: email-assistant
   SHA       PROVIDER        VERSION  DEPLOYED               URL
   abc123    railway         1.6      5/12/2026 1:08 PM     https://email-assistant.up.railway.app
   def456    fly             1.5      5/9/2026  9:35 PM     https://email-assistant.fly.dev
-  ghi789    digitalocean    1.6      5/12/2026 1:08 PM     http://203.0.113.42:8080
+  ghi789    digitalocean    —        5/12/2026 1:08 PM     http://203.0.113.42:8080
 ─────────────────────────────────────────────────────────────
 ```
 

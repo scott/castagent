@@ -4111,7 +4111,7 @@ cast dev ${agentName}
 
   {
     name: 'registry',
-    description: 'List all releases across all agents',
+    description: 'List live deployments across all agents',
     category: 'session',
     modes: ['dev', 'production'],
     handler: async (ctx) => {
@@ -4127,12 +4127,12 @@ cast dev ${agentName}
         return
       }
 
-      const allReleases = db.listAllReleases() as Array<{
-        agent_name: string
-        version: string
-        created_at: string
+      const deployments = db.listActiveDeployments() as Array<{
+        id?: string | null
+        agent_name?: string | null
         provider?: string | null
-        deployment_sha?: string | null
+        deployed_version?: string | null
+        deployed_at?: string | null
         deployment_url?: string | null
       }>
 
@@ -4152,37 +4152,36 @@ cast dev ${agentName}
         paddingRight: 2,
       })
 
-      if (allReleases.length === 0) {
+      if (deployments.length === 0) {
         const empty = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('No releases found.')]),
+          content: new StyledText([dim('No deployments found.')]),
         })
         contentBox.add(empty)
-        const hint = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim('Create a release with: cast release <agent> <version>')]),
-        })
-        contentBox.add(hint)
       } else {
         const tableData: (TextChunk[] | null)[][] = []
         tableData.push([
           [white('Agent')],
+          [white('SHA')],
+          [white('Provider')],
           [white('Version')],
-          [white('Date')],
           [white('Deployed')],
+          [white('URL')],
         ])
-        for (const release of allReleases) {
-          const date = new Date(release.created_at)
-          const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
-          let deployedCell: TextChunk[]
-          if (release.deployment_sha) {
-            deployedCell = [green(`✓ ${release.provider || 'deployed'}`), dim(` (${release.deployment_sha.slice(0, 7)})`)]
-          } else {
-            deployedCell = [dim('-')]
-          }
+        for (const row of deployments) {
+          const version = row.deployed_version && String(row.deployed_version).trim()
+            ? String(row.deployed_version).trim()
+            : '—'
+          const deployedAt = row.deployed_at ? new Date(row.deployed_at) : null
+          const when = deployedAt && !Number.isNaN(deployedAt.getTime())
+            ? `${deployedAt.toLocaleDateString()} ${deployedAt.toLocaleTimeString()}`
+            : (row.deployed_at || 'unknown')
           tableData.push([
-            [white(release.agent_name || '-')],
-            [cyan(release.version || '-')],
-            [dim(dateStr)],
-            deployedCell,
+            [white(row.agent_name || '—')],
+            [cyan(row.id || '—')],
+            [white(row.provider || 'unknown')],
+            [cyan(version)],
+            [dim(when)],
+            [dim(row.deployment_url || 'N/A')],
           ])
         }
         const table = new TextTableRenderable(ctx.renderer, {
@@ -4194,7 +4193,7 @@ cast dev ${agentName}
         })
         contentBox.add(table)
         const total = new TextRenderable(ctx.renderer, {
-          content: new StyledText([dim(`\nTotal: ${allReleases.length} release(s)`)]),
+          content: new StyledText([dim(`\nTotal: ${deployments.length} deployment(s)`)]),
         })
         contentBox.add(total)
       }

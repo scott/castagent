@@ -1,8 +1,51 @@
 import {Command, Flags, Args} from '@oclif/core'
 import {db} from '../lib/sqlite'
 
+const RULE = '──────────────────────────────────────────────────────────────────────────────'
+const COL = {agent: 15, sha: 10, provider: 16, version: 10, deployed: 23}
+
+function pad(value: string, width: number): string {
+  return value.padEnd(width)
+}
+
+function displayVersion(version: string | null | undefined): string {
+  if (version == null) return '—'
+  const trimmed = String(version).trim()
+  return trimmed.length > 0 ? trimmed : '—'
+}
+
+function displaySha(sha: string | null | undefined): string {
+  if (sha == null) return '—'
+  const trimmed = String(sha).trim()
+  return trimmed.length > 0 ? trimmed : '—'
+}
+
+function displayDeployed(value: string | null | undefined): string {
+  if (!value) return 'unknown'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return `${date.toLocaleDateString()} ${date.toLocaleTimeString()}`
+}
+
+function deploymentCells(dep: {
+  deployment_sha?: string | null
+  id?: string | null
+  provider?: string | null
+  deployed_version?: string | null
+  deployed_at?: string | null
+  deployment_url?: string | null
+}): {sha: string; provider: string; version: string; deployed: string; url: string} {
+  return {
+    sha: pad(displaySha(dep.deployment_sha ?? dep.id), COL.sha),
+    provider: pad(dep.provider || 'unknown', COL.provider),
+    version: pad(displayVersion(dep.deployed_version), COL.version),
+    deployed: pad(displayDeployed(dep.deployed_at), COL.deployed),
+    url: dep.deployment_url || 'N/A',
+  }
+}
+
 export default class Registry extends Command {
-  static description = 'List all releases across all agents (or for a specific agent)'
+  static description = 'List live deployments across all agents (or for a specific agent)'
 
   static examples = [
     '<%= config.bin %> <%= command.id %>',
@@ -15,7 +58,7 @@ export default class Registry extends Command {
   }
 
   static args = {
-    agent: Args.string({description: 'Agent name (optional, shows detailed deployments for single agent)'}),
+    agent: Args.string({description: 'Agent name (optional). Limits the table to that agent.'}),
   }
 
   async run(): Promise<void> {
@@ -23,12 +66,40 @@ export default class Registry extends Command {
     const agentName = args.agent as string | undefined
 
     if (agentName) {
-      // Show detailed deployments for single agent
       await this.showAgentDeployments(agentName, flags.json)
     } else {
-      // Show all releases across all agents
-      await this.showAllReleases(flags.json)
+      await this.showFleet(flags.json)
     }
+  }
+
+  private async showFleet(json: boolean): Promise<void> {
+    const deployments = db.listActiveDeployments()
+
+    if (json) {
+      console.log(JSON.stringify(deployments, null, 2))
+      return
+    }
+
+    if (deployments.length === 0) {
+      this.log('No deployments found.')
+      return
+    }
+
+    this.log('')
+    this.log('Local Agent Registry')
+    this.log(RULE)
+    this.log(`  ${pad('AGENT', COL.agent)}${pad('SHA', COL.sha)}${pad('PROVIDER', COL.provider)}${pad('VERSION', COL.version)}${pad('DEPLOYED', COL.deployed)}URL`)
+    this.log(`  ${RULE}`)
+
+    for (const dep of deployments) {
+      const cells = deploymentCells(dep)
+      const agent = pad(dep.agent_name || '—', COL.agent)
+      this.log(`  ${agent}${cells.sha}${cells.provider}${cells.version}${cells.deployed}${cells.url}`)
+    }
+
+    this.log(RULE)
+    this.log('')
+    this.log(`Total: ${deployments.length} deployment(s)`)
   }
 
   private async showAgentDeployments(agentName: string, json: boolean): Promise<void> {
@@ -46,56 +117,17 @@ export default class Registry extends Command {
 
     this.log('')
     this.log(`Local Agent Registry: ${agentName}`)
-    this.log('──────────────────────────────────────────────────────────────────────────────')
-    this.log('  SHA       PROVIDER   VERSION   DEPLOYED               URL')
-    this.log('  ──────────────────────────────────────────────────────────────────────────────')
+    this.log(RULE)
+    this.log(`  ${pad('SHA', COL.sha)}${pad('PROVIDER', COL.provider)}${pad('VERSION', COL.version)}${pad('DEPLOYED', COL.deployed)}URL`)
+    this.log(`  ${RULE}`)
 
     for (const dep of deployments) {
-      const deployedDate = dep.deployed_at
-        ? new Date(dep.deployed_at).toLocaleDateString() + ' ' + new Date(dep.deployed_at).toLocaleTimeString()
-        : 'unknown'
-      const version = dep.deployed_version || 'latest'
-      const url = dep.deployment_url || 'N/A'
-      const provider = (dep.provider || 'unknown').padEnd(8)
-      this.log(`  ${dep.deployment_sha}  ${provider}   ${version.padEnd(8)} ${deployedDate.padEnd(20)} ${url}`)
+      const cells = deploymentCells(dep)
+      this.log(`  ${cells.sha}${cells.provider}${cells.version}${cells.deployed}${cells.url}`)
     }
 
-    this.log('──────────────────────────────────────────────────────────────────────────────')
+    this.log(RULE)
     this.log('')
     this.log(`Total: ${deployments.length} deployment(s)`)
-  }
-
-  private async showAllReleases(json: boolean): Promise<void> {
-    const releases = db.listAllReleases()
-
-    if (json) {
-      console.log(JSON.stringify(releases, null, 2))
-      return
-    }
-
-    if (releases.length === 0) {
-      this.log('No releases found.')
-      return
-    }
-
-    this.log('')
-    this.log('Local Agent Registry')
-    this.log('──────────────────────────────────────────────────────────────────────────────')
-
-    for (const release of releases) {
-      const date = new Date(release.created_at)
-      const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
-      let status = ''
-      if (release.provider && release.deployment_sha) {
-        status = ` [DEPLOYED on ${release.provider.toUpperCase()}, sha:${release.deployment_sha}]`
-      } else if (release.provider) {
-        status = ` [DEPLOYED on ${release.provider.toUpperCase()}]`
-      }
-      this.log(`  ${release.agent_name}    ${release.version}   ${dateStr}${status}`)
-    }
-
-    this.log('──────────────────────────────────────────────────────────────────────────────')
-    this.log('')
-    this.log(`Total: ${releases.length} release(s)`)
   }
 }
