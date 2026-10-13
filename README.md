@@ -105,8 +105,16 @@ ln -sf $(pwd)/cast ~/.local/bin/cast
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-**Upgrading / re-running install:**
-Re-running `./install.sh` is the safe way to upgrade. The script is idempotent: it rebuilds the TypeScript projects, refreshes the `~/.local/bin/cast` symlink, and removes any stale binaries left over from older versions of Cast Agent (e.g. the pre-TypeScript Go binary that used to live at `~/.cast/bin/cast`). If you ever see the wrong version of `cast` running after a rebuild, re-run `./install.sh` — it will clear the conflict.
+**Upgrading the Cast checkout:**
+```bash
+./upgrade.sh
+```
+
+`upgrade.sh` fast-forwards this checkout to the newest `origin/master` commit (`origin/main` when that is the only upstream branch) and rebuilds the CLI, TUI, and Python runtime in place. Agents, config, and tokens under `~/.cast` stay in place. A stale pre-TypeScript binary at `~/.cast/bin/cast` is removed so it cannot shadow the rebuilt CLI.
+
+The script stops without rebuilding when the checkout has uncommitted changes, or when the local upstream branch has commits that cannot fast-forward. It does not upgrade a deployed agent. That command is still `cast upgrade <agent>`.
+
+Re-running `./install.sh` rebuilds the current checkout and refreshes the symlink without fetching. Use `./upgrade.sh` to move to the newest version and rebuild. If the wrong `cast` still runs afterwards, `./upgrade.sh` clears a stale `~/.cast/bin/cast` binary.
 
 ### Usage
 
@@ -448,6 +456,7 @@ castagent/
 ├── cast                   # Bash wrapper script (entry point)
 ├── setup.sh               # Quick setup (creates symlink only)
 ├── install.sh             # Full install (deps, build, config)
+├── upgrade.sh             # Fast-forward to newest upstream and rebuild in place
 └── README.md              # This file
 ```
 
@@ -490,7 +499,7 @@ Every push to `master` and every pull request runs the **Test Coverage** workflo
 
 ## Configuration
 
-The `cast` command at the repository root is a bash wrapper that delegates to `typescript/cast-cli/bin/run`. When you run `./setup.sh` or `./install.sh`, it creates a symlink from `~/.local/bin/cast` to this wrapper, making the CLI available globally.
+The `cast` command at the repository root is a bash wrapper that delegates to `typescript/cast-cli/bin/run`. When you run `./setup.sh`, `./install.sh`, or `./upgrade.sh`, it creates a symlink from `~/.local/bin/cast` to this wrapper, making the CLI available globally.
 
 Create `~/.cast/config.yaml`:
 
