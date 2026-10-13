@@ -2,6 +2,7 @@ import {execFile, execFileSync} from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import {resolveCastPythonPath} from './cast-python.js'
 import {getDb, type DbApi} from './db.js'
 import {sessionMetaFromRow} from './session-topic.js'
 
@@ -56,8 +57,8 @@ export interface Session {
 }
 
 /**
- * Run a Python script and return trimmed stdout. We shell out to the cast-cli
- * Python wrapper, which already knows how to find cast.sessions.
+ * Run a Python script and return trimmed stdout. Session storage imports
+ * `cast.sessions` from this checkout, not the stale tree at ~/.cast/python.
  */
 function runPython(script: string): string {
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
@@ -67,9 +68,13 @@ function runPython(script: string): string {
   )
   try {
     fs.writeFileSync(tmp, script)
+    // Pipe stderr. execFileSync otherwise writes the child's stderr to the
+    // terminal before throwing, so a failed append paints a traceback over
+    // the chat even though appendMessage treats that failure as non-fatal.
     return execFileSync(pythonCmd, [tmp], {
       cwd: os.homedir(),
       encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
     }).trim()
   } finally {
     try {
@@ -81,7 +86,7 @@ function runPython(script: string): string {
 }
 
 function pythonPath(): string {
-  return path.join(os.homedir(), '.cast', 'python')
+  return resolveCastPythonPath()
 }
 
 function toJson(value: any): string {

@@ -1,6 +1,7 @@
 import {execFileSync} from 'child_process'
 import * as os from 'os'
 import * as path from 'path'
+import {resolveCastPythonPath} from './cast-python'
 
 /**
  * Metadata for a session, as stored in the SQLite index.
@@ -63,9 +64,13 @@ function runPython(script: string): string {
   const tmp = path.join(os.tmpdir(), `cast_sessions_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.py`)
   try {
     require('fs').writeFileSync(tmp, script)
+    // Pipe stderr. The *Sync default copies the child's stderr to this
+    // process before throwing, which paints a traceback over the terminal
+    // even when the caller handles the failure.
     return execFileSync(pythonCmd, [tmp], {
       cwd: os.homedir(),
       encoding: 'utf-8',
+      stdio: ['ignore', 'pipe', 'pipe'],
     }).trim()
   } finally {
     try {
@@ -77,7 +82,7 @@ function runPython(script: string): string {
 }
 
 function pythonPath(): string {
-  return path.join(os.homedir(), '.cast', 'python')
+  return resolveCastPythonPath()
 }
 
 function header(): string {
