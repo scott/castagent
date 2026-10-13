@@ -31,6 +31,9 @@ export interface SendMessageOptions {
   history?: SessionHistoryTurn[]
 }
 
+/** Extra connections after the MicroVM edge closes a chat response. */
+export const STREAM_RESUME_LIMIT = 8
+
 export class A2AClientError extends Error {
   constructor(
     message: string,
@@ -294,36 +297,65 @@ export class A2AClient {
 
   async *sendMessageStream(text: string, options?: SendMessageOptions): AsyncGenerator<StreamChunk> {
     const built = this.messageParams(text, options)
+    // The MicroVM edge ends the HTTP response about 15 seconds after it
+    // starts. The same stream id lets the server keep generating and the
+    // next POST continue from the data events already parsed.
+    const resumable = this.pausesBetweenRequests()
+    const streamId = resumable ? this.generateId() : undefined
+    let offset = 0
+    let resumes = 0
+    let sawResume = false
 
-    const response = await this.withTransientRetry(() => this.http.post('/', {
-      jsonrpc: '2.0',
-      id: this.generateId(),
-      method: 'message/send',
-      params: {
-        message: built.message,
-        metadata: built.metadata,
-      },
-    }, {
-      headers: {
-        Accept: 'text/event-stream',
-      },
-      responseType: 'stream',
-    }))
+    while (true) {
+      if (streamId) {
+        built.metadata.streamId = streamId
+        built.metadata.streamOffset = offset
+      }
+      // Copy the metadata. A later resume updates the offset, and the body
+      // already handed to the HTTP client must keep the offset it was sent with.
+      const metadata = {...built.metadata}
 
-    const stream = response.data as Readable
-    stream.setEncoding('utf8')
+      const response = await this.withTransientRetry(() => this.http.post('/', {
+        jsonrpc: '2.0',
+        id: this.generateId(),
+        method: 'message/send',
+        params: {
+          message: built.message,
+          metadata,
+        },
+      }, {
+        headers: {
+          Accept: 'text/event-stream',
+        },
+        responseType: 'stream',
+      }))
 
-    let buffer = ''
-    try {
-      for await (const chunk of stream) {
-        buffer += chunk as string
-        const lines = buffer.split('\n')
-        buffer = lines.pop() || ''
+      const stream = response.data as Readable
+      stream.setEncoding('utf8')
 
-        for (const line of lines) {
-          if (line.startsWith('data: ')) {
+      let buffer = ''
+      let finished = false
+      let failed = false
+      try {
+        for await (const chunk of stream) {
+          buffer += chunk as string
+          const lines = buffer.split('\n')
+          buffer = lines.pop() || ''
+
+          for (const rawLine of lines) {
+            const line = rawLine.replace(/\r$/, '')
+            if (streamId && line === `: cast-stream ${streamId}`) {
+              sawResume = true
+              continue
+            }
+            if (!line.startsWith('data: ')) continue
+
             const data = line.slice(6)
+            // Count every data event, including an empty part. The server
+            // offset is that count, so skipping empty text would repeat events.
+            if (streamId) offset++
             if (data === '[DONE]') {
+              finished = true
               return
             }
 
@@ -343,7 +375,8 @@ export class A2AClient {
                 }
               }
             } catch (error) {
-              // Ignore parse errors for non-JSON lines
+              // Ignore parse errors for non-JSON lines. The offset already
+              // moved, so a resume does not deliver the bad line again.
               if (error instanceof Error && !error.message.includes('A2A error')) {
                 continue
               }
@@ -351,13 +384,30 @@ export class A2AClient {
             }
           }
         }
+      } catch (error) {
+        // Leaving the loop on [DONE] closes the socket. That is the reply
+        // finishing, not the edge cutting it off.
+        if (finished) return
+        if (error instanceof A2AClientError) throw error
+        if (error instanceof Error && error.message.includes('A2A error')) throw error
+        if (!this.isUnexpectedSocketClose(error)) throw error
+        failed = true
+      } finally {
+        if (!finished) {
+          stream.on('error', () => {})
+          stream.destroy()
+        }
       }
-    } catch (error) {
-      if (error instanceof A2AClientError) throw error
-      if (this.isUnexpectedSocketClose(error)) {
+
+      if (finished) return
+      if (sawResume && resumes < STREAM_RESUME_LIMIT) {
+        resumes++
+        continue
+      }
+      if (failed) {
         throw new A2AClientError(this.socketClosedMessage(), 'ECONNRESET')
       }
-      throw error
+      return
     }
   }
 
@@ -373,7 +423,7 @@ export class A2AClient {
 
   private socketClosedMessage(): string {
     if (this.pausesBetweenRequests()) {
-      return 'The MicroVM edge closed the chat stream. It drops a response that sends no data for about 15 seconds, which happens during a long step such as installing a skill.'
+      return 'The MicroVM edge closed the chat stream. It ends a response about 15 seconds after the request starts, including during a long step such as installing a skill.'
     }
     return 'The connection closed while the agent was still responding.'
   }
