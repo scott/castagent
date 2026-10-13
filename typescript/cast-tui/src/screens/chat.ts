@@ -180,13 +180,15 @@ export async function showChatScreen(
       }
     }
 
-    // Autocomplete dropdown — filtered by current UI mode
-    const autocompleteOptions = getSlashCommands(currentUiMode).map((cmd) => ({
-      name: cmd.name,
-      description: cmd.description,
-    }))
+    // Slash commands for the current UI mode. Replaced if that mode changes.
+    const slashPickerOptions = (mode: UiMode) =>
+      getSlashCommands(mode).map((cmd) => ({
+        name: cmd.name,
+        description: cmd.description,
+        category: cmd.category,
+      }))
 
-    const autocomplete = createAutocomplete(renderer, autocompleteOptions, (option) => {
+    const autocomplete = createAutocomplete(renderer, slashPickerOptions(currentUiMode), (option) => {
       autocompleteJustSelected = true
       inputComp.input.setText(`/${option.name} `)
       focusInput()
@@ -252,6 +254,8 @@ export async function showChatScreen(
             }
             header.setUiMode(currentUiMode)
             messages.setUiMode(currentUiMode)
+            // Picker options follow the UI mode before the next `/`.
+            autocomplete.setOptions(slashPickerOptions(currentUiMode))
 
             // Clear messages
             for (const child of messages.scrollBox.getChildren()) {

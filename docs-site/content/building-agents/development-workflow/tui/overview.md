@@ -97,5 +97,6 @@ through OSC 52.
 
 Slash commands that need input (a version, a name, a SHA) open a modal
 instead of requiring flag syntax. You don't need to memorise anything;
-type `/` and autocomplete kicks in. The cursor stays in the input, and
-`/` jumps there when focus is elsewhere.
+type `/` and autocomplete kicks in. `/` lists the current mode's
+commands, grouped by category and alphabetized. The cursor stays in the
+input, and `/` jumps there when focus is elsewhere.
