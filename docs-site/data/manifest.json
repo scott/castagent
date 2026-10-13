@@ -114,7 +114,7 @@
     {
       "id": "registry",
       "full": "cast registry",
-      "description": "List all releases across all agents (or for a specific agent)"
+      "description": "List live deployments across all agents (or for a specific agent)"
     },
     {
       "id": "release",
@@ -316,7 +316,7 @@
     {
       "name": "registry",
       "category": "session",
-      "description": "List all releases across all agents"
+      "description": "List live deployments across all agents"
     },
     {
       "name": "release",

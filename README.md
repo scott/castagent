@@ -349,6 +349,10 @@ cast releases my-agent
 cast release my-agent 1.6
 cast release my-agent 1.6 --message "Added email parsing"
 
+# Live deployments, including rows with no matching release
+cast registry
+cast registry my-agent
+
 # Restore local files to a previous release
 cast restore my-agent --release 1.0
 
@@ -401,7 +405,7 @@ Highlighting text with the mouse copies that selection to the clipboard.
 | `/deploy` | agent | Release picker → provider picker → live deploy with SHA shown on success. |
 | `/upgrade` | agent | Operates on the current agent. Modal lists releases to upgrade to. |
 | `/shutdown` | agent | Lists active deployments (every provider) and shuts one down after Y/N. Streams `cast shutdown --force`. Dev and production only. |
-| `/registry` | session | Modal table of all releases across all agents, with deployment status. |
+| `/registry` | session | Modal table of every live deployment (agent, SHA, provider, version, time, URL). Release history stays on `/releases`. |
 | `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a SHA directly. Connecting starts a new session for that agent. |
 | `/import [source] [name]` | agent | Import a Cast agent from GitHub or a local path. |
 | `/builder-skills [add <github-or-folder>]` | agent | Add or remove skills the builder uses when creating agents. Dev mode only. Applies on the next `cast new` or `cast edit`. |

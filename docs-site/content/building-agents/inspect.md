@@ -52,7 +52,10 @@ cast describe email-assistant
 - Quick actions (`cast dev`, `cast deploy`, `cast update`).
 
 The deployment table uses the same SHA you'll see in `cast registry` and
-when connecting.
+when connecting. `cast registry` lists every live deployment — agent, SHA,
+provider, deployed version, time, and URL — including a blank version.
+`cast registry <name>` is that table for one agent. Release history is
+`cast releases`, not `cast registry`.
 
 ## Rename
 
