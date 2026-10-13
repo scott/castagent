@@ -39,6 +39,7 @@ const TEST_AGENT_PREFIXES = [
   // and the Releases block of tests/ts/lib/sqlite.test.ts.
   'release-test-',
   'release-cmd-test-',
+  'release-lib-test-',
   'rel-a-',
   'rel-b-',
   'rel-x-',
@@ -147,6 +148,16 @@ export function cleanupTestAgentsFromDatabase(): void {
       const agentName = (agent as any).name
       if (isTestAgent(agentName)) {
         db.deleteAgent(agentName)
+      }
+    }
+  } catch {}
+  // Release rows can exist without an agents-table row. Drop those too.
+  try {
+    const releases = db.listAllReleases()
+    for (const release of releases) {
+      const agentName = (release as any).agent_name
+      if (isTestAgent(agentName)) {
+        db.deleteRelease(agentName, (release as any).version)
       }
     }
   } catch {}

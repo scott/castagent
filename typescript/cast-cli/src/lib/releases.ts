@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import * as crypto from 'crypto'
+import {db} from './sqlite'
 
 export interface ReleaseInfo {
   version: string
@@ -11,6 +12,40 @@ export interface ReleaseInfo {
   changelog: string
   created_at: string
   tarball_path: string
+}
+
+function castPythonPath(): string {
+  // Prefer this checkout so /release and `cast release` do not keep calling
+  // a stale copy under ~/.cast/python that never writes SQLite.
+  const candidates = [
+    path.resolve(__dirname, '../../../../python'),
+    path.resolve(__dirname, '../../../python'),
+    path.join(os.homedir(), '.cast', 'python'),
+  ]
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, 'cast', 'releases.py'))) {
+      return candidate
+    }
+  }
+  return path.join(os.homedir(), '.cast', 'python')
+}
+
+function pythonPrelude(): string {
+  return `import sys\nsys.path.insert(0, ${JSON.stringify(castPythonPath())})\n`
+}
+
+function recordReleaseIfAbsent(agentName: string, release: ReleaseInfo): void {
+  // Python create_release is the writer. This only fills a row when that
+  // module is an older copy, and it does not replace a stored row.
+  if (db.getRelease(agentName, release.version)) return
+  db.createRelease(
+    agentName,
+    release.version,
+    release.change_number,
+    release.message || '',
+    release.changelog || '',
+    release.tarball_path || '',
+  )
 }
 
 function runPythonScript(script: string): string {
@@ -38,9 +73,7 @@ function runPythonScript(script: string): string {
 
 export async function createRelease(agentName: string, version: string, message: string = ''): Promise<ReleaseInfo> {
   const output = runPythonScript(`
-import sys
-sys.path.insert(0, '${path.join(os.homedir(), '.cast', 'python')}')
-from cast.releases import create_release
+${pythonPrelude()}from cast.releases import create_release
 import json
 result = create_release('${agentName}', '${version}', '${message.replace(/'/g, "\\'")}')
 print(json.dumps({
@@ -52,15 +85,15 @@ print(json.dumps({
   'tarball_path': str(result.tarball_path)
 }))
 `)
-  return JSON.parse(output)
+  const release = JSON.parse(output) as ReleaseInfo
+  recordReleaseIfAbsent(agentName, release)
+  return release
 }
 
 export async function listReleases(agentName: string): Promise<ReleaseInfo[]> {
   try {
     const output = runPythonScript(`
-import sys
-sys.path.insert(0, '${path.join(os.homedir(), '.cast', 'python')}')
-from cast.releases import list_releases
+${pythonPrelude()}from cast.releases import list_releases
 import json
 results = list_releases('${agentName}')
 print(json.dumps([{
@@ -81,9 +114,7 @@ print(json.dumps([{
 export async function getRelease(agentName: string, version: string): Promise<ReleaseInfo | null> {
   try {
     const output = runPythonScript(`
-import sys
-sys.path.insert(0, '${path.join(os.homedir(), '.cast', 'python')}')
-from cast.releases import get_release
+${pythonPrelude()}from cast.releases import get_release
 import json
 result = get_release('${agentName}', '${version}')
 if result is None:
@@ -107,9 +138,7 @@ else:
 export async function getCurrentRelease(agentName: string): Promise<string | null> {
   try {
     const output = runPythonScript(`
-import sys
-sys.path.insert(0, '${path.join(os.homedir(), '.cast', 'python')}')
-from cast.releases import get_current_release
+${pythonPrelude()}from cast.releases import get_current_release
 result = get_current_release('${agentName}')
 print(result if result is not None else 'null')
 `)
@@ -122,9 +151,7 @@ print(result if result is not None else 'null')
 export async function suggestVersion(agentName: string): Promise<{patch: string; minor: string; major: string; breaking?: boolean}> {
   try {
     const output = runPythonScript(`
-import sys
-sys.path.insert(0, '${path.join(os.homedir(), '.cast', 'python')}')
-from cast.releases import suggest_version
+${pythonPrelude()}from cast.releases import suggest_version
 import json
 result = suggest_version('${agentName}')
 print(json.dumps(result))
@@ -138,9 +165,7 @@ print(json.dumps(result))
 export async function validateSemver(version: string): Promise<boolean> {
   try {
     const output = runPythonScript(`
-import sys
-sys.path.insert(0, '${path.join(os.homedir(), '.cast', 'python')}')
-from cast.releases import validate_semver
+${pythonPrelude()}from cast.releases import validate_semver
 result = validate_semver('${version}')
 print('true' if result else 'false')
 `)

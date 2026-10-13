@@ -2,11 +2,12 @@
 
 import json
 import os
+import sqlite3
 import tarfile
 import shutil
 import re
 import warnings
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
@@ -44,6 +45,184 @@ def _get_releases_json_path(name: str) -> Path:
     return _get_releases_dir(name) / "releases.json"
 
 
+def _cast_db_path() -> Path:
+    """cast.db beside the agents directory (~/.cast/cast.db).
+
+    When tests point AGENTS_DIR at a temp folder that is not named
+    "agents", the database stays inside that folder.
+    """
+    agents = Path(AGENTS_DIR)
+    if agents.name == "agents":
+        return agents.parent / "cast.db"
+    return agents / "cast.db"
+
+
+def _coerce_int(value: Any) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _parse_created_at(value: Any) -> Optional[datetime]:
+    """Parse an ISO or SQLite timestamp into naive UTC."""
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        parsed = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(timezone.utc).replace(tzinfo=None)
+    return parsed
+
+
+def _format_created_at(value: datetime) -> str:
+    """SQLite-sortable UTC timestamp. Fractional seconds keep same-second creates ordered."""
+    return value.strftime("%Y-%m-%d %H:%M:%S.%f")
+
+
+def _load_releases_document(agent_name: str) -> Optional[Dict[str, Any]]:
+    releases_json_path = _get_releases_json_path(agent_name)
+    if not releases_json_path.exists():
+        return None
+    with open(releases_json_path, "r") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        return None
+    return data
+
+
+def _ensure_releases_schema(conn: sqlite3.Connection) -> None:
+    """Create the releases table and add any columns the TS schema already has.
+
+    Mirrors typescript/cast-cli/src/lib/sqlite.ts. ALTER is idempotent and
+    does not rewrite or renumber existing rows.
+    """
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS releases (
+            agent_name TEXT,
+            version TEXT,
+            change_number INTEGER,
+            message TEXT,
+            changelog TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            tarball_path TEXT,
+            PRIMARY KEY (agent_name, version)
+        )
+        """
+    )
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(releases)")}
+    for name, decl in (
+        ("change_number", "INTEGER"),
+        ("message", "TEXT"),
+        ("changelog", "TEXT"),
+        ("created_at", "DATETIME"),
+        ("tarball_path", "TEXT"),
+    ):
+        if name not in columns:
+            conn.execute(f"ALTER TABLE releases ADD COLUMN {name} {decl}")
+
+
+def _sync_releases_from_json(agent_name: str) -> None:
+    """Insert releases.json rows missing from SQLite.
+
+    A row that is already stored for (agent_name, version) is not updated,
+    so a second create cannot blank message or changelog.
+    """
+    document = _load_releases_document(agent_name)
+    if document is None:
+        return
+    raw_releases = document.get("releases") or []
+    if not isinstance(raw_releases, list) or not raw_releases:
+        return
+
+    current_version = None
+    current = document.get("current")
+    if isinstance(current, dict):
+        current_version = current.get("version")
+
+    db_path = _cast_db_path()
+    db_path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(db_path), timeout=5, isolation_level=None)
+    try:
+        conn.execute("PRAGMA busy_timeout = 5000")
+        _ensure_releases_schema(conn)
+        existing_versions = {
+            str(row[0])
+            for row in conn.execute(
+                "SELECT version FROM releases WHERE agent_name = ?",
+                (agent_name,),
+            )
+        }
+        existing_times: List[datetime] = []
+        for (stamp,) in conn.execute(
+            "SELECT created_at FROM releases WHERE agent_name = ? AND created_at IS NOT NULL",
+            (agent_name,),
+        ):
+            parsed = _parse_created_at(stamp)
+            if parsed is not None:
+                existing_times.append(parsed)
+
+        pending: List[Dict[str, Any]] = []
+        seen = set(existing_versions)
+        for entry in raw_releases:
+            if not isinstance(entry, dict):
+                continue
+            version = entry.get("version")
+            if not version or str(version) in seen:
+                continue
+            seen.add(str(version))
+            pending.append(entry)
+        if not pending:
+            return
+
+        stamps: List[datetime] = []
+        for index, entry in enumerate(pending):
+            parsed = _parse_created_at(entry.get("created_at"))
+            if parsed is None:
+                parsed = datetime(1970, 1, 1) + timedelta(seconds=index)
+            stamps.append(parsed)
+
+        if current_version is not None:
+            for index, entry in enumerate(pending):
+                if str(entry.get("version")) != str(current_version):
+                    continue
+                others = [stamp for i, stamp in enumerate(stamps) if i != index]
+                others.extend(existing_times)
+                if others and stamps[index] <= max(others):
+                    stamps[index] = max(others) + timedelta(microseconds=1)
+                break
+
+        with conn:
+            for entry, stamp in zip(pending, stamps):
+                conn.execute(
+                    """
+                    INSERT OR IGNORE INTO releases (
+                        agent_name, version, change_number, message,
+                        changelog, created_at, tarball_path
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        agent_name,
+                        str(entry.get("version")),
+                        _coerce_int(entry.get("change_number")),
+                        "" if entry.get("message") is None else str(entry.get("message")),
+                        "" if entry.get("changelog") is None else str(entry.get("changelog")),
+                        _format_created_at(stamp),
+                        "" if entry.get("tarball_path") is None else str(entry.get("tarball_path")),
+                    ),
+                )
+    finally:
+        conn.close()
+
+
 def _ensure_releases_dir(name: str) -> Path:
     """Ensure the releases directory exists."""
     releases_dir = _get_releases_dir(name)
@@ -59,6 +238,7 @@ def validate_semver(version: str) -> bool:
 
 def get_current_release(agent_name: str) -> Optional[str]:
     """Get the current (latest) semantic version for an agent."""
+    _sync_releases_from_json(agent_name)
     releases_json_path = _get_releases_json_path(agent_name)
     if not releases_json_path.exists():
         return None
@@ -72,6 +252,7 @@ def get_current_release(agent_name: str) -> Optional[str]:
 
 def list_releases(agent_name: str) -> List[ReleaseInfo]:
     """List all releases for an agent."""
+    _sync_releases_from_json(agent_name)
     releases_json_path = _get_releases_json_path(agent_name)
     if not releases_json_path.exists():
         return []
@@ -304,6 +485,10 @@ def create_release(agent_name: str, version: str, message: str = "", agents_dir:
         yaml_data["version"] = version
         with open(agent_yaml_path, "w") as f:
             yaml.dump(yaml_data, f, default_flow_style=False, sort_keys=False)
+
+    # Same writer the CLI, TUI, and builder use. Insert-if-absent so a
+    # pre-existing SQLite row is not replaced.
+    _sync_releases_from_json(agent_name)
 
     return release_info
 

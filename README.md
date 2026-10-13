@@ -335,7 +335,7 @@ cast update my-agent --model openrouter/openai/gpt-4o --dry-run
 Cast Agent tracks an agent with three independent concepts:
 
 - **Undo log (internal)** — automatic, sequential snapshots taken on every edit. You don't manage this directly; you interact with it through `cast undo` / `cast redo`. The log also feeds `cast release`'s auto-changelog.
-- **Releases** — intentional semantic versions (1.0, 1.5, 2.0) you create when you're ready to ship. Releases are the deployment artifact.
+- **Releases** — intentional semantic versions (1.0, 1.5, 2.0) you create when you're ready to ship. Releases are the deployment artifact. `cast release`, the TUI `/release` command, and the builder record each release in `releases.json` and in `cast.db`.
 - **Sessions** — saved conversations tied to an agent. Connecting (`cast connect`, `/connect`, or the on-host TUI) starts a new session with an empty model context. Cast Agent auto-saves every chat turn into that session. Continuing an old conversation is an explicit resume (`cast session resume`, `/session resume`, or `/sessions`). You can also fork, rename, or audit conversations.
 
 ```bash

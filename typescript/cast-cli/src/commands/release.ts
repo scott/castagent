@@ -3,7 +3,6 @@ import * as path from 'path'
 import * as os from 'os'
 import * as fs from 'fs'
 import {createRelease, validateSemver, suggestVersion, listReleases} from '../lib/releases'
-import {db} from '../lib/sqlite'
 
 export default class Release extends Command {
   static description = 'Create a semantic release for an agent'
@@ -49,11 +48,8 @@ export default class Release extends Command {
     this.log(`Creating release ${version} for agent '${agentName}'...`)
 
     try {
-      // Create the release
+      // createRelease writes releases.json and the SQLite row (insert-if-absent).
       const release = await createRelease(agentName, version, message)
-
-      // Store in database
-      db.createRelease(agentName, release.version, release.change_number, release.message, release.changelog, release.tarball_path)
 
       this.log('')
       this.log('╔══════════════════════════════════════════════════════════════╗')

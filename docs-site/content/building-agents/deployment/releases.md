@@ -59,6 +59,15 @@ The `--message` flag overrides the auto-generated message. If the version
 you're about to release corresponds to a breaking change (e.g. you removed
 a required tool), Cast prompts for confirmation.
 
+`cast release`, the TUI `/release` command, and the builder `create_release`
+tool all use the same writer. A successful release updates `releases.json`
+and inserts one SQLite row (version, change number, message, changelog, and
+tarball path). Listing releases or reading the current release also inserts
+any JSON versions that are missing from `cast.db`. A row that is already
+stored is left as-is, so a second create does not blank its message or
+changelog. `cast.db`'s current release and `releases.json`'s `current.version`
+stay in agreement.
+
 ## Suggested versions
 
 When you open `{% ref "slash:release" %}` in the TUI, Cast suggests the
