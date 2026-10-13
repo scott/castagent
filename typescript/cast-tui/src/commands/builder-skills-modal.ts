@@ -2,8 +2,9 @@ import {execFileSync} from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import {BoxRenderable, TextRenderable, StyledText, white, dim, red} from '@opentui/core'
-import type {KeyEvent} from '@opentui/core'
+import {BoxRenderable, TextRenderable, StyledText, white, dim, red, decodePasteBytes} from '@opentui/core'
+import type {KeyEvent, PasteEvent} from '@opentui/core'
+import clipboardy from 'clipboardy'
 import {createModal} from '../components/modal.js'
 import {
   classifyBuilderSkillAddSource,
@@ -12,6 +13,17 @@ import {
   wrapSkillIndex,
   type BuilderSkillRow,
 } from '../lib/builder-skills-list.js'
+import {
+  applyEntryKey,
+  clipFieldError,
+  createTextEntry,
+  insertText,
+  modalContentColumns,
+  previewField,
+  recordFailedSubmit,
+  type TextEntry,
+  type TextFieldKind,
+} from '../lib/text-entry.js'
 
 /**
  * Host surface the slash command passes in. Kept narrow so this file does
@@ -134,21 +146,32 @@ function loadSkillRows(): {ok: true; skills: BuilderSkillRow[]} | {ok: false; er
   }
 }
 
-function printableChar(key: KeyEvent): string | null {
-  if (key.ctrl || key.meta) return null
-  const sequence = (key as KeyEvent & {sequence?: string}).sequence
-  if (sequence && sequence.length === 1 && sequence >= ' ' && sequence !== '\u007f') return sequence
-  if (key.name === 'space') return ' '
-  if (key.name && key.name.length === 1 && key.name >= ' ' && key.name <= '~') return key.name
-  return null
+const BODY_LINES = 8
+const BODY_LINES_WITH_ERROR = 4
+const PROMPT_MAX = 300
+const NAME_MAX = 64
+const DESCRIPTION_MAX = 200
+const BODY_MAX = 20000
+
+function readClipboard(): string {
+  return clipboardy.readSync()
+}
+
+type ManualDraft = {
+  name: 'manual'
+  nameText: TextEntry
+  description: TextEntry
+  body: TextEntry
+  field: number
+  error?: string
 }
 
 type Screen =
   | {name: 'list'; skills: BuilderSkillRow[]; selected: number; error?: string}
   | {name: 'add'; selected: number}
-  | {name: 'github'; draft: string; error?: string}
-  | {name: 'folder'; draft: string; error?: string}
-  | {name: 'manual'; nameText: string; description: string; body: string; field: number; error?: string}
+  | {name: 'github'; draft: TextEntry; error?: string}
+  | {name: 'folder'; draft: TextEntry; error?: string}
+  | ManualDraft
   | {name: 'pick'; source: string; candidates: BuilderSkillRow[]; selected: number; error?: string}
   | {name: 'confirm'; skillName: string}
 
@@ -220,6 +243,7 @@ function openModal(ctx: BuilderSkillsHost, initial: Screen): void {
     centered: true,
     overlay: true,
   })
+  modal.box.overflow = 'hidden'
   if (modal.overlay) ctx.renderer.root.add(modal.overlay)
 
   const contentBox = new BoxRenderable(ctx.renderer, {
@@ -230,6 +254,7 @@ function openModal(ctx: BuilderSkillsHost, initial: Screen): void {
     paddingTop: 2,
     paddingLeft: 2,
     paddingRight: 2,
+    overflow: 'hidden',
   })
 
   let screen = initial
@@ -244,9 +269,28 @@ function openModal(ctx: BuilderSkillsHost, initial: Screen): void {
     ctx.messages.addAgentMessage(appliedMessage(verb, name), ctx.mode)
   }
 
+  function contentColumns(): number {
+    const width = typeof ctx.renderer?.width === 'number' ? ctx.renderer.width : 0
+    return modalContentColumns(width)
+  }
+
   const addLine = (text: string, tone: 'text' | 'selected' | 'error' | 'hint' = 'text') => {
     const color = tone === 'error' ? red : tone === 'selected' || tone === 'text' ? white : dim
     contentBox.add(new TextRenderable(ctx.renderer, {content: new StyledText([color(text)])}))
+  }
+
+  const addBlock = (text: string, tone: 'text' | 'error' = 'text') => {
+    const color = tone === 'error' ? red : white
+    contentBox.add(new TextRenderable(ctx.renderer, {
+      content: new StyledText([color(text)]),
+      width: '100%',
+      wrapMode: 'none',
+      flexShrink: 0,
+    }))
+  }
+
+  const addError = (message: string) => {
+    addBlock(clipFieldError(message, contentColumns()), 'error')
   }
 
   const clear = () => {
@@ -281,7 +325,13 @@ function openModal(ctx: BuilderSkillsHost, initial: Screen): void {
       succeed('Added', installed?.name ?? 'skill')
       return
     }
-    if (screen.name === 'github' || screen.name === 'pick') {
+    if (screen.name === 'github') {
+      const failed = recordFailedSubmit(screen.draft, failureText(result))
+      screen = {...screen, draft: failed.entry, error: failed.error}
+      render()
+      return
+    }
+    if (screen.name === 'pick') {
       screen = {...screen, error: failureText(result)}
       render()
       return
@@ -290,28 +340,37 @@ function openModal(ctx: BuilderSkillsHost, initial: Screen): void {
     ctx.messages.addAgentMessage(failureText(result), ctx.mode)
   }
 
-  function installFolder(folder: string) {
-    const result = runCast(['add', '--folder', folder, '--json'])
+  function installFolder(entry: TextEntry) {
+    const result = runCast(['add', '--folder', entry.text.trim(), '--json'])
     if (result.status === 0) {
       const installed = parseInstalled(result.stdout)
       succeed('Added', installed?.name ?? 'skill')
       return
     }
-    screen = {name: 'folder', draft: folder, error: failureText(result)}
+    const failed = recordFailedSubmit(entry, failureText(result))
+    screen = {name: 'folder', draft: failed.entry, error: failed.error}
     render()
   }
 
-  function saveManual(draft: {nameText: string; description: string; body: string; field: number}) {
+  function saveManual(draft: ManualDraft) {
     const result = runCast(
-      ['add', '--name', draft.nameText.trim(), '--description', draft.description.trim(), '--body', '-', '--json'],
-      draft.body,
+      ['add', '--name', draft.nameText.text.trim(), '--description', draft.description.text.trim(), '--body', '-', '--json'],
+      draft.body.text,
     )
     if (result.status === 0) {
       const installed = parseInstalled(result.stdout)
-      succeed('Added', installed?.name ?? draft.nameText.trim())
+      succeed('Added', installed?.name ?? draft.nameText.text.trim())
       return
     }
-    screen = {...draft, name: 'manual', error: failureText(result)}
+    const active = draft.field === 1 ? draft.description : draft.field === 2 ? draft.body : draft.nameText
+    const failed = recordFailedSubmit(active, failureText(result))
+    screen = {
+      ...draft,
+      nameText: draft.field === 0 ? failed.entry : draft.nameText,
+      description: draft.field === 1 ? failed.entry : draft.description,
+      body: draft.field === 2 ? failed.entry : draft.body,
+      error: failed.error,
+    }
     render()
   }
 
@@ -320,7 +379,7 @@ function openModal(ctx: BuilderSkillsHost, initial: Screen): void {
     const current = screen
     if (current.name === 'list') {
       modal.setTitle('Builder skills')
-      if (current.error) addLine(current.error, 'error')
+      if (current.error) addError(current.error)
       if (current.skills.length === 0) {
         addLine('No builder skills yet. Skills added here are used the next time you create or edit an agent.', 'hint')
       } else {
@@ -341,30 +400,39 @@ function openModal(ctx: BuilderSkillsHost, initial: Screen): void {
     } else if (current.name === 'github') {
       modal.setTitle('GitHub repository')
       addLine('owner/repo, owner/repo@ref, or a github.com URL', 'hint')
-      addLine((current.draft || '') + '_', 'selected')
-      if (current.error) addLine(current.error, 'error')
+      addBlock(previewField(current.draft, {multiline: false, columns: contentColumns(), showCursor: true}))
+      if (current.error) addError(current.error)
       footer('Enter Install   ESC Close')
     } else if (current.name === 'folder') {
       modal.setTitle('Folder on disk')
       addLine('Path to a folder that contains SKILL.md', 'hint')
-      addLine((current.draft || '') + '_', 'selected')
-      if (current.error) addLine(current.error, 'error')
+      addBlock(previewField(current.draft, {multiline: false, columns: contentColumns(), showCursor: true}))
+      if (current.error) addError(current.error)
       footer('Enter Install   ESC Close')
     } else if (current.name === 'manual') {
       modal.setTitle('New builder skill')
       const labels = ['Name', 'Description', 'Body', 'Save']
-      const values = [current.nameText, current.description, current.body, '']
+      const values = [current.nameText, current.description, current.body]
+      const columns = Math.max(1, contentColumns() - 2)
+      const bodyLines = current.error && current.field >= 2 ? BODY_LINES_WITH_ERROR : BODY_LINES
       for (let i = 0; i < labels.length; i++) {
         const selected = i === current.field
         const prefix = selected ? '▸ ' : '  '
         if (i === 3) {
           addLine(`${prefix}Save`, selected ? 'selected' : 'hint')
+          if (selected && current.error) addError(current.error)
           continue
         }
         addLine(`${prefix}${labels[i]}`, selected ? 'selected' : 'hint')
-        addLine(`  ${values[i]}${selected ? '_' : ''}`, 'text')
+        const shown = previewField(values[i], {
+          multiline: i === 2,
+          columns,
+          maxLines: i === 2 ? bodyLines : undefined,
+          showCursor: selected,
+        })
+        addBlock(indentField(shown))
+        if (selected && current.error) addError(current.error)
       }
-      if (current.error) addLine(current.error, 'error')
       footer('Enter does not save the body. Ctrl+S or Save writes the skill. ESC Close')
     } else if (current.name === 'pick') {
       modal.setTitle('Choose a skill')
@@ -373,7 +441,7 @@ function openModal(ctx: BuilderSkillsHost, initial: Screen): void {
       current.candidates.forEach((skill, index) => {
         addLine(formatBuilderSkillRow(skill, index === selected), index === selected ? 'selected' : 'hint')
       })
-      if (current.error) addLine(current.error, 'error')
+      if (current.error) addError(current.error)
       footer('↑↓ Navigate   Enter Install   ESC Close')
     } else {
       modal.setTitle('Remove builder skill')
@@ -386,7 +454,47 @@ function openModal(ctx: BuilderSkillsHost, initial: Screen): void {
     ctx.renderer.requestRender?.()
   }
 
+  function indentField(text: string): string {
+    return text.split('\n').map((line) => `  ${line}`).join('\n')
+  }
+
+  function editManualField(draft: ManualDraft, key: KeyEvent): boolean {
+    if (draft.field >= 3) return false
+    const current = draft.field === 0 ? draft.nameText : draft.field === 1 ? draft.description : draft.body
+    const kind: TextFieldKind = draft.field === 2 ? 'body' : 'single'
+    const maxLength = draft.field === 0 ? NAME_MAX : draft.field === 1 ? DESCRIPTION_MAX : BODY_MAX
+    const next = applyEntryKey(current, key, {kind, maxLength}, readClipboard)
+    if (!next.handled) return false
+    const error = next.entry.text !== current.text ? undefined : draft.error
+    if (draft.field === 0) screen = {...draft, nameText: next.entry, error}
+    else if (draft.field === 1) screen = {...draft, description: next.entry, error}
+    else screen = {...draft, body: next.entry, error}
+    render()
+    return true
+  }
+
+  function pasteIntoActive(raw: string): void {
+    if (screen.name === 'github' || screen.name === 'folder') {
+      const next = insertText(screen.draft, raw, 'single', PROMPT_MAX)
+      const error = next.text !== screen.draft.text ? undefined : screen.error
+      screen = {...screen, draft: next, error}
+      render()
+      return
+    }
+    if (screen.name !== 'manual' || screen.field >= 3) return
+    const current = screen.field === 0 ? screen.nameText : screen.field === 1 ? screen.description : screen.body
+    const kind: TextFieldKind = screen.field === 2 ? 'body' : 'single'
+    const maxLength = screen.field === 0 ? NAME_MAX : screen.field === 1 ? DESCRIPTION_MAX : BODY_MAX
+    const next = insertText(current, raw, kind, maxLength)
+    const error = next.text !== current.text ? undefined : screen.error
+    if (screen.field === 0) screen = {...screen, nameText: next, error}
+    else if (screen.field === 1) screen = {...screen, description: next, error}
+    else screen = {...screen, body: next, error}
+    render()
+  }
+
   modal.box.handleKeyPress = (key: KeyEvent): boolean => {
+    if (key.eventType === 'release') return true
     if (key.name === 'escape') {
       close()
       return true
@@ -431,9 +539,9 @@ function openModal(ctx: BuilderSkillsHost, initial: Screen): void {
         return true
       }
       if (key.name === 'return' || key.name === 'enter') {
-        if (screen.selected === 0) screen = {name: 'github', draft: ''}
-        else if (screen.selected === 1) screen = {name: 'folder', draft: ''}
-        else screen = {name: 'manual', nameText: '', description: '', body: '', field: 0}
+        if (screen.selected === 0) screen = {name: 'github', draft: createTextEntry()}
+        else if (screen.selected === 1) screen = {name: 'folder', draft: createTextEntry()}
+        else screen = {name: 'manual', nameText: createTextEntry(), description: createTextEntry(), body: createTextEntry(), field: 0}
         render()
         return true
       }
@@ -442,28 +550,23 @@ function openModal(ctx: BuilderSkillsHost, initial: Screen): void {
 
     if (screen.name === 'github' || screen.name === 'folder') {
       if (key.name === 'return' || key.name === 'enter') {
-        const draft = screen.draft.trim()
+        const draft = screen.draft.text.trim()
         if (!draft) {
-          screen = {...screen, error: 'A value is required.'}
+          const failed = recordFailedSubmit(screen.draft, 'A value is required.')
+          screen = {...screen, draft: failed.entry, error: failed.error}
           render()
           return true
         }
         if (screen.name === 'github') installGithub(draft)
-        else installFolder(draft)
+        else installFolder(screen.draft)
         return true
       }
-      if (key.name === 'backspace') {
-        screen = {...screen, draft: screen.draft.slice(0, -1), error: undefined}
-        render()
-        return true
-      }
-      const ch = printableChar(key)
-      if (ch && screen.draft.length < 300) {
-        screen = {...screen, draft: screen.draft + ch, error: undefined}
-        render()
-        return true
-      }
-      return false
+      const next = applyEntryKey(screen.draft, key, {kind: 'single', maxLength: PROMPT_MAX}, readClipboard)
+      if (!next.handled) return false
+      const error = next.entry.text !== screen.draft.text ? undefined : screen.error
+      screen = {...screen, draft: next.entry, error}
+      render()
+      return true
     }
 
     if (screen.name === 'manual') {
@@ -484,25 +587,15 @@ function openModal(ctx: BuilderSkillsHost, initial: Screen): void {
           saveManual(screen)
           return true
         }
-        if (screen.field === 2) screen = {...screen, body: screen.body + '\n'}
-        else screen = {...screen, field: screen.field + 1}
+        if (screen.field === 2) {
+          const body = insertText(screen.body, '\n', 'body', BODY_MAX)
+          const error = body.text !== screen.body.text ? undefined : screen.error
+          screen = {...screen, body, error}
+        } else screen = {...screen, field: screen.field + 1}
         render()
         return true
       }
-      if (key.name === 'backspace') {
-        if (screen.field === 0) screen = {...screen, nameText: screen.nameText.slice(0, -1)}
-        else if (screen.field === 1) screen = {...screen, description: screen.description.slice(0, -1)}
-        else if (screen.field === 2) screen = {...screen, body: screen.body.slice(0, -1)}
-        render()
-        return true
-      }
-      const ch = printableChar(key)
-      if (!ch || screen.field === 3) return false
-      if (screen.field === 0 && screen.nameText.length < 64) screen = {...screen, nameText: screen.nameText + ch}
-      else if (screen.field === 1 && screen.description.length < 200) screen = {...screen, description: screen.description + ch}
-      else if (screen.field === 2 && screen.body.length < 20000) screen = {...screen, body: screen.body + ch}
-      render()
-      return true
+      return editManualField(screen, key)
     }
 
     if (screen.name === 'pick') {
@@ -544,6 +637,12 @@ function openModal(ctx: BuilderSkillsHost, initial: Screen): void {
       return true
     }
     return false
+  }
+
+  modal.box.handlePaste = (event: PasteEvent): void => {
+    if (screen.name !== 'github' && screen.name !== 'folder' && screen.name !== 'manual') return
+    event.preventDefault()
+    pasteIntoActive(decodePasteBytes(event.bytes))
   }
 
   modal.setContent(contentBox)
