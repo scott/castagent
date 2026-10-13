@@ -185,7 +185,10 @@ jobs:
           python-version: "3.12"
 
       - name: Install pytest
-        run: pip install pytest
+        # Topic tests import PyYAML through AgentConfig and langchain-core
+        # for the completion messages. Both are missing from pyproject.toml
+        # (issue #24). Install them here so this job can stay required.
+        run: pip install pytest pyyaml langchain-core
 
       - name: Run session storage tests
         run: PYTHONPATH=python python -m pytest tests/python/unit/test_sessions.py tests/python/unit/test_session_topic.py -q
