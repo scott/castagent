@@ -133,15 +133,9 @@
     return value.replace(/^v/, '')
   }
 
-  function fillButton(button, version, isLatest) {
+  function fillButton(button, version) {
     button.textContent = ''
     button.appendChild(document.createTextNode('v' + version))
-    if (isLatest) {
-      var mark = document.createElement('span')
-      mark.className = 'version-picker-latest'
-      mark.textContent = 'Latest'
-      button.appendChild(mark)
-    }
   }
 
   function menuRows(manifest, version, pathname) {
@@ -178,7 +172,7 @@
     }
     button.setAttribute('aria-expanded', 'false')
     button.setAttribute('aria-controls', 'version-picker-menu')
-    fillButton(button, version, version === manifest.latest)
+    fillButton(button, version)
 
     var currentIndex = 0
     rows.forEach(function (row, index) {

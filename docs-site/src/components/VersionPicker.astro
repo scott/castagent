@@ -1,9 +1,8 @@
 ---
 const docsVersion = String(import.meta.env.PUBLIC_DOCS_VERSION || '').replace(/^v/, '')
-const showLatest = import.meta.env.BASE_URL === '/'
 ---
 
 <div class="version-picker" data-version-picker data-docs-version={docsVersion}>
-  <button type="button" class="version-picker-button" aria-haspopup="listbox" aria-expanded="false">v{docsVersion}{showLatest && <span class="version-picker-latest">Latest</span>}</button>
+  <button type="button" class="version-picker-button" aria-haspopup="listbox" aria-expanded="false">v{docsVersion}</button>
 </div>
 <script is:inline src="/version-picker.js"></script>
