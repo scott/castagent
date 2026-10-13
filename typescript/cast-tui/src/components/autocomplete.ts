@@ -1,8 +1,10 @@
 import {BoxRenderable, TextRenderable, StyledText, white, dim, cyan, bold} from '@opentui/core'
+import {groupSlashCommands, moveSlashSelection, type SlashPickerCategory, type SlashPickerRow} from '../lib/slash-picker.js'
 
 export interface AutocompleteOption {
   name: string
   description: string
+  category: SlashPickerCategory
 }
 
 export interface AutocompleteComponent {
@@ -23,8 +25,10 @@ export function createAutocomplete(
   onSelect: (option: AutocompleteOption) => void
 ): AutocompleteComponent {
   let allOptions: AutocompleteOption[] = [...options]
-  let filteredOptions: AutocompleteOption[] = []
+  let rows: SlashPickerRow<AutocompleteOption>[] = []
+  let selectable: AutocompleteOption[] = []
   let selectedIndex = 0
+  let lastValue = ''
 
   const box = new BoxRenderable(ctx, {
     position: 'absolute',
@@ -41,14 +45,23 @@ export function createAutocomplete(
   })
 
   function renderOptions() {
-    // Clear existing children
     for (const child of box.getChildren()) {
       box.remove(child.id)
     }
 
-    for (let i = 0; i < filteredOptions.length; i++) {
-      const option = filteredOptions[i]
-      const isSelected = i === selectedIndex
+    let commandOrdinal = 0
+    for (const row of rows) {
+      if (row.kind === 'header') {
+        const text = new TextRenderable(ctx, {
+          content: new StyledText([dim(`  ${row.label}`)]),
+        })
+        box.add(text)
+        continue
+      }
+
+      const option = row.command
+      const isSelected = commandOrdinal === selectedIndex
+      commandOrdinal++
 
       const prefix = isSelected ? cyan('▸ ') : white('  ')
       const nameStyle = isSelected
@@ -65,28 +78,32 @@ export function createAutocomplete(
   }
 
   function filterOptions(value: string) {
+    lastValue = value
     if (!value.startsWith('/')) {
-      filteredOptions = []
+      rows = []
+      selectable = []
       hide()
       return
     }
 
-    const query = value.slice(1).toLowerCase()
-    filteredOptions = allOptions.filter((opt) =>
-      opt.name.toLowerCase().startsWith(query)
-    )
-
-    if (filteredOptions.length === 0) {
-      hide()
-    } else {
-      selectedIndex = 0
-      renderOptions()
-      show()
+    rows = groupSlashCommands(allOptions, value.slice(1))
+    selectable = []
+    for (const row of rows) {
+      if (row.kind === 'command') selectable.push(row.command)
     }
+
+    if (selectable.length === 0) {
+      hide()
+      return
+    }
+
+    selectedIndex = 0
+    renderOptions()
+    show()
   }
 
   function show() {
-    if (filteredOptions.length > 0) {
+    if (selectable.length > 0) {
       box.visible = true
       box.requestRender?.()
     }
@@ -97,8 +114,9 @@ export function createAutocomplete(
     box.requestRender?.()
   }
 
-  function setOptions(options: AutocompleteOption[]) {
-    allOptions = [...options]
+  function setOptions(next: AutocompleteOption[]) {
+    allOptions = [...next]
+    if (box.visible) filterOptions(lastValue)
   }
 
   function setInputValue(value: string) {
@@ -106,29 +124,24 @@ export function createAutocomplete(
   }
 
   function moveUp() {
-    if (filteredOptions.length === 0) return
-    selectedIndex =
-      (selectedIndex - 1 + filteredOptions.length) % filteredOptions.length
+    if (selectable.length === 0) return
+    selectedIndex = moveSlashSelection(selectable.length, selectedIndex, -1)
     renderOptions()
     box.requestRender?.()
   }
 
   function moveDown() {
-    if (filteredOptions.length === 0) return
-    selectedIndex = (selectedIndex + 1) % filteredOptions.length
+    if (selectable.length === 0) return
+    selectedIndex = moveSlashSelection(selectable.length, selectedIndex, 1)
     renderOptions()
     box.requestRender?.()
   }
 
   function selectCurrent(): AutocompleteOption | null {
-    if (
-      filteredOptions.length === 0 ||
-      selectedIndex < 0 ||
-      selectedIndex >= filteredOptions.length
-    ) {
+    if (selectable.length === 0 || selectedIndex < 0 || selectedIndex >= selectable.length) {
       return null
     }
-    const option = filteredOptions[selectedIndex]
+    const option = selectable[selectedIndex]
     hide()
     onSelect(option)
     return option

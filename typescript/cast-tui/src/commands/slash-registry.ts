@@ -44,6 +44,7 @@ import {
   type ImportModalFields,
 } from '../lib/import-command.js'
 import type {UiMode} from '../components/header.js'
+import {formatSlashHelp} from '../lib/slash-picker.js'
 
 // Get agent description from agent.yaml
 function getAgentDescription(agentName: string): string {
@@ -1679,47 +1680,8 @@ const commands: SlashCommand[] = [
     description: 'Show all available slash commands',
     category: 'chat',
     handler: async (ctx) => {
-      if (ctx.uiMode === 'on-host') {
-        ctx.messages.addAgentMessage(
-          'On-host commands:\n' +
-          '  /clear  - Clear all messages from the chat\n' +
-          '  /copy   - Copy the last agent response to clipboard\n' +
-          '  /quit   - Exit the TUI\n' +
-          '  /exit   - Exit the TUI\n' +
-          '  /help   - Show this help\n' +
-          '\n' +
-          'Type a message and press Enter to talk to the agent.\n' +
-          'Press Ctrl+C to exit at any time.',
-          ctx.mode,
-        )
-        return
-      }
-
-      const lines: string[] = []
-      lines.push('Available commands:')
-      lines.push('')
-
-      const categories: Record<string, string> = {
-        chat: 'Chat',
-        agent: 'Agent',
-        session: 'Session',
-        git: 'Git',
-      }
-
       const visible = getSlashCommands(ctx.uiMode ?? 'dev')
-      for (const [cat, label] of Object.entries(categories)) {
-        const cmds = visible.filter((c) => c.category === cat)
-        if (cmds.length > 0) {
-          lines.push(`${label}:`)
-          for (const cmd of cmds) {
-            const args = cmd.args ? ` ${cmd.args}` : ''
-            lines.push(`  /${cmd.name}${args} - ${cmd.description}`)
-          }
-          lines.push('')
-        }
-      }
-
-      ctx.messages.addAgentMessage(lines.join('\n'), ctx.mode)
+      ctx.messages.addAgentMessage(formatSlashHelp(visible), ctx.mode)
     },
   },
 
@@ -3361,6 +3323,7 @@ const commands: SlashCommand[] = [
     name: 'sessions',
     description: 'List saved sessions and open the picker modal',
     category: 'session',
+    modes: ['dev', 'production'],
     handler: async (ctx) => {
       const items = await listSessionsMeta(ctx.agentName, 50, true)
       if (items.length === 0) {
@@ -3413,6 +3376,7 @@ const commands: SlashCommand[] = [
     name: 'session',
     description: 'Start or resume a session',
     category: 'session',
+    modes: ['dev', 'production'],
     args: '[new|resume]',
     handler: async (ctx, args) => {
       const subcommand = (args[0] ?? 'new').toLowerCase()
