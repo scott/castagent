@@ -1,5 +1,39 @@
 # cast-cli
 
+## 2.5.0
+
+### Minor Changes
+
+- The docs site searches with Pagefind. A box in the header and a `/search` page filter prose, CLI, slash-command, and provider pages as you type.
+
+  - PR #111
+
+- `/` and `/help` list the commands for the current UI mode, grouped by category and alphabetized.
+
+  - PR #110
+
+- An unnamed session shows a one-line topic from that agent's model in the sessions picker and in `cast session list`. The first user message remains the fallback until a topic is stored.
+
+  - PR #114
+
+- `cast registry` and `/registry` list every live deployment. Release history stays on `cast releases`.
+
+  - PR #109
+
+### Patch Changes
+
+- The docs version picker button shows only the version, so the Cast Agent wordmark stays on one line. The open menu still marks the current release as Latest.
+
+  - PR #108
+
+- Add-skill fields accept a cursor and paste, and a failed install keeps the error inside the modal.
+
+  - PR #113
+
+- A release from the CLI, the TUI, or the builder writes the SQLite `releases` row as well as `releases.json`. JSON releases missing from SQLite are inserted and existing rows are left as they are.
+
+  - PR #112
+
 ## 2.4.0
 
 ### Minor Changes

@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.0] - 2026-10-13
+
+### Added
+
+- The docs site searches with Pagefind. A box in the header and a `/search` page filter prose, CLI, slash-command, and provider pages as you type ([#111](https://github.com/scott/castagent/pull/111)).
+- `/` and `/help` list the commands for the current UI mode, grouped by category and alphabetized ([#110](https://github.com/scott/castagent/pull/110)).
+- An unnamed session shows a one-line topic from that agent's model in the sessions picker and in `cast session list`. The first user message remains the fallback until a topic is stored ([#114](https://github.com/scott/castagent/pull/114)).
+- `cast registry` and `/registry` list every live deployment. Release history stays on `cast releases` ([#109](https://github.com/scott/castagent/pull/109)).
+
+### Fixed
+
+- The docs version picker button shows only the version, so the Cast Agent wordmark stays on one line. The open menu still marks the current release as Latest ([#108](https://github.com/scott/castagent/pull/108)).
+- Add-skill fields accept a cursor and paste, and a failed install keeps the error inside the modal ([#113](https://github.com/scott/castagent/pull/113)).
+- A release from the CLI, the TUI, or the builder writes the SQLite `releases` row as well as `releases.json`. JSON releases missing from SQLite are inserted and existing rows are left as they are ([#112](https://github.com/scott/castagent/pull/112)).
+
 ## [2.4.0] - 2026-10-12
 
 ### Added
