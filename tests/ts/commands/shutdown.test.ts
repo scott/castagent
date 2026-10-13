@@ -35,6 +35,20 @@ function createCommandInstance(CommandClass: any, args: string[], flags: any = {
   return instance
 }
 
+function stubDeploymentTokenDelete(sandbox?: sinon.SinonSandbox): void {
+  const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
+  if (typeof keychainModule.keychain.deleteDeploymentToken !== 'function') {
+    keychainModule.keychain.deleteDeploymentToken = async () => false
+  }
+  if (sandbox) {
+    if (!(keychainModule.keychain.deleteDeploymentToken as any).isSinonProxy) {
+      sandbox.stub(keychainModule.keychain, 'deleteDeploymentToken').resolves(false)
+    }
+    return
+  }
+  keychainModule.keychain.deleteDeploymentToken = async () => false
+}
+
 describe('shutdown command', () => {
   let Shutdown: any
 
@@ -79,6 +93,7 @@ describe('shutdown command', () => {
 
     beforeEach(() => {
       sandbox = sinon.createSandbox()
+      stubDeploymentTokenDelete(sandbox)
     })
 
     afterEach(() => {
@@ -251,6 +266,125 @@ describe('shutdown command', () => {
         sandbox.restore()
       }
     })
+
+    it('should shut down one SHA and leave the other provider registered', async () => {
+      const testAgentName = 'test-shutdown-two-providers-' + Date.now()
+      const instance = createCommandInstance(Shutdown, ['d6b12f'], {force: true})
+      let loggedMessage = ''
+      instance.log = (msg: string) => {
+        loggedMessage += msg + '\n'
+      }
+      instance.warn = () => {}
+
+      const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
+      const spriteToken = 'sprite-token'
+      const spriteHash = keychainModule.keychain.hashToken(spriteToken)
+      const microHash = keychainModule.keychain.hashToken('micro-token')
+      const microvm = {
+        id: 'd6b12f',
+        agent_name: testAgentName,
+        provider: 'microvm',
+        deployment_url: 'https://micro.example',
+        volume_id: 'vm-1',
+        auth_token_hash: microHash,
+      }
+      const sprites = {
+        id: 'bb7590',
+        agent_name: testAgentName,
+        provider: 'sprites',
+        deployment_url: 'https://sprite.example',
+        volume_id: 'sprite-vol',
+        auth_token_hash: spriteHash,
+      }
+
+      const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
+      sandbox.stub(sqliteModule.db, 'getDeploymentBySha').callsFake((sha: unknown) => sha === 'd6b12f' ? microvm : null)
+      sandbox.stub(sqliteModule.db, 'listDeployments').returns([sprites, microvm])
+      const removeAll = sandbox.stub(sqliteModule.db, 'removeAllDeployments').callsFake(() => {})
+      const removeOne = sandbox.stub(sqliteModule.db, 'removeDeploymentBySha').callsFake(() => {})
+      sandbox.stub(keychainModule.keychain, 'getToken').resolves(spriteToken)
+      const deleteToken = sandbox.stub(keychainModule.keychain, 'deleteToken').resolves(true)
+
+      const shutdownModule = require('../../../typescript/cast-cli/src/commands/shutdown')
+      const originalDestroyer = shutdownModule.PROVIDER_DESTROYERS.microvm
+      let destroyed: any = null
+      shutdownModule.PROVIDER_DESTROYERS.microvm = async (_agentName: string, deployment: any) => {
+        destroyed = deployment
+      }
+
+      try {
+        await instance.run()
+        expect(removeAll.called).to.equal(false)
+        expect(removeOne.calledOnce).to.equal(true)
+        expect(removeOne.calledWith('d6b12f')).to.equal(true)
+        expect(deleteToken.called).to.equal(false)
+        expect(destroyed?.id).to.equal('d6b12f')
+        expect(loggedMessage).to.include("Deployment 'd6b12f'")
+        expect(loggedMessage).to.include('Left the auth token in place')
+      } finally {
+        shutdownModule.PROVIDER_DESTROYERS.microvm = originalDestroyer
+        sandbox.restore()
+      }
+    })
+
+    it('should remove every row of a shared provider remote and leave other providers', async () => {
+      const testAgentName = 'test-shutdown-shared-remote-' + Date.now()
+      const instance = createCommandInstance(Shutdown, ['bb7590'], {force: true})
+      instance.log = () => {}
+      instance.warn = () => {}
+
+      const older = {
+        id: 'aa1111',
+        agent_name: testAgentName,
+        provider: 'sprites',
+        deployment_url: 'https://sprite.example',
+        volume_id: 'old-vol',
+        auth_token_hash: 'old',
+      }
+      const sprites = {
+        id: 'bb7590',
+        agent_name: testAgentName,
+        provider: 'sprites',
+        deployment_url: 'https://sprite.example',
+        volume_id: 'new-vol',
+        auth_token_hash: 'new',
+      }
+      const microvm = {
+        id: 'd6b12f',
+        agent_name: testAgentName,
+        provider: 'microvm',
+        deployment_url: 'https://micro.example',
+        volume_id: 'vm-1',
+        auth_token_hash: 'micro',
+      }
+
+      const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
+      sandbox.stub(sqliteModule.db, 'getDeploymentBySha').callsFake((sha: unknown) => sha === 'bb7590' ? sprites : null)
+      sandbox.stub(sqliteModule.db, 'listDeployments').returns([sprites, older, microvm])
+      const removeAll = sandbox.stub(sqliteModule.db, 'removeAllDeployments').callsFake(() => {})
+      const removed: string[] = []
+      sandbox.stub(sqliteModule.db, 'removeDeploymentBySha').callsFake((sha: unknown) => {
+        removed.push(String(sha))
+      })
+
+      const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
+      sandbox.stub(keychainModule.keychain, 'getToken').resolves(null)
+      sandbox.stub(keychainModule.keychain, 'deleteToken').resolves(true)
+
+      const shutdownModule = require('../../../typescript/cast-cli/src/commands/shutdown')
+      const originalDestroyer = shutdownModule.PROVIDER_DESTROYERS.sprites
+      shutdownModule.PROVIDER_DESTROYERS.sprites = async () => {}
+
+      try {
+        await instance.run()
+        expect(removeAll.called).to.equal(false)
+        expect(removed).to.have.members(['bb7590', 'aa1111'])
+        expect(removed).to.not.include('d6b12f')
+      } finally {
+        shutdownModule.PROVIDER_DESTROYERS.sprites = originalDestroyer
+        sandbox.restore()
+      }
+    })
   })
 })
 
@@ -362,6 +496,7 @@ describe('shutdown command - force flag behavior', () => {
 
   beforeEach(() => {
     sandbox = sinon.createSandbox()
+    stubDeploymentTokenDelete(sandbox)
   })
 
   afterEach(() => {
@@ -496,6 +631,7 @@ describe('shutdown command - error handling', () => {
 
   beforeEach(() => {
     sandbox = sinon.createSandbox()
+    stubDeploymentTokenDelete(sandbox)
   })
 
   afterEach(() => {

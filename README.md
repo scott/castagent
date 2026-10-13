@@ -156,6 +156,7 @@ cast deploy demo-agent --provider docker
 
 # Shut down a deployed agent (destroy remote resources)
 cast shutdown demo-agent
+cast shutdown abc123          # one deployment, when the agent has several
 
 # Connect to deployed agent
 cast connect demo-agent
@@ -197,6 +198,7 @@ cast connect demo-agent
 To shut down and clean up resources:
 ```bash
 cast shutdown demo-agent
+cast shutdown abc123   # only that deployment; other providers stay registered
 ```
 
 DigitalOcean MicroVMs (`--provider microvm`) are separate from Droplets. They are in public preview in region MKC1, run linux/amd64 images from DigitalOcean Container Registry, and pause when idle. The next request resumes a paused MicroVM. Cast Agent retries HTTP 503 while it wakes. The edge closes each chat response about 15 seconds after the request starts, even while bytes are still arriving. Cast keeps that reply running and the client continues it on the next request. A keepalive still covers proxies that drop a quiet stream. Deploy or upgrade the agent so the image includes that runtime, and reconnect with a current build. `--with-tui` is rejected. The endpoint expects your DigitalOcean token on `Authorization` and the agent token on `X-Cast-Authorization`. If the edge does not forward that second header, rerun with `--edge-auth-only`. Logs are `doctl compute microvm exec <id> -- <log command>`. `doctl` 1.173.0 or newer is required.

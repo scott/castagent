@@ -80,7 +80,7 @@ export const microvmProvider: DeploymentProvider = {
     ])
   },
   async destroy(ctx) {
-    await MicrovmDeploy.destroy(ctx.agentName)
+    await MicrovmDeploy.destroy(ctx.agentName, ctx.deployment)
   },
   async upgrade(ctx) {
     if (ctx.versionTarballPath && fs.existsSync(ctx.versionTarballPath)) {

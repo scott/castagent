@@ -1,10 +1,14 @@
 import {expect} from 'chai'
+import sinon from 'sinon'
 import * as path from 'path'
 import * as os from 'os'
 import * as fs from 'fs'
 import {
+  deploymentIdsToRemove,
+  forgetDeploymentTokens,
   getAgentPath,
   isShaPattern,
+  resolveDeploymentAuthToken,
   resolveDeploymentTarget,
   generateDeploymentSha,
   generateDeploymentId,
@@ -12,6 +16,7 @@ import {
   getProviderToken,
   getVolumeName,
   getMemoryMountPath,
+  storeAuthToken,
 } from '../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 
 describe('Agent Path Resolution', () => {
@@ -337,5 +342,114 @@ describe('Volume helpers', () => {
     it('returns /app/agent/memory for unknown providers', () => {
       expect(getMemoryMountPath('unknown')).to.equal('/app/agent/memory')
     })
+  })
+})
+
+describe('deploymentIdsToRemove', () => {
+  const microvm = {id: 'd6b12f', provider: 'microvm', volume_id: 'vm-1', auth_token_hash: 'micro'}
+  const sprites = {id: 'bb7590', provider: 'sprites', volume_id: 'sprite-vol', auth_token_hash: 'sprite'}
+  const olderSprites = {id: 'aa1111', provider: 'sprites', volume_id: 'old-vol', auth_token_hash: 'old'}
+
+  it('removes every live row when shutdown is by agent name', () => {
+    const ids = deploymentIdsToRemove(sprites, [sprites, microvm], false)
+    expect(ids).to.have.members(['bb7590', 'd6b12f'])
+  })
+
+  it('removes only the MicroVM row when shutdown is by that SHA', () => {
+    const ids = deploymentIdsToRemove(microvm, [sprites, microvm], true)
+    expect(ids).to.deep.equal(['d6b12f'])
+  })
+
+  it('removes every sprites row and leaves the MicroVM when the sprite is shared', () => {
+    const ids = deploymentIdsToRemove(sprites, [sprites, olderSprites, microvm], true)
+    expect(ids).to.have.members(['bb7590', 'aa1111'])
+  })
+})
+
+describe('per-deployment auth tokens', () => {
+  const keychain = require('../../../typescript/cast-cli/src/lib/keychain').keychain
+  let sandbox: sinon.SinonSandbox
+
+  beforeEach(() => {
+    sandbox = sinon.createSandbox()
+  })
+
+  afterEach(() => {
+    sandbox.restore()
+  })
+
+  it('stores a deployment token and the agent token on the first deploy', async () => {
+    const setToken = sandbox.stub(keychain, 'setToken').resolves()
+    const setDeploymentToken = sandbox.stub(keychain, 'setDeploymentToken').resolves()
+    const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
+    const agentName = `token-first-${Date.now()}`
+    sandbox.stub(db, 'listDeployments').returns([])
+
+    await storeAuthToken(agentName, 'first-token', 'aaa111')
+
+    expect(setDeploymentToken.calledOnceWith('aaa111', 'first-token')).to.equal(true)
+    expect(setToken.calledOnceWith(agentName, 'first-token')).to.equal(true)
+  })
+
+  it('does not replace the agent token when another deployment is live', async () => {
+    const setToken = sandbox.stub(keychain, 'setToken').resolves()
+    const setDeploymentToken = sandbox.stub(keychain, 'setDeploymentToken').resolves()
+    const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
+    const agentName = `token-second-${Date.now()}`
+    sandbox.stub(db, 'listDeployments').returns([{id: 'd6b12f', provider: 'microvm'}])
+
+    await storeAuthToken(agentName, 'sprite-token', 'bb7590')
+
+    expect(setDeploymentToken.calledOnceWith('bb7590', 'sprite-token')).to.equal(true)
+    expect(setToken.called).to.equal(false)
+  })
+
+  it('uses the per-SHA token when connecting', async () => {
+    sandbox.stub(keychain, 'getDeploymentToken').resolves('sha-token')
+    sandbox.stub(keychain, 'getToken').resolves('agent-token')
+
+    const token = await resolveDeploymentAuthToken({
+      id: 'bb7590',
+      agent_name: 'demo-agent',
+      auth_token_hash: 'does-not-matter',
+    })
+    expect(token).to.equal('sha-token')
+  })
+
+  it('uses the agent token only when its hash matches the deployment', async () => {
+    sandbox.stub(keychain, 'getDeploymentToken').resolves(null)
+    sandbox.stub(keychain, 'getToken').resolves('agent-token')
+    const hash = keychain.hashToken('agent-token')
+
+    const matched = await resolveDeploymentAuthToken({
+      id: 'd6b12f',
+      agent_name: 'demo-agent',
+      auth_token_hash: hash,
+    })
+    const other = await resolveDeploymentAuthToken({
+      id: 'bb7590',
+      agent_name: 'demo-agent',
+      auth_token_hash: keychain.hashToken('sprite-token'),
+    })
+
+    expect(matched).to.equal('agent-token')
+    expect(other).to.equal(null)
+  })
+
+  it('keeps the agent token when a remaining deployment still matches it', async () => {
+    const deleteToken = sandbox.stub(keychain, 'deleteToken').resolves(true)
+    const deleteDeploymentToken = sandbox.stub(keychain, 'deleteDeploymentToken').resolves(true)
+    sandbox.stub(keychain, 'getToken').resolves('agent-token')
+    const hash = keychain.hashToken('agent-token')
+
+    const forgotten = await forgetDeploymentTokens(
+      'demo-agent',
+      [{id: 'bb7590', provider: 'sprites', auth_token_hash: keychain.hashToken('sprite-token')}],
+      [{id: 'd6b12f', provider: 'microvm', auth_token_hash: hash}],
+    )
+
+    expect(forgotten).to.equal('deployment')
+    expect(deleteDeploymentToken.calledOnceWith('bb7590')).to.equal(true)
+    expect(deleteToken.called).to.equal(false)
   })
 })

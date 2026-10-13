@@ -20,9 +20,12 @@ cast connect abc123         # by deployment SHA
 ```
 
 `{% ref "cli:connect" %}` opens a TUI chat session against the deployed
-agent. The CLI reads the deployment's `auth_token_hash` from the SQLite
-database, fetches the corresponding bearer token from the keychain, and
-hands both to the TUI. No token ever appears in shell output.
+agent. The CLI reads that deployment's `auth_token_hash` from the SQLite
+database and fetches the bearer token stored for that SHA. It uses the
+agent-level keychain entry only when the hash matches this deployment, so
+connecting to one host does not send another host's token. No token ever
+appears in shell output. Deploying the same agent to a second provider
+stores a second token and leaves the first one in place.
 
 In the TUI, `{% ref "slash:connect" %}` opens a modal listing recent
 deployments — pick by SHA or by name.
@@ -46,15 +49,22 @@ cast shutdown abc123
 cast shutdown email-assistant --force
 ```
 
-`{% ref "cli:shutdown" %}` calls the provider's destroy method
-(deletes the Railway project, destroys the Fly app, etc.), removes the
-SSH key entry, and soft-deletes the row in the `deployments` table.
-The deployment SHA is preserved in the deleted row for audit, but the
-remote resources are gone.
+`{% ref "cli:shutdown" %}` calls that deployment's destroy method
+(deletes the Railway project, destroys the Fly app, the sprite, or that
+one MicroVM), then soft-deletes the matching row. The SHA stays on the
+deleted row for audit. The remote resources for that row are gone.
 
-`--force` skips the confirmation prompt and the "if multiple deployments
-exist" check — useful in scripts where you want to tear down everything
-matching a name.
+A SHA shuts down only that deployment. Another provider for the same
+agent stays in the registry and keeps its auth token. An agent name is
+accepted when every live row is the same target, and then every row of
+that target is removed, including older re-deploys. Distinct targets
+still require a SHA. `--force` skips the confirmation prompt only.
+
+Sprites, Fly, Railway, Docker, and Droplets name one remote after the
+agent. Shutting down any SHA of that provider removes the other rows for
+that same provider, because the remote is shared. A MicroVM is one
+remote per row, so shutting down its SHA leaves every other MicroVM
+running.
 
 In the TUI, `{% ref "slash:shutdown" %}` lists every active deployment
 (including DigitalOcean MicroVM and local) and shuts one down after a
