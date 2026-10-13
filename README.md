@@ -567,7 +567,7 @@ from source on every build**, so the docs cannot drift from the code.
 npm --prefix docs-site install
 npm --prefix docs-site run dev
 
-# Production build (writes docs-site/dist/)
+# Production build (writes docs-site/dist/ and a Pagefind index at dist/pagefind/)
 npm run docs:build
 
 # CI check: diff the regenerated manifest against the committed baseline

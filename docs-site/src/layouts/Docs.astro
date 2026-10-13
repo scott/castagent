@@ -5,8 +5,11 @@
  */
 import '../styles/global.css'
 import Sidebar from '../components/Sidebar.astro'
+import Search from '../components/Search.astro'
 
 const docsVersion = String(import.meta.env.PUBLIC_DOCS_VERSION || '').replace(/^v/, '')
+const docsPath = Astro.url.pathname.replace(/\/$/, '') || '/'
+const onSearchPage = docsPath.endsWith('/search')
 
 interface Props {
   title: string
@@ -41,9 +44,16 @@ const fullTitle = title === 'Cast Agent' ? title : `${title} · Cast Agent`
     <div class="layout">
       <Sidebar />
       <main class="content">
-        <slot />
+        {!onSearchPage && (
+          <div class="docs-topbar" data-pagefind-ignore>
+            <Search id="docs-search" />
+          </div>
+        )}
+        <div class="docs-body" data-pagefind-body>
+          <slot />
+        </div>
         <hr />
-        <footer style="color:var(--color-fg-muted);font-size:0.85rem;">
+        <footer data-pagefind-ignore style="color:var(--color-fg-muted);font-size:0.85rem;">
           <a href="https://github.com/scott/castagent">castagent</a> · docs
           auto-generated from source.
         </footer>

@@ -644,6 +644,25 @@ body:has(.landing) { overflow-x: clip; }
 
 .provider-name { font-weight: 600; }
 
+.docs-topbar {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 1.25rem;
+}
+
+.docs-search {
+  position: relative;
+  width: min(100%, 24rem);
+  z-index: 4;
+}
+
+.search-page .docs-search { width: min(100%, 42rem); }
+
+@media (max-width: 800px) {
+  .docs-topbar { justify-content: stretch; }
+  .docs-search, .search-page .docs-search { width: 100%; }
+}
+
 /* Version picker. Uses the existing type and colors; no new accent. */
 .version-picker {
   position: relative;

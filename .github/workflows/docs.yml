@@ -85,6 +85,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm --prefix docs-site ci
+      # postbuild runs `pagefind --site dist`, so dist/pagefind/ is in the
+      # artifact uploaded below. Snapshot builds use the same npm script.
       - run: npm --prefix docs-site run build
       # Unpack frozen snapshots after the current build. Dropping this step
       # would erase /vX.Y.Z/ on the next deploy. contents: read is enough to

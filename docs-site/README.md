@@ -44,7 +44,9 @@ npm run build
 # outputs to dist/ — deploy this to GitHub Pages
 ```
 
-The `prebuild` script runs all `extract-*` scripts first, then the snapshot script writes `data/manifest.json` and validates the previous manifest.
+The `prebuild` script runs all `extract-*` scripts first, then the snapshot script writes `data/manifest.json` and validates the previous manifest. `postbuild` runs `pagefind --site dist` (cwd is `docs-site/`), which writes a static search index to `dist/pagefind/`. There is no search backend. The dev server does not build that index; run `npm run build` before trying search locally.
+
+Search is a Pagefind UI in the docs header (`src/components/Search.astro`, mounted from `src/layouts/Docs.astro`) and on the dedicated `/search` page. It filters as you type and highlights matches in prose pages and the generated CLI, slash-command, and provider pages. Stylesheet and script URLs are base-relative (`pagefind/pagefind-ui.js`), so `<base href>` resolves them. The JS bundle path and result links use `import.meta.env.BASE_URL`, which is `/` for the current site and `/vX.Y.Z/` for a frozen snapshot. Do not hardcode a root-only `/pagefind/` path.
 
 ### Deploying
 
@@ -130,14 +132,14 @@ docs-site/
 ├── tsconfig.json
 ├── public/                 # static assets (logo, etc.)
 ├── src/
-│   ├── components/         # CommandRef, SlashRef, ProviderCard, Sidebar, VersionPicker, …
+│   ├── components/         # CommandRef, SlashRef, ProviderCard, Sidebar, Search, VersionPicker, …
 │   ├── content.config.ts   # content collection schemas
 │   ├── layouts/Docs.astro  # sidebar + content + footer
 │   ├── lib/                # manifest loader, link resolver, proseLoader
 │   │   ├── links.ts        # `{% ref %}` resolution (regex + anchor → URL)
 │   │   ├── manifest.ts     # data/manifest.json accessors
 │   │   └── proseLoader.ts  # custom content loader that resolves refs
-│   ├── pages/              # /, /cli/reference, /tui/slash-commands, …
+│   ├── pages/              # /, /search, /cli/reference, /tui/slash-commands, …
 │   └── styles/global.css
 ├── content/                # hand-written prose (Markdown/MDX)
 ├── scripts/                # extract-cli, extract-slash, extract-providers, extract-changelog, snapshot-manifest, validate-manifest
