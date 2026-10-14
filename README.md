@@ -488,6 +488,8 @@ already has a Git repo.
 
 Removing a remote also deletes `repository.url` from `agent.yaml` when that URL belonged to the remote and no other remote still uses it.
 
+In the TUI, `/git log` shows up to 5 commits. `/git log -n 1` shows only the newest commit. `--count` is the same option, and the count must be at least 1.
+
 ## Development
 
 ### Project Structure

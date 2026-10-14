@@ -196,8 +196,10 @@ subcommands:
 `/git commit <msg>` commits the same text without the flag. `/git help`
 shows `/git commit [-m] <msg>`.
 
-There is no TUI-side modal picker for Git — it shells out to the
-CLI and prints the output into the chat.
+There is no TUI-side modal picker for Git. The command prints its
+result into the chat. `/git log` shows up to 5 commits. `-n` or
+`--count` sets how many and must be at least 1, so `/git log -n 1`
+prints only the newest commit.
 
 Inside `cast new`, `/git` acts on the agent the wizard just created.
 Before that agent exists, it replies `No agent is loaded.` In
