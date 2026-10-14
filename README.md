@@ -436,6 +436,7 @@ Highlighting text with the mouse copies that selection to the clipboard.
 | `/upgrade` | agent | Operates on the current agent. Modal lists releases to upgrade to. |
 | `/update [flags]` | agent | Update the current agent's local configuration. No arguments opens a field modal. Dev and production. Hidden on-host. |
 | `/shutdown` | agent | Lists active deployments (every provider) and shuts one down after Y/N. Streams `cast shutdown --force`. Dev and production only. |
+| `/stop` | agent | Stop the current local agent and stay in the TUI. |
 | `/registry` | session | Modal table of every live deployment (agent, SHA, provider, version, time, URL). Release history stays on `/releases`. |
 | `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a SHA directly. Connecting starts a new session for that agent. |
 | `/import [source] [name]` | agent | Import a Cast agent from GitHub or a local path. |
