@@ -3,7 +3,9 @@ import {execFileSync} from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import DockerDeploy, {renderDockerCompose, writeDockerCompose} from '../../../../typescript/cast-cli/src/lib/deploy/docker'
+import sinon from 'sinon'
+import DockerDeploy, {recordDockerDeployment, renderDockerCompose, writeDockerCompose} from '../../../../typescript/cast-cli/src/lib/deploy/docker'
+import * as deployUtils from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 
 describe('Docker Deploy Provider', () => {
   describe('static properties', () => {
@@ -43,6 +45,78 @@ describe('Docker Deploy Provider', () => {
   describe('static destroy method', () => {
     it('should have destroy method', () => {
       expect(typeof DockerDeploy.destroy).to.equal('function')
+    })
+  })
+
+  describe('recordDockerDeployment', () => {
+    let sandbox: sinon.SinonSandbox
+
+    beforeEach(() => {
+      sandbox = sinon.createSandbox()
+    })
+
+    afterEach(() => {
+      sandbox.restore()
+    })
+
+    const input = {
+      agentName: 'bb-answers',
+      deploymentUrl: 'http://localhost:8080',
+      tokenHash: 'hash',
+      volumeId: 'cast-bb-answers-vol',
+      volumeConfig: '{}',
+      containerName: 'cast-bb-answers',
+    }
+
+    it('records the deployment and leaves the container running', async () => {
+      const save = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const exec = sandbox.stub(deployUtils, 'execCommand').resolves({stdout: '', stderr: '', exitCode: 0})
+
+      const id = await recordDockerDeployment(input)
+
+      expect(id).to.equal('abc123')
+      expect(save.calledOnce).to.equal(true)
+      expect(save.firstCall.args[0]).to.equal('bb-answers')
+      expect(save.firstCall.args[1]).to.equal('docker')
+      expect(save.firstCall.args[2]).to.equal('http://localhost:8080')
+      expect(exec.called).to.equal(false)
+    })
+
+    it('removes the container and volume when the registry write fails', async () => {
+      sandbox.stub(deployUtils, 'saveDeployment').throws(new Error('FOREIGN KEY constraint failed'))
+      const exec = sandbox.stub(deployUtils, 'execCommand').resolves({stdout: '', stderr: '', exitCode: 0})
+
+      try {
+        await recordDockerDeployment(input)
+        expect.fail('registry failure should reject')
+      } catch (error) {
+        expect((error as Error).message).to.equal('FOREIGN KEY constraint failed')
+      }
+
+      expect(exec.getCalls().map(call => call.args)).to.deep.equal([
+        ['docker', ['stop', 'cast-bb-answers']],
+        ['docker', ['rm', 'cast-bb-answers']],
+        ['docker', ['volume', 'rm', 'cast-bb-answers-vol']],
+      ])
+    })
+
+    it('reports a leftover container when cleanup fails', async () => {
+      sandbox.stub(deployUtils, 'saveDeployment').throws(new Error('FOREIGN KEY constraint failed'))
+      sandbox.stub(deployUtils, 'execCommand').resolves({
+        stdout: '',
+        stderr: 'permission denied',
+        exitCode: 1,
+      })
+
+      try {
+        await recordDockerDeployment(input)
+        expect.fail('registry failure should reject')
+      } catch (error) {
+        const message = (error as Error).message
+        expect(message).to.include('FOREIGN KEY constraint failed')
+        expect(message).to.include("Failed to remove container 'cast-bb-answers'")
+        expect(message).to.include('permission denied')
+      }
     })
   })
 

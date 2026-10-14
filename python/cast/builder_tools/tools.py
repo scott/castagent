@@ -3,6 +3,7 @@
 import json
 import os
 import re
+import sqlite3
 import yaml
 from pathlib import Path
 from typing import Dict, List, Any, Optional
@@ -13,6 +14,50 @@ from cast.versioning import create_version
 AGENTS_DIR = Path.home() / ".cast" / "agents"
 BUILDER_DIR = Path.home() / ".cast" / "builder"
 CREATED_AGENT_MARKER = "created-agent"
+
+
+def _cast_db_path() -> Path:
+    """cast.db beside the agents directory, matching cast.releases."""
+    agents = Path(AGENTS_DIR)
+    if agents.name == "agents":
+        return agents.parent / "cast.db"
+    return agents / "cast.db"
+
+
+def _register_agent(name: str, agent_yaml_path: Path) -> None:
+    """Insert the agents row that deployments.agent_name references.
+
+    better-sqlite3 enables foreign keys, so `cast deploy` fails with
+    FOREIGN KEY constraint failed when this row is missing. A database
+    error must not undo the scaffold. Deploy inserts the row again if
+    this write does not land.
+    """
+    try:
+        db_path = _cast_db_path()
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(str(db_path))
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS agents (
+                    name TEXT PRIMARY KEY,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    agent_yaml_path TEXT,
+                    last_run_at DATETIME,
+                    run_count INTEGER DEFAULT 0
+                )
+                """
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO agents (name, agent_yaml_path) VALUES (?, ?)",
+                (name, str(agent_yaml_path)),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+    except (OSError, sqlite3.Error):
+        return
 
 
 def _remember_created_agent(name: str) -> None:
@@ -259,6 +304,7 @@ def create_agent(name: str, description: str = "") -> str:
     # Create initial version
     create_version(name, source="create", message="Initial version", agents_dir=AGENTS_DIR)
 
+    _register_agent(name, agent_yaml_path)
     _remember_created_agent(name)
 
     return f"Agent '{name}' created successfully at {agent_path}"

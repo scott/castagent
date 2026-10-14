@@ -8,7 +8,7 @@ import * as path from 'path'
 import {ensureDockerDeployArtifactsIgnored} from '../cast-ignore'
 import {db} from '../sqlite'
 import {containerHealthFailureMessage, probeDockerContainer, waitForContainerHealth} from './container-health'
-import {execCommand, inferenceEnv, generateDeploymentId, getVolumeName, createMemoryVolume, deleteMemoryVolume, createDockerignore, storeAuthToken} from './deploy-utils'
+import {execCommand, inferenceEnv, generateDeploymentId, getVolumeName, createMemoryVolume, deleteMemoryVolume, createDockerignore, storeAuthToken, saveDeployment} from './deploy-utils'
 import {writeRequirementsTxt} from './requirements'
 
 // Helper to run a shell command and return its exit code
@@ -60,6 +60,11 @@ export default class DockerDeploy extends Command {
     if (!fs.existsSync(agentPath)) {
       this.error(`Agent '${agentName}' not found at ${agentPath}`)
     }
+
+    // Record the parent row before the container starts. The deployment
+    // insert below also ensures it, but a missing row used to fail only
+    // after `docker run` had already left cast-<agent> running.
+    db.ensureAgent(agentName, path.join(agentPath, 'agent.yaml'))
 
     this.log(`Deploying ${agentName} locally with Docker...`)
 
@@ -174,7 +179,14 @@ export default class DockerDeploy extends Command {
 
     const deploymentUrl = `http://localhost:${flags.port}`
     const volumeConfig = JSON.stringify({ deploymentId, mountPath: '/app/agent/memory' })
-    db.setDeployment(agentName, 'docker', deploymentUrl, tokenHash, volumeId, volumeConfig)
+    await recordDockerDeployment({
+      agentName,
+      deploymentUrl,
+      tokenHash,
+      volumeId,
+      volumeConfig,
+      containerName,
+    })
 
     this.log('')
     this.log('╔══════════════════════════════════════════════════════════════╗')
@@ -308,4 +320,66 @@ export function renderDockerCompose(opts: DockerComposeOptions): string {
 export function writeDockerCompose(agentPath: string, opts: DockerComposeOptions): void {
   fs.writeFileSync(path.join(agentPath, 'docker-compose.yml'), renderDockerCompose(opts))
   ensureDockerDeployArtifactsIgnored(agentPath)
+}
+
+export interface DockerDeploymentRecord {
+  agentName: string
+  deploymentUrl: string
+  tokenHash: string
+  volumeId: string
+  volumeConfig: string
+  containerName: string
+}
+
+// Persist the deployment under CAST_DEPLOYMENT_SHA when cast deploy set
+// one, so the printed SHA is the row in the registry. If that write fails,
+// stop and remove the container and volume that docker run already started.
+export async function recordDockerDeployment(input: DockerDeploymentRecord): Promise<string> {
+  try {
+    return saveDeployment(
+      input.agentName,
+      'docker',
+      input.deploymentUrl,
+      input.tokenHash,
+      input.volumeId,
+      input.volumeConfig,
+    )
+  } catch (error) {
+    const cleanup = await removeStartedDockerResources(input.containerName, input.volumeId)
+    if (cleanup) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw new Error(
+        `${message}. Failed to remove container '${input.containerName}': ${cleanup}`,
+      )
+    }
+    throw error
+  }
+}
+
+async function removeStartedDockerResources(containerName: string, volumeId: string): Promise<string | null> {
+  const problems: string[] = []
+  const stop = await runDocker(['stop', containerName])
+  const removed = await runDocker(['rm', containerName])
+  const volume = volumeId ? await runDocker(['volume', 'rm', volumeId]) : {exitCode: 0, stderr: ''}
+
+  if (stop.exitCode !== 0 && !/No such container/i.test(stop.stderr)) {
+    problems.push(stop.stderr.trim() || `docker stop exited ${stop.exitCode}`)
+  }
+  if (removed.exitCode !== 0 && !/No such container/i.test(removed.stderr)) {
+    problems.push(removed.stderr.trim() || `docker rm exited ${removed.exitCode}`)
+  }
+  if (volume.exitCode !== 0 && !/No such volume/i.test(volume.stderr)) {
+    problems.push(volume.stderr.trim() || `docker volume rm exited ${volume.exitCode}`)
+  }
+  return problems.length > 0 ? problems.join('; ') : null
+}
+
+async function runDocker(args: string[]): Promise<{exitCode: number; stderr: string}> {
+  try {
+    const result = await execCommand('docker', args)
+    return {exitCode: result.exitCode, stderr: result.stderr || ''}
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {exitCode: 1, stderr: message}
+  }
 }
