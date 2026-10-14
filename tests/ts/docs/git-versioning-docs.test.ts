@@ -64,6 +64,19 @@ describe('Git versioning docs', () => {
     expect(flat).to.include('`/git commit -m tui-commit` stores `tui-commit`')
   })
 
+  it('says the docker compose file does not store the deployment token', () => {
+    const anatomy = read('docs-site/content/building-agents/anatomy.md').replace(/\s+/g, ' ')
+    const settings = read('docs-site/content/getting-started/global-settings.md').replace(/\s+/g, ' ')
+    const flat = gitPage.replace(/\s+/g, ' ')
+    expect(flat).to.include('does not contain the deployment bearer token')
+    expect(flat).to.include('/docker-compose.yml')
+    expect(flat).to.include('does not start tracking `docker-compose.yml`')
+    expect(anatomy).to.include('does not contain the deployment bearer token or provider API keys')
+    expect(settings).to.include('does not write them into `docker-compose.yml`')
+    expect(defaultCastIgnoreContents()).to.include('/docker-compose.yml\n')
+    expect(defaultCastIgnoreContents()).to.include('/.cast-runtime/\n')
+  })
+
   it('matches the versioning overview', () => {
     const flat = overview.replace(/\s+/g, ' ')
     expect(flat).to.include('do not exclude the current undo log at `.cast/changes/`')

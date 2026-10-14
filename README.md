@@ -508,6 +508,13 @@ shows `/git commit [-m] <msg>`.
 `cast git init` runs `git init -b main` and writes ignore rules to
 `.gitignore` and `.castignore`. Those rules leave runtime files such
 as `memory/memory.db` and `tools/__pycache__/` out of the repository.
+They also leave the Docker deploy files `Dockerfile`,
+`docker-compose.yml`, `requirements.txt`, and `.cast-runtime/` out of
+the repository. `docker-compose.yml` does not contain the deployment
+bearer token or provider API keys. Deploy passes those to the container
+as environment variables, stores the bearer token in the keychain, and
+adds the same ignore rules to an ignore file that is already there.
+A Git repository that has no `.gitignore` yet receives one.
 `repository.branch` is `main`, matching the checked-out branch. If Git
 has no `user.name` and `user.email`, init stops before creating the
 repository and tells you to set them with `git config`. `cast dev`

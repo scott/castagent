@@ -98,7 +98,10 @@ interpolation falls through to the environment if not set in YAML.
 - **OAuth credentials** (e.g. Gmail) go in `~/.cast/vault/<agent>/` with
   mode `0600`. The Builder Agent writes them during MCP install.
 - **Bearer tokens** for deployed agents are stored via the system keychain
-  (`keytar`) at `~/.cast/tokens/<agent>.token` as a fallback.
+  (`keytar`) at `~/.cast/tokens/<agent>.token` as a fallback. Docker deploy
+  passes that token, and any provider API keys, to the container as
+  environment variables. It does not write them into `docker-compose.yml`
+  or any other file in the agent directory.
 - **Per-agent state** that is safe to share (deploy URLs, deployment SHAs)
   lives in `~/.cast/cast.db` (SQLite).
 
