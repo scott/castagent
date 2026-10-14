@@ -104,7 +104,7 @@ class TestDevPersistentMemory:
             chunks.append(chunk)
 
         assert chunks
-        assert "QUINCE-BB2" in _highlight_contents(agent_dir)
+        assert any("QUINCE-BB2" in row for row in _highlight_contents(agent_dir))
 
     @pytest.mark.asyncio
     async def test_disabled_memory_does_not_write(self, tmp_path, monkeypatch):
@@ -143,7 +143,7 @@ class TestDevPersistentMemory:
         assert notes.count("QUINCE-BB2") == 1
 
     def test_configure_runtime_env_sets_agent_path(self, tmp_path, monkeypatch):
-        monkeypatch.delenv("CAST_AGENT_PATH", raising=False)
+        monkeypatch.setenv("CAST_AGENT_PATH", "placeholder")
         root = configure_runtime_env(str(tmp_path))
         assert os.environ["CAST_AGENT_PATH"] == root
         assert os.path.realpath(root) == os.path.realpath(tmp_path)
