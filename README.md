@@ -283,6 +283,8 @@ After creation, start your agent with:
 cast dev <agent-name>
 ```
 
+If that name is not on disk yet, `cast dev <agent-name>` starts the same new-agent flow and creates `~/.cast/agents/<agent-name>/` from your description. `cast update`, `cast deploy`, and `cast upgrade` do not create a missing agent; they tell you to run `cast new`.
+
 Inside that wizard, `/git`, `/undo`, `/redo`, `/describe`, and `/releases` act on the agent just created. Before an agent exists, they reply `No agent is loaded.` `/undo` and `/redo` show the CLI failure reason in the chat. The CLI process does not write that text over the input line.
 
 ### Editing an Existing Agent

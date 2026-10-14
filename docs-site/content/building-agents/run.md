@@ -30,6 +30,16 @@ The port is allocated dynamically (10000–65535) and recorded in the SQLite
 database so `cast list` and `cast describe` can show "[local: running on
 port 21357]".
 
+## When the agent does not exist yet
+
+`cast dev <name>` runs an agent that is already on disk. If
+`~/.cast/agents/<name>/` is missing, dev mode starts the new-agent flow
+for that name. The builder asks what the agent should do, then creates
+`~/.cast/agents/<name>/`. It does not claim a configuration was loaded.
+
+`cast update`, `cast deploy`, and `cast upgrade` do not create agents.
+When the directory is missing they tell you to run `cast new`.
+
 ## Headless mode
 
 To run without the TUI — useful for scripts, CI, or remote dev over SSH —

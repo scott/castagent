@@ -53,6 +53,16 @@ echo "Summarises incoming email and drafts replies." | cast new
 
 The Builder reads stdin if no TTY is available.
 
+You can start the same flow for a name you already chose:
+
+```bash
+cast dev email-assistant
+```
+
+If `~/.cast/agents/email-assistant` does not exist, the builder asks what
+the agent should do and creates that name. `cast new` still picks the
+name from your description.
+
 ## From an existing Git repository
 
 ```bash

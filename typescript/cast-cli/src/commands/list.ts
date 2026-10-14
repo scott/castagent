@@ -19,7 +19,7 @@ export default class List extends Command {
     if (!fs.existsSync(agentsDir)) {
       this.log('No agents directory found at ~/.cast/agents/')
       this.log('')
-      this.log("Create your first agent with: cast dev <agent-name>")
+      this.log("Create your first agent with: cast new")
       return
     }
 
@@ -45,7 +45,7 @@ export default class List extends Command {
     if (allAgentNames.length === 0) {
       this.log('No agents found.')
       this.log('')
-      this.log("Create your first agent with: cast dev <agent-name>")
+      this.log("Create your first agent with: cast new")
       return
     }
 

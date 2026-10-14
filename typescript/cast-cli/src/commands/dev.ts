@@ -226,14 +226,15 @@ export default class Dev extends Command {
         }
       })
 
-      // Send initialize
+      // Send initialize. This conversation only runs when the agent
+      // directory is missing, so the builder must start the new-agent flow.
       setTimeout(() => {
         if (builder.stdin && !builder.killed) {
           builder.stdin.write(JSON.stringify({
             jsonrpc: '2.0',
             id: 1,
             method: 'initialize',
-            params: {agent_name: agentName},
+            params: this.missingAgentInitializeParams(agentName),
           }) + '\n')
         }
       }, 500)
@@ -277,19 +278,15 @@ export default class Dev extends Command {
     const pythonPath = this.getPythonPath()
 
     if (!fs.existsSync(agentPath)) {
-      this.log(`Agent '${agentName}' not found. Launching Builder Agent...`)
+      this.log(`Agent '${agentName}' not found. Starting the new-agent flow...`)
 
-      // Spawn Builder Agent
+      // Spawn Builder Agent in new mode so it creates this name
+      // instead of claiming an existing configuration was loaded.
       const builder = spawn(pythonExecutable, [
         '-m', 'cast.builder',
       ], {
         stdio: ['pipe', 'pipe', 'inherit'],
-        env: {
-          ...process.env,
-          CAST_AGENT_NAME: agentName,
-          CAST_AGENT_PATH: agentPath,
-          PYTHONPATH: pythonPath,
-        },
+        env: this.builderLaunchEnv(agentName, agentPath, pythonPath),
       })
 
       try {
@@ -304,6 +301,20 @@ export default class Dev extends Command {
       // Agent exists, run runtime directly
       await this.runRuntimeAgent(agentName, agentPath, flags)
     }
+  }
+
+  builderLaunchEnv(agentName: string, agentPath: string, pythonPath: string): NodeJS.ProcessEnv {
+    return {
+      ...process.env,
+      CAST_AGENT_NAME: agentName,
+      CAST_AGENT_PATH: agentPath,
+      CAST_NEW_MODE: '1',
+      PYTHONPATH: pythonPath,
+    }
+  }
+
+  missingAgentInitializeParams(agentName: string): {agent_name: string; new_mode: boolean} {
+    return {agent_name: agentName, new_mode: true}
   }
 
   private async runRuntimeAgent(agentName: string, agentPath: string, flags: any): Promise<void> {

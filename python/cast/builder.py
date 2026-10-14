@@ -413,6 +413,16 @@ class EchoChatModel(BaseChatModel):
         """Set the current agent name for context-aware tool calls."""
         self._agent_name = name
 
+    def _requested_agent_name(self) -> Optional[str]:
+        """Name already chosen by the caller, such as `cast dev <name>`.
+
+        `__new__` means the wizard still has to pick a name.
+        """
+        name = self._agent_name
+        if not name or name == "__new__":
+            return None
+        return name
+
     def _generate(
         self,
         messages: List[BaseMessage],
@@ -628,9 +638,28 @@ class EchoChatModel(BaseChatModel):
                     generation = ChatGeneration(message=message)
                     return ChatResult(generations=[generation])
 
-            # User provided a description - suggest a name
+            # User provided a description. If the caller already chose a
+            # name (cast dev <missing-agent>), create that agent. Otherwise
+            # suggest a name. List requests fall through to normal mode.
             description = extract_description()
-            if len(description) > 5:
+            list_request = (
+                ("list" in lower_msg and "agent" in lower_msg)
+                or lower_msg.strip() == "list agents"
+            )
+            requested_name = self._requested_agent_name()
+            if requested_name and len(description) > 5 and not list_request:
+                tool_calls.append({
+                    "name": "create_agent",
+                    "args": {"name": requested_name, "description": description},
+                    "id": next_call_id(),
+                    "type": "tool_call",
+                })
+                content = f"I'll create **{requested_name}** for you."
+                message = AIMessage(content=content, tool_calls=tool_calls)
+                generation = ChatGeneration(message=message)
+                return ChatResult(generations=[generation])
+
+            if len(description) > 5 and not list_request:
                 tool_calls.append({
                     "name": "suggest_name",
                     "args": {"description": description},
@@ -943,6 +972,28 @@ class BuilderAgent:
         if hasattr(self.llm, 'set_new_mode'):
             self.llm.set_new_mode(enabled)
 
+    def prepare_new_agent(self, name: Optional[str] = None) -> None:
+        """Enter the new-agent flow.
+
+        A concrete name means the caller already chose the directory
+        (for example `cast dev <name>` when that agent is not on disk).
+        The builder should create that name after the user describes it.
+        """
+        self.set_new_mode(True)
+        if not name or name == "__new__":
+            return
+        if not self.messages:
+            self.messages.append(SystemMessage(content=self.system_prompt))
+        self.messages.append(SystemMessage(
+            content=(
+                f"The user asked to create the agent '{name}'. "
+                f"That agent does not exist yet. "
+                f"Ask what it should do, then call create_agent with name='{name}' "
+                f"and the user's description. "
+                f"Do not say that a configuration is already loaded."
+            )
+        ))
+
     def load_agent_for_editing(self, name: str) -> None:
         """Load an existing agent's configuration for editing."""
         self.agent_name = name
@@ -1095,28 +1146,49 @@ class BuilderAgent:
     def get_welcome_message(self) -> str:
         model = get_builder_model()
         if self.new_mode:
-            return (
-                f"Hello! I'm the Cast Builder Agent (powered by **{model}**). Let's create a new agent together.\n\n"
-                + "**What should your agent do?**\n\n"
-                + "Describe what you'd like your agent to accomplish. For example:\n"
-                + '- "An agent that reads my Gmail inbox and drafts replies"\n'
-                + '- "A code review agent that checks pull requests on GitHub"\n'
-                + '- "A monitoring agent that watches log files and alerts me to errors"\n\n'
-                + "What would you like your agent to do?"
-            )
+            return self._new_agent_welcome(model)
 
         if self.edit_welcome:
             return self.edit_welcome
 
+        # Config was not loaded. Do not claim that it was.
         name = self.agent_name or "your agent"
         return (
             f"Hello! I'm the Cast Builder Agent (powered by **{model}**). I'm here to help you edit **{name}**.\n\n"
-            f"I've loaded its current configuration. I can help you:\n"
+            f"I can help you:\n"
             f"- Update instructions or system prompts\n"
             f"- Modify agent.yaml settings (model, tools, permissions)\n"
             f"- Add or remove MCP integrations\n"
             f"- Recommend better models\n\n"
             f"What would you like to change?"
+        )
+
+    def _new_agent_welcome(self, model: str) -> str:
+        """Welcome for the new-agent flow.
+
+        A concrete agent name means `cast dev <name>` asked for an agent
+        that is not on disk yet. The unnamed wizard (`cast new`) still
+        asks the builder to pick a name.
+        """
+        name = self.agent_name if self.agent_name and self.agent_name != "__new__" else None
+        if name:
+            intro = (
+                f"Hello! I'm the Cast Builder Agent (powered by **{model}**). "
+                f"Let's create **{name}**.\n\n"
+            )
+        else:
+            intro = (
+                f"Hello! I'm the Cast Builder Agent (powered by **{model}**). "
+                f"Let's create a new agent together.\n\n"
+            )
+        return (
+            intro
+            + "**What should your agent do?**\n\n"
+            + "Describe what you'd like your agent to accomplish. For example:\n"
+            + '- "An agent that reads my Gmail inbox and drafts replies"\n'
+            + '- "A code review agent that checks pull requests on GitHub"\n'
+            + '- "A monitoring agent that watches log files and alerts me to errors"\n\n'
+            + "What would you like your agent to do?"
         )
 
 
@@ -1127,6 +1199,19 @@ JSONRPC_METHOD_NOT_FOUND = -32601
 JSONRPC_INVALID_PARAMS = -32602
 JSONRPC_INTERNAL_ERROR = -32603
 JSONRPC_TOOL_ERROR = -32001
+
+
+def _agent_directory_exists(name: str) -> bool:
+    """True when ~/.cast/agents/<name> is already on disk.
+
+    Uses the builder tools directory so tests and create_agent agree
+    about where agents live.
+    """
+    from cast.builder_tools import tools
+
+    if not name or name == "__new__":
+        return False
+    return (tools.AGENTS_DIR / name).is_dir()
 
 
 class StdioJsonRpcServer:
@@ -1172,8 +1257,10 @@ class StdioJsonRpcServer:
 
         self.agent.set_agent_name(agent_name)
 
-        if new_mode or agent_name == "__new__":
-            self.agent.set_new_mode(True)
+        # A missing directory is a new agent, even when the caller forgot
+        # to set new_mode. Editing that name would claim a config exists.
+        if new_mode or agent_name == "__new__" or not _agent_directory_exists(agent_name):
+            self.agent.prepare_new_agent(agent_name)
             print("Builder Agent initialized in NEW MODE", file=sys.stderr)
         else:
             print(f"Builder Agent initialized for editing: {agent_name}", file=sys.stderr)

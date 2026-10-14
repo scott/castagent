@@ -197,6 +197,18 @@ describe('dev command', () => {
       expect(pythonPath).to.be.a('string')
       expect(pythonPath.length).to.be.greaterThan(0)
     })
+
+    it('starts the builder in new mode when the agent is missing', () => {
+      const instance = new Dev(['bb-devnew'], {color: false})
+      const params = instance.missingAgentInitializeParams('bb-devnew')
+      expect(params).to.deep.equal({agent_name: 'bb-devnew', new_mode: true})
+
+      const env = instance.builderLaunchEnv('bb-devnew', '/tmp/bb-devnew', '/tmp/python')
+      expect(env.CAST_NEW_MODE).to.equal('1')
+      expect(env.CAST_AGENT_NAME).to.equal('bb-devnew')
+      expect(env.CAST_AGENT_PATH).to.equal('/tmp/bb-devnew')
+      expect(env.PYTHONPATH).to.equal('/tmp/python')
+    })
   })
 })
 

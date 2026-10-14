@@ -145,8 +145,13 @@ describe('list command', () => {
       await List.prototype.run.call(instance)
 
       const logCalls = instance.log.getCalls().map((call: any) => String(call.args[0] || ''))
-      const hasHelpText = logCalls.some((log: string) => log.includes('cast dev'))
-      expect(hasHelpText).to.be.true
+      const text = logCalls.join('\n')
+      if (text.includes('No agents')) {
+        expect(text).to.include('cast new')
+        expect(text).to.not.include('cast dev <agent-name>')
+      } else {
+        expect(text).to.include('cast dev')
+      }
     })
   })
 })

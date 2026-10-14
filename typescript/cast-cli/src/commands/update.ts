@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import * as yaml from 'yaml'
+import {missingAgentError} from '../lib/missing-agent'
 import {db} from '../lib/sqlite'
 import {createVersion} from '../lib/versioning'
 import {inferenceModelStatus} from '../lib/deploy/deploy-utils'
@@ -128,10 +129,7 @@ export default class Update extends Command {
 
     // Validate agent exists
     if (!fs.existsSync(agentPath)) {
-      this.error(
-        `Agent '${agentName}' not found at ${agentPath}.\n` +
-        `Create the agent first with: cast dev ${agentName} --no-tui`
-      )
+      this.error(missingAgentError(agentName, agentPath))
     }
 
     if (!fs.existsSync(agentYamlPath)) {
