@@ -85,8 +85,10 @@ cast delete email-assistant --force     # skip confirmation
 all deployment rows, and the database entry. **This is destructive and
 unrecoverable.** Cast refuses without confirmation unless `--force` is
 passed. If no system keychain is available, for example Linux without
-Secret Service, the command prints `No keychain available. Nothing removed.`
-and does not claim that a token was removed. To delete safely, first:
+Secret Service, and no fallback token file exists, the command prints
+`No keychain available. Nothing removed.` and does not claim that a token
+was removed. A bearer token saved under `~/.cast/tokens/` is deleted, and
+the command says so. To delete safely, first:
 
 ```bash
 cast git push <name>          # backup to a remote

@@ -483,6 +483,37 @@ describe('delete command', () => {
       expect(errorSpy.called).to.equal(false)
     })
 
+    it('removes a file fallback token when Secret Service is missing', async () => {
+      const agentName = 'keychain-file-fallback-agent'
+      const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+      const tokenFile = path.join(os.homedir(), '.cast', 'tokens', `${agentName}.token`)
+      fs.mkdirSync(agentPath, {recursive: true})
+      fs.mkdirSync(path.dirname(tokenFile), {recursive: true})
+      fs.writeFileSync(tokenFile, 'file-token', {mode: 0o600})
+
+      const instance = createRunInstance(['delete', agentName, '--force'])
+      sandbox.stub(dbModule.db, 'getDeployment').returns(null)
+      sandbox.stub(dbModule.db, 'getAgent').returns({name: agentName})
+      sandbox.stub(dbModule.db, 'deleteAgent').callsFake(() => {})
+      sandbox.stub(require('keytar'), 'deletePassword').rejects(secretServiceError)
+
+      const {logs, warnings, errorSpy} = captureOutput(instance)
+
+      try {
+        await instance.run()
+      } finally {
+        if (fs.existsSync(agentPath)) fs.rmSync(agentPath, {recursive: true, force: true})
+        if (fs.existsSync(tokenFile)) fs.rmSync(tokenFile, {force: true})
+      }
+
+      expect(logs).to.include('Removed bearer token from ~/.cast/tokens.')
+      expect(logs.some(line => line.includes('Nothing removed.'))).to.equal(false)
+      expect(logs.some(line => line.includes('Removed token from keychain.'))).to.equal(false)
+      expect(warnings).to.deep.equal([])
+      expect(errorSpy.called).to.equal(false)
+      expect(fs.existsSync(tokenFile)).to.equal(false)
+    })
+
     it('prints one line when a database-only agent has no keychain', async () => {
       const agentName = 'db-only-no-keychain'
       const instance = createRunInstance(['delete', agentName, '--force'])

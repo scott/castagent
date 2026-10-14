@@ -6,7 +6,7 @@ import * as path from 'path'
 import {getSession} from '../../lib/sessions'
 import {db} from '../../lib/sqlite'
 import {resolveCastPythonRuntime} from '../../lib/cast-python'
-import {resolveDeploymentAuthToken, resolveDeploymentTarget} from '../../lib/deploy/deploy-utils'
+import {deploymentAuthFailureReason, missingDeploymentAuthMessage, resolveDeploymentAuthToken, resolveDeploymentTarget} from '../../lib/deploy/deploy-utils'
 import {deploymentProviderLoadErrors, getDeploymentProvider} from '../../lib/deploy/registry'
 import type {DeploymentRow} from '../../lib/deploy/types'
 import {
@@ -170,12 +170,8 @@ export default class SessionResume extends Command {
     token: string | null,
   ): Promise<{url: string; token: string | null; edgeToken?: string; proxy?: ChildProcess}> {
     if (!token && deploymentHasAuthHash(deployment)) {
-      this.error(
-        `No auth token found for deployment '${deployment.id}' (${deployment.agent_name}).\n` +
-        `The keychain token for this agent belongs to a different deployment.\n` +
-        `Redeploy this one:\n` +
-        `  cast deploy ${deployment.agent_name} --provider ${deployment.provider}`,
-      )
+      const reason = await deploymentAuthFailureReason(deployment)
+      this.error(missingDeploymentAuthMessage(deployment, reason))
     }
 
     let nextUrl = url

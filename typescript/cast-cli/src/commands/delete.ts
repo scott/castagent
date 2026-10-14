@@ -126,7 +126,7 @@ export default class Delete extends Command {
   private async reportTokenRemoval(agentName: string): Promise<void> {
     const outcome = await keychain.removeAgentToken(agentName)
     if (outcome.result === 'removed') {
-      this.log('Removed token from keychain.')
+      this.log(outcome.message ?? 'Removed token from keychain.')
       return
     }
     if (outcome.result === 'unavailable') {
