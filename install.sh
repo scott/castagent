@@ -113,6 +113,7 @@ linux_build_ready() {
     check_command git || return 1
     check_command curl || return 1
     check_command tar || return 1
+    check_command unzip || return 1
     check_command gcc || return 1
     check_command pkg-config || return 1
     pkg-config --exists libsecret-1 >/dev/null 2>&1 || return 1
@@ -133,18 +134,18 @@ ensure_system_packages() {
             if check_command apt-get; then
                 run_root env DEBIAN_FRONTEND=noninteractive apt-get update
                 run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-                    git curl ca-certificates tar build-essential pkg-config libsecret-1-dev
+                    git curl ca-certificates tar unzip build-essential pkg-config libsecret-1-dev
             elif check_command dnf; then
-                run_root dnf install -y git curl ca-certificates tar gcc gcc-c++ make pkgconf-pkg-config libsecret-devel
+                run_root dnf install -y git curl ca-certificates tar unzip gcc gcc-c++ make pkgconf-pkg-config libsecret-devel
             elif check_command yum; then
-                run_root yum install -y git curl ca-certificates tar gcc gcc-c++ make pkgconfig libsecret-devel
+                run_root yum install -y git curl ca-certificates tar unzip gcc gcc-c++ make pkgconfig libsecret-devel
             elif check_command pacman; then
-                run_root pacman -Sy --noconfirm git curl ca-certificates tar base-devel pkgconf libsecret
+                run_root pacman -Sy --noconfirm git curl ca-certificates tar unzip base-devel pkgconf libsecret
             elif check_command apk; then
-                run_root apk add git curl ca-certificates tar build-base pkgconfig libsecret-dev
+                run_root apk add git curl ca-certificates tar unzip build-base pkgconfig libsecret-dev
             else
                 log_error "No supported package manager found."
-                log_info "Install git, curl, tar, a C compiler, and libsecret, then run this script again."
+                log_info "Install git, curl, tar, unzip, a C compiler, and libsecret, then run this script again."
                 exit 1
             fi
             ;;
@@ -265,7 +266,44 @@ python_ok() {
 }
 
 python_venv_ok() {
-    python3 -c 'import venv, ensurepip' >/dev/null 2>&1
+    local tmp
+
+    # Importing ensurepip succeeds on Debian/Ubuntu even though the system
+    # Python disables it. A real venv is the check that matters.
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/cast-venv.XXXXXX")"
+    if python3 -m venv "$tmp/venv" >/dev/null 2>&1 && [ -x "$tmp/venv/bin/python" ]; then
+        rm -rf "$tmp"
+        return 0
+    fi
+    rm -rf "$tmp"
+    return 1
+}
+
+ensure_pip() {
+    export_tool_path
+    if check_command pip3 || python3 -m pip --version >/dev/null 2>&1; then
+        return 0
+    fi
+    # uv provides its own package installer. Debian's python3 -m ensurepip
+    # exits with "ensurepip is disabled" even when the venv module works.
+    if check_command uv; then
+        log_info "pip3 not found. Using uv for Python packages."
+        return 0
+    fi
+    if check_command apt-get; then
+        log_info "Installing python3-pip and python3-venv..."
+        run_root env DEBIAN_FRONTEND=noninteractive apt-get update
+        run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y python3-pip python3-venv
+    elif python3 -m ensurepip --upgrade >/dev/null 2>&1; then
+        return 0
+    fi
+    export_tool_path
+    if check_command pip3 || python3 -m pip --version >/dev/null 2>&1; then
+        return 0
+    fi
+    log_error "Failed to install pip"
+    log_info "Install pip and run this script again: https://pip.pypa.io/en/stable/installation/"
+    exit 1
 }
 
 install_uv_python() {
@@ -300,11 +338,12 @@ ensure_python() {
     if python_ok && python_venv_ok; then
         return 0
     fi
-    if python_ok && ! python_venv_ok && check_command apt-get; then
-        log_info "Installing python3-venv..."
+    if python_ok && check_command apt-get; then
+        log_info "Installing python3-venv and python3-pip..."
         run_root env DEBIAN_FRONTEND=noninteractive apt-get update
-        run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv
-        if python_venv_ok; then
+        run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv python3-pip
+        export_tool_path
+        if python_ok && python_venv_ok; then
             return 0
         fi
     fi
@@ -315,12 +354,44 @@ ensure_python() {
     fi
 }
 
+ensure_unzip() {
+    check_command unzip && return 0
+    log_info "Installing unzip..."
+    if check_command apt-get; then
+        run_root env DEBIAN_FRONTEND=noninteractive apt-get update
+        run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y unzip
+    elif check_command dnf; then
+        run_root dnf install -y unzip
+    elif check_command yum; then
+        run_root yum install -y unzip
+    elif check_command pacman; then
+        run_root pacman -Sy --noconfirm unzip
+    elif check_command apk; then
+        run_root apk add unzip
+    elif [ "$(uname -s)" = Darwin ] && check_command brew; then
+        brew install unzip </dev/null
+    else
+        log_warn "unzip is not installed. Bun's installer needs it."
+        return 1
+    fi
+    export_tool_path
+    if check_command unzip; then
+        return 0
+    fi
+    log_warn "unzip is still not available. Bun's installer needs it."
+    return 1
+}
+
 ensure_bun() {
     local tmp
 
     export_tool_path
     if check_command bun || [ -x "$HOME/.bun/bin/bun" ]; then
         export_tool_path
+        return 0
+    fi
+    if ! ensure_unzip; then
+        log_warn "Bun was not installed. The TUI needs it: https://bun.sh"
         return 0
     fi
     log_info "Installing Bun..."
@@ -362,6 +433,23 @@ persist_path() {
     done
 }
 
+use_downloaded_installer() {
+    local dest="$1"
+    local source="${BASH_SOURCE[0]:-}"
+
+    # A piped one-liner has no script file. An existing checkout may still
+    # contain the installer from an earlier run, so replace it before exec.
+    if [ -n "$source" ] && [ "$source" != bash ] && [ -f "$source" ]; then
+        return 0
+    fi
+    log_info "Using the downloaded installer for $dest"
+    if ! curl -fsSL https://raw.githubusercontent.com/scott/castagent/main/install.sh -o "$dest/install.sh"; then
+        log_error "Could not download install.sh into $dest"
+        exit 1
+    fi
+    chmod +x "$dest/install.sh"
+}
+
 clone_and_reexec() {
     local dest
 
@@ -369,6 +457,7 @@ clone_and_reexec() {
     if [ -e "$dest" ] || [ -L "$dest" ]; then
         if is_cast_checkout "$dest"; then
             log_info "Using existing checkout: $dest"
+            use_downloaded_installer "$dest"
             export CAST_INSTALL_PACKAGES_DONE=1
             exec bash "$dest/install.sh"
         fi
@@ -383,6 +472,7 @@ clone_and_reexec() {
         log_error "Could not clone Cast into $dest"
         exit 1
     fi
+    use_downloaded_installer "$dest"
     export CAST_INSTALL_PACKAGES_DONE=1
     exec bash "$dest/install.sh"
 }
@@ -469,17 +559,16 @@ else
     exit 1
 fi
 
-# Check pip
+# Check pip. Debian/Ubuntu disables ensurepip for the system Python.
+ensure_pip
 if check_command pip3; then
     PIP_VERSION=$(pip3 --version | awk '{print $2}')
     log_info "pip found: v$PIP_VERSION"
+elif check_command uv; then
+    log_info "Python packages will be installed with uv"
 else
-    log_warn "pip3 not found. Attempting to install..."
-    python3 -m ensurepip --upgrade 2>/dev/null || {
-        log_error "Failed to install pip"
-        log_info "Please install pip manually: https://pip.pypa.io/en/stable/installation/"
-        exit 1
-    }
+    log_error "pip3 is not available"
+    exit 1
 fi
 
 # Check UV (optional but recommended)

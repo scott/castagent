@@ -67,7 +67,7 @@ Describe what you want, and Cast Agent builds the complete agent scaffold with i
 curl -sL https://raw.githubusercontent.com/scott/castagent/main/install.sh | bash
 ```
 
-Installs git, Node.js 20, Python 3.12, and Bun when they are missing, clones the repo into `~/.cast/castagent`, builds Cast, and links `cast`. On Linux it also installs a C compiler and libsecret. Re-running it rebuilds that checkout without fetching. Use `./upgrade.sh` from the checkout to update.
+Installs git, Node.js 20, Python 3.12, and Bun when they are missing, clones the repo into `~/.cast/castagent`, builds Cast, and links `cast`. On Linux it also installs a C compiler, unzip, and libsecret. Re-running it updates `install.sh` in that checkout and rebuilds it. It does not fetch new commits. Use `./upgrade.sh` from the checkout to update.
 
 **Full installation** (clone it yourself):
 ```bash

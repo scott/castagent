@@ -19,7 +19,7 @@ them yourself when you clone the repo and run `./install.sh` from that checkout.
 - **Node.js 18 or newer** (the one-liner installs Node.js 20).
 - **Python 3.11 or newer** (the one-liner installs Python 3.12).
 - **Bun** — required to render the TUI.
-- **git**, **tar**, and a C compiler. Linux also needs libsecret.
+- **git**, **tar**, **unzip**, and a C compiler. Linux also needs libsecret.
 
 You will also need an LLM API key to actually run an agent. Either is enough:
 
@@ -41,9 +41,12 @@ curl -sL https://raw.githubusercontent.com/scott/castagent/main/install.sh | bas
 
 On macOS or Linux this installs git, Node.js 20, Python 3.12, and Bun when
 they are missing, clones the repo into `~/.cast/castagent`, builds the CLI and
-TUI, and links `cast`. Linux also gets a C compiler and libsecret, which the
-native CLI dependencies need. A second run rebuilds that checkout and does not
-fetch new commits. Update an existing checkout with [`./upgrade.sh`](#updating).
+TUI, and links `cast`. Linux also gets a C compiler, unzip, and libsecret.
+Unzip is required by the Bun installer. On Debian and Ubuntu the system Python
+does not provide `ensurepip`, so the script installs `python3-venv` and
+`python3-pip` when that Python is new enough to use. A second run updates
+`install.sh` in that checkout and rebuilds it. It does not fetch new commits.
+Update the checkout with [`./upgrade.sh`](#updating).
 
 ## Full install from a clone
 

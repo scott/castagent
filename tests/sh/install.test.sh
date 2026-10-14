@@ -159,6 +159,11 @@ chmod +x "$HOME/.bun/bin/bun"
 EOS
     exit 0
 fi
+if [[ "$url" == *install.sh ]]; then
+    cp "${CAST_INSTALL_TEST_SCRIPT:?}" "$out"
+    chmod +x "$out"
+    exit 0
+fi
 printf 'unexpected curl %s\n' "$url" >&2
 exit 1
 EOF
@@ -254,6 +259,17 @@ EOF
 cat > "$TMP/stubs/apt-get" << 'EOF'
 #!/bin/bash
 printf 'apt-get %s\n' "$*" >> "${CAST_INSTALL_LOG:?}"
+if [[ "$*" == *unzip* ]]; then
+    mkdir -p "$HOME/.local/bin"
+    printf '%s\n' '#!/bin/bash' 'exit 0' > "$HOME/.local/bin/unzip"
+    chmod +x "$HOME/.local/bin/unzip"
+fi
+if [[ "$*" == *python3-pip* && -n "${CAST_PYTHON_VENV_READY:-}" ]]; then
+    touch "$CAST_PYTHON_VENV_READY"
+    mkdir -p "$HOME/.local/bin"
+    printf '%s\n' '#!/bin/bash' 'printf "%s\n" "pip 24.0 from apt"' > "$HOME/.local/bin/pip3"
+    chmod +x "$HOME/.local/bin/pip3"
+fi
 exit 0
 EOF
 
@@ -384,7 +400,7 @@ run_piped "$LINUX_HOME" "$TMP/linux.out"
 [[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/linux.out" >&2; fail "linux one-liner failed ($RUN_STATUS)"; }
 CLONE="$LINUX_HOME/.cast/castagent"
 assert_contains "$CAST_INSTALL_LOG" "git clone --branch main https://github.com/scott/castagent.git $CLONE" "one-liner clones main"
-assert_contains "$CAST_INSTALL_LOG" "apt-get install -y git curl ca-certificates tar build-essential pkg-config libsecret-1-dev" "linux installs build packages"
+assert_contains "$CAST_INSTALL_LOG" "apt-get install -y git curl ca-certificates tar unzip build-essential pkg-config libsecret-1-dev" "linux installs build packages"
 assert_contains "$CAST_INSTALL_LOG" "curl https://nodejs.org/dist/latest-v20.x/SHASUMS256.txt" "node version is resolved"
 assert_contains "$TMP/linux.out" "Downloading node-v20.19.0-linux-x64.tar.gz" "linux downloads the x64 tarball"
 assert_contains "$CAST_INSTALL_LOG" "curl https://astral.sh/uv/install.sh" "python comes from uv"
@@ -413,6 +429,59 @@ run_piped "$OCC_HOME" "$TMP/occupied.out"
 assert_contains "$TMP/occupied.out" "$OCC_HOME/.cast/castagent exists and is not a Cast checkout." "occupied path explains itself"
 assert_eq "$(cat "$OCC_HOME/.cast/castagent/keep")" "keep" "occupied path is left in place"
 assert_not_contains "$CAST_INSTALL_LOG" "git clone" "occupied path is not cloned over"
+
+mkdir -p "$TMP/ubuntu-bin"
+export CAST_PYTHON_VENV_READY="$TMP/ubuntu-venv-ready"
+rm -f "$CAST_PYTHON_VENV_READY"
+cat > "$TMP/ubuntu-bin/python3" << 'EOF'
+#!/bin/bash
+if [[ "${1:-}" == "--version" ]]; then
+    printf '%s\n' "Python 3.12.3"
+    exit 0
+fi
+if [[ "${1:-}" == "-c" ]]; then
+    exit 0
+fi
+if [[ "${1:-}" == "-m" && "${2:-}" == "venv" ]]; then
+    if [[ ! -f "${CAST_PYTHON_VENV_READY:?}" ]]; then
+        printf '%s\n' "ensurepip is disabled in Debian/Ubuntu for the system python." >&2
+        exit 1
+    fi
+    dest="${3:-.venv}"
+    mkdir -p "$dest/bin"
+    printf '%s\n' '#!/bin/bash' 'exit 0' > "$dest/bin/python"
+    chmod +x "$dest/bin/python"
+    printf '%s\n' '#!/bin/bash' 'exit 0' > "$dest/bin/pip"
+    chmod +x "$dest/bin/pip"
+    printf '%s\n' 'export PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd):$PATH"' > "$dest/bin/activate"
+    exit 0
+fi
+if [[ "${1:-}" == "-m" && "${2:-}" == "ensurepip" ]]; then
+    printf '%s\n' "ensurepip is disabled in Debian/Ubuntu for the system python." >&2
+    exit 1
+fi
+if [[ "${1:-}" == "-m" && "${2:-}" == "pip" ]]; then
+    [[ -f "${CAST_PYTHON_VENV_READY:?}" ]]
+    exit $?
+fi
+exit 1
+EOF
+chmod +x "$TMP/ubuntu-bin/python3"
+UBUNTU_HOME="$TMP/ubuntu-home"
+UBUNTU_REPO="$TMP/ubuntu-repo"
+seed_checkout "$UBUNTU_REPO"
+reset_log
+PATH="$TMP/ubuntu-bin:$TMP/tools:$TMP/stubs:/usr/bin:/bin"
+export PATH
+run_file "$UBUNTU_HOME" "$UBUNTU_REPO/install.sh" "$TMP/ubuntu.out"
+[[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/ubuntu.out" >&2; fail "Ubuntu system Python install failed ($RUN_STATUS)"; }
+assert_contains "$CAST_INSTALL_LOG" "apt-get install -y python3-venv python3-pip" "Ubuntu installs the distro venv and pip"
+assert_not_contains "$TMP/ubuntu.out" "Failed to install pip" "Ubuntu does not stop on disabled ensurepip"
+assert_not_contains "$CAST_INSTALL_LOG" "astral.sh" "a usable system Python does not install uv"
+assert_contains "$CAST_INSTALL_LOG" "npm $UBUNTU_REPO install" "Ubuntu install builds the checkout"
+PATH="$TMP/stubs:/usr/bin:/bin"
+export PATH
+unset CAST_PYTHON_VENV_READY
 
 export CAST_UNAME_S=Darwin
 export CAST_UNAME_M=arm64
