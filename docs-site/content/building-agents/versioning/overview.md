@@ -61,7 +61,7 @@ other — is the most common source of confusion.
         |
         |  cast git commit -m "..."
         v
-  +-----------+   cast git push origin main
+  +-----------+   cast git push
   |  .git/    | ------------------------->  GitHub / GitLab / ...
   +-----------+
 ```

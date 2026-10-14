@@ -81,10 +81,19 @@ model will produce a clean diff in the commit.
 ## Push
 
 ```bash
-cast git push my-agent                      # origin main
-cast git push my-agent origin main          # explicit
-cast git push my-agent upstream feature/x   # different remote/branch
+cast git push my-agent
+cast git push my-agent --branch main
+cast git push my-agent --remote upstream --branch feature/x
 ```
+
+With no `--branch`, the push sends the branch that is currently checked
+out. A repo whose current branch is `master` is pushed to `origin/master`.
+`repository.branch` in `agent.yaml` is not used as the push target.
+Pass `--branch` to publish a different branch, and `--remote` to use a
+remote other than `origin`.
+
+The success line prints the short hash that landed on the remote. Pushing
+the same commit again reports that the remote is already up to date.
 
 Auth is whatever the underlying Git client is configured for — SSH
 keys, a `gh` token via the credential helper, or whatever your

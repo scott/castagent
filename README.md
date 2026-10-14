@@ -431,7 +431,7 @@ cast git status my-agent
 cast git add my-agent -A
 cast git commit my-agent -m "Update instructions"
 
-# Push to remote
+# Push the current branch to origin
 cast git push my-agent
 
 # View commit history
