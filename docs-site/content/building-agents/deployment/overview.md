@@ -49,6 +49,8 @@ short version:
 `Not yet implemented. Use --provider docker for now.` and does not record
 a deployment. `cast registry` stays empty, and `cast connect` reports that
 no deployment was found. Use `--provider docker` to run on this machine.
+A successful Docker deploy stores the SHA printed by `cast deploy`.
+`cast registry` lists that id, and `cast connect <sha>` finds it.
 
 Each provider has its own CLI auth (`railway login`, `flyctl auth login`,
 `doctl auth init`, `sprite login`). `cast deploy` walks you through any
