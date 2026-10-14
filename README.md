@@ -114,7 +114,7 @@ export PATH="$HOME/.local/bin:$PATH"
 
 `upgrade.sh` moves this checkout onto the newest `origin/main` commit and rebuilds the CLI, TUI, and Python runtime in place. A checkout on any branch is switched, including local `master` that tracks `origin/master`. `origin/master` is used only when the remote has no `main` branch. Agents, config, and tokens under `~/.cast` stay in place. A stale pre-TypeScript binary at `~/.cast/bin/cast` is removed so it cannot shadow the rebuilt CLI.
 
-The script stops without rebuilding when the checkout has uncommitted changes, or when the local upstream branch has commits that cannot fast-forward. Commits that exist only on the branch you were on stay on that branch. It does not upgrade a deployed agent. That command is still `cast upgrade <agent>`.
+Tracked TypeScript build info (`typescript/cast-cli/tsconfig.tsbuildinfo` and `typescript/cast-tui/tsconfig.tsbuildinfo`) is reset. `tsc -b` rewrites those files, and checkouts from before they were removed from git still track them, so a build would otherwise look like a local edit and block the fast-forward. Any other uncommitted change stops the upgrade before it rebuilds. The script also stops when the local upstream branch has commits that cannot fast-forward. Commits that exist only on the branch you were on stay on that branch. It does not upgrade a deployed agent. That command is still `cast upgrade <agent>`.
 
 A checkout created before the default branch was `main` can still contain the older `upgrade.sh`, which follows `origin/master` and reports that it is already current. Run the current script instead. It finds the checkout through `~/.local/bin/cast` or the `cast` command on `PATH`:
 

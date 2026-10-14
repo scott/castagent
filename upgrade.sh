@@ -46,9 +46,10 @@ Any local branch is switched onto origin/main, including a checkout on
 master that tracks origin/master. origin/master is used only when the
 remote has no main branch.
 
-Leaves ~/.cast agents, config, and tokens untouched. Stops without rebuilding
-when the checkout has uncommitted changes, or when the local upstream branch
-has commits that cannot fast-forward.
+Leaves ~/.cast agents, config, and tokens untouched. Resets tracked TypeScript
+build info files, which a build rewrites. Stops without rebuilding when any
+other uncommitted change is present, or when the local upstream branch has
+commits that cannot fast-forward.
 
 This does not upgrade a deployed agent. That command is: cast upgrade <agent>
 EOF
@@ -254,6 +255,60 @@ require_tools() {
     fi
 }
 
+# tsc -b rewrites these caches. .gitignore already lists them, but checkouts
+# from before #128 still track the files. A build then looks like a local edit,
+# and the fast-forward that deletes them refuses to overwrite those changes.
+generated_build_info_paths() {
+    printf '%s\n' \
+        typescript/cast-cli/tsconfig.tsbuildinfo \
+        typescript/cast-tui/tsconfig.tsbuildinfo
+}
+
+is_generated_build_info() {
+    local path="$1"
+    local known
+
+    while IFS= read -r known; do
+        if [[ "$path" == "$known" ]]; then
+            return 0
+        fi
+    done < <(generated_build_info_paths)
+    return 1
+}
+
+# True when a tracked change is not one of the generated build info files.
+changes_block_upgrade() {
+    local path
+
+    while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
+        if ! is_generated_build_info "$path"; then
+            return 0
+        fi
+    done < <(
+        git -C "$ROOT" --no-pager diff --name-only HEAD
+        git -C "$ROOT" --no-pager diff --name-only --cached
+    )
+    return 1
+}
+
+restore_generated_build_info() {
+    local path restored=0
+
+    while IFS= read -r path; do
+        git -C "$ROOT" cat-file -e "HEAD:$path" 2>/dev/null || continue
+        if git -C "$ROOT" diff --quiet HEAD -- "$path" \
+            && git -C "$ROOT" diff --quiet --cached -- "$path"; then
+            continue
+        fi
+        git -C "$ROOT" checkout HEAD -- "$path" </dev/null
+        restored=1
+    done < <(generated_build_info_paths)
+    if [[ "$restored" -eq 1 ]]; then
+        log_info "Reset tracked TypeScript build info. A build rewrites these files."
+    fi
+}
+
 assert_clean_worktree() {
     local git_dir
 
@@ -265,12 +320,15 @@ assert_clean_worktree() {
         exit 1
     fi
 
-    if ! git -C "$ROOT" diff --quiet || ! git -C "$ROOT" diff --cached --quiet; then
+    if changes_block_upgrade; then
         log_error "This checkout has uncommitted changes. Commit or stash them, then run upgrade again."
         git -C "$ROOT" --no-pager diff --stat
         git -C "$ROOT" --no-pager diff --cached --stat
         exit 1
     fi
+
+    # Match HEAD so the fast-forward that drops these files can delete them.
+    restore_generated_build_info
 }
 
 # Fetch one remote branch into refs/remotes/origin/<branch>, ignoring the
@@ -417,6 +475,9 @@ build_typescript() {
     log_info "Building cast-tui..."
     (cd "$ROOT/typescript/cast-tui" && npm run build </dev/null)
     log_success "TypeScript projects built"
+    # The rebuild rewrites tracked build info on checkouts that still have it
+    # in git. Put those files back so the next upgrade is not blocked.
+    restore_generated_build_info
 }
 
 install_python() {

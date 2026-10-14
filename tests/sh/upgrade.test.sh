@@ -72,6 +72,10 @@ EOF
 cat > "$TMP/stubs/npm" << 'EOF'
 #!/bin/bash
 printf '%s\n' "npm $(pwd) $*" >> "${CAST_UPGRADE_LOG:?}"
+# tsc -b rewrites this cache. Reproduce that so upgrade.sh must put it back.
+if [[ "${1:-}" == "run" && "${2:-}" == "build" ]]; then
+    printf '%s\n' 'rebuilt' > tsconfig.tsbuildinfo
+fi
 exit 0
 EOF
 
@@ -249,6 +253,7 @@ assert_contains "$help_out" "origin/main" "help follows main"
 assert_contains "$help_out" "tracks origin/master" "help moves a master checkout onto main"
 assert_contains "$help_out" "no main branch" "help falls back to master only when main is absent"
 assert_contains "$help_out" "cast upgrade <agent>" "help distinguishes deployed-agent upgrade"
+assert_contains "$help_out" "build info files" "help mentions generated build info"
 set +e
 bash "$SCRIPT_SRC" --nope >"$TMP/bad.out" 2>&1
 bad_status=$?
@@ -318,6 +323,91 @@ assert_contains "$TMP/dirty/out" "uncommitted changes" "dirty checkout explains 
 assert_not_contains "$CAST_UPGRADE_LOG" "npm " "dirty checkout does not install"
 assert_eq "$(cat "$TMP/dirty/home/.cast/config.yaml")" "SENTINEL-CONFIG" "failed upgrade leaves config"
 [[ -f "$TMP/dirty/home/.cast/bin/cast" ]] || fail "failed upgrade should leave the stale binary"
+
+track_build_info() {
+    local repo="$1"
+    printf '%s\n' 'committed-cli' > "$repo/typescript/cast-cli/tsconfig.tsbuildinfo"
+    printf '%s\n' 'committed-tui' > "$repo/typescript/cast-tui/tsconfig.tsbuildinfo"
+    git -C "$repo" add \
+        typescript/cast-cli/tsconfig.tsbuildinfo \
+        typescript/cast-tui/tsconfig.tsbuildinfo
+    git -C "$repo" commit -m "track build info" >/dev/null
+    git -C "$repo" push origin HEAD >/dev/null
+}
+
+dirty_build_info() {
+    local repo="$1"
+    printf '%s\n' 'dirty-cli' > "$repo/typescript/cast-cli/tsconfig.tsbuildinfo"
+    printf '%s\n' 'dirty-tui' > "$repo/typescript/cast-tui/tsconfig.tsbuildinfo"
+}
+
+porcelain_tracked() {
+    git -C "$1" status --porcelain -uno
+}
+
+make_pair "buildinfo"
+track_build_info "$PAIR_REPO"
+advance_origin "$PAIR_ORIGIN" "2.0.0"
+dirty_build_info "$PAIR_REPO"
+git -C "$PAIR_REPO" add typescript/cast-tui/tsconfig.tsbuildinfo
+prepare_home "$TMP/buildinfo/home" "$PAIR_REPO"
+prepare_venv "$PAIR_REPO"
+reset_log
+run_upgrade "$PAIR_REPO/upgrade.sh" "$TMP/buildinfo/home" "$TMP/buildinfo/out"
+[[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/buildinfo/out" >&2; fail "dirty build info should still upgrade"; }
+assert_eq "$(git -C "$PAIR_REPO" rev-parse HEAD)" "$(git -C "$PAIR_REPO" rev-parse origin/master)" "build info upgrade fast-forwards"
+assert_contains "$PAIR_REPO/typescript/cast-cli/package.json" '"version": "2.0.0"' "build info upgrade takes the new commit"
+assert_eq "$(cat "$PAIR_REPO/typescript/cast-cli/tsconfig.tsbuildinfo")" "committed-cli" "cli build info matches HEAD after rebuild"
+assert_eq "$(cat "$PAIR_REPO/typescript/cast-tui/tsconfig.tsbuildinfo")" "committed-tui" "tui build info matches HEAD after rebuild"
+assert_eq "$(porcelain_tracked "$PAIR_REPO")" "" "tracked build info is clean after rebuild"
+assert_contains "$TMP/buildinfo/out" "Reset tracked TypeScript build info" "upgrade says it reset build info"
+assert_not_contains "$TMP/buildinfo/out" "uncommitted changes" "build info is not treated as a local edit"
+assert_contains "$CAST_UPGRADE_LOG" "npm $PAIR_REPO/typescript/cast-cli run build" "build info upgrade still builds"
+
+make_pair "untrack"
+track_build_info "$PAIR_REPO"
+dirty_build_info "$PAIR_REPO"
+git -C "$PAIR_REPO" add \
+    typescript/cast-cli/tsconfig.tsbuildinfo \
+    typescript/cast-tui/tsconfig.tsbuildinfo
+untrack_clone="$TMP/untrack/upstream"
+git clone "$PAIR_ORIGIN" "$untrack_clone" >/dev/null 2>&1
+git_identity "$untrack_clone"
+git -C "$untrack_clone" rm \
+    typescript/cast-cli/tsconfig.tsbuildinfo \
+    typescript/cast-tui/tsconfig.tsbuildinfo >/dev/null
+printf '%s\n' '*.tsbuildinfo' > "$untrack_clone/.gitignore"
+git -C "$untrack_clone" add .gitignore
+git -C "$untrack_clone" commit -m "stop tracking build info" >/dev/null
+git -C "$untrack_clone" push origin HEAD >/dev/null
+prepare_home "$TMP/untrack/home" "$PAIR_REPO"
+prepare_venv "$PAIR_REPO"
+reset_log
+run_upgrade "$PAIR_REPO/upgrade.sh" "$TMP/untrack/home" "$TMP/untrack/out"
+[[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/untrack/out" >&2; fail "upgrade onto untracked build info failed"; }
+assert_eq "$(git -C "$PAIR_REPO" rev-parse HEAD)" "$(git -C "$PAIR_REPO" rev-parse origin/master)" "upgrade reaches the commit that drops build info"
+assert_eq "$(git -C "$PAIR_REPO" ls-files '*.tsbuildinfo')" "" "build info is no longer tracked"
+assert_eq "$(porcelain_tracked "$PAIR_REPO")" "" "rebuilt build info stays ignored"
+git -C "$PAIR_REPO" check-ignore -q typescript/cast-cli/tsconfig.tsbuildinfo \
+    || fail "rebuilt cli build info should be ignored"
+git -C "$PAIR_REPO" check-ignore -q typescript/cast-tui/tsconfig.tsbuildinfo \
+    || fail "rebuilt tui build info should be ignored"
+assert_contains "$TMP/untrack/out" "Reset tracked TypeScript build info" "untrack upgrade resets the dirty copies first"
+
+make_pair "mixed"
+track_build_info "$PAIR_REPO"
+dirty_build_info "$PAIR_REPO"
+printf '%s\n' 'dirty' >> "$PAIR_REPO/package.json"
+mixed_sha="$(git -C "$PAIR_REPO" rev-parse HEAD)"
+prepare_home "$TMP/mixed/home" "$PAIR_REPO"
+reset_log
+run_upgrade "$PAIR_REPO/upgrade.sh" "$TMP/mixed/home" "$TMP/mixed/out"
+[[ "$RUN_STATUS" -ne 0 ]] || fail "real edits next to build info should fail"
+assert_eq "$(git -C "$PAIR_REPO" rev-parse HEAD)" "$mixed_sha" "mixed checkout is not moved"
+assert_contains "$TMP/mixed/out" "uncommitted changes" "mixed checkout explains why it stopped"
+assert_not_contains "$CAST_UPGRADE_LOG" "npm " "mixed checkout does not install"
+assert_eq "$(cat "$PAIR_REPO/typescript/cast-cli/tsconfig.tsbuildinfo")" "dirty-cli" "refused upgrade leaves build info alone"
+grep -F -q 'dirty' "$PAIR_REPO/package.json" || fail "refused upgrade leaves the real edit"
 
 make_pair "ahead"
 git -C "$PAIR_REPO" commit --allow-empty -m "local only" >/dev/null

@@ -110,11 +110,14 @@ used only when the remote has no `main` branch. Agents, config, and tokens
 in `~/.cast` stay where they are. A stale pre-TypeScript binary at
 `~/.cast/bin/cast` is removed so it cannot shadow the new CLI.
 
-The script stops without rebuilding when you have uncommitted changes, or when
-local commits on that upstream branch cannot fast-forward. Commits that exist
-only on the branch you were on stay on that branch. It updates the local Cast
-installation only. A deployed agent is still updated with
-`cast upgrade <agent>`.
+Tracked TypeScript build info (`typescript/cast-cli/tsconfig.tsbuildinfo` and
+`typescript/cast-tui/tsconfig.tsbuildinfo`) is reset. A build rewrites those
+files, and checkouts from before they were removed from git still track them.
+Any other uncommitted change stops the upgrade before it rebuilds. The script
+also stops when local commits on that upstream branch cannot fast-forward.
+Commits that exist only on the branch you were on stay on that branch. It
+updates the local Cast installation only. A deployed agent is still updated
+with `cast upgrade <agent>`.
 
 A checkout created before the default branch was `main` can still contain the
 older `upgrade.sh`, which follows `origin/master` and reports that it is
