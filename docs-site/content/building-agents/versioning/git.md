@@ -168,6 +168,12 @@ subcommands:
 /git push
 ```
 
+`-m` is the commit message flag. `/git commit -m tui-commit` stores
+`tui-commit`. Quotes around the message are not stored, so
+`/git commit -m "Switched to Claude 3.7"` stores `Switched to Claude 3.7`.
+`/git commit <msg>` commits the same text without the flag. `/git help`
+shows `/git commit [-m] <msg>`.
+
 There is no TUI-side modal picker for Git — it shells out to the
 CLI and prints the output into the chat.
 

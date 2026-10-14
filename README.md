@@ -472,6 +472,11 @@ cast git remote my-agent add origin https://github.com/user/repo.git
 cast git remote my-agent list
 ```
 
+In the TUI, `/git commit -m "Update instructions"` treats `-m` as the
+message flag, so the stored message is `Update instructions`.
+`/git commit "Update instructions"` commits the same text. `/git help`
+shows `/git commit [-m] <msg>`.
+
 `cast git init` writes ignore rules to `.gitignore` and `.castignore`.
 Those rules leave runtime files such as `memory/memory.db` out of the
 repository. `cast dev` adds the memory database rules to an agent that
