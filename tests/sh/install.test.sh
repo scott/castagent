@@ -44,6 +44,18 @@ assert_not_contains() {
     fi
 }
 
+assert_install_hints() {
+    local file="$1"
+    assert_contains "$file" "cast new" "quick start creates an agent with cast new"
+    assert_contains "$file" "cast dev <agent>" "quick start runs an agent with cast dev"
+    assert_contains "$file" "Create your first agent: cast new" "next steps use cast new"
+    assert_contains "$file" "Start developing: cast dev <agent>" "next steps use cast dev"
+    assert_contains "$file" "https://castagent.dev" "install points at the docs site"
+    assert_not_contains "$file" "cast <agent-name>" "quick start does not treat an agent name as a command"
+    assert_not_contains "$file" "my-first-agent" "next steps do not run an agent name as a command"
+    assert_not_contains "$file" "docs/SPEC.md" "install does not point at the spec file"
+}
+
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/cast-install-test.XXXXXX")"
 TMP="$(cd "$TMP" && pwd)"
 trap 'rm -rf "$TMP"' EXIT
@@ -273,6 +285,13 @@ fi
 exit 0
 EOF
 
+cat > "$TMP/stubs/pkg-config" << 'EOF'
+#!/bin/bash
+# A developer machine may already have libsecret. Report it missing so the
+# install test always exercises the package-install path.
+exit 1
+EOF
+
 cat > "$TMP/stubs/brew" << 'EOF'
 #!/bin/bash
 printf 'brew %s\n' "$*" >> "${CAST_INSTALL_LOG:?}"
@@ -342,7 +361,9 @@ printf '%s\n' "1.1.0"
 exit 0
 EOF
 
-chmod +x "$TMP/stubs/"* "$TMP/tools/"* "$TMP/fixtures/uv"
+mkdir -p "$TMP/py-ok"
+cp "$TMP/tools/python3" "$TMP/py-ok/python3"
+chmod +x "$TMP/stubs/"* "$TMP/tools/"* "$TMP/py-ok/python3" "$TMP/fixtures/uv"
 
 SYSTEM_CAST_BEFORE=""
 if [[ -L /usr/local/bin/cast || -e /usr/local/bin/cast ]]; then
@@ -413,6 +434,7 @@ assert_eq "$(readlink "$LINUX_HOME/.local/bin/python3")" "$LINUX_HOME/.local/py/
 [[ -x "$LINUX_HOME/.bun/bin/bun" ]] || fail "bun binary should exist"
 assert_contains "$LINUX_HOME/.bashrc" "castagent-path" "bash profile gains a PATH line"
 assert_not_contains "$CAST_INSTALL_LOG" "npm $SOURCE_ROOT" "install does not build this workspace"
+assert_install_hints "$TMP/linux.out"
 
 reset_log
 run_piped "$LINUX_HOME" "$TMP/linux-again.out"
@@ -488,6 +510,10 @@ export CAST_UNAME_M=arm64
 rm -f "$CAST_GIT_READY"
 BREW_HOME="$TMP/brew-home"
 reset_log
+# Debian's /usr/bin/python3 cannot create a venv. Give the Darwin run a
+# working interpreter so it does not fall through to apt-get.
+PATH="$TMP/py-ok:$TMP/stubs:/usr/bin:/bin"
+export PATH
 run_piped "$BREW_HOME" "$TMP/brew.out"
 [[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/brew.out" >&2; fail "macOS one-liner failed ($RUN_STATUS)"; }
 assert_contains "$CAST_INSTALL_LOG" "brew install git" "macOS installs git with Homebrew"
@@ -521,6 +547,7 @@ assert_not_contains "$CAST_INSTALL_LOG" "astral.sh" "an existing Python is reuse
 assert_contains "$CAST_INSTALL_LOG" "npm $FILE_REPO install" "checkout install builds that repo"
 assert_eq "$(readlink "$FILE_HOME/.local/bin/cast")" "$FILE_REPO/cast" "checkout install links its own cast"
 [[ ! -e "$FILE_HOME/.cast/castagent" ]] || fail "checkout install should not create the default clone"
+assert_install_hints "$TMP/file.out"
 
 if [[ -L /usr/local/bin/cast || -e /usr/local/bin/cast ]]; then
     system_cast_after="$(readlink /usr/local/bin/cast || printf 'file')"
