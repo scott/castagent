@@ -22,14 +22,53 @@ class TestStdioJsonRpcServer:
         assert "output" in server.methods
 
     @pytest.mark.asyncio
-    async def test_handle_initialize_basic(self):
-        """handle_initialize should set up agent for editing."""
-        server = StdioJsonRpcServer()
+    async def test_handle_initialize_missing_agent_starts_new_mode(self, tmp_path, monkeypatch):
+        """A missing agent starts the new-agent flow instead of edit mode."""
+        from cast.builder_tools import tools
 
-        result = await server.handle_initialize({"agent_name": "test-agent"})
+        agents = tmp_path / "agents"
+        agents.mkdir()
+        monkeypatch.setattr(tools, "AGENTS_DIR", agents)
+
+        server = StdioJsonRpcServer()
+        result = await server.handle_initialize({
+            "agent_name": "bb-devnew",
+            "new_mode": False,
+        })
+
         assert result["status"] == "ready"
-        assert result["agent_name"] == "test-agent"
+        assert result["agent_name"] == "bb-devnew"
+        assert result["new_mode"] is True
+        assert server.agent.new_mode is True
+        message = result["message"]
+        assert "bb-devnew" in message
+        assert "what should your agent do" in message.lower()
+        assert "loaded its current configuration" not in message.lower()
+        assert "loaded" not in message.lower()
+        assert not (agents / "bb-devnew").exists()
+
+    @pytest.mark.asyncio
+    async def test_handle_initialize_existing_agent_stays_in_edit_mode(self, tmp_path, monkeypatch):
+        """An agent directory that exists is opened for editing."""
+        from cast.builder_tools import tools
+
+        agents = tmp_path / "agents"
+        agent_dir = agents / "inbox-agent"
+        agent_dir.mkdir(parents=True)
+        (agent_dir / "agent.yaml").write_text(
+            "name: inbox-agent\ndescription: reads mail\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr(tools, "AGENTS_DIR", agents)
+
+        server = StdioJsonRpcServer()
+        result = await server.handle_initialize({"agent_name": "inbox-agent"})
+
+        assert result["status"] == "ready"
         assert result["new_mode"] is False
+        assert "inbox-agent" in result["message"]
+        assert "loaded its current configuration" not in result["message"].lower()
+        assert "what would you like to change" in result["message"].lower()
 
     @pytest.mark.asyncio
     async def test_handle_initialize_new_mode(self):
@@ -322,6 +361,27 @@ class TestEchoChatModel:
         assert result.generations
         content = result.generations[0].message.content
         assert len(content) > 0
+        tool_calls = result.generations[0].message.tool_calls or []
+        assert any(tc["name"] == "suggest_name" for tc in tool_calls)
+
+    def test_generate_new_mode_uses_requested_name(self):
+        """cast dev <name> should create that name from the description."""
+        from langchain_core.messages import HumanMessage
+
+        model = EchoChatModel()
+        model.set_new_mode(True)
+        model.set_agent_name("bb-devnew")
+
+        result = model._generate([
+            HumanMessage(content="Watch CI logs and ping me when a build fails badly"),
+        ])
+
+        tool_calls = result.generations[0].message.tool_calls or []
+        create_calls = [tc for tc in tool_calls if tc["name"] == "create_agent"]
+        assert len(create_calls) == 1
+        assert create_calls[0]["args"]["name"] == "bb-devnew"
+        assert "build fails" in create_calls[0]["args"]["description"]
+        assert not any(tc["name"] == "suggest_name" for tc in tool_calls)
 
     def test_generate_confirm_name(self):
         """_generate should create agent when name is confirmed."""
@@ -387,18 +447,54 @@ class TestStdioJsonRpcServerIntegration:
     """Integration tests for StdioJsonRpcServer."""
 
     @pytest.mark.asyncio
-    async def test_full_conversation_flow(self, tmp_path):
+    async def test_full_conversation_flow(self, tmp_path, monkeypatch):
         """Test a full conversation flow."""
+        from cast.builder_tools import tools
+
+        agents = tmp_path / "agents"
+        agents.mkdir()
+        monkeypatch.setattr(tools, "AGENTS_DIR", agents)
+
         server = StdioJsonRpcServer()
 
         # Initialize
         result = await server.handle_initialize({"agent_name": "test-agent"})
         assert result["status"] == "ready"
+        assert result["new_mode"] is True
 
-        # Send a message
+        # Send a message. A list request must not scaffold the missing agent.
         result = await server.handle_output({"content": "list agents"})
         assert "acknowledged" in result
         assert "response" in result
+        assert not (agents / "test-agent").exists()
+
+    @pytest.mark.asyncio
+    async def test_missing_agent_description_creates_named_scaffold(self, tmp_path, monkeypatch):
+        """A description in the missing-agent flow writes that agent's files."""
+        from cast import versioning
+        from cast.builder_tools import tools
+
+        agents = tmp_path / "agents"
+        agents.mkdir()
+        monkeypatch.setattr(tools, "AGENTS_DIR", agents)
+        monkeypatch.setattr(tools, "BUILDER_DIR", tmp_path / "builder")
+        monkeypatch.setattr(versioning, "AGENTS_DIR", agents)
+        monkeypatch.setattr("cast.builder.create_llm", lambda: EchoChatModel())
+
+        server = StdioJsonRpcServer()
+        result = await server.handle_initialize({"agent_name": "bb-devnew"})
+        assert result["new_mode"] is True
+        assert "loaded its current configuration" not in result["message"].lower()
+
+        await server.agent.process_message(
+            "Watch CI logs and ping me when a build fails badly"
+        )
+
+        agent_yaml = agents / "bb-devnew" / "agent.yaml"
+        assert agent_yaml.is_file()
+        config = yaml.safe_load(agent_yaml.read_text(encoding="utf-8"))
+        assert config["name"] == "bb-devnew"
+        assert "build fails" in config["description"]
 
     @pytest.mark.asyncio
     async def test_error_propagation(self):

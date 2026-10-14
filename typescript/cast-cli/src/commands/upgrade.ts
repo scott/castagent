@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import * as readline from 'readline'
+import {missingAgentError} from '../lib/missing-agent'
 import {getRelease, getCurrentRelease, listReleases, validateSemver} from '../lib/releases'
 import {db} from '../lib/sqlite'
 import {resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
@@ -85,10 +86,7 @@ export default class Upgrade extends Command {
 
     const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
     if (!fs.existsSync(agentPath)) {
-      this.error(
-        `Agent '${agentName}' not found at ${agentPath}.\n` +
-        `Create the agent first with: cast dev ${agentName} --no-tui`
-      )
+      this.error(missingAgentError(agentName, agentPath))
     }
 
     const provider = deployment.provider

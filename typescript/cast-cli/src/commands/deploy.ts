@@ -14,6 +14,7 @@ import {
   resolveProviderAuthToken,
 } from '../lib/deploy/registry'
 import type {DeployContext, DeploymentProvider} from '../lib/deploy/types'
+import {missingAgentError} from '../lib/missing-agent'
 import {getCurrentRelease} from '../lib/releases'
 import {db} from '../lib/sqlite'
 
@@ -381,10 +382,7 @@ export default class Deploy extends Command {
     // Validate agent exists before reading provider-specific flags.
     const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
     if (!fs.existsSync(agentPath)) {
-      this.error(
-        `Agent '${agentName}' not found at ${agentPath}.\n` +
-        `Create the agent first with: cast dev ${agentName} --no-tui`
-      )
+      this.error(missingAgentError(agentName, agentPath))
     }
 
     // Prepare version for deploy (extract specific release tarball if needed)

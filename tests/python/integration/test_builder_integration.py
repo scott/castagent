@@ -199,8 +199,17 @@ class TestStdioJsonRpcServer:
         assert "call_id" in result or "output" in result or "error" in result
 
     @pytest.mark.asyncio
-    async def test_handle_output(self):
+    async def test_handle_output(self, tmp_path, monkeypatch):
         """Should handle output (user message) method."""
+        from cast import versioning
+        from cast.builder_tools import tools
+
+        agents = tmp_path / "agents"
+        agents.mkdir()
+        monkeypatch.setattr(tools, "AGENTS_DIR", agents)
+        monkeypatch.setattr(tools, "BUILDER_DIR", tmp_path / "builder")
+        monkeypatch.setattr(versioning, "AGENTS_DIR", agents)
+
         server = StdioJsonRpcServer()
         await server.handle_initialize({"agent_name": "test-agent"})
 
