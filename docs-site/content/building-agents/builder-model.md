@@ -77,7 +77,10 @@ production and on-host. See
 Typing `/model` opens a modal titled "Builder Model". The list comes from
 `cast model --list --json`, sorted alphabetically by the full id. The
 modal shows a window of that list and keeps the selected row on screen.
-The current row is marked `(current)` and starts selected. A stored id
+Each catalog id is one row. The window is short enough to fit in the
+modal, so Up and Down reach every id from `cast model --list` without
+skipping a row or leaving characters from the previous frame on the
+next id. The current row is marked `(current)` and starts selected. A stored id
 with a leading `openrouter/` matches the same catalog id, so the default
 `openrouter/minimax/minimax-m2.5` selects `minimax/minimax-m2.5`. Up and
 down wrap. Enter on a different model runs `cast model <id>`. Enter on

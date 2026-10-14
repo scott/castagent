@@ -6,15 +6,14 @@ import {createModal} from '../components/modal.js'
 import {
   BUILDER_MODEL_MODAL_TITLE,
   CAST_CLI_NOT_FOUND,
+  buildBuilderModelLines,
   builderModelApplyArgv,
+  builderModelContentColumns,
   builderModelCurrentArgv,
   builderModelFocusReturnTarget,
   builderModelListArgv,
   builderModelSuccessMessage,
-  builderModelWindow,
-  formatBuilderModelRow,
   initialBuilderModelIndex,
-  isSameBuilderModel,
   shouldApplyBuilderModel,
   sortBuilderModels,
   wrapBuilderModelIndex,
@@ -100,6 +99,7 @@ export function openBuilderModelModal(
     title: BUILDER_MODEL_MODAL_TITLE,
     overlay: true,
   })
+  modal.box.overflow = 'hidden'
   if (modal.overlay) ctx.renderer.root.add(modal.overlay)
 
   const contentBox = new BoxRenderable(ctx.renderer, {
@@ -110,6 +110,8 @@ export function openBuilderModelModal(
     paddingTop: 2,
     paddingLeft: 2,
     paddingRight: 2,
+    overflow: 'hidden',
+    backgroundColor: '#333333',
   })
 
   let models: BuilderModelInfo[] = []
@@ -145,40 +147,30 @@ export function openBuilderModelModal(
 
   const addLine = (text: string, tone: 'text' | 'hint' | 'error' = 'text') => {
     const color = tone === 'error' ? red : tone === 'hint' ? dim : white
-    contentBox.add(new TextRenderable(ctx.renderer, {content: new StyledText([color(text)])}))
+    // height 1 and flexShrink 0 keep each id on its own row. A shrunk
+    // row overlaps the next id and leaves the tail of the longer one.
+    contentBox.add(new TextRenderable(ctx.renderer, {
+      content: new StyledText([color(text)]),
+      width: '100%',
+      height: 1,
+      wrapMode: 'none',
+      flexShrink: 0,
+    }))
   }
 
   const render = () => {
     clear()
-    if (inlineError && models.length === 0) {
-      addLine(inlineError, 'error')
-      addLine(' ')
-      addLine('ESC Close', 'hint')
-      ctx.renderer.requestRender?.()
-      return
-    }
-
-    addLine(`Current: ${currentId || '(unset)'}`)
-    addLine('────────────────────────────────────────────────────────', 'hint')
     const height = typeof ctx.renderer?.height === 'number' ? ctx.renderer.height : 24
-    const maxRows = Math.max(5, Math.floor(height * 0.8) - 6)
-    const window = builderModelWindow(models.length, selected, maxRows)
-    if (window.start > 0) addLine('  …', 'hint')
-    for (let index = window.start; index < window.end; index++) {
-      const model = models[index]
-      addLine(formatBuilderModelRow(
-        model.id,
-        index === selected,
-        isSameBuilderModel(model.id, currentId),
-      ))
-    }
-    if (window.end < models.length) addLine('  …', 'hint')
-    if (inlineError) {
-      addLine(' ')
-      addLine(inlineError, 'error')
-    }
-    addLine(' ')
-    addLine('↑↓ Select   Enter Apply   ESC Close', 'hint')
+    const width = typeof ctx.renderer?.width === 'number' ? ctx.renderer.width : 80
+    const lines = buildBuilderModelLines({
+      models,
+      selected,
+      currentId,
+      termHeight: height,
+      columns: builderModelContentColumns(width),
+      error: inlineError,
+    })
+    for (const line of lines) addLine(line.text, line.tone)
     ctx.renderer.requestRender?.()
   }
 
