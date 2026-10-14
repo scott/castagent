@@ -48,9 +48,9 @@ describe('update command', () => {
   describe('model update', () => {
     it('should validate model format', () => {
       const validModels = [
-        'openrouter/anthropic/claude-3.7-sonnet',
+        'openrouter/anthropic/claude-sonnet-4.6',
         'openai/gpt-4o',
-        'google/gemini-2.0-flash',
+        'google/gemini-2.5-flash',
       ]
 
       for (const model of validModels) {
@@ -81,13 +81,18 @@ describe('update command', () => {
       const update = new Update(['update', 'agent'], {} as any)
       const unknown = (update as any).validateModel('zzz/notreal')
       const shipped = (update as any).validateModel('openrouter/minimax/minimax-m2.5')
-      const prefixed = (update as any).validateModel('openrouter/anthropic/claude-3.7-sonnet')
+      const prefixed = (update as any).validateModel('openrouter/anthropic/claude-sonnet-4.6')
+      const retired = (update as any).validateModel('google/gemini-2.0-flash')
       expect(unknown).to.deep.equal({
         valid: false,
         error: unknownModelMessage('zzz/notreal'),
       })
       expect(shipped).to.deep.equal({valid: true})
       expect(prefixed).to.deep.equal({valid: true})
+      expect(retired).to.deep.equal({
+        valid: false,
+        error: unknownModelMessage('google/gemini-2.0-flash'),
+      })
     })
 
     it('accepts an external acceptsAnyModel id without an OpenRouter warning', () => {
@@ -134,9 +139,9 @@ describe('update command', () => {
 
     it('should warn for unknown models', () => {
       const knownModels = [
-        'anthropic/claude-3.7-sonnet',
+        'anthropic/claude-sonnet-4.6',
         'openai/gpt-4o',
-        'google/gemini-2.0-flash',
+        'google/gemini-2.5-flash',
       ]
 
       const unknownModel = 'unknown/model'
@@ -452,13 +457,13 @@ describe('update command', () => {
       const {errors} = await runUpdate({
         permission: ['bash=ask'],
         'python-version': '3.11',
-        model: 'openrouter/anthropic/claude-3.7-sonnet',
+        model: 'openrouter/anthropic/claude-sonnet-4.6',
       })
       expect(errors).to.deep.equal([])
       const config = yaml.parse(written())
       expect(config.harness.permissions.bash).to.equal('ask')
       expect(config.runtime.python_version).to.equal('3.11')
-      expect(config.brain.model).to.equal('openrouter/anthropic/claude-3.7-sonnet')
+      expect(config.brain.model).to.equal('openrouter/anthropic/claude-sonnet-4.6')
     })
   })
 })

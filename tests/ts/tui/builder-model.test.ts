@@ -153,12 +153,12 @@ describe('builder model picker', () => {
 
   it('fits every catalog id on its own row while scrolling', () => {
     const ids = helper.sortBuilderModels(catalogIds().map(id => ({id}))).map(model => model.id)
-    expect(ids).to.have.length(55)
-    expect(ids).to.include('meta-llama/llama-3.2-90b-vision-instruct')
-    expect(ids).to.include('meta-llama/llama-3.3-70b-instruct')
+    expect(ids).to.have.length(21)
+    expect(ids).to.include('meta-llama/llama-3.1-70b-instruct')
+    expect(ids).to.include('meta-llama/llama-3.1-8b-instruct')
     expect(ids).to.include('openai/gpt-4-turbo')
-    expect(ids).to.include('cohere/command-r-plus')
-    expect(ids).to.include('kimi/k2.5')
+    expect(ids).to.include('cohere/command-r-plus-08-2024')
+    expect(ids).to.include('minimax/minimax-m2.5')
 
     const termHeight = 50
     const inner = helper.builderModelModalInnerRows(termHeight)
@@ -180,7 +180,7 @@ describe('builder model picker', () => {
         expect(line.text).to.not.include('instructnstruct')
       }
       const span = helper.builderModelWindow(ids.length, selected, maxRows)
-      expect(span.end - span.start).to.equal(maxRows)
+      expect(span.end - span.start).to.equal(Math.min(maxRows, ids.length))
       expect(selected).to.be.at.least(span.start)
       expect(selected).to.be.below(span.end)
       expect(span.start - previousStart).to.be.at.most(1)
@@ -198,8 +198,8 @@ describe('builder model picker', () => {
     }
     expect([...seen].sort()).to.deep.equal([...ids].sort())
 
-    const longer = ids.indexOf('meta-llama/llama-3.2-90b-vision-instruct')
-    const shorter = ids.indexOf('meta-llama/llama-3.3-70b-instruct')
+    const longer = ids.indexOf('meta-llama/llama-3.1-70b-instruct')
+    const shorter = ids.indexOf('meta-llama/llama-3.1-8b-instruct')
     expect(shorter - longer).to.equal(1)
     const glued = frame(ids, shorter, termHeight, 200)
     const longerRow = helper.formatBuilderModelRow(ids[longer], false, false)
@@ -218,8 +218,8 @@ describe('builder model picker', () => {
     }
     expect(moved).to.deep.equal([
       'cohere/command-r-plus-08-2024',
-      'cohere/command-r-plus',
-      'cohere/command-r',
+      'anthropic/claude-sonnet-4.6',
+      'anthropic/claude-opus-4.5',
     ])
 
     const withError = frame(ids, shorter, termHeight, 200, 'could not write config')

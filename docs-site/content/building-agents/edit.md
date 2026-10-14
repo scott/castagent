@@ -40,7 +40,7 @@ For atomic changes, `cast update` is faster and scriptable:
 
 ```bash
 # Change the model
-cast update email-assistant --model openrouter/anthropic/claude-3.7-sonnet
+cast update email-assistant --model openrouter/anthropic/claude-sonnet-4.6
 
 # Add a tool, remove another
 cast update email-assistant --add-tool bash --remove-tool glob
@@ -93,7 +93,7 @@ and from the field list it closes the modal and returns focus to the input.
 You can also pass the CLI flags directly:
 
 ```text
-/update --model openrouter/anthropic/claude-3.7-sonnet
+/update --model openrouter/anthropic/claude-sonnet-4.6
 /update --description A short summary
 /update --add-tool bash --permission bash=ask
 ```

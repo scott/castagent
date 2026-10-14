@@ -86,78 +86,9 @@ class OpenRouterProvider:
     name = "openrouter"
     default_base_url = "https://openrouter.ai/api/v1"
 
-    supported_models = [
-        # Anthropic - Claude 4 series
-        "anthropic/claude-opus-4.5",
-        "anthropic/claude-sonnet-4.6",
-        "anthropic/claude-haiku-4",
-        # Anthropic - Claude 3.7 series
-        "anthropic/claude-3.7-sonnet",
-        "anthropic/claude-3.7-sonnet:thinking",
-        # Anthropic - Claude 3.5 series
-        "anthropic/claude-3.5-sonnet",
-        "anthropic/claude-3.5-haiku",
-        # Anthropic - Claude 3 series
-        "anthropic/claude-3-opus",
-        "anthropic/claude-3-sonnet",
-        "anthropic/claude-3-haiku",
-        # OpenAI - GPT-4o series
-        "openai/gpt-4o",
-        "openai/gpt-4o-mini",
-        "openai/gpt-4o-search-preview",
-        # OpenAI - GPT-4.5
-        "openai/gpt-4.5-turbo",
-        # OpenAI - GPT-4 series
-        "openai/gpt-4-turbo",
-        # Google - Gemini 2 series
-        "google/gemini-2.5-pro",
-        "google/gemini-2.5-flash",
-        "google/gemini-2.0-flash",
-        # Google - Gemini 1.5 series
-        "google/gemini-1.5-pro",
-        "google/gemini-1.5-flash",
-        # Meta - Llama 4 series
-        "meta-llama/llama-4-scout",
-        "meta-llama/llama-4-maverick",
-        "meta-llama/llama-4-17b-16e-instruct",
-        # Meta - Llama 3 series
-        "meta-llama/llama-3.3-70b-instruct",
-        "meta-llama/llama-3.2-90b-vision-instruct",
-        "meta-llama/llama-3.2-11b-vision-instruct",
-        "meta-llama/llama-3.1-405b-instruct",
-        "meta-llama/llama-3.1-70b-instruct",
-        "meta-llama/llama-3.1-8b-instruct",
-        # Kimi
-        "kimi/k2.5",
-        "kimi/k2",
-        "kimi/kimi-2.5",
-        "kimi/kimi-2",
-        # DeepSeek
-        "deepseek/deepseek-chat-v3-0324",
-        "deepseek/deepseek-chat",
-        "deepseek/deepseek-coder",
-        # Minimax
-        "minimax/minimax-m4",
-        "minimax/minimax-m2.5",
-        "minimax/minimax-m2",
-        # Mistral
-        "mistralai/mistral-large",
-        "mistralai/mistral-medium",
-        "mistralai/mistral-small",
-        "mistralai/mistral-nemo",
-        # Cohere
-        "cohere/command-r-plus-08-2024",
-        "cohere/command-r-plus",
-        "cohere/command-r7b-12-2024",
-        "cohere/command-r",
-        # xAI
-        "x-ai/grok-2",
-        "x-ai/grok-2-mini",
-        "x-ai/grok-beta",
-        # Perplexity
-        "perplexity/llama-3.1-sonar-large-128k-online",
-        "perplexity/llama-3.1-sonar-huge-128k-online",
-    ]
+    # Kept in lockstep with manifest knownModels, which cast model and
+    # cast update --model treat as the allow-list.
+    supported_models = list(row_for("openrouter").get("knownModels") or ())
 
     def __init__(self):
         self.api_key = os.getenv("OPENROUTER_API_KEY")

@@ -26,7 +26,7 @@ stripped). The API call uses the raw stored id.
 
 ```bash
 cast model
-cast model anthropic/claude-3.5-sonnet
+cast model anthropic/claude-sonnet-4.6
 cast model openrouter/minimax/minimax-m2.5
 cast model --list
 cast model --list --json
@@ -42,7 +42,7 @@ same default scaffold `install.sh` writes before `cast new`. The write is
 atomic (a temp file, then rename) and the file is read back to confirm.
 
 ```text
-✓ Builder model set to: anthropic/claude-3.5-sonnet
+✓ Builder model set to: anthropic/claude-sonnet-4.6
   Restart the builder to take effect (run `cast dev <agent>` again).
 ```
 
@@ -66,7 +66,7 @@ error is printed.
 
 `OPENROUTER_API_KEY` is still required for a live OpenRouter call. Without
 it, the builder stays in echo mode. A stored id such as
-`anthropic/claude-3.5-sonnet` is sent to
+`anthropic/claude-sonnet-4.6` is sent to
 `https://openrouter.ai/api/v1/chat/completions`.
 
 An existing `digitalocean/<model-id>` value in the file still selects
@@ -97,7 +97,7 @@ to the input.
 On success the chat shows:
 
 ```text
-Builder model changed to anthropic/claude-3.5-sonnet.
+Builder model changed to anthropic/claude-sonnet-4.6.
 Restart the builder to apply: cast dev email-assistant
 ```
 
