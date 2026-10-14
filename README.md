@@ -462,7 +462,7 @@ cast git commit my-agent -m "Update instructions"
 # Push the current branch to origin
 cast git push my-agent
 
-# View commit history
+# View commit history (last 10 by default; -n must be at least 1)
 cast git log my-agent
 
 # View changes. A missing --file path is an error.

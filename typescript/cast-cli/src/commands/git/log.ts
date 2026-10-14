@@ -19,7 +19,7 @@ export default class GitLog extends Command {
   static flags = {
     count: Flags.integer({
       char: 'n',
-      description: 'Number of commits to show',
+      description: 'Number of commits to show (at least 1)',
       default: 10,
     }),
   }
@@ -46,6 +46,13 @@ export default class GitLog extends Command {
     const {args, flags} = await this.parse(GitLog)
     const agentName = args.agent
     const count = flags.count
+
+    // simple-git omits --max-count when maxCount is 0 (the value is falsy),
+    // and git treats a negative --max-count as unlimited. Both print the
+    // full history. Reject them before calling log.
+    if (count < 1) {
+      this.error('--count must be >= 1')
+    }
 
     const agentsDir = this.getAgentsDir()
     const agentPath = path.join(agentsDir, agentName)
