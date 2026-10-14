@@ -1,7 +1,12 @@
 import {Command, Flags} from '@oclif/core'
-import * as fs from 'fs'
 import {StdioJsonRpcBridge} from '../../lib/builder/stdio'
 import {AssertionEngine, AssertionResult} from '../../lib/meta/assertions'
+import {
+  metaTestChildEnv,
+  metaTestInitializeParams,
+  resolveMetaTestPython,
+  usingSystemPython,
+} from '../../lib/meta/harness'
 import {ScenarioLoader} from '../../lib/meta/scenarios'
 
 interface ScenarioRunResult {
@@ -59,18 +64,14 @@ export default class MetaTest extends Command {
       }
     }
 
-    // Find Python executable
-    let venvPython = '/Users/scott/Workspace/castagent/python/.venv/bin/python3'
-    if (!fs.existsSync(venvPython)) {
-      venvPython = 'python3'
+    const python = resolveMetaTestPython(__dirname)
+    if (usingSystemPython(python.command)) {
+      this.warn('Python virtual environment not found at python/.venv/')
+      this.warn('Falling back to system python3. Some features may not work correctly.')
     }
 
-    const pythonPath = process.env.PYTHONPATH || '/Users/scott/Workspace/castagent/python'
-    const bridge = new StdioJsonRpcBridge(venvPython, ['-m', 'cast', 'builder'], {
-      env: {
-        ...process.env,
-        PYTHONPATH: pythonPath,
-      },
+    const bridge = new StdioJsonRpcBridge(python.command, ['-m', 'cast', 'builder'], {
+      env: metaTestChildEnv(process.env, python),
     })
 
     try {
@@ -85,10 +86,7 @@ export default class MetaTest extends Command {
 
     try {
       // Initialize the builder agent
-      await bridge.send('initialize', {
-        agent_name: 'meta-test',
-        agent_path: '~/.cast/agents/meta-test',
-      })
+      await bridge.send('initialize', metaTestInitializeParams())
 
       const results: ScenarioRunResult[] = []
 
