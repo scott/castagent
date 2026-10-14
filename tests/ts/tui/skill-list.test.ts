@@ -11,6 +11,11 @@ function loadSkillList(): {
   formatNumberedRow: (index: number, label: string, selected: boolean) => string
   wrapIndex: (index: number, delta: number, length: number) => number
   numberKeyIndex: (keyName: string | undefined, count: number) => number | null
+  sourceListAction: (
+    keyName: string | undefined,
+    selected: number,
+    count: number,
+  ) => {type: 'move'; index: number} | {type: 'open'; index: number} | {type: 'ignore'}
   ADD_SOURCE_LABELS: string[]
 } {
   const file = path.resolve(__dirname, '../../../typescript/cast-tui/src/lib/skill-list.ts')
@@ -33,6 +38,7 @@ describe('skill list formatting', () => {
     formatNumberedRow,
     wrapIndex,
     numberKeyIndex,
+    sourceListAction,
     ADD_SOURCE_LABELS,
   } = loadSkillList()
 
@@ -89,5 +95,15 @@ describe('skill list formatting', () => {
     expect(numberKeyIndex('4', 3)).to.equal(null)
     expect(formatNumberedRow(0, ADD_SOURCE_LABELS[0], true)).to.equal('▸ 1. GitHub repository')
     expect(formatNumberedRow(1, ADD_SOURCE_LABELS[1], false)).to.equal('  2. Folder on this machine')
+  })
+
+  it('highlights a source with a number key and opens it on Enter', () => {
+    expect(sourceListAction('3', 0, ADD_SOURCE_LABELS.length)).to.deep.equal({type: 'move', index: 2})
+    expect(sourceListAction('enter', 2, ADD_SOURCE_LABELS.length)).to.deep.equal({type: 'open', index: 2})
+    expect(sourceListAction('return', 0, ADD_SOURCE_LABELS.length)).to.deep.equal({type: 'open', index: 0})
+    expect(sourceListAction('1', 2, 3)).to.deep.equal({type: 'move', index: 0})
+    expect(sourceListAction('up', 0, 3)).to.deep.equal({type: 'move', index: 2})
+    expect(sourceListAction('down', 2, 3)).to.deep.equal({type: 'move', index: 0})
+    expect(sourceListAction('a', 0, 3)).to.deep.equal({type: 'ignore'})
   })
 })

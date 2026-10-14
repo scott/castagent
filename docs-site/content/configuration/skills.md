@@ -29,6 +29,8 @@ in dev and production, and absent from on-host help.
 | Folder on this machine | an absolute path or a path starting with `~` | `source.type: folder` and `source.from` (the absolute path that was copied) |
 | Enter a skill in the modal | name, description, and markdown body | `source.type: modal` |
 
+On the source list, 1 through 3 highlight a row and Enter opens it. The inline form starts on Name. Tab moves to Description, then the markdown body, then Save. Shift+Tab moves back and stops on Name. Ctrl+S saves from any field. Enter moves from Name to Description and from Description to the body. Enter in the body inserts a newline.
+
 `{% ref "cli:skills" %}` is the writer. The TUI shells out to it and does not
 edit `agent.yaml` itself.
 

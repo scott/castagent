@@ -7,11 +7,20 @@ import type {KeyEvent, PasteEvent} from '@opentui/core'
 import clipboardy from 'clipboardy'
 import {createModal} from '../components/modal.js'
 import {
+  applySkillEntryKey,
+  buildSkillEntryLines,
+  createSkillEntryDraft,
+  fitSkillEntryLine,
+  insertSkillEntryText,
+  type SkillEntryDraft,
+  type SkillEntryLine,
+} from '../lib/skill-entry.js'
+import {
   ADD_SOURCE_LABELS,
   formatNumberedRow,
   formatSkillRow,
-  numberKeyIndex,
   sortSkillsByName,
+  sourceListAction,
   type SkillListItem,
   wrapIndex,
 } from '../lib/skill-list.js'
@@ -23,8 +32,6 @@ import {
   modalContentColumns,
   previewField,
   recordFailedSubmit,
-  type TextEntry,
-  type TextFieldKind,
 } from '../lib/text-entry.js'
 
 const RESTART_LINE = 'Restart the agent so the running prompt picks it up.'
@@ -50,8 +57,6 @@ export type SkillsStep =
   | {kind: 'entry'}
   | {kind: 'confirm'}
   | {kind: 'picker'; github: string; choices: SkillChoiceRow[]}
-
-type EntryField = 'name' | 'description' | 'body' | 'save'
 
 interface CastResult {
   ok: boolean
@@ -172,19 +177,7 @@ function letterKey(key: KeyEvent): string {
   return name.length === 1 && /[a-z]/i.test(name) ? name.toLowerCase() : ''
 }
 
-function nextField(field: EntryField): EntryField {
-  if (field === 'name') return 'description'
-  if (field === 'description') return 'body'
-  if (field === 'body') return 'save'
-  return 'name'
-}
-
-const BODY_LINES = 8
-const BODY_LINES_WITH_ERROR = 4
 const PROMPT_MAX = 500
-const NAME_MAX = 64
-const DESCRIPTION_MAX = 200
-const BODY_MAX = 200000
 
 function readClipboard(): string {
   return clipboardy.readSync()
@@ -233,12 +226,7 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
   let error = ''
   let draft = createTextEntry()
   let installed: SkillListItem[] = []
-  let entry: {name: TextEntry; description: TextEntry; body: TextEntry; field: EntryField} = {
-    name: createTextEntry(),
-    description: createTextEntry(),
-    body: createTextEntry(),
-    field: 'name',
-  }
+  let entry: SkillEntryDraft = createSkillEntryDraft()
 
   const current = (): SkillsStep => stack[stack.length - 1]
 
@@ -247,21 +235,31 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
     return modalContentColumns(width)
   }
 
-  function addLine(chunks: Array<ReturnType<typeof white>>): void {
-    contentBox.add(new TextRenderable(ctx.renderer, {content: new StyledText(chunks)}))
+  function termHeight(): number {
+    return typeof ctx.renderer?.height === 'number' ? ctx.renderer.height : 24
   }
 
-  function addBlock(text: string, color: typeof white): void {
+  function addLine(chunks: Array<ReturnType<typeof white>>): void {
+    // height 1 and flexShrink 0 keep each row on its own line. A shrunk
+    // row overlaps the next one and leaves the tail of the longer text.
     contentBox.add(new TextRenderable(ctx.renderer, {
-      content: new StyledText([color(text)]),
+      content: new StyledText(chunks),
       width: '100%',
+      height: 1,
       wrapMode: 'none',
       flexShrink: 0,
     }))
   }
 
+  function addBlock(text: string, color: typeof white): void {
+    addLine([color(fitSkillEntryLine(text, contentColumns()))])
+  }
+
   function addError(message: string): void {
-    addBlock(clipFieldError(message, contentColumns()), red)
+    const columns = contentColumns()
+    for (const line of clipFieldError(message, columns).split('\n')) {
+      addLine([red(fitSkillEntryLine(line, columns))])
+    }
   }
 
   function refreshInstalled(): void {
@@ -296,9 +294,7 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
     selected = 0
     error = ''
     draft = createTextEntry()
-    if (step.kind === 'entry') {
-      entry = {name: createTextEntry(), description: createTextEntry(), body: createTextEntry(), field: 'name'}
-    }
+    if (step.kind === 'entry') entry = createSkillEntryDraft()
     if (step.kind === 'list') refreshInstalled()
     render()
   }
@@ -348,10 +344,10 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
     if (!result.ok) {
       const active = entry.field === 'description' ? entry.description : entry.field === 'body' ? entry.body : entry.name
       const failed = recordFailedSubmit(active, castErrorText(result.stderr, result.stdout))
-      if (entry.field === 'description') entry.description = failed.entry
-      else if (entry.field === 'body') entry.body = failed.entry
-      else if (entry.field === 'name') entry.name = failed.entry
-      error = failed.error
+      if (entry.field === 'description') entry = {...entry, description: failed.entry, error: failed.error}
+      else if (entry.field === 'body') entry = {...entry, body: failed.entry, error: failed.error}
+      else if (entry.field === 'name') entry = {...entry, name: failed.entry, error: failed.error}
+      else entry = {...entry, error: failed.error}
       render()
       return
     }
@@ -412,28 +408,18 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
 
   function renderEntry(): void {
     modal.setTitle(`New skill on '${ctx.agentName}'`)
-    const columns = contentColumns()
-    const bodyLines = error && (entry.field === 'body' || entry.field === 'save') ? BODY_LINES_WITH_ERROR : BODY_LINES
-    addLine([dim('Name')])
-    addBlock(shownField(entry.name, columns, false, entry.field === 'name'), entry.field === 'name' ? cyan : white)
-    if (error && entry.field === 'name') addError(error)
-    addLine([dim('Description')])
-    addBlock(shownField(entry.description, columns, false, entry.field === 'description'), entry.field === 'description' ? cyan : white)
-    if (error && entry.field === 'description') addError(error)
-    addLine([dim('Body')])
-    addBlock(shownField(entry.body, columns, true, entry.field === 'body', bodyLines), entry.field === 'body' ? cyan : white)
-    if (error && entry.field === 'body') addError(error)
-    addLine([dim(' ')])
-    const save = entry.field === 'save' ? '▸ Save' : '  Save'
-    addLine([entry.field === 'save' ? cyan(save) : white(save)])
-    if (error && entry.field === 'save') addError(error)
-    addLine([dim(' ')])
-    addLine([dim('Ctrl+S Save   Tab Next   ESC Cancel')])
+    const lines = buildSkillEntryLines({
+      draft: entry,
+      columns: contentColumns(),
+      termHeight: termHeight(),
+    })
+    for (const line of lines) addLine([entryLineColor(line)(line.text)])
   }
 
-  function shownField(value: TextEntry, columns: number, multiline: boolean, active: boolean, maxLines?: number): string {
-    const shown = previewField(value, {multiline, columns, maxLines, showCursor: active})
-    return shown || (active ? '_' : ' ')
+  function entryLineColor(line: SkillEntryLine): typeof white {
+    if (line.tone === 'error') return red
+    if (line.tone === 'hint' || line.tone === 'label') return dim
+    return line.active ? cyan : white
   }
 
   function renderConfirm(): void {
@@ -484,24 +470,13 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
   }
 
   function onSourceKey(key: KeyEvent): void {
-    const count = ADD_SOURCE_LABELS.length
-    if (key.name === 'up') {
-      selected = wrapIndex(selected, -1, count)
+    const action = sourceListAction(key.name, selected, ADD_SOURCE_LABELS.length)
+    if (action.type === 'move') {
+      selected = action.index
       render()
       return
     }
-    if (key.name === 'down') {
-      selected = wrapIndex(selected, 1, count)
-      render()
-      return
-    }
-    const numbered = numberKeyIndex(key.name, count)
-    if (numbered !== null) {
-      selected = numbered
-      openSource(numbered)
-      return
-    }
-    if (key.name === 'return' || key.name === 'enter') openSource(selected)
+    if (action.type === 'open') openSource(action.index)
   }
 
   function openSource(index: number): void {
@@ -537,39 +512,13 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
   }
 
   function onEntryKey(key: KeyEvent): void {
-    if (key.ctrl && (key.name === 's' || key.name === 'S')) {
+    const effect = applySkillEntryKey(entry, key, readClipboard)
+    if (effect.type === 'ignore') return
+    entry = effect.draft
+    if (effect.type === 'submit') {
       submitEntry()
       return
     }
-    if (key.name === 'tab') {
-      entry.field = nextField(entry.field)
-      render()
-      return
-    }
-    if (key.name === 'return' || key.name === 'enter') {
-      if (entry.field === 'name') entry.field = 'description'
-      else if (entry.field === 'description') entry.field = 'body'
-      else if (entry.field === 'body') {
-        const next = insertText(entry.body, '\n', 'body', BODY_MAX)
-        if (next.text !== entry.body.text) error = ''
-        entry.body = next
-      } else {
-        submitEntry()
-        return
-      }
-      render()
-      return
-    }
-    if (entry.field === 'save') return
-    const current = entry.field === 'name' ? entry.name : entry.field === 'description' ? entry.description : entry.body
-    const kind: TextFieldKind = entry.field === 'body' ? 'body' : 'single'
-    const maxLength = entry.field === 'name' ? NAME_MAX : entry.field === 'description' ? DESCRIPTION_MAX : BODY_MAX
-    const next = applyEntryKey(current, key, {kind, maxLength}, readClipboard)
-    if (!next.handled) return
-    if (next.entry.text !== current.text) error = ''
-    if (entry.field === 'name') entry.name = next.entry
-    else if (entry.field === 'description') entry.description = next.entry
-    else entry.body = next.entry
     render()
   }
 
@@ -582,15 +531,8 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
       render()
       return
     }
-    if (step.kind !== 'entry' || entry.field === 'save') return
-    const currentEntry = entry.field === 'name' ? entry.name : entry.field === 'description' ? entry.description : entry.body
-    const kind: TextFieldKind = entry.field === 'body' ? 'body' : 'single'
-    const maxLength = entry.field === 'name' ? NAME_MAX : entry.field === 'description' ? DESCRIPTION_MAX : BODY_MAX
-    const next = insertText(currentEntry, raw, kind, maxLength)
-    if (next.text !== currentEntry.text) error = ''
-    if (entry.field === 'name') entry.name = next
-    else if (entry.field === 'description') entry.description = next
-    else entry.body = next
+    if (step.kind !== 'entry') return
+    entry = insertSkillEntryText(entry, raw)
     render()
   }
 
