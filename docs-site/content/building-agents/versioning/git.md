@@ -53,6 +53,13 @@ The `add` path stores the URL in `agent.yaml`'s `repository.url` so
 `cast clone` can find the agent later. The `create` path shells out
 to the GitHub CLI (`gh repo create`) to provision the repo on
 GitHub, then adds it as `origin` and pushes the initial commit.
+`create` writes that repository to `repository.url` as an https URL
+with no `.git` suffix. The owner and host come from the remote `gh`
+recorded. If that remote URL is missing, the owner comes from
+`gh api user` and the host is github.com. The local username is not
+used. A token embedded in the remote URL is not copied into
+`agent.yaml`. Comments, quotes, and list indentation in the rest of
+the file stay as they are.
 
 If that remote name is already configured, `add` stops and tells you
 to run `set-url` (or `remove` the remote first). `set-url` replaces

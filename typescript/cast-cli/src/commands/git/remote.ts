@@ -4,7 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 import simpleGit, {SimpleGit} from 'simple-git'
 import {spawn} from 'child_process'
-import {isMap, isScalar, parseDocument, parse as parseYaml, stringify as stringifyYaml} from 'yaml'
+import {isMap, isScalar, parseDocument, parse as parseYaml, stringify as stringifyYaml, type YAMLMap} from 'yaml'
 
 type RemoteSubcommand = 'add' | 'create' | 'list' | 'remove' | 'set-url'
 
@@ -73,12 +73,222 @@ export default class GitRemote extends Command {
 
   private updateAgentYaml(agentPath: string, url: string): void {
     const configPath = path.join(agentPath, 'agent.yaml')
-    const config = this.loadAgentConfig(agentPath)
+    if (!fs.existsSync(configPath)) {
+      fs.writeFileSync(configPath, this.appendRepositoryBlock('', url))
+      return
+    }
 
-    config.repository = config.repository || {}
+    const content = fs.readFileSync(configPath, 'utf-8')
+    fs.writeFileSync(configPath, this.agentYamlWithRepositoryUrl(content, url))
+  }
+
+  // Set repository.url in place. Reprinting the whole document reflows
+  // folded text, quote style, and list indentation.
+  private agentYamlWithRepositoryUrl(content: string, url: string): string {
+    const doc = parseDocument(content, {keepSourceTokens: true})
+    if (doc.errors.length > 0 || !isMap(doc.contents)) {
+      if (content.trim().length === 0 && doc.errors.length === 0) {
+        return this.appendRepositoryBlock('', url)
+      }
+      return this.rewriteRepositoryUrl(content, url)
+    }
+
+    const repository = doc.get('repository', true)
+    if (isMap(repository)) {
+      const urlNode = repository.get('url', true)
+      if (isScalar(urlNode) && urlNode.range) {
+        return this.replaceUrlScalar(content, urlNode.range, url, urlNode.type)
+      }
+      if (urlNode !== undefined) return this.rewriteRepositoryUrl(content, url)
+      return this.insertRepositoryUrl(content, repository, url)
+    }
+
+    if (isScalar(repository) && repository.value == null && repository.range) {
+      return this.insertUrlLineAfter(content, repository.range[0], url)
+    }
+
+    if (repository === undefined) return this.appendRepositoryBlock(content, url)
+    return this.rewriteRepositoryUrl(content, url)
+  }
+
+  private replaceUrlScalar(
+    content: string,
+    range: readonly [number, number, number],
+    url: string,
+    style?: string,
+  ): string {
+    const existing = content.slice(range[0], range[1])
+    let encoded = this.yamlUrlScalar(url, style)
+    if (existing.length === 0 && content[range[0] - 1] === ':') encoded = ` ${encoded}`
+    if (existing.endsWith('\n') && !encoded.endsWith('\n')) {
+      encoded += existing.endsWith('\r\n') ? '\r\n' : '\n'
+    }
+    return content.slice(0, range[0]) + encoded + content.slice(range[1])
+  }
+
+  private insertRepositoryUrl(content: string, repository: YAMLMap, url: string): string {
+    if (!repository.range) return this.rewriteRepositoryUrl(content, url)
+
+    if (repository.srcToken?.type === 'flow-collection') {
+      const end = repository.range[1] - 1
+      if (content[end] !== '}') return this.rewriteRepositoryUrl(content, url)
+      const scalar = this.yamlUrlScalar(url)
+      const inside = content.slice(repository.range[0] + 1, end).trim()
+      const insertion = inside.length === 0
+        ? `url: ${scalar}`
+        : inside.endsWith(',')
+          ? ` url: ${scalar}`
+          : `, url: ${scalar}`
+      return content.slice(0, end) + insertion + content.slice(end)
+    }
+
+    const indent = this.repositoryKeyIndent(repository)
+    const at = repository.range[2]
+    const newline = content.includes('\r\n') ? '\r\n' : '\n'
+    const line = `${' '.repeat(indent)}url: ${this.yamlUrlScalar(url)}${newline}`
+    const needsLeading = at > 0 && content[at - 1] !== '\n'
+    return content.slice(0, at) + (needsLeading ? newline : '') + line + content.slice(at)
+  }
+
+  private repositoryKeyIndent(repository: YAMLMap): number {
+    const firstKey = repository.items[0]?.key
+    const token = isScalar(firstKey) ? firstKey.srcToken : undefined
+    if (token && 'indent' in token && typeof token.indent === 'number' && token.indent >= 1) {
+      return token.indent
+    }
+    return 2
+  }
+
+  private insertUrlLineAfter(content: string, index: number, url: string): string {
+    const newline = content.includes('\r\n') ? '\r\n' : '\n'
+    const line = `  url: ${this.yamlUrlScalar(url)}${newline}`
+    const lineEnd = content.indexOf('\n', index)
+    if (lineEnd === -1) {
+      const base = content.length === 0 || content.endsWith('\n') ? content : `${content}${newline}`
+      return `${base}${line}`
+    }
+    return content.slice(0, lineEnd + 1) + line + content.slice(lineEnd + 1)
+  }
+
+  private appendRepositoryBlock(content: string, url: string): string {
+    const newline = content.includes('\r\n') ? '\r\n' : '\n'
+    const block = `repository:${newline}  url: ${this.yamlUrlScalar(url)}${newline}`
+    if (content.length === 0) return block
+    const base = content.endsWith('\n') ? content : `${content}${newline}`
+    return base + block
+  }
+
+  private rewriteRepositoryUrl(content: string, url: string): string {
+    const parsed = parseYaml(content)
+    const config: Record<string, any> =
+      parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {}
+    if (!config.repository || typeof config.repository !== 'object' || Array.isArray(config.repository)) {
+      config.repository = {}
+    }
     config.repository.url = url
+    return stringifyYaml(config)
+  }
 
-    fs.writeFileSync(configPath, stringifyYaml(config))
+  private yamlUrlScalar(url: string, style?: string): string {
+    if (style === 'QUOTE_DOUBLE') return JSON.stringify(url)
+    if (style === 'QUOTE_SINGLE') return `'${url.replace(/'/g, "''")}'`
+    if (this.isPlainYamlScalar(url)) return url
+    return JSON.stringify(url)
+  }
+
+  private isPlainYamlScalar(value: string): boolean {
+    if (value.length === 0 || value !== value.trim() || /[\n\r\t]/.test(value)) return false
+    if (/^(?:~|\?|:|\*|\&|!|%|@|`|>|\||\[|\]|\{|\}|,|'|"|#|-)/.test(value)) return false
+    if (value.includes(': ') || value.includes(' #') || value.includes('#')) return false
+    return true
+  }
+
+  // gh records https or ssh, sometimes with .git or embedded credentials.
+  // agent.yaml stores the https URL without userinfo or a .git suffix.
+  private httpsRepositoryUrl(remoteUrl: string): string | null {
+    const trimmed = remoteUrl.trim()
+    const scp = /^git@([^:\s]+):(.+)$/.exec(trimmed)
+    if (scp) return this.httpsRepo(scp[1], scp[2])
+
+    if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
+      try {
+        const parsed = new URL(trimmed)
+        if (!parsed.hostname) return null
+        return this.httpsRepo(parsed.hostname, parsed.pathname)
+      } catch {
+        return null
+      }
+    }
+    return null
+  }
+
+  private httpsRepo(host: string, repoPath: string): string | null {
+    let pathPart = repoPath.replace(/^\/+/, '')
+    while (pathPart.endsWith('/')) pathPart = pathPart.slice(0, -1)
+    if (pathPart.toLowerCase().endsWith('.git')) pathPart = pathPart.slice(0, -4)
+    if (!host || !pathPart || /\s/.test(pathPart)) return null
+    return `https://${host}/${pathPart}`
+  }
+
+  // The GitHub owner is whoever gh created the repo for, not the local
+  // login. Prefer the remote gh just added. Fall back to `gh api user`.
+  private async repositoryUrlAfterCreate(
+    git: SimpleGit,
+    remoteName: string,
+    agentName: string,
+  ): Promise<string | null> {
+    // Read the URL gh stored. `git remote -v` applies insteadOf rules and can
+    // hide the owner behind a credential helper URL.
+    if (/^[A-Za-z0-9._-]+$/.test(remoteName)) {
+      try {
+        const remoteUrl = (await git.raw(['config', '--local', '--get', `remote.${remoteName}.url`])).trim()
+        if (remoteUrl) {
+          const parsed = this.httpsRepositoryUrl(remoteUrl)
+          if (parsed) return parsed
+        }
+      } catch {
+        // The remote may be missing. The login lookup below still names the owner.
+      }
+    }
+
+    try {
+      const result = await this.captureGh(['api', 'user', '--jq', '.login'])
+      const login = result.stdout.trim()
+      if (result.code === 0 && /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(login)) {
+        const repoName = /^[A-Za-z0-9._-]+$/.test(agentName) ? agentName : encodeURIComponent(agentName)
+        return `https://github.com/${login}/${repoName}`
+      }
+    } catch {
+      return null
+    }
+    return null
+  }
+
+  private captureGh(args: string[]): Promise<{code: number | null; stdout: string; stderr: string}> {
+    return new Promise((resolve, reject) => {
+      const proc = spawn('gh', args, {stdio: ['ignore', 'pipe', 'pipe']})
+      let stdout = ''
+      let stderr = ''
+      proc.stdout?.on('data', (data: Buffer) => { stdout += data.toString() })
+      proc.stderr?.on('data', (data: Buffer) => { stderr += data.toString() })
+      proc.on('error', (err: Error) => reject(err))
+      proc.on('close', (code: number | null) => resolve({code, stdout, stderr}))
+    })
+  }
+
+  private async finishCreate(
+    git: SimpleGit,
+    agentPath: string,
+    name: string,
+    agentName: string,
+  ): Promise<void> {
+    const url = await this.repositoryUrlAfterCreate(git, name, agentName)
+    if (!url) {
+      throw new Error('Could not determine the GitHub repository URL. repository.url was left unchanged.')
+    }
+    this.updateAgentYaml(agentPath, url)
+    this.log('')
+    this.log(`GitHub repository created and remote '${name}' added!`)
   }
 
   private async listRemotes(git: SimpleGit, agentName: string): Promise<void> {
@@ -163,17 +373,11 @@ export default class GitRemote extends Command {
       const proc = spawn('gh', args, {stdio: 'inherit'})
 
       proc.on('close', (code: number | null) => {
-        if (code === 0) {
-          this.log('')
-          this.log(`GitHub repository created and remote '${name}' added!`)
-
-          const url = `https://github.com/${process.env.USER || 'you'}/${agentName}`
-          this.updateAgentYaml(agentPath, url)
-
-          resolve()
-        } else {
+        if (code !== 0) {
           reject(new Error(`gh repo create failed with exit code ${code}`))
+          return
         }
+        this.finishCreate(git, agentPath, name, agentName).then(resolve, reject)
       })
 
       proc.on('error', (err: Error) => {
