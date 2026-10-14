@@ -64,14 +64,31 @@ describe('cast model', () => {
   it('lists the same ids as the OpenRouter registry with provider and family', () => {
     const ids = knownIdsFromRegistry()
     expect(MODELS.map(model => model.id).sort()).to.deep.equal([...ids].sort())
-    const sonnet = MODELS.find(model => model.id === 'anthropic/claude-3.5-sonnet')
+    const retired = [
+      'google/gemini-2.0-flash',
+      'anthropic/claude-3.5-sonnet',
+      'anthropic/claude-3-haiku',
+      'kimi/k2.5',
+      'minimax/minimax-m4',
+      'x-ai/grok-2',
+    ]
+    for (const id of retired) {
+      expect(ids).to.not.include(id)
+      expect(resolveBuilderModelId(id)).to.equal(null)
+      expect(resolveBuilderModelId(`openrouter/${id}`)).to.equal(null)
+    }
+    const sonnet = MODELS.find(model => model.id === 'anthropic/claude-sonnet-4.6')
     expect(sonnet).to.deep.equal({
-      id: 'anthropic/claude-3.5-sonnet',
+      id: 'anthropic/claude-sonnet-4.6',
       provider: 'anthropic',
-      family: 'claude-3.5-sonnet',
+      family: 'claude-sonnet-4.6',
     })
-    const kimi = MODELS.find(model => model.id === 'kimi/k2.5')
-    expect(kimi).to.deep.equal({id: 'kimi/k2.5', provider: 'kimi', family: 'k2.5'})
+    const scout = MODELS.find(model => model.id === 'meta-llama/llama-4-scout')
+    expect(scout).to.deep.equal({
+      id: 'meta-llama/llama-4-scout',
+      provider: 'meta-llama',
+      family: 'llama-4-scout',
+    })
   })
 
   it('prints the current model and a numbered list when called with no args', async () => {
@@ -81,7 +98,7 @@ describe('cast model', () => {
     expect(text).to.include('Current builder model: openrouter/minimax/minimax-m2.5')
     expect(text).to.include('Available models:')
     expect(text).to.match(/\n {2}1\. \S+/)
-    expect(text).to.include('anthropic/claude-3.5-sonnet')
+    expect(text).to.include('anthropic/claude-sonnet-4.6')
     expect(text).to.include('Set with: cast model <model-id>')
     expect(fs.existsSync(configPath())).to.equal(false)
   })
@@ -105,16 +122,16 @@ describe('cast model', () => {
 
     const {logs, errors} = await runCommand(
       Model,
-      {model: 'anthropic/claude-3.5-sonnet'},
+      {model: 'anthropic/claude-sonnet-4.6'},
       {list: false, json: false, current: false},
     )
     expect(errors).to.deep.equal([])
     const text = logs.join('\n')
-    expect(text).to.include('✓ Builder model set to: anthropic/claude-3.5-sonnet')
+    expect(text).to.include('✓ Builder model set to: anthropic/claude-sonnet-4.6')
     expect(text).to.include('Restart the builder to take effect (run `cast dev <agent>` again).')
 
     const config = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
-    expect(config.defaults.builder_model).to.equal('anthropic/claude-3.5-sonnet')
+    expect(config.defaults.builder_model).to.equal('anthropic/claude-sonnet-4.6')
     expect(config.defaults.agent_storage).to.equal('/tmp/agents')
     expect(config.defaults.deployment_provider).to.equal('docker')
     expect(config.cast.version).to.equal('9.9')
@@ -131,7 +148,7 @@ describe('cast model', () => {
     )
     expect(errors).to.have.length(1)
     expect(errors[0]).to.include('not-a-real-model')
-    expect(errors[0]).to.include('anthropic/claude-3.5-sonnet')
+    expect(errors[0]).to.include('anthropic/claude-sonnet-4.6')
     expect(errors[0]).to.include('minimax/minimax-m2.5')
     expect(fs.existsSync(configPath())).to.equal(false)
   })
@@ -139,8 +156,8 @@ describe('cast model', () => {
   it('resolves a catalog id and one leading openrouter prefix', () => {
     expect(resolveBuilderModelId('minimax/minimax-m2.5')).to.equal('minimax/minimax-m2.5')
     expect(resolveBuilderModelId('openrouter/minimax/minimax-m2.5')).to.equal('openrouter/minimax/minimax-m2.5')
-    expect(resolveBuilderModelId('openrouter/anthropic/claude-3.5-sonnet')).to.equal(
-      'openrouter/anthropic/claude-3.5-sonnet',
+    expect(resolveBuilderModelId('openrouter/anthropic/claude-sonnet-4.6')).to.equal(
+      'openrouter/anthropic/claude-sonnet-4.6',
     )
     expect(resolveBuilderModelId('  openrouter/minimax/minimax-m2.5  ')).to.equal('openrouter/minimax/minimax-m2.5')
     expect(resolveBuilderModelId('openrouter/not-a-model')).to.equal(null)
@@ -157,7 +174,7 @@ describe('cast model', () => {
 
     const changed = await runCommand(
       Model,
-      {model: 'anthropic/claude-3.5-sonnet'},
+      {model: 'anthropic/claude-sonnet-4.6'},
       {list: false, json: false, current: false},
     )
     expect(changed.errors).to.deep.equal([])
@@ -201,17 +218,17 @@ describe('cast model', () => {
 
     const prefixed = await runCommand(
       Model,
-      {model: 'openrouter/anthropic/claude-3.5-sonnet'},
+      {model: 'openrouter/anthropic/claude-sonnet-4.6'},
       {list: false, json: false, current: false},
     )
     expect(prefixed.errors).to.deep.equal([])
-    expect(prefixed.logs.join('\n')).to.include('✓ Builder model set to: openrouter/anthropic/claude-3.5-sonnet')
+    expect(prefixed.logs.join('\n')).to.include('✓ Builder model set to: openrouter/anthropic/claude-sonnet-4.6')
     expect(yaml.parse(fs.readFileSync(configPath(), 'utf8')).defaults.builder_model).to.equal(
-      'openrouter/anthropic/claude-3.5-sonnet',
+      'openrouter/anthropic/claude-sonnet-4.6',
     )
 
     const current = await runCommand(Model, {}, {list: false, json: false, current: true})
-    expect(current.logs).to.deep.equal(['openrouter/anthropic/claude-3.5-sonnet'])
+    expect(current.logs).to.deep.equal(['openrouter/anthropic/claude-sonnet-4.6'])
     const roundTrip = await runCommand(
       Model,
       {model: current.logs[0]},
@@ -264,7 +281,7 @@ describe('cast model', () => {
     expect(fs.existsSync(configPath())).to.equal(false)
     const {errors} = await runCommand(
       Model,
-      {model: 'anthropic/claude-3.5-sonnet'},
+      {model: 'anthropic/claude-sonnet-4.6'},
       {list: false, json: false, current: false},
     )
     expect(errors).to.deep.equal([])
@@ -272,7 +289,7 @@ describe('cast model', () => {
     expect(config.cast.version).to.equal('1.0')
     expect(config.defaults.agent_storage).to.equal('~/.cast/agents')
     expect(config.defaults.deployment_provider).to.equal('railway')
-    expect(config.defaults.builder_model).to.equal('anthropic/claude-3.5-sonnet')
+    expect(config.defaults.builder_model).to.equal('anthropic/claude-sonnet-4.6')
     expect(config.providers.openrouter.api_key).to.equal('${OPENROUTER_API_KEY}')
     expect(config.providers.openrouter.default_base_url).to.equal('https://openrouter.ai/api/v1')
     expect(config.providers.digitalocean_inference.api_key).to.equal('${DIGITALOCEAN_MODEL_ACCESS_KEY}')
@@ -292,7 +309,7 @@ describe('cast model', () => {
 
     const set = await runCommand(
       Model,
-      {model: 'anthropic/claude-3.5-sonnet'},
+      {model: 'anthropic/claude-sonnet-4.6'},
       {list: false, json: false, current: false},
     )
     expect(set.errors).to.deep.equal([INVALID_CONFIG_YAML])
@@ -306,7 +323,7 @@ describe('cast model', () => {
     try {
       const {errors} = await runCommand(
         Model,
-        {model: 'anthropic/claude-3.5-sonnet'},
+        {model: 'anthropic/claude-sonnet-4.6'},
         {list: false, json: false, current: false},
       )
       expect(errors).to.have.length(1)

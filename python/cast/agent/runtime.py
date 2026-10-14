@@ -61,6 +61,16 @@ class RuntimeAgent:
     def _llm_key_hint(self) -> str:
         return f"(Set {self._llm_env_var()} for full LLM capabilities)"
 
+    def _llm_failure_suffix(self) -> str:
+        """Ask for a key only when this process never had one.
+
+        A configured key that still gets a 400 or 404 is a model or
+        provider failure. Telling the user to set the key is wrong then.
+        """
+        if self._provider.is_available():
+            return ""
+        return f"\n\n{self._llm_key_hint()}"
+
     def _setup_llm(self):
         """Initialize the LLM and ReAct agent graph."""
         try:
@@ -204,14 +214,11 @@ class RuntimeAgent:
                     f"- The model name is incorrect\n"
                     f"- Your API key doesn't have access to this model\n"
                     f"- The model is temporarily unavailable\n\n"
-                    f"Error: {error_msg}\n\n"
-                    f"{self._llm_key_hint()}"
+                    f"Error: {error_msg}"
+                    f"{self._llm_failure_suffix()}"
                 )
-            
-            return (
-                f"I encountered an error: {error_msg}\n\n"
-                f"{self._llm_key_hint()}"
-            )
+
+            return f"I encountered an error: {error_msg}{self._llm_failure_suffix()}"
     
     async def process_message_stream(
         self,

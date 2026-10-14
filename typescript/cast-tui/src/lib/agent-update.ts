@@ -57,7 +57,7 @@ export const UPDATE_FIELDS: readonly UpdateField[] = [
     label: 'Model',
     flag: '--model',
     kind: 'text',
-    hint: 'Model id, for example openrouter/anthropic/claude-3.7-sonnet',
+    hint: 'Model id, for example openrouter/anthropic/claude-sonnet-4.6',
   },
   {
     id: 'description',

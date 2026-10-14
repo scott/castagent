@@ -414,7 +414,35 @@ class TestRuntimeAgentProcessMessageErrors:
             response = await agent.process_message("hello")
 
             assert "404" in response or "model" in response.lower()
-            assert "OPENROUTER_API_KEY" in response
+            assert "OPENROUTER_API_KEY" not in response
+            assert "Set " not in response
+
+    @patch("cast.agent.runtime.get_provider")
+    @patch("cast.agent.runtime.create_react_agent")
+    @pytest.mark.asyncio
+    async def test_invalid_model_id_does_not_ask_for_a_set_key(
+        self, mock_create_react_agent, mock_provider_class, agent_config
+    ):
+        """A 400 for a bad model id must not claim the API key is missing."""
+        mock_graph = AsyncMock()
+        mock_graph.ainvoke.side_effect = Exception(
+            "Error code: 400 - {'error': {'message': 'google/gemini-2.0-flash is not a valid model ID'}}"
+        )
+        mock_create_react_agent.return_value = mock_graph
+
+        mock_provider = MagicMock()
+        mock_provider.is_available.return_value = True
+        mock_provider.env_var = "OPENROUTER_API_KEY"
+        mock_provider.create_llm.return_value = MagicMock()
+        mock_provider_class.return_value = mock_provider
+
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
+            agent = RuntimeAgent(agent_config)
+            response = await agent.process_message("hello")
+
+        assert "400" in response
+        assert "google/gemini-2.0-flash is not a valid model ID" in response
+        assert "Set OPENROUTER_API_KEY" not in response
 
     @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
@@ -434,6 +462,7 @@ class TestRuntimeAgentProcessMessageErrors:
             response = await agent.process_message("hello")
 
             assert "encountered an error" in response.lower() or "Connection timeout" in response
+            assert "OPENROUTER_API_KEY" not in response
 
 
 class TestRuntimeAgentStreamingMode:

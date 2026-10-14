@@ -300,9 +300,12 @@ class TestSelection:
         assert shipped["valid"] is True
         assert shipped["warning"] is None
         assert shipped["error"] is None
-        prefixed = model_status("openrouter/anthropic/claude-3.7-sonnet")
+        prefixed = model_status("openrouter/anthropic/claude-sonnet-4.6")
         assert prefixed["valid"] is True
         assert prefixed["error"] is None
+        retired = model_status("google/gemini-2.0-flash")
+        assert retired["valid"] is False
+        assert retired["error"].startswith("Unknown model 'google/gemini-2.0-flash'.")
 
     def test_manifest_rows_match_provider_modules(self):
         manifest = json.loads((PROVIDERS / "manifest.json").read_text())

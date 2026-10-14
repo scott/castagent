@@ -180,12 +180,12 @@ cast shutdown abc123          # one deployment, when the agent has several
 cast connect demo-agent
 
 # Update agent configuration
-cast update demo-agent --model openrouter/anthropic/claude-3.7-sonnet
+cast update demo-agent --model openrouter/anthropic/claude-sonnet-4.6
 
 # Show or set the builder's model (not the model of an agent being created).
 # A running builder does not hot-swap; start it again to apply.
 cast model
-cast model anthropic/claude-3.5-sonnet
+cast model anthropic/claude-sonnet-4.6
 cast model openrouter/minimax/minimax-m2.5
 
 # Delete agent
@@ -326,7 +326,7 @@ The `cast update` command supports comprehensive agent configuration:
 
 ```bash
 # Update the LLM model
-cast update my-agent --model openrouter/anthropic/claude-3.7-sonnet
+cast update my-agent --model openrouter/anthropic/claude-sonnet-4.6
 
 # Update description and version
 cast update my-agent --description "My new description" --version 1.1.0
@@ -355,7 +355,7 @@ cast update my-agent --model openrouter/openai/gpt-4o --dry-run
 
 `cast update` checks these values before it writes. A permission level other than `always-allow`, `ask`, or `deny`, an unknown model id, or a Python version other than `3.11` or `3.12` prints an error and exits non-zero. `agent.yaml` is not changed. Unknown models use the same message as `cast model`. A leading `openrouter/` prefix is still accepted, including the shipped default `openrouter/minimax/minimax-m2.5`. A provider that accepts any model id, such as `digitalocean/`, is still accepted.
 
-In the TUI, `/update` updates that same local agent. With no arguments it opens a modal titled `Update: <agent>`. Up and down move through the fields, Enter chooses one, and a second prompt or list collects the value. Enter writes it with `cast update`. ESC closes the modal and returns focus to the input. The same flags work on the command, for example `/update --model openrouter/anthropic/claude-3.7-sonnet`. A rejected value is shown in the modal, or in the chat when you passed flags, and `agent.yaml` is left unchanged. Restart the local agent (`cast dev <agent>`) so a running session picks up the change. `/update` is available in dev and production and hidden on-host. It does not redeploy a live agent.
+In the TUI, `/update` updates that same local agent. With no arguments it opens a modal titled `Update: <agent>`. Up and down move through the fields, Enter chooses one, and a second prompt or list collects the value. Enter writes it with `cast update`. ESC closes the modal and returns focus to the input. The same flags work on the command, for example `/update --model openrouter/anthropic/claude-sonnet-4.6`. A rejected value is shown in the modal, or in the chat when you passed flags, and `agent.yaml` is left unchanged. Restart the local agent (`cast dev <agent>`) so a running session picks up the change. `/update` is available in dev and production and hidden on-host. It does not redeploy a live agent.
 
 ### Agent versioning
 

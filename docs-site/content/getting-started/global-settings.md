@@ -117,7 +117,7 @@ repository:
   branch: main
 
 brain:
-  model: openrouter/anthropic/claude-3.7-sonnet
+  model: openrouter/anthropic/claude-sonnet-4.6
   instructions_file: instructions.md
 
 tools:

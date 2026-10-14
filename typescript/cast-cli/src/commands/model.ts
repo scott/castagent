@@ -11,7 +11,7 @@ export default class Model extends Command {
 
   static examples = [
     '<%= config.bin %> <%= command.id %>',
-    '<%= config.bin %> <%= command.id %> anthropic/claude-3.5-sonnet',
+    '<%= config.bin %> <%= command.id %> anthropic/claude-sonnet-4.6',
     '<%= config.bin %> <%= command.id %> openrouter/minimax/minimax-m2.5',
     '<%= config.bin %> <%= command.id %> --list',
     '<%= config.bin %> <%= command.id %> --list --json',

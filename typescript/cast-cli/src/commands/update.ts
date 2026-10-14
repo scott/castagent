@@ -17,7 +17,7 @@ export default class Update extends Command {
   static description = 'Update agent configuration'
 
   static examples = [
-    '<%= config.bin %> <%= command.id %> email-agent --model openrouter/anthropic/claude-3.7-sonnet',
+    '<%= config.bin %> <%= command.id %> email-agent --model openrouter/anthropic/claude-sonnet-4.6',
     '<%= config.bin %> <%= command.id %> email-agent --description "Handles incoming emails"',
     '<%= config.bin %> <%= command.id %> email-agent --instructions-text "You are an email assistant."',
     '<%= config.bin %> <%= command.id %> email-agent --add-tool bash --add-tool read',
@@ -29,7 +29,7 @@ export default class Update extends Command {
 
   static flags = {
     model: Flags.string({
-      description: 'Update LLM model (known id, for example openrouter/anthropic/claude-3.7-sonnet)',
+      description: 'Update LLM model (known id, for example openrouter/anthropic/claude-sonnet-4.6)',
     }),
     description: Flags.string({
       description: 'Update agent description',
@@ -422,7 +422,7 @@ export default class Update extends Command {
       this.log('No changes made. Use flags to update configuration.')
       this.log('')
       this.log('Examples:')
-      this.log(`  cast update ${agentName} --model openrouter/anthropic/claude-3.7-sonnet`)
+      this.log(`  cast update ${agentName} --model openrouter/anthropic/claude-sonnet-4.6`)
       this.log(`  cast update ${agentName} --description "My helpful agent"`)
       this.log(`  cast update ${agentName} --add-tool bash --remove-tool glob`)
       this.log(`  cast update ${agentName} --permission bash=always-allow`)
