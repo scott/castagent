@@ -39,6 +39,7 @@ import {openBuilderSkillsCommand} from './builder-skills-modal.js'
 import {openBuilderModelModal} from './builder-model-modal.js'
 import {openAgentUpdateModal, runAgentUpdateFromArgs} from './agent-update-modal.js'
 import {parseUpdateArgs} from '../lib/agent-update.js'
+import {parseGitCommitArgs} from '../lib/git-commit-args.js'
 import {addSkillFromSource, openSkillsModal} from './skills-modal.js'
 import {
   handleImportCommand,
@@ -3682,7 +3683,12 @@ cast dev ${agentName}
       }
 
       if (subcommand === 'commit') {
-        let message = args.slice(1).join(' ')
+        const parsed = parseGitCommitArgs(args.slice(1))
+        if (parsed.error) {
+          ctx.messages.addAgentMessage(parsed.error, ctx.mode)
+          return
+        }
+        let message = parsed.message
 
         try {
           const git = simpleGit(agentPath)
@@ -3841,7 +3847,7 @@ cast dev ${agentName}
         `  /git add <file>              - Stage specific file(s)\n` +
         `  /git add .                   - Stage all files\n` +
         `  /git add -A                  - Stage all (including deleted)\n` +
-        `  /git commit <msg>            - Commit staged changes\n` +
+        `  /git commit [-m] <msg>       - Commit staged changes\n` +
         `  /git push                    - Push to remote\n` +
         `  /git log                     - Show recent commits\n` +
         `  /git diff                    - Show changes\n\n` +
