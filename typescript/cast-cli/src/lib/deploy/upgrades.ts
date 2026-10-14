@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import {db} from '../sqlite'
+import {containerHealthFailureMessage, probeDockerContainer, waitForContainerHealth} from './container-health'
 import {
   createDockerignore,
   execCommand,
@@ -10,6 +11,7 @@ import {
   resolveDeploymentAuthToken,
 } from './deploy-utils'
 import {writeHostMotdOverSsh} from './motd'
+import {writeRequirementsTxt} from './requirements'
 
 export interface UpgradeHost {
   log(message: string): void
@@ -98,69 +100,7 @@ CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "80
 }
 
 function createRequirementsTxt(projectRoot: string, agentPath: string): void {
-  const {execSync} = require('child_process')
-  const venvPath = path.join(projectRoot, 'python', '.venv')
-  let requirements = ''
-
-  if (fs.existsSync(venvPath)) {
-    try {
-      const pipPath = path.join(venvPath, 'bin', 'pip')
-      if (fs.existsSync(pipPath)) {
-        requirements = execSync(`"${pipPath}" freeze`, {encoding: 'utf8'})
-      }
-    } catch {
-      // fall back to default list
-    }
-  }
-
-  if (!requirements.trim()) {
-    requirements = `anyio>=4.13.0
-certifi>=2026.4.22
-charset-normalizer>=3.4.7
-distro>=1.9.0
-httpx>=0.28.1
-idna>=3.13
-jiter>=0.14.0
-jsonpatch>=1.33
-jsonpointer>=3.1.1
-langchain>=1.2.15
-langchain-core>=1.3.2
-langchain-openai>=1.2.1
-langgraph>=1.1.10
-langgraph-checkpoint>=4.0.3
-langgraph-prebuilt>=1.0.12
-langgraph-sdk>=0.3.13
-openai>=2.33.0
-orjson>=3.11.8
-packaging>=26.2
-pydantic>=2.13.3
-pydantic_core>=2.46.3
-python-dotenv>=1.2.2
-PyYAML>=6.0.1
-regex>=2026.4.4
-requests>=2.33.1
-requests-toolbelt>=1.0.0
-sniffio>=1.3.1
-starlette>=1.0.0
-tenacity>=9.1.4
-tiktoken>=0.12.0
-tqdm>=4.67.3
-typing-inspection>=0.4.2
-urllib3>=2.6.3
-uvicorn>=0.46.0
-xxhash>=3.7.0
-`
-  }
-
-  requirements = requirements
-    .split('\n')
-    .filter(line => {
-      const trimmed = line.trim().toLowerCase()
-      return !/^cast\b/.test(trimmed) && !trimmed.includes('castagent')
-    })
-    .join('\n')
-
-  fs.writeFileSync(path.join(agentPath, 'requirements.txt'), requirements)
+  writeRequirementsTxt(projectRoot, agentPath)
 }
 
 export async function upgradeDockerDeployment(
@@ -288,6 +228,12 @@ export async function upgradeDockerDeployment(
       else reject(new Error(`Docker run failed with code ${code}`))
     })
   })
+
+  host.log('Waiting for the container to become ready...')
+  const health = await waitForContainerHealth(() => probeDockerContainer(containerName))
+  if (!health.ok) {
+    host.error(containerHealthFailureMessage(containerName, health))
+  }
 
   host.log('')
   host.log('╔══════════════════════════════════════════════════════════════╗')

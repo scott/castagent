@@ -1,12 +1,14 @@
 import {Args, Command, Flags} from '@oclif/core'
-import {execSync, spawn} from 'child_process'
+import {spawn} from 'child_process'
 import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 
 import {db} from '../sqlite'
+import {containerHealthFailureMessage, probeDockerContainer, waitForContainerHealth} from './container-health'
 import {execCommand, inferenceEnv, generateDeploymentId, getVolumeName, createMemoryVolume, deleteMemoryVolume, createDockerignore, storeAuthToken} from './deploy-utils'
+import {writeRequirementsTxt} from './requirements'
 
 // Helper to run a shell command and return its exit code
 function runCommand(command: string, args: string[], options?: {stdio?: any; cwd?: string; silent?: boolean}): Promise<number> {
@@ -163,6 +165,12 @@ export default class DockerDeploy extends Command {
       this.error(`Docker run failed with code ${runCode}`)
     }
 
+    this.log('Waiting for the container to become ready...')
+    const health = await waitForContainerHealth(() => probeDockerContainer(containerName))
+    if (!health.ok) {
+      this.error(containerHealthFailureMessage(containerName, health))
+    }
+
     const deploymentUrl = `http://localhost:${flags.port}`
     const volumeConfig = JSON.stringify({ deploymentId, mountPath: '/app/agent/memory' })
     db.setDeployment(agentName, 'docker', deploymentUrl, tokenHash, volumeId, volumeConfig)
@@ -252,71 +260,9 @@ CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "80
   }
 
   private createRequirementsTxt(projectRoot: string, agentPath: string): void {
-    // Try to generate requirements from the project's venv
-    const venvPath = path.join(projectRoot, 'python', '.venv')
-    let requirements = ''
-
-    if (fs.existsSync(venvPath)) {
-      try {
-        const pipPath = path.join(venvPath, 'bin', 'pip')
-        if (fs.existsSync(pipPath)) {
-          requirements = execSync(`"${pipPath}" freeze`, {encoding: 'utf8'})
-        }
-      } catch {
-        // fall back to default list
-      }
-    }
-
-    if (!requirements.trim()) {
-      requirements = `anyio>=4.13.0
-certifi>=2026.4.22
-charset-normalizer>=3.4.7
-distro>=1.9.0
-httpx>=0.28.1
-idna>=3.13
-jiter>=0.14.0
-jsonpatch>=1.33
-jsonpointer>=3.1.1
-langchain>=1.2.15
-langchain-core>=1.3.2
-langchain-openai>=1.2.1
-langgraph>=1.1.10
-langgraph-checkpoint>=4.0.3
-langgraph-prebuilt>=1.0.12
-langgraph-sdk>=0.3.13
-openai>=2.33.0
-orjson>=3.11.8
-packaging>=26.2
-pydantic>=2.13.3
-pydantic_core>=2.46.3
-python-dotenv>=1.2.2
-PyYAML>=6.0.1
-regex>=2026.4.4
-requests>=2.33.1
-requests-toolbelt>=1.0.0
-sniffio>=1.3.1
-starlette>=1.0.0
-tenacity>=9.1.4
-tiktoken>=0.12.0
-tqdm>=4.67.3
-typing-inspection>=0.4.2
-urllib3>=2.6.3
-uvicorn>=0.46.0
-xxhash>=3.7.0
-`
-    }
-
-    // Filter out the cast package since it's copied directly into the image
-    requirements = requirements
-      .split('\n')
-      .filter(line => {
-        const trimmed = line.trim().toLowerCase()
-        // Remove exact 'cast' package (editable, VCS, or normal install) and castagent repo refs
-        return !/^cast\b/.test(trimmed) && !trimmed.includes('castagent')
-      })
-      .join('\n')
-
-    fs.writeFileSync(path.join(agentPath, 'requirements.txt'), requirements)
+    // The cast package is copied into the image, so it is filtered out.
+    // pyproject.toml dependencies and agent.yaml runtime.requirements are kept.
+    writeRequirementsTxt(projectRoot, agentPath)
   }
 
   private createDockerCompose(

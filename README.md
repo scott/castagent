@@ -203,7 +203,7 @@ Cast Agent supports deploying agents to multiple platforms:
 |----------|-------------|---------|
 | **DigitalOcean** | Deploy to DigitalOcean Droplets (cloud VMs) | `cast deploy demo-agent --provider digitalocean` |
 | **DigitalOcean MicroVM** | Firecracker microVM in MKC1. Pauses when idle and resumes on the next request. Public preview. | `cast deploy demo-agent --provider microvm` |
-| **Docker** | Containerized deployment to any Docker host | `cast deploy demo-agent --provider docker` |
+| **Docker** | Containerized deployment to any Docker host. The image installs `python/pyproject.toml` dependencies and `runtime.requirements`, then deploy waits until the container is running. A container that exits is a failed deploy. | `cast deploy demo-agent --provider docker` |
 | **Railway** | Deploy to Railway's cloud platform | `cast deploy demo-agent --provider railway` |
 | **Fly.io** | Deploy to Fly.io's global edge network | `cast deploy demo-agent --provider fly` |
 | **Sprites** | Firecracker VMs on Fly.io. The agent runs as a sprite service and comes back after the VM wakes. | `cast deploy demo-agent --provider sprites` |

@@ -103,7 +103,8 @@ The version is a positional argument, not a flag.
 ### Provider differences
 
 - **Docker** — re-extracts the tarball, rebuilds the image, stops the
-  old container, starts a new one with the same volume.
+  old container, starts a new one with the same volume. The new container
+  must stay running and print `Agent ready`. If it exits, the upgrade fails.
 - **Railway** — re-extracts, runs `railway up --detach` to redeploy.
 - **Fly** — re-extracts, runs `flyctl deploy --detach`.
 - **DigitalOcean** — re-extracts, rebuilds, re-streams the image, and

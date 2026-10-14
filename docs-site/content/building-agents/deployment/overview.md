@@ -77,6 +77,19 @@ The deployment is a single Docker image that contains:
 The image exposes A2A on port 8080. The provider assigns a public URL
 (Railway/Fly/DO) or you use `docker port` to map it locally.
 
+For Docker, `requirements.txt` is written when you deploy or upgrade. It
+starts from `pip freeze` of `python/.venv` when that virtualenv exists,
+otherwise from the runtime's dependency list. It always adds dependencies
+from `python/pyproject.toml` (including GitPython, which the runtime
+imports at startup) and every package in the agent's `runtime.requirements`.
+The `cast` package itself is omitted because the image copies that source
+tree in directly.
+
+`cast deploy --provider docker` waits until the container is still running
+and the runtime has printed `Agent ready`. If the container exits, deploy
+fails with a non-zero status and does not print a deployment SHA. The same
+readiness check applies to `cast upgrade` of a Docker deployment.
+
 ## Multi-deployment
 
 You can deploy the same agent to many places. Each deployment gets a
