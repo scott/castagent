@@ -59,6 +59,45 @@ class TestCreateAgent:
             finally:
                 tools.AGENTS_DIR = original_dir
 
+    def test_create_agent_records_registry_row(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from cast.builder_tools import tools
+            original_dir = tools.AGENTS_DIR
+            root = Path(tmpdir)
+            tools.AGENTS_DIR = root / "agents"
+            try:
+                agent_name = "bb-answers-registry"
+                result = create_agent.invoke({"name": agent_name, "description": "Answers questions"})
+                assert "created successfully" in result
+                db_path = root / "cast.db"
+                assert db_path.is_file()
+                conn = sqlite3.connect(str(db_path))
+                try:
+                    row = conn.execute(
+                        "SELECT name, agent_yaml_path FROM agents WHERE name = ?",
+                        (agent_name,),
+                    ).fetchone()
+                finally:
+                    conn.close()
+                assert row is not None
+                assert row[0] == agent_name
+                assert Path(row[1]) == root / "agents" / agent_name / "agent.yaml"
+                home_db = Path.home() / ".cast" / "cast.db"
+                if home_db.exists():
+                    home = sqlite3.connect(str(home_db))
+                    try:
+                        leaked = home.execute(
+                            "SELECT 1 FROM agents WHERE name = ?",
+                            (agent_name,),
+                        ).fetchone()
+                    except sqlite3.Error:
+                        leaked = None
+                    finally:
+                        home.close()
+                    assert leaked is None
+            finally:
+                tools.AGENTS_DIR = original_dir
+
     def test_create_agent_records_marker_for_the_wizard(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             from cast.builder_tools import tools

@@ -290,6 +290,19 @@ export class CastDatabase {
     stmt.run(name, agentYamlPath)
   }
 
+  // deployments.agent_name references agents(name), and better-sqlite3
+  // builds SQLite with foreign keys enabled. Agent creation writes the
+  // scaffold on disk; this records the parent row before a deployment
+  // insert. INSERT OR IGNORE keeps created_at and run_count when the
+  // row is already there.
+  public ensureAgent(name: string, agentYamlPath?: string): void {
+    const yamlPath = agentYamlPath && agentYamlPath.length > 0
+      ? agentYamlPath
+      : path.join(os.homedir(), '.cast', 'agents', name, 'agent.yaml')
+    const stmt = this.db.prepare('INSERT OR IGNORE INTO agents (name, agent_yaml_path) VALUES (?, ?)')
+    stmt.run(name, yamlPath)
+  }
+
   public updateAgent(name: string, updates: Partial<{agent_yaml_path: string; last_run_at: string; run_count: number}>): void {
     const fields = Object.keys(updates)
     if (fields.length === 0) return
@@ -316,11 +329,46 @@ export class CastDatabase {
   }
 
   public renameAgent(currentName: string, newName: string): void {
+    // The deployments foreign key is checked at the end of each statement.
+    // Updating agents.name in place fails while deployments still point at
+    // the old name, and pointing deployments at the new name fails until
+    // that parent row exists. Copy the parent, repoint children, then
+    // delete the old parent.
     const transaction = this.db.transaction(() => {
-      this.db.prepare('UPDATE agents SET name = ?, updated_at = CURRENT_TIMESTAMP WHERE name = ?').run(newName, currentName)
+      const hasDeployment = this.db.prepare(
+        'SELECT 1 AS ok FROM deployments WHERE agent_name = ? LIMIT 1',
+      ).get(currentName)
+      if (hasDeployment) {
+        this.ensureAgent(currentName)
+      }
+
+      const existing = this.db.prepare('SELECT * FROM agents WHERE name = ?').get(currentName) as {
+        created_at?: string | null
+        agent_yaml_path?: string | null
+        last_run_at?: string | null
+        run_count?: number | null
+      } | undefined
+
+      if (existing) {
+        this.db.prepare(`
+          INSERT INTO agents (name, created_at, updated_at, agent_yaml_path, last_run_at, run_count)
+          VALUES (?, ?, CURRENT_TIMESTAMP, ?, ?, ?)
+        `).run(
+          newName,
+          existing.created_at ?? null,
+          existing.agent_yaml_path ?? null,
+          existing.last_run_at ?? null,
+          existing.run_count ?? 0,
+        )
+      }
+
       this.db.prepare('UPDATE deployments SET agent_name = ? WHERE agent_name = ?').run(newName, currentName)
       this.db.prepare('UPDATE local_agents SET agent_name = ? WHERE agent_name = ?').run(newName, currentName)
       this.db.prepare('UPDATE agent_mcp SET agent_name = ? WHERE agent_name = ?').run(newName, currentName)
+
+      if (existing) {
+        this.db.prepare('DELETE FROM agents WHERE name = ?').run(currentName)
+      }
     })
     transaction()
   }
@@ -387,6 +435,7 @@ export class CastDatabase {
   }
 
   public createDeployment(id: string, agentName: string, provider: string, url: string, tokenHash: string, volumeId?: string | null, volumeConfig?: string | null, deployedVersion?: string | null): void {
+    this.ensureAgent(agentName)
     const stmt = this.db.prepare(`
       INSERT INTO deployments
       (id, agent_name, provider, deployment_url, auth_token_hash, volume_id, volume_config, deployed_version)
@@ -678,6 +727,10 @@ export class CastDatabase {
     const stmt = this.db.prepare('DELETE FROM sessions WHERE agent_name = ?')
     const result = stmt.run(agentName)
     return Number(result.changes) || 0
+  }
+
+  public close(): void {
+    this.db.close()
   }
 }
 

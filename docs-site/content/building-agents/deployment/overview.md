@@ -61,6 +61,14 @@ resets the socket. Cast registers the agent as a sprite service on port
 it before opening the proxy. Deploy the sprite again if it was created
 before that service existed.
 
+Docker starts a container named `cast-<name>`. After it is ready, Cast
+writes the deployment to `~/.cast/cast.db` under the SHA that `cast deploy`
+prints. That write needs an `agents` row for the same name. Creating an
+agent records the row, and deploy inserts it if it is still missing. If
+that registry write fails, Cast stops and removes the container and its
+memory volume before exiting. A container that exits before it is ready
+stays in place so `docker logs cast-<name>` still works.
+
 ## What gets shipped
 
 The deployment is a single Docker image that contains:

@@ -56,6 +56,7 @@ const TEST_AGENT_PREFIXES = [
   // "sha-" prefix alone is too broad (real SHAs are sha1...), so we
   // require the "sha-test-" prefix specifically.
   'sha-test-',
+  'fk-test-',
 ]
 
 // Common test agent names (without prefix)

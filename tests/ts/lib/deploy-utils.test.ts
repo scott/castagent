@@ -17,6 +17,7 @@ import {
   getVolumeName,
   getMemoryMountPath,
   storeAuthToken,
+  saveDeployment,
 } from '../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 
 describe('Agent Path Resolution', () => {
@@ -125,6 +126,29 @@ describe('Deployment SHA helpers', () => {
       const id2 = generateDeploymentId()
       expect(id1).to.not.equal(id2)
     })
+  })
+})
+
+describe('saveDeployment', () => {
+  it('stores CAST_DEPLOYMENT_SHA and records the agent row', () => {
+    const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
+    const agentName = `fk-test-sha-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    const sha = Math.random().toString(16).slice(2, 8)
+    const previous = process.env.CAST_DEPLOYMENT_SHA
+    process.env.CAST_DEPLOYMENT_SHA = sha
+    try {
+      const id = saveDeployment(agentName, 'docker', 'http://localhost:8080', 'hash', 'vol', '{}')
+      expect(id).to.equal(sha)
+      expect(db.getAgent(agentName)).to.exist
+      const deployment = db.getDeploymentBySha(sha)
+      expect(deployment).to.exist
+      expect(deployment.agent_name).to.equal(agentName)
+      expect(deployment.provider).to.equal('docker')
+    } finally {
+      if (previous === undefined) delete process.env.CAST_DEPLOYMENT_SHA
+      else process.env.CAST_DEPLOYMENT_SHA = previous
+      db.deleteAgent(agentName)
+    }
   })
 })
 

@@ -36,7 +36,8 @@ The Builder Agent asks four things in order:
 
 When the conversation ends, the agent lives at `~/.cast/agents/<name>/`
 with everything wired up. Cast prints a final summary and offers to start
-the agent in dev mode.
+the agent in dev mode. The new agent is also recorded in `~/.cast/cast.db`,
+which is what a later deploy attaches its deployment row to.
 
 Inside the same TUI, `{% ref "slash:git" %}`, `{% ref "slash:undo" %}`,
 `{% ref "slash:redo" %}`, `{% ref "slash:describe" %}`, and
@@ -53,7 +54,8 @@ echo "Summarises incoming email and drafts replies." | cast new
 ```
 
 `cast new` reads that text, chooses an available name, and writes the
-scaffold to `~/.cast/agents/<name>/`. It prints the agent name and path.
+scaffold to `~/.cast/agents/<name>/`. It records that name in
+`~/.cast/cast.db` and prints the agent name and path.
 It does not open the TUI. A blank pipe is an error. On a terminal, the
 same command still opens the Builder wizard and asks you to confirm the
 name.
