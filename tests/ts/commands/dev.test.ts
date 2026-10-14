@@ -580,6 +580,7 @@ describe('dev command - /stop keeps the TUI open', () => {
     for (const listener of sigintListeners) {
       process.on('SIGINT', listener)
     }
+    fs.rmSync(path.join(os.homedir(), '.cast', 'logs', `${agentName}.log`), {force: true})
     const tuiEntry = path.join(__dirname, '../../../typescript/cast-tui/dist/index.js')
     if (fs.existsSync(tuiEntry)) {
       const body = fs.readFileSync(tuiEntry, 'utf8')
@@ -592,12 +593,14 @@ describe('dev command - /stop keeps the TUI open', () => {
   function fakeChild() {
     const child = new EventEmitter() as EventEmitter & {
       stdout: EventEmitter
+      stderr: EventEmitter
       pid: number
       exitCode: number | null
       killed: boolean
       kill: (signal?: NodeJS.Signals) => boolean
     }
     child.stdout = new EventEmitter()
+    child.stderr = new EventEmitter()
     child.pid = 4242
     child.exitCode = null
     child.killed = false
@@ -683,6 +686,17 @@ describe('dev command - /stop keeps the TUI open', () => {
     expect(exitStub.calledOnceWith(0)).to.equal(true)
     expect(logs.some((line) => line.includes('Agent exited with signal SIGTERM'))).to.equal(true)
     expect(logs.some((line) => line.includes('code null'))).to.equal(false)
+  })
+
+  it('records runtime stdout and stderr for cast logs', () => {
+    const stderr = sandbox.stub(process.stderr, 'write').returns(true)
+    const {runtime} = boot({'no-tui': true})
+    runtime.stderr.emit('data', Buffer.from('Traceback (most recent call last):\nImportError: missing\n'))
+
+    const body = fs.readFileSync(path.join(os.homedir(), '.cast', 'logs', `${agentName}.log`), 'utf8')
+    expect(body).to.include('Agent ready on port 4321')
+    expect(body).to.include('ImportError: missing')
+    expect(stderr.called).to.equal(true)
   })
 
   it('still surfaces a non-zero runtime crash', () => {

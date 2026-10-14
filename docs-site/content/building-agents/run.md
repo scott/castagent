@@ -73,8 +73,17 @@ local-agent row from the database. Use `cast list` to confirm.
 
 ## Logs
 
-`{% ref "cli:logs" %}` tails the runtime's stdout/stderr. It works for
-both local runs and (where the provider supports it) for deployed agents.
+`{% ref "cli:logs" %}` prints the runtime's stdout and stderr.
+
+For a local agent, `{% ref "cli:dev" %}` and `cast session resume` record
+that output in `~/.cast/logs/<name>.log` while the runtime is running.
+`cast logs` prints the file, including a crash from a run that already
+exited.
+
+For a Docker deployment, `cast logs` prints the output of
+`docker logs cast-<name>`, including a container that has already exited.
+When the agent has more than one live deployment, pass the deployment SHA.
+Other providers are not read by this command.
 
 ```bash
 cast logs email-assistant

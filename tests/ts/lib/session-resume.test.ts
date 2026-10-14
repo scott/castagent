@@ -240,6 +240,11 @@ describe('session resume command source', () => {
     expect(source).to.include("spawn(resolveBun(), buildTuiArgs(")
   })
 
+  it('records the dev runtime stdout and stderr for cast logs', () => {
+    expect(source).to.include('attachRuntimeLog')
+    expect(source).to.include("stdio: ['pipe', 'pipe', 'pipe']")
+  })
+
   it('does not exec the cast binary', () => {
     expect(source).to.not.include('execFileSync')
     expect(source).to.not.include('which')

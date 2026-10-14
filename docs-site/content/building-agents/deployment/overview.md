@@ -69,7 +69,9 @@ prints. That write needs an `agents` row for the same name. Creating an
 agent records the row, and deploy inserts it if it is still missing. If
 that registry write fails, Cast stops and removes the container and its
 memory volume before exiting. A container that exits before it is ready
-stays in place so `docker logs cast-<name>` still works.
+stays in place so `docker logs cast-<name>` still works. `cast logs <name>`
+prints those same container logs. Pass the deployment SHA when more than
+one live deployment exists.
 
 ## What gets shipped
 

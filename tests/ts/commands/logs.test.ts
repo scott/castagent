@@ -1,74 +1,106 @@
 import {expect} from 'chai'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
+import sinon from 'sinon'
+import Logs from '../../../typescript/cast-cli/src/commands/logs'
+import * as deployUtils from '../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
+import {db} from '../../../typescript/cast-cli/src/lib/sqlite'
+
+const CRASH = 'Traceback (most recent call last):\nModuleNotFoundError: No module named \'git\'\n'
+
+function command(agent: string): Logs {
+  const instance = new Logs(['logs', agent], {color: false} as any) as any
+  instance.parse = async () => ({args: {agent}, flags: {}, argv: [agent], raw: []})
+  instance.error = (message?: string) => {
+    throw new Error(message ?? '')
+  }
+  return instance
+}
+
+async function printed(agent: string): Promise<string> {
+  const chunks: string[] = []
+  const write = process.stdout.write
+  process.stdout.write = ((chunk: string | Uint8Array) => {
+    chunks.push(String(chunk))
+    return true
+  }) as typeof process.stdout.write
+  try {
+    await command(agent).run()
+  } finally {
+    process.stdout.write = write
+  }
+  return chunks.join('')
+}
 
 describe('logs command', () => {
-  describe('command description', () => {
-    it('should have correct description', () => {
-      expect('View runtime logs').to.not.be.empty
-    })
+  let sandbox: sinon.SinonSandbox
+
+  beforeEach(() => {
+    sandbox = sinon.createSandbox()
   })
 
-  describe('agent argument', () => {
-    it('should require agent name argument', () => {
-      const args = {
-        agent: 'test-agent'
-      }
-      expect(args.agent).to.be.a('string')
-      expect(args.agent).to.not.be.empty
-    })
-
-    it('should document agent name in usage', () => {
-      const usage = 'cast logs <agent>'
-      expect(usage).to.include('logs')
-      expect(usage).to.include('agent')
-    })
+  afterEach(() => {
+    sandbox.restore()
   })
 
-  describe('log file location', () => {
-    it('should construct log path correctly', () => {
-      const agentName = 'test-agent'
-      const logDir = '.cast/logs'
-      const logPath = `${logDir}/${agentName}`
-
-      expect(logPath).to.include(agentName)
-    })
-
-    it('should use timestamp for log files', () => {
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
-      const logFile = `agent-${timestamp}.log`
-
-      expect(logFile).to.include('agent')
-      expect(logFile).to.include('.log')
-    })
+  it('describes the agent argument', () => {
+    expect(Logs.description).to.equal('Print local runtime logs or Docker container logs')
+    expect(Logs.args.agent.required).to.equal(true)
+    expect(Logs.args.agent.description).to.equal('Agent name or deployment SHA')
   })
 
-  describe('log format', () => {
-    it('should support common log formats', () => {
-      const logFormats = ['json', 'text', 'structured']
-      expect(logFormats).to.include('json')
-      expect(logFormats).to.include('text')
+  it('prints a Docker crash instead of a placeholder line', async () => {
+    sandbox.stub(db, 'listDeployments').returns([{
+      id: 'abc123',
+      agent_name: 'bb2-chat',
+      provider: 'docker',
+      deployment_url: 'http://localhost:8080',
+    }])
+    const exec = sandbox.stub(deployUtils, 'execCommand').resolves({
+      stdout: '',
+      stderr: CRASH,
+      exitCode: 0,
     })
 
-    it('should include timestamp in logs', () => {
-      const timestamp = new Date().toISOString()
-      const logEntry = `[${timestamp}] INFO: Agent started`
+    const output = await printed('bb2-chat')
 
-      expect(logEntry).to.include(timestamp)
-    })
+    expect(output).to.equal(CRASH)
+    expect(output).to.not.include('Viewing logs')
+    expect(exec.calledOnce).to.equal(true)
+    expect(exec.firstCall.args[0]).to.equal('docker')
+    expect(exec.firstCall.args[1]).to.deep.equal(['logs', 'cast-bb2-chat'])
+    expect(exec.firstCall.args[2]).to.include({silent: true, shell: false})
   })
 
-  describe('log filtering', () => {
-    it('should support filtering by level', () => {
-      const levels = ['DEBUG', 'INFO', 'WARN', 'ERROR']
-      expect(levels.length).to.equal(4)
-    })
+  it('prints a saved local crash and does not call docker', async () => {
+    const agent = `test-logs-local-${Date.now()}`
+    const logFile = path.join(os.homedir(), '.cast', 'logs', `${agent}.log`)
+    fs.mkdirSync(path.dirname(logFile), {recursive: true})
+    fs.writeFileSync(logFile, CRASH)
+    const exec = sandbox.stub(deployUtils, 'execCommand').rejects(new Error('docker should not be called'))
 
-    it('should support time range filtering', () => {
-      const startTime = new Date(Date.now() - 3600000).toISOString()
-      const endTime = new Date().toISOString()
+    try {
+      const output = await printed(agent)
+      expect(output).to.equal(CRASH)
+      expect(output).to.not.include('Viewing logs')
+      expect(exec.called).to.equal(false)
+    } finally {
+      fs.rmSync(logFile, {force: true})
+    }
+  })
 
-      expect(startTime).to.be.a('string')
-      expect(endTime).to.be.a('string')
-      expect(startTime < endTime).to.be.true
-    })
+  it('fails with an accurate message when a local agent has no log file', async () => {
+    const agent = `test-logs-missing-${Date.now()}`
+    sandbox.stub(deployUtils, 'execCommand').rejects(new Error('docker should not be called'))
+
+    try {
+      await printed(agent)
+      expect.fail('missing logs should fail')
+    } catch (error) {
+      const message = (error as Error).message
+      expect(message).to.include(`No local runtime logs for '${agent}'`)
+      expect(message).to.not.include('Viewing logs')
+    }
   })
 })

@@ -1,14 +1,25 @@
 import {Args, Command} from '@oclif/core'
+import {collectRuntimeLogs} from '../lib/runtime-logs'
 
 export default class Logs extends Command {
-  static description = 'View runtime logs'
+  static description = 'Print local runtime logs or Docker container logs'
+
+  static examples = [
+    '<%= config.bin %> <%= command.id %> email-assistant',
+    '<%= config.bin %> <%= command.id %> abc123',
+  ]
 
   static args = {
-    agent: Args.string({description: 'Agent name', required: true}),
+    agent: Args.string({description: 'Agent name or deployment SHA', required: true}),
   }
 
   async run(): Promise<void> {
     const {args} = await this.parse(Logs)
-    this.log(`Viewing logs for ${args.agent}...`)
+    const result = await collectRuntimeLogs(args.agent)
+    if (result.status === 'error') {
+      this.error(result.text)
+    }
+    const text = result.text.endsWith('\n') ? result.text : `${result.text}\n`
+    process.stdout.write(text)
   }
 }

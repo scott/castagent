@@ -7,6 +7,7 @@ import * as net from 'net'
 import * as readline from 'readline'
 import {db} from '../lib/sqlite'
 import {ensureMemoryDatabaseIgnored} from '../lib/cast-ignore'
+import {attachRuntimeLog} from '../lib/runtime-logs'
 
 export default class Dev extends Command {
   static description = 'Start agent in development mode'
@@ -348,9 +349,12 @@ export default class Dev extends Command {
       '--agent-path', agentPath,
       '--port', port.toString(),
     ], {
-      stdio: ['pipe', 'pipe', 'inherit'],
+      // stderr is piped so a crash can be saved for `cast logs` and still
+      // shown on this terminal. CAST_AGENT_PATH stays on the runtime env.
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: this.runtimeLaunchEnv(agentName, agentPath, pythonPath),
     })
+    attachRuntimeLog(agentName, runtime)
 
     runtime.on('error', (err) => {
       this.error(`Failed to start Python runtime: ${err.message}\nMake sure Python dependencies are installed.`)
