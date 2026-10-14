@@ -667,6 +667,13 @@ class A2AServer:
             await asyncio.sleep(1)
 
 
+def configure_runtime_env(agent_path: str) -> str:
+    """Set CAST_AGENT_PATH to the agent directory the runtime loaded."""
+    root = os.path.abspath(agent_path)
+    os.environ["CAST_AGENT_PATH"] = root
+    return root
+
+
 async def main():
     parser = argparse.ArgumentParser(description="Cast Runtime Agent")
     parser.add_argument("--agent-path", required=True, help="Path to agent directory")
@@ -679,6 +686,10 @@ async def main():
     if not os.path.exists(args.agent_path):
         print(f"Error: Agent path does not exist: {args.agent_path}", file=sys.stderr)
         sys.exit(1)
+
+    # Tools resolve relative paths against this directory. cast dev sets
+    # the same variable; --agent-path wins when the parent omitted it.
+    configure_runtime_env(args.agent_path)
 
     # Load agent config
     try:

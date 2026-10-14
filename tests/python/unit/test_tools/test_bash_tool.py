@@ -170,3 +170,16 @@ class TestBashToolEdgeCases:
         })
 
         assert "path with spaces" in result
+
+    def test_runs_in_agent_directory(self, tmp_path, monkeypatch):
+        """Relative commands use CAST_AGENT_PATH, not the shell cwd."""
+        agent = tmp_path / "agent"
+        (agent / "memory").mkdir(parents=True)
+        other = tmp_path / "elsewhere"
+        other.mkdir()
+        monkeypatch.setenv("CAST_AGENT_PATH", str(agent))
+        monkeypatch.chdir(other)
+
+        result = bash_tool.invoke({"command": "pwd"})
+
+        assert os.path.realpath(result.strip()) == os.path.realpath(agent)

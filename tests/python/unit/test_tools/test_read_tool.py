@@ -205,3 +205,38 @@ class TestReadToolEdgeCases:
 
         # Should return empty or minimal content
         assert result is not None
+
+
+class TestReadToolAgentDirectory:
+    """Relative reads use CAST_AGENT_PATH, not the process working directory."""
+
+    def test_reads_memory_notes_from_agent_directory(self, tmp_path, monkeypatch):
+        agent = tmp_path / "agent"
+        notes = agent / "memory" / "notes.md"
+        notes.parent.mkdir(parents=True)
+        notes.write_text("- my favorite fruit is QUINCE-BB2\n")
+
+        other = tmp_path / "elsewhere"
+        other.mkdir()
+        (other / "memory").mkdir()
+        (other / "memory" / "notes.md").write_text("WRONG\n")
+
+        monkeypatch.setenv("CAST_AGENT_PATH", str(agent))
+        monkeypatch.chdir(other)
+
+        result = read_tool.invoke({"file_path": "memory/notes.md"})
+
+        assert "QUINCE-BB2" in result
+        assert "WRONG" not in result
+        assert "not found" not in result.lower()
+
+    def test_absolute_path_ignores_agent_directory(self, tmp_path, monkeypatch):
+        agent = tmp_path / "agent"
+        agent.mkdir()
+        outside = tmp_path / "outside.txt"
+        outside.write_text("absolute-file\n")
+        monkeypatch.setenv("CAST_AGENT_PATH", str(agent))
+
+        result = read_tool.invoke({"file_path": str(outside)})
+
+        assert "absolute-file" in result

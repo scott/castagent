@@ -194,3 +194,18 @@ class TestGlobToolEdgeCases:
             assert "dir1" in result or "dir2" in result
         finally:
             os.chdir(original_cwd)
+
+    def test_relative_pattern_uses_agent_directory(self, tmp_path, monkeypatch):
+        """memory/*.md is matched inside CAST_AGENT_PATH."""
+        agent = tmp_path / "agent"
+        notes = agent / "memory" / "notes.md"
+        notes.parent.mkdir(parents=True)
+        notes.write_text("QUINCE-BB2\n")
+        other = tmp_path / "elsewhere"
+        other.mkdir()
+        monkeypatch.setenv("CAST_AGENT_PATH", str(agent))
+        monkeypatch.chdir(other)
+
+        result = glob_tool.invoke({"pattern": "memory/*.md"})
+
+        assert "memory/notes.md" in result
