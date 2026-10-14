@@ -104,7 +104,7 @@
     {
       "id": "new",
       "full": "cast new",
-      "description": "Create a new agent through an interactive TUI wizard"
+      "description": "Create a new agent. On a TTY, opens the Builder wizard. Without a TTY, reads a description from stdin and creates the agent."
     },
     {
       "id": "redo",

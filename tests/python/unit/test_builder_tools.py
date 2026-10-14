@@ -369,6 +369,91 @@ class TestCreateAgentWithDescription:
                 tools.AGENTS_DIR = original_dir
 
 
+class TestCreateFromDescription:
+    """Headless create used when cast new has no TTY."""
+
+    def _isolate(self, tmp_path, monkeypatch):
+        from cast.builder_tools import tools
+        import cast.versioning as versioning
+
+        agents = tmp_path / "agents"
+        monkeypatch.setenv("CAST_AGENTS_DIR", str(agents))
+        monkeypatch.setattr(versioning, "AGENTS_DIR", agents)
+        monkeypatch.setattr(tools, "BUILDER_DIR", tmp_path / "builder")
+        return tools, agents
+
+    def test_creates_email_agent_from_issue_text(self, tmp_path, monkeypatch):
+        tools, agents = self._isolate(tmp_path, monkeypatch)
+        description = "Email assistant that triages and drafts replies"
+        info = tools.create_from_description(description)
+        assert info["name"] == "email-agent"
+        assert info["description"] == description
+        assert info["path"] == str(agents / "email-agent")
+
+        config = yaml.safe_load((agents / "email-agent" / "agent.yaml").read_text())
+        assert config["name"] == "email-agent"
+        assert config["description"] == description
+        instructions = (agents / "email-agent" / "instructions.md").read_text()
+        assert description in instructions
+
+    def test_docs_example_picks_email_agent(self, tmp_path, monkeypatch):
+        tools, agents = self._isolate(tmp_path, monkeypatch)
+        description = "Summarises incoming email and drafts replies."
+        info = tools.create_from_description(description + "\n")
+        assert info["name"] == "email-agent"
+        assert info["description"] == description
+        assert (agents / "email-agent" / "agent.yaml").is_file()
+
+    def test_suffix_when_name_is_taken(self, tmp_path, monkeypatch):
+        tools, agents = self._isolate(tmp_path, monkeypatch)
+        tools.AGENTS_DIR = agents
+        create_agent.invoke({"name": "email-agent", "description": "taken"})
+        info = tools.create_from_description("reads my email")
+        assert info["name"] == "email-agent-2"
+        assert (agents / "email-agent-2" / "agent.yaml").is_file()
+        assert (agents / "email-agent" / "agent.yaml").is_file()
+
+    def test_short_description_uses_new_agent(self, tmp_path, monkeypatch):
+        tools, agents = self._isolate(tmp_path, monkeypatch)
+        info = tools.create_from_description("ab")
+        assert info["name"] == "new-agent"
+        assert (agents / "new-agent").is_dir()
+
+    def test_blank_description_is_refused(self, tmp_path, monkeypatch):
+        tools, _agents = self._isolate(tmp_path, monkeypatch)
+        with pytest.raises(ValueError, match="No description on stdin"):
+            tools.create_from_description("  \n\t")
+
+    def test_stdin_module_prints_json(self, tmp_path, monkeypatch, capsys):
+        import io
+        import sys
+        from cast.create_from_stdin import main
+
+        self._isolate(tmp_path, monkeypatch)
+        monkeypatch.setattr(
+            sys,
+            "stdin",
+            io.StringIO("Summarises incoming email and drafts replies.\n"),
+        )
+        assert main() == 0
+        captured = capsys.readouterr()
+        payload = json.loads(captured.out)
+        assert payload["name"] == "email-agent"
+        assert payload["path"].endswith("email-agent")
+        assert captured.err == ""
+
+    def test_stdin_module_rejects_blank(self, monkeypatch, capsys):
+        import io
+        import sys
+        from cast.create_from_stdin import main
+
+        monkeypatch.setattr(sys, "stdin", io.StringIO("\n"))
+        assert main() == 2
+        captured = capsys.readouterr()
+        assert "No description on stdin" in captured.err
+        assert captured.out == ""
+
+
 class TestReadFile:
     """Tests for read_file tool."""
 

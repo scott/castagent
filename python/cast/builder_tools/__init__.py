@@ -2,6 +2,7 @@
 
 from .tools import (
     create_agent,
+    create_from_description,
     update_agent_config,
     update_instructions,
     install_mcp,
@@ -16,6 +17,7 @@ from .tools import (
 
 __all__ = [
     "create_agent",
+    "create_from_description",
     "update_agent_config",
     "update_instructions",
     "install_mcp",

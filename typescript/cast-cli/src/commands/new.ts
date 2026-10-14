@@ -2,14 +2,15 @@ import {Command} from '@oclif/core'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
-import {spawn} from 'child_process'
+import {spawn, spawnSync} from 'child_process'
 import {BuilderA2ABridge} from '../lib/builder/bridge'
 
 export default class New extends Command {
-  static description = 'Create a new agent through an interactive TUI wizard'
+  static description = 'Create a new agent. On a TTY, opens the Builder wizard. Without a TTY, reads a description from stdin and creates the agent.'
 
   static examples = [
     '<%= config.bin %> <%= command.id %>',
+    'echo "Summarises incoming email and drafts replies." | <%= config.bin %> <%= command.id %>',
   ]
 
   static flags = {}
@@ -70,6 +71,13 @@ export default class New extends Command {
   }
 
   async run(): Promise<void> {
+    // A pipe has no TTY. Read the description and create the agent
+    // without opening the TUI. A terminal still uses the wizard below.
+    if (!process.stdin.isTTY) {
+      await this.createFromStdin()
+      return
+    }
+
     this.log('Starting Cast Agent Creator...')
     this.log('')
 
@@ -175,6 +183,63 @@ export default class New extends Command {
 
     // Keep the CLI alive
     await new Promise(() => {})
+  }
+
+  private async createFromStdin(): Promise<void> {
+    const description = this.readPipedDescription()
+    this.checkVenv()
+    const created = this.createAgentFromDescription(description)
+    this.log(`Created agent '${created.name}' at ${created.path}`)
+    this.log(`Run 'cast dev ${created.name}' to start it.`)
+  }
+
+  private readPipedDescription(): string {
+    let raw = ''
+    try {
+      raw = fs.readFileSync(0, 'utf8')
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.error(`Failed to read stdin: ${message}`)
+    }
+    if (!raw.trim()) {
+      this.error('No description on stdin. Pipe a description, for example: echo "Summarises incoming email and drafts replies." | cast new')
+    }
+    return raw
+  }
+
+  private createAgentFromDescription(description: string): {name: string; path: string} {
+    const pythonExecutable = this.getPythonExecutable()
+    const pythonPath = this.getPythonPath()
+    const result = spawnSync(pythonExecutable, ['-m', 'cast.create_from_stdin'], {
+      input: description,
+      encoding: 'utf8',
+      env: {
+        ...process.env,
+        PYTHONPATH: pythonPath,
+      },
+    })
+
+    if (result.error) {
+      this.error(`Failed to create agent: ${result.error.message}`)
+    }
+    if (result.status !== 0) {
+      const detail = `${result.stderr || result.stdout || 'Failed to create agent'}`.trim()
+      this.error(detail || 'Failed to create agent')
+    }
+    if (!result.stdout) {
+      this.error('Failed to create agent: builder returned no output')
+    }
+
+    let parsed: {name?: string; path?: string} | null = null
+    try {
+      parsed = JSON.parse(result.stdout) as {name?: string; path?: string}
+    } catch {
+      this.error(`Failed to create agent: ${result.stdout.trim() || 'builder returned invalid JSON'}`)
+    }
+    if (!parsed?.name || !parsed.path) {
+      this.error('Failed to create agent: builder returned an incomplete result')
+    }
+    return {name: parsed.name, path: parsed.path}
   }
 
   private async runTerminalMode(bridge: BuilderA2ABridge): Promise<void> {

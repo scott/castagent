@@ -264,6 +264,41 @@ def create_agent(name: str, description: str = "") -> str:
     return f"Agent '{name}' created successfully at {agent_path}"
 
 
+def create_from_description(description: str) -> Dict[str, str]:
+    """Create an agent from piped text when ``cast new`` has no TTY.
+
+    Blank input is refused. The name is chosen the same way as
+    ``suggest_name``, including a numeric suffix when that name is taken.
+    ``CAST_AGENTS_DIR`` overrides the agents directory for this call only.
+    """
+    text = description.strip()
+    if not text:
+        raise ValueError(
+            "No description on stdin. Pipe a description, for example: "
+            'echo "Summarises incoming email and drafts replies." | cast new'
+        )
+
+    global AGENTS_DIR
+    previous = AGENTS_DIR
+    override = os.environ.get("CAST_AGENTS_DIR", "").strip()
+    if override:
+        AGENTS_DIR = Path(override)
+    try:
+        name = _find_available_name(_generate_name_from_description(text))
+        if not re.fullmatch(r"[A-Za-z0-9-]+", name):
+            raise ValueError("Could not derive an agent name from the description.")
+        result = create_agent.invoke({"name": name, "description": text})
+        if not isinstance(result, str) or "created successfully" not in result.lower():
+            raise ValueError(str(result))
+        return {
+            "name": name,
+            "path": str(_get_agent_path(name)),
+            "description": text,
+        }
+    finally:
+        AGENTS_DIR = previous
+
+
 @tool
 def check_name_availability(name: str) -> str:
     """
