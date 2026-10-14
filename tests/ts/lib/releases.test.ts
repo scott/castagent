@@ -113,4 +113,45 @@ describe('releases lib (TS wrapper)', () => {
       expect(row.changelog).to.equal('full-log')
     })
   })
+
+  describe('python interpreter', () => {
+    afterEach(() => {
+      releases._setExecPythonForTests(null)
+      releases._setPythonRuntimeForTests(null)
+    })
+
+    it('runs release scripts with the checkout virtualenv', async () => {
+      const repo = path.resolve(__dirname, '../../..')
+      const venvRoot = path.join(repo, 'python', '.venv')
+      const venvBin = path.join(venvRoot, 'bin')
+      const venvPython = path.join(venvBin, 'python3')
+      const created = !fs.existsSync(venvPython)
+      if (created) {
+        fs.mkdirSync(venvBin, {recursive: true})
+        fs.writeFileSync(venvPython, '')
+      }
+      let seenCommand = ''
+      let seenPath = ''
+      let seenScript = ''
+      releases._setExecPythonForTests((command: string, args: string[], options: {env?: NodeJS.ProcessEnv}) => {
+        seenCommand = command
+        seenPath = String(options.env?.PYTHONPATH ?? '')
+        seenScript = fs.readFileSync(args[0], 'utf8')
+        return '[]'
+      })
+      try {
+        const listed = await releases.listReleases('release-venv-probe')
+        expect(listed).to.deep.equal([])
+        expect(seenCommand).to.equal(venvPython)
+        const pythonDir = path.join(repo, 'python')
+        expect(seenPath.split(path.delimiter)).to.include(pythonDir)
+        expect(seenScript).to.include(JSON.stringify(pythonDir))
+      } finally {
+        if (created && fs.existsSync(venvPython)) fs.unlinkSync(venvPython)
+        for (const dir of [venvBin, venvRoot]) {
+          if (fs.existsSync(dir) && fs.readdirSync(dir).length === 0) fs.rmdirSync(dir)
+        }
+      }
+    })
+  })
 })

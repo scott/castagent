@@ -85,13 +85,18 @@ you're about to release corresponds to a breaking change (e.g. you removed
 a required tool), Cast prompts for confirmation.
 
 `cast release`, the TUI `/release` command, and the builder `create_release`
-tool all use the same writer. A successful release updates `releases.json`
-and inserts one SQLite row (version, change number, message, changelog, and
-tarball path). Listing releases or reading the current release also inserts
-any JSON versions that are missing from `cast.db`. A row that is already
-stored is left as-is, so a second create does not blank its message or
-changelog. `cast.db`'s current release and `releases.json`'s `current.version`
-stay in agreement.
+tool all use the same writer. The CLI and TUI run that writer with the
+virtualenv next to the Cast Python package (`python/.venv`) when it exists.
+A successful release updates `releases.json` and inserts one SQLite row
+(version, change number, message, changelog, and tarball path). Listing
+releases or reading the current release also inserts any JSON versions that
+are missing from `cast.db`. A row that is already stored is left as-is, so
+a second create does not blank its message or changelog. `cast.db`'s current
+release and `releases.json`'s `current.version` stay in agreement.
+
+If creating a release fails, Cast restores `releases.json`, `agent.yaml`,
+and the tarball to the bytes they had before the attempt. A version that
+did not finish is not recorded, so the same version can be created again.
 
 ## Suggested versions
 

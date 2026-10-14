@@ -613,6 +613,26 @@ def _set_agent_yaml_version(path: Path, version: str) -> None:
     _write_preserved_text(path, updated)
 
 
+def _read_optional_bytes(path: Path) -> Optional[bytes]:
+    """Return a file's bytes, or None when the path is not a file."""
+    if not path.is_file():
+        return None
+    return path.read_bytes()
+
+
+def _restore_optional_bytes(path: Path, previous: Optional[bytes]) -> None:
+    """Restore a file to the bytes it had before a release write.
+
+    None means the file did not exist and must be removed.
+    """
+    if previous is None:
+        if path.is_file():
+            path.unlink()
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(previous)
+
+
 def create_release(agent_name: str, version: str, message: str = "", agents_dir: Optional[Path] = None) -> ReleaseInfo:
     """Create a semantic release snapshot.
 
@@ -621,6 +641,10 @@ def create_release(agent_name: str, version: str, message: str = "", agents_dir:
     tarball is then the working tree (project files except .castignore
     paths, .cast/, and .git/), so it records that version. tarball_path
     in releases.json is relative to the agent directory.
+
+    The tarball, releases.json, agent.yaml, and SQLite row are one
+    release. If any of those writes fail, the files are restored to the
+    bytes they had before this call.
 
     Args:
         agent_name: The name of the agent.
@@ -648,42 +672,25 @@ def create_release(agent_name: str, version: str, message: str = "", agents_dir:
             f"Release version '{version}' is lower than agent.yaml version '{current_yaml_version}'"
         )
 
-    # Ensure releases directory exists
-    releases_dir = _ensure_releases_dir(agent_name)
-
     # Get current change number
     change_number = _get_latest_change_number(agent_name)
 
     # Generate timestamp
     timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
-    # Stamp agent.yaml before packing so the tarball and the working
-    # copy record the same release version. Only the version scalar
-    # changes. The snapshot is the agent working tree: the configured
-    # prompt, skills, tools, mcp, tests, and any other project file.
-    # .castignore paths are left out. .cast (undo log and this archive)
-    # and .git stay on disk and are not packed. If packing fails, put
-    # the original file back.
-    tarball_filename = f"{version}.tar.gz"
-    tarball_path = releases_dir / tarball_filename
-    original_yaml = agent_yaml_path.read_bytes() if agent_yaml_path.is_file() else None
-    if original_yaml is not None:
-        _set_agent_yaml_version(agent_yaml_path, version)
-
-    try:
-        with tarfile.open(tarball_path, "w:gz") as tar:
-            for full, rel in _iter_snapshot_paths(agent_path):
-                tar.add(full, arcname=rel, recursive=False, filter=_reject_metadata)
-    except Exception:
-        if original_yaml is not None:
-            agent_yaml_path.write_bytes(original_yaml)
-        if tarball_path.exists():
-            tarball_path.unlink()
-        raise
-
-    # Generate changelog
+    # Changelog reads the previous release. Compute it before writing so a
+    # failure here does not leave a tarball behind.
     last_release_change = get_latest_release_change_number(agent_name)
     changelog = generate_changelog(agent_name, last_release_change)
+
+    # Ensure releases directory exists
+    releases_dir = _ensure_releases_dir(agent_name)
+    tarball_filename = f"{version}.tar.gz"
+    tarball_path = releases_dir / tarball_filename
+    releases_json_path = _get_releases_json_path(agent_name)
+    previous_tarball = _read_optional_bytes(tarball_path)
+    previous_json = _read_optional_bytes(releases_json_path)
+    previous_yaml = _read_optional_bytes(agent_yaml_path)
 
     # Persist a path relative to the agent directory. Callers receive
     # the absolute path of the tarball that was just written.
@@ -697,24 +704,40 @@ def create_release(agent_name: str, version: str, message: str = "", agents_dir:
         tarball_path=stored_tarball_path,
     )
 
-    # Update releases.json
-    releases_json_path = _get_releases_json_path(agent_name)
-    if releases_json_path.exists():
-        with open(releases_json_path, "r") as f:
-            releases_data = json.load(f)
-    else:
+    if previous_json is None:
         releases_data = {"releases": [], "current": None}
+    else:
+        releases_data = json.loads(previous_json.decode("utf-8"))
 
     releases_data["releases"].append(asdict(release_info))
     releases_data["current"] = {"version": version, "change_number": change_number}
 
-    with open(releases_json_path, "w") as f:
-        json.dump(releases_data, f, indent=2)
+    try:
+        # Stamp agent.yaml before packing so the tarball and the working
+        # copy record the same release version. Only the version scalar
+        # changes. The snapshot is the agent working tree: the configured
+        # prompt, skills, tools, mcp, tests, and any other project file.
+        # .castignore paths are left out. .cast (undo log and this archive)
+        # and .git stay on disk and are not packed.
+        if previous_yaml is not None:
+            _set_agent_yaml_version(agent_yaml_path, version)
 
-    # Same writer the CLI, TUI, and builder use. Insert-if-absent so a
-    # pre-existing SQLite row is not replaced. SQLite is local to this
-    # machine, so the synced row stores the resolved absolute path.
-    _sync_releases_from_json(agent_name)
+        with tarfile.open(tarball_path, "w:gz") as tar:
+            for full, rel in _iter_snapshot_paths(agent_path):
+                tar.add(full, arcname=rel, recursive=False, filter=_reject_metadata)
+
+        with open(releases_json_path, "w") as f:
+            json.dump(releases_data, f, indent=2)
+
+        # Same writer the CLI, TUI, and builder use. Insert-if-absent so a
+        # pre-existing SQLite row is not replaced. SQLite is local to this
+        # machine, so the synced row stores the resolved absolute path.
+        _sync_releases_from_json(agent_name)
+    except Exception:
+        _restore_optional_bytes(tarball_path, previous_tarball)
+        _restore_optional_bytes(releases_json_path, previous_json)
+        _restore_optional_bytes(agent_yaml_path, previous_yaml)
+        raise
 
     release_info.tarball_path = str(tarball_path.resolve())
     return release_info
