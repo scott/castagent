@@ -5,6 +5,7 @@ import * as os from 'os'
 import * as path from 'path'
 import sinon from 'sinon'
 import GitInit from '../../../../typescript/cast-cli/src/commands/git/init'
+import {GIT_IDENTITY_HINT} from '../../../../typescript/cast-cli/src/lib/git-identity'
 
 // Helper to create command instance with mocked context
 function createCommandInstance(CommandClass: any, args: string[]): any {
@@ -138,6 +139,9 @@ describe('Git Init Command', () => {
       // Create agent directory
       fs.mkdirSync(tempAgentDir, {recursive: true})
       fs.writeFileSync(path.join(tempAgentDir, 'agent.yaml'), 'name: test-agent\nversion: "1.0"')
+      fs.mkdirSync(path.join(tempAgentDir, 'tools', '__pycache__'), {recursive: true})
+      fs.writeFileSync(path.join(tempAgentDir, 'tools', 'hello.py'), 'print(1)\n')
+      fs.writeFileSync(path.join(tempAgentDir, 'tools', '__pycache__', 'hello.cpython-311.pyc'), 'pyc')
 
       const instance = createCommandInstance(GitInit, ['git', 'init', testAgentName])
       let logged = false
@@ -148,7 +152,28 @@ describe('Git Init Command', () => {
         }
       }
 
-      await instance.run()
+      const previous = snapshotEnv([
+        'GIT_CONFIG_COUNT',
+        'GIT_CONFIG_KEY_0',
+        'GIT_CONFIG_VALUE_0',
+        'GIT_AUTHOR_NAME',
+        'GIT_AUTHOR_EMAIL',
+        'GIT_COMMITTER_NAME',
+        'GIT_COMMITTER_EMAIL',
+      ])
+      process.env.GIT_CONFIG_COUNT = '1'
+      process.env.GIT_CONFIG_KEY_0 = 'init.defaultBranch'
+      process.env.GIT_CONFIG_VALUE_0 = 'develop'
+      process.env.GIT_AUTHOR_NAME = 'Cast Test'
+      process.env.GIT_AUTHOR_EMAIL = 'cast-test@example.com'
+      process.env.GIT_COMMITTER_NAME = 'Cast Test'
+      process.env.GIT_COMMITTER_EMAIL = 'cast-test@example.com'
+
+      try {
+        await instance.run()
+      } finally {
+        restoreEnvMap(previous)
+      }
 
       expect(logged).to.be.true
       // Verify .git directory was created
@@ -167,24 +192,103 @@ describe('Git Init Command', () => {
       })
       expect(status).to.not.contain('memory.db')
 
-      const control = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-git-default-branch-'))
-      try {
-        execFileSync('git', ['init'], {cwd: control})
-        const expectedBranch = execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], {
-          cwd: control,
-          encoding: 'utf8',
-        }).trim()
-        const actualBranch = execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], {
-          cwd: tempAgentDir,
-          encoding: 'utf8',
-        }).trim()
-        expect(actualBranch).to.equal(expectedBranch)
-      } finally {
-        fs.rmSync(control, {recursive: true, force: true})
-      }
+      const tracked = execFileSync('git', ['ls-files'], {
+        cwd: tempAgentDir,
+        encoding: 'utf8',
+      })
+      expect(tracked).to.contain('tools/hello.py')
+      expect(tracked).to.not.contain('__pycache__')
+      expect(tracked).to.not.contain('.pyc')
+      const untracked = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'], {
+        cwd: tempAgentDir,
+        encoding: 'utf8',
+      })
+      expect(untracked).to.not.contain('__pycache__')
+      expect(untracked).to.not.contain('.pyc')
+
+      const actualBranch = execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], {
+        cwd: tempAgentDir,
+        encoding: 'utf8',
+      }).trim()
+      expect(actualBranch).to.equal('main')
 
       const agentYaml = fs.readFileSync(path.join(tempAgentDir, 'agent.yaml'), 'utf8')
       expect(agentYaml).to.contain('branch: main')
     })
+
+    it('should stop before creating a repo when git identity is missing', async () => {
+      const agentName = 'test-git-init-identity-' + Date.now()
+      const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
+      fs.mkdirSync(agentDir, {recursive: true})
+      const originalYaml = 'name: test-agent\nversion: "1.0"\n'
+      fs.writeFileSync(path.join(agentDir, 'agent.yaml'), originalYaml)
+
+      const instance = createCommandInstance(GitInit, ['git', 'init', agentName])
+      let errorMessage = ''
+      instance.error = (msg: any) => {
+        errorMessage = typeof msg === 'string' ? msg : String(msg)
+      }
+      instance.log = () => {}
+
+      const saved = snapshotIdentityEnv()
+      hideGitIdentity()
+      try {
+        await instance.run()
+        expect(errorMessage).to.equal(GIT_IDENTITY_HINT)
+        expect(errorMessage).to.include('git config --global user.name')
+        expect(errorMessage).to.include('git config --global user.email')
+        expect(fs.existsSync(path.join(agentDir, '.git'))).to.equal(false)
+        expect(fs.existsSync(path.join(agentDir, '.gitignore'))).to.equal(false)
+        expect(fs.readFileSync(path.join(agentDir, 'agent.yaml'), 'utf8')).to.equal(originalYaml)
+      } finally {
+        restoreIdentityEnv(saved)
+        fs.rmSync(agentDir, {recursive: true, force: true})
+      }
+    })
   })
 })
+
+function snapshotEnv(keys: string[]): Map<string, string | undefined> {
+  return new Map(keys.map(key => [key, process.env[key]]))
+}
+
+function restoreEnv(key: string, value: string | undefined): void {
+  if (value === undefined) delete process.env[key]
+  else process.env[key] = value
+}
+
+function restoreEnvMap(saved: Map<string, string | undefined>): void {
+  for (const [key, value] of saved) restoreEnv(key, value)
+}
+
+const IDENTITY_ENV_KEYS = [
+  'GIT_CONFIG_GLOBAL',
+  'GIT_CONFIG_SYSTEM',
+  'GIT_CONFIG_NOSYSTEM',
+  'GIT_AUTHOR_NAME',
+  'GIT_AUTHOR_EMAIL',
+  'GIT_COMMITTER_NAME',
+  'GIT_COMMITTER_EMAIL',
+  'EMAIL',
+]
+
+function snapshotIdentityEnv(): Map<string, string | undefined> {
+  return new Map(IDENTITY_ENV_KEYS.map(key => [key, process.env[key]]))
+}
+
+function hideGitIdentity(): void {
+  const empty = path.join(os.tmpdir(), `cast-empty-gitconfig-${process.pid}`)
+  fs.writeFileSync(empty, '')
+  process.env.GIT_CONFIG_GLOBAL = empty
+  process.env.GIT_CONFIG_SYSTEM = empty
+  process.env.GIT_CONFIG_NOSYSTEM = '1'
+  for (const key of IDENTITY_ENV_KEYS.slice(3)) delete process.env[key]
+}
+
+function restoreIdentityEnv(saved: Map<string, string | undefined>): void {
+  const empty = process.env.GIT_CONFIG_GLOBAL
+  for (const [key, value] of saved) restoreEnv(key, value)
+  if (empty && empty.includes('cast-empty-gitconfig-')) {
+    fs.rmSync(empty, {force: true})
+  }
+}
