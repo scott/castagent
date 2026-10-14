@@ -2,14 +2,15 @@ import {Args, Command, Flags} from '@oclif/core'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import simpleGit, {SimpleGit} from 'simple-git'
+import simpleGit, {PushResult, SimpleGit} from 'simple-git'
 
 export default class GitPush extends Command {
   static description = 'Push commits to the remote repository'
 
   static examples = [
     '<%= config.bin %> git push my-agent',
-    '<%= config.bin %> git push my-agent origin main',
+    '<%= config.bin %> git push my-agent --branch main',
+    '<%= config.bin %> git push my-agent --remote upstream --branch feature/x',
   ]
 
   static args = {
@@ -22,8 +23,7 @@ export default class GitPush extends Command {
       default: 'origin',
     }),
     branch: Flags.string({
-      description: 'Branch name',
-      default: 'main',
+      description: 'Branch to push. Defaults to the current branch.',
     }),
   }
 
@@ -39,7 +39,6 @@ export default class GitPush extends Command {
     const {args, flags} = await this.parse(GitPush)
     const agentName = args.agent
     const remote = flags.remote
-    const branch = flags.branch
 
     const agentsDir = this.getAgentsDir()
     const agentPath = path.join(agentsDir, agentName)
@@ -65,23 +64,15 @@ export default class GitPush extends Command {
         )
       }
 
+      const branch = await this.resolveBranch(git, flags.branch, agentName)
+
       this.log(`Pushing to ${remote}/${branch}...`)
 
       const result = await git.push(remote, branch)
-
-      if (result.pushed && result.pushed.length > 0) {
-        this.log('')
-        this.log(`Successfully pushed ${result.pushed.length} commit(s) to ${remote}/${branch}`)
-        for (const push of result.pushed) {
-          const pushItem = push as any
-          const commit = pushItem.commit || 'unknown'
-          this.log(`  ${pushItem.ref || remote}/${branch}: ${String(commit).substring(0, 7)}`)
-        }
-      } else {
-        this.log('Everything up-to-date - no commits to push.')
-      }
+      await this.reportPush(git, result, remote, branch)
 
     } catch (error: any) {
+      if (error?.oclif) throw error
       if (error.message.includes('Authentication failed') || error.message.includes('Permission denied')) {
         this.error(
           `Authentication failed.\n` +
@@ -93,6 +84,51 @@ export default class GitPush extends Command {
         )
       }
       this.error(`Failed to push: ${error.message}`)
+    }
+  }
+
+  private async resolveBranch(git: SimpleGit, requested: string | undefined, agentName: string): Promise<string> {
+    const branch = requested?.trim()
+    if (branch) return branch
+
+    const status = await git.status()
+    if (status.detached || !status.current) {
+      this.error(
+        `HEAD is detached, so there is no current branch to push.\n` +
+        `Pass one with: cast git push ${agentName} --branch <name>`
+      )
+    }
+    return status.current
+  }
+
+  private async reportPush(git: SimpleGit, result: PushResult, remote: string, branch: string): Promise<void> {
+    const target = `${remote}/${branch}`
+    const updatedTo = result.update?.hash?.to
+    const created = (result.pushed ?? []).some(item => item.new)
+
+    if (!updatedTo && !created) {
+      const pushed = result.pushed ?? []
+      const unchanged = pushed.length === 0 || pushed.every(item => item.alreadyUpdated)
+      if (unchanged) {
+        this.log(`Everything up-to-date at ${target}`)
+        return
+      }
+    }
+
+    const hash = updatedTo ?? await this.headHash(git, branch)
+    this.log('')
+    this.log(`Successfully pushed to ${target}`)
+    if (hash) {
+      this.log(`  ${target}: ${hash.substring(0, 7)}`)
+    }
+  }
+
+  private async headHash(git: SimpleGit, branch: string): Promise<string | undefined> {
+    try {
+      const hash = (await git.revparse([branch])).trim()
+      return hash || undefined
+    } catch {
+      return undefined
     }
   }
 }
