@@ -385,6 +385,11 @@ class TestCreateFromDescription:
     def test_creates_email_agent_from_issue_text(self, tmp_path, monkeypatch):
         tools, agents = self._isolate(tmp_path, monkeypatch)
         description = "Email assistant that triages and drafts replies"
+        home_side = Path.home() / ".cast" / "agents" / "email-agent"
+        real_marker = Path.home() / ".cast" / "builder" / "created-agent"
+        marker_before = real_marker.read_text() if real_marker.exists() else None
+        assert not home_side.exists()
+
         info = tools.create_from_description(description)
         assert info["name"] == "email-agent"
         assert info["description"] == description
@@ -395,6 +400,13 @@ class TestCreateFromDescription:
         assert config["description"] == description
         instructions = (agents / "email-agent" / "instructions.md").read_text()
         assert description in instructions
+        changes = agents / "email-agent" / ".cast" / "changes" / "changes.json"
+        assert changes.is_file()
+        assert not home_side.exists()
+        marker_after = real_marker.read_text() if real_marker.exists() else None
+        assert marker_after == marker_before
+        recorded = (tmp_path / "builder" / "created-agent").read_text(encoding="utf-8").strip()
+        assert recorded == "email-agent"
 
     def test_docs_example_picks_email_agent(self, tmp_path, monkeypatch):
         tools, agents = self._isolate(tmp_path, monkeypatch)

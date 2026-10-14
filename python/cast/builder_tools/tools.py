@@ -279,10 +279,16 @@ def create_from_description(description: str) -> Dict[str, str]:
         )
 
     global AGENTS_DIR
+    import cast.versioning as versioning
+
     previous = AGENTS_DIR
+    previous_versioning = versioning.AGENTS_DIR
     override = os.environ.get("CAST_AGENTS_DIR", "").strip()
     if override:
+        # create_version stores snapshots under versioning.AGENTS_DIR.
+        # Keep that next to the scaffold when CAST_AGENTS_DIR is set.
         AGENTS_DIR = Path(override)
+        versioning.AGENTS_DIR = AGENTS_DIR
     try:
         name = _find_available_name(_generate_name_from_description(text))
         if not re.fullmatch(r"[A-Za-z0-9-]+", name):
@@ -297,6 +303,7 @@ def create_from_description(description: str) -> Dict[str, str]:
         }
     finally:
         AGENTS_DIR = previous
+        versioning.AGENTS_DIR = previous_versioning
 
 
 @tool

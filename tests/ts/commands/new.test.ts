@@ -515,53 +515,146 @@ describe('new command - error handling', () => {
 
 describe('new command - stdin without a TTY', () => {
   const worker = path.join(__dirname, 'new-stdin-worker.ts')
+  const repoRoot = path.resolve(__dirname, '../../..')
 
-  function runNew(input: string, home: string) {
-    const agents = path.join(home, '.cast', 'agents')
-    fs.mkdirSync(agents, {recursive: true})
+  function runNew(input: string, extraEnv: NodeJS.ProcessEnv = {}) {
     return spawnSync(process.execPath, ['-r', 'ts-node/register', worker], {
-      cwd: path.resolve(__dirname, '../../..'),
+      cwd: repoRoot,
       env: {
         ...process.env,
-        HOME: home,
-        CAST_AGENTS_DIR: agents,
         TS_NODE_TRANSPILE_ONLY: '1',
+        ...extraEnv,
       },
       encoding: 'utf8',
       input,
     })
   }
 
-  it('creates an agent from a piped description', () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-'))
+  function withMarkerRestore(fn: () => void): void {
+    const marker = path.join(os.homedir(), '.cast', 'builder', 'created-agent')
+    const hadMarker = fs.existsSync(marker)
+    const markerBefore = hadMarker ? fs.readFileSync(marker) : null
     try {
-      const description = 'Email assistant that triages and drafts replies'
-      const result = runNew(`${description}\n`, home)
-      expect(result.status, result.stderr || result.stdout).to.equal(0)
-      expect(result.stdout).to.include("Created agent 'email-agent'")
-      expect(result.stdout).to.include('cast dev email-agent')
-      expect(result.stdout).to.not.include('Launching OpenTUI')
-      const agentDir = path.join(home, '.cast', 'agents', 'email-agent')
-      const agentYaml = fs.readFileSync(path.join(agentDir, 'agent.yaml'), 'utf8')
-      expect(agentYaml).to.include('name: email-agent')
-      expect(agentYaml).to.include(description)
-      const instructions = fs.readFileSync(path.join(agentDir, 'instructions.md'), 'utf8')
-      expect(instructions).to.include(description)
+      fn()
     } finally {
-      fs.rmSync(home, {recursive: true, force: true})
+      if (hadMarker && markerBefore) {
+        fs.mkdirSync(path.dirname(marker), {recursive: true})
+        fs.writeFileSync(marker, markerBefore)
+      } else if (fs.existsSync(marker)) {
+        fs.rmSync(marker)
+      }
     }
-  })
+  }
 
   it('rejects a blank pipe and does not create an agent', () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-blank-'))
+    const agents = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-blank-'))
     try {
-      const result = runNew('   \n', home)
+      const result = runNew('   \n', {CAST_AGENTS_DIR: agents})
       expect(result.status).to.not.equal(0)
       expect(result.stderr).to.include('No description on stdin')
       expect(result.stdout).to.not.include('Launching OpenTUI')
-      expect(fs.readdirSync(path.join(home, '.cast', 'agents'))).to.deep.equal([])
+      expect(fs.readdirSync(agents)).to.deep.equal([])
     } finally {
-      fs.rmSync(home, {recursive: true, force: true})
+      fs.rmSync(agents, {recursive: true, force: true})
     }
+  })
+
+  it('prints the agent from stdin and does not launch the TUI', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-fake-'))
+    const bin = path.join(root, 'bin')
+    const agents = path.join(root, 'agents')
+    const stdinOut = path.join(root, 'stdin.txt')
+    fs.mkdirSync(bin)
+    fs.mkdirSync(agents)
+    const fake = path.join(bin, 'python3')
+    fs.writeFileSync(fake, `#!/usr/bin/env node
+const fs = require('fs')
+const path = require('path')
+const chunks = []
+process.stdin.on('data', (chunk) => chunks.push(chunk))
+process.stdin.on('end', () => {
+  const text = Buffer.concat(chunks).toString('utf8')
+  fs.writeFileSync(process.env.CAST_STDIN_OUT, text)
+  if (process.argv[2] !== '-m' || process.argv[3] !== 'cast.create_from_stdin') {
+    process.stderr.write('unexpected python args\\n')
+    process.exit(9)
+  }
+  const agentPath = path.join(process.env.CAST_AGENTS_DIR, 'email-agent')
+  process.stdout.write(JSON.stringify({name: 'email-agent', path: agentPath}) + '\\n')
+})
+`, {mode: 0o755})
+    try {
+      const description = 'Email assistant that triages and drafts replies'
+      const result = runNew(`${description}\n`, {
+        PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}`,
+        CAST_AGENTS_DIR: agents,
+        CAST_STDIN_OUT: stdinOut,
+      })
+      expect(result.status, result.stderr || result.stdout).to.equal(0)
+      expect(result.stdout).to.include("Created agent 'email-agent'")
+      expect(result.stdout).to.include('cast dev email-agent')
+      expect(result.stdout).to.include(path.join(agents, 'email-agent'))
+      expect(result.stdout).to.not.include('Launching OpenTUI')
+      expect(fs.readFileSync(stdinOut, 'utf8')).to.equal(`${description}\n`)
+    } finally {
+      fs.rmSync(root, {recursive: true, force: true})
+    }
+  })
+
+  it('surfaces a builder failure from the piped path', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-fail-'))
+    const bin = path.join(root, 'bin')
+    fs.mkdirSync(bin)
+    fs.writeFileSync(path.join(bin, 'python3'), `#!/bin/sh
+echo 'Could not derive an agent name from the description.' >&2
+exit 2
+`, {mode: 0o755})
+    try {
+      const result = runNew('hello from the pipe\n', {
+        PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}`,
+      })
+      expect(result.status).to.not.equal(0)
+      expect(result.stderr).to.include('Could not derive an agent name from the description.')
+      expect(result.stdout).to.not.include('Launching OpenTUI')
+    } finally {
+      fs.rmSync(root, {recursive: true, force: true})
+    }
+  })
+
+  it('creates an agent from a piped description', function () {
+    const probe = spawnSync('python3', ['-c', 'import langchain_core, yaml'], {encoding: 'utf8'})
+    if (probe.status !== 0) {
+      this.skip()
+    }
+    const venv = path.join(repoRoot, 'python', '.venv', 'bin', 'python3')
+    if (fs.existsSync(venv)) {
+      this.skip()
+    }
+
+    const agents = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-real-'))
+    const description = 'Email assistant that triages and drafts replies'
+    const homeSide = path.join(os.homedir(), '.cast', 'agents', 'email-agent')
+    const homeExisted = fs.existsSync(homeSide)
+    withMarkerRestore(() => {
+      try {
+        const result = runNew(`${description}\n`, {CAST_AGENTS_DIR: agents})
+        expect(result.status, result.stderr || result.stdout).to.equal(0)
+        expect(result.stdout).to.include("Created agent 'email-agent'")
+        expect(result.stdout).to.include('cast dev email-agent')
+        expect(result.stdout).to.not.include('Launching OpenTUI')
+        const agentDir = path.join(agents, 'email-agent')
+        const agentYaml = fs.readFileSync(path.join(agentDir, 'agent.yaml'), 'utf8')
+        expect(agentYaml).to.include('name: email-agent')
+        expect(agentYaml).to.include(description)
+        const instructions = fs.readFileSync(path.join(agentDir, 'instructions.md'), 'utf8')
+        expect(instructions).to.include(description)
+        expect(fs.existsSync(path.join(agentDir, '.cast', 'changes', 'changes.json'))).to.equal(true)
+        if (!homeExisted) {
+          expect(fs.existsSync(homeSide)).to.equal(false)
+        }
+      } finally {
+        fs.rmSync(agents, {recursive: true, force: true})
+      }
+    })
   })
 })
