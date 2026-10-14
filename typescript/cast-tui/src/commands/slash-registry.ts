@@ -50,6 +50,7 @@ import {
 } from '../lib/import-command.js'
 import type {UiMode} from '../components/header.js'
 import {formatSlashHelp} from '../lib/slash-picker.js'
+import {formatGitLog, loadRecentCommits, parseGitLogCount} from '../lib/git-log.js'
 import {
   CAPTURED_CHILD_STDIO,
   childProcessFailureReason,
@@ -3771,29 +3772,15 @@ cast dev ${agentName}
       }
 
       if (subcommand === 'log') {
+        const parsed = parseGitLogCount(args.slice(1))
+        if (!parsed.ok) {
+          ctx.messages.addAgentMessage(parsed.message, ctx.mode)
+          return
+        }
+
         try {
-          const git = simpleGit(agentPath)
-          const log = await git.log({maxCount: 5})
-
-          if (log.all.length === 0) {
-            ctx.messages.addAgentMessage('No commits yet.', ctx.mode)
-            return
-          }
-
-          const lines: string[] = []
-          lines.push(`Recent commits for '${agentName}'`)
-          lines.push('')
-
-          for (const commit of log.all) {
-            lines.push(`commit ${commit.hash.substring(0, 7)}`)
-            lines.push(`Author: ${commit.author_name}`)
-            lines.push(`Date: ${new Date(commit.date).toLocaleString()}`)
-            lines.push('')
-            lines.push(`    ${commit.message}`)
-            lines.push('')
-          }
-
-          ctx.messages.addAgentMessage(lines.join('\n'), ctx.mode)
+          const commits = await loadRecentCommits(agentPath, parsed.maxCount)
+          ctx.messages.addAgentMessage(formatGitLog(agentName, commits), ctx.mode)
         } catch (err) {
           ctx.messages.addAgentMessage(`Failed to get git log: ${err instanceof Error ? err.message : String(err)}`, ctx.mode)
         }
@@ -3849,7 +3836,7 @@ cast dev ${agentName}
         `  /git add -A                  - Stage all (including deleted)\n` +
         `  /git commit [-m] <msg>       - Commit staged changes\n` +
         `  /git push                    - Push to remote\n` +
-        `  /git log                     - Show recent commits\n` +
+        `  /git log [-n <count>]        - Show recent commits (default 5)\n` +
         `  /git diff                    - Show changes\n\n` +
         `Or use CLI: cast git <command> ${agentName}`,
         ctx.mode
