@@ -465,8 +465,9 @@ cast git push my-agent
 # View commit history
 cast git log my-agent
 
-# View changes
+# View changes. A missing --file path is an error.
 cast git diff my-agent
+cast git diff my-agent --file instructions.md
 
 # Manage remotes
 cast git remote my-agent add origin https://github.com/user/repo.git
