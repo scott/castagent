@@ -54,10 +54,15 @@ The `add` path stores the URL in `agent.yaml`'s `repository.url` so
 to the GitHub CLI (`gh repo create`) to provision the repo on
 GitHub, then adds it as `origin` and pushes the initial commit.
 
+If that remote name is already configured, `add` stops and tells you
+to run `set-url` (or `remove` the remote first). `set-url` replaces
+the URL and writes it to `repository.url`, same as `add`.
+
 Other `cast git remote` actions:
 
 ```bash
 cast git remote my-agent list              # show configured remotes
+cast git remote my-agent set-url origin https://github.com/you/new.git
 cast git remote my-agent remove origin     # drop a remote
 ```
 

@@ -469,6 +469,7 @@ cast git diff my-agent
 
 # Manage remotes
 cast git remote my-agent add origin https://github.com/user/repo.git
+cast git remote my-agent set-url origin https://github.com/user/repo.git
 cast git remote my-agent list
 ```
 
