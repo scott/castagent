@@ -168,6 +168,12 @@ Use `↑/↓` to navigate. `Enter` and `R` resume the highlighted session,
 `F` forks it, `N` renames it, and `D` deletes it. Fork, rename, and
 delete do not have dedicated slash subcommands.
 
+`/save [filename]` writes a plain text copy of the chat on screen. It
+does not write session JSON. With no filename the file is
+`~/.cast/transcripts/<agent>-<timestamp>.txt`. A relative name is saved
+in that directory. An absolute path, or a path that starts with `~`,
+is written at that location. Missing parent directories are created.
+
 ## Storage
 
 ```
