@@ -272,8 +272,7 @@ describe('delete command', () => {
       sandbox.stub(dbModule.db, 'getAgent').returns({ name: agentName }) // But db has it
       sandbox.stub(dbModule.db, 'deleteAgent').callsFake(() => {})
 
-      // Mock keychain
-      sandbox.stub(keychainModule.keychain, 'deleteToken').rejects(new Error('Keychain error'))
+      sandbox.stub(keychainModule.keychain, 'removeAgentToken').resolves({result: 'absent'})
 
       sandbox.stub(instance, 'warn').callsFake(() => {})
       sandbox.stub(instance, 'log').callsFake(() => {})
@@ -312,7 +311,7 @@ describe('delete command', () => {
       sandbox.stub(dbModule.db, 'deleteAgent').callsFake(() => {})
 
       sandbox.stub(keychainModule.keychain, 'getToken').resolves(null)
-      sandbox.stub(keychainModule.keychain, 'deleteToken').resolves()
+      sandbox.stub(keychainModule.keychain, 'removeAgentToken').resolves({result: 'absent'})
 
       sandbox.stub(instance, 'log').callsFake(() => {})
 
@@ -355,6 +354,150 @@ describe('delete command', () => {
 
       // Directory should still exist
       expect(fs.existsSync(agentPath)).to.be.true
+    })
+
+    const secretServiceError = new Error(
+      'The name org.freedesktop.secrets was not provided by any .service files',
+    )
+
+    const captureOutput = (instance: any) => {
+      const logs: string[] = []
+      const warnings: string[] = []
+      sandbox.stub(instance, 'log').callsFake((...args: unknown[]) => {
+        logs.push(args.map(arg => String(arg ?? '')).join(' '))
+      })
+      sandbox.stub(instance, 'warn').callsFake((...args: unknown[]) => {
+        warnings.push(args.map(arg => String(arg ?? '')).join(' '))
+      })
+      const errorSpy = sandbox.spy(console, 'error')
+      return {logs, warnings, errorSpy}
+    }
+
+    it('prints one line when Secret Service is missing and does not claim the token was removed', async () => {
+      const agentName = 'keychain-missing-agent'
+      const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+      fs.mkdirSync(agentPath, {recursive: true})
+      fs.writeFileSync(path.join(agentPath, 'agent.yaml'), 'name: test')
+
+      const instance = createRunInstance(['delete', agentName, '--force'])
+      sandbox.stub(dbModule.db, 'getDeployment').returns(null)
+      sandbox.stub(dbModule.db, 'getAgent').returns({name: agentName})
+      sandbox.stub(dbModule.db, 'deleteAgent').callsFake(() => {})
+      sandbox.stub(require('keytar'), 'getPassword').rejects(secretServiceError)
+      sandbox.stub(require('keytar'), 'deletePassword').rejects(secretServiceError)
+
+      const {logs, warnings, errorSpy} = captureOutput(instance)
+
+      try {
+        await instance.run()
+      } finally {
+        if (fs.existsSync(agentPath)) fs.rmSync(agentPath, {recursive: true, force: true})
+      }
+
+      expect(logs.filter(line => line === 'No keychain available. Nothing removed.')).to.have.length(1)
+      expect(warnings.filter(line => line.startsWith('Failed to remove token from keychain'))).to.deep.equal([])
+      expect(errorSpy.called).to.equal(false)
+      expect(logs.some(line => line.includes('Removed token from keychain.'))).to.equal(false)
+      expect(logs.some(line => line.includes(`Agent '${agentName}' deleted successfully.`))).to.equal(true)
+    })
+
+    it('prints Removed token from keychain only when a token was deleted', async () => {
+      const agentName = 'keychain-removed-agent'
+      const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+      fs.mkdirSync(agentPath, {recursive: true})
+      fs.writeFileSync(path.join(agentPath, 'agent.yaml'), 'name: test')
+
+      const instance = createRunInstance(['delete', agentName, '--force'])
+      sandbox.stub(dbModule.db, 'getDeployment').returns(null)
+      sandbox.stub(dbModule.db, 'getAgent').returns({name: agentName})
+      sandbox.stub(dbModule.db, 'deleteAgent').callsFake(() => {})
+      sandbox.stub(require('keytar'), 'getPassword').resolves('stored-token')
+      sandbox.stub(require('keytar'), 'deletePassword').resolves(true)
+
+      const {logs, warnings, errorSpy} = captureOutput(instance)
+
+      try {
+        await instance.run()
+      } finally {
+        if (fs.existsSync(agentPath)) fs.rmSync(agentPath, {recursive: true, force: true})
+      }
+
+      expect(logs.filter(line => line === 'Removed token from keychain.')).to.have.length(1)
+      expect(logs.some(line => line.includes('Auth token from keychain'))).to.equal(true)
+      expect(logs.some(line => line.includes('No keychain available'))).to.equal(false)
+      expect(warnings).to.deep.equal([])
+      expect(errorSpy.called).to.equal(false)
+    })
+
+    it('does not claim a token was removed when the keychain has none', async () => {
+      const agentName = 'keychain-absent-agent'
+      const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+      fs.mkdirSync(agentPath, {recursive: true})
+      fs.writeFileSync(path.join(agentPath, 'agent.yaml'), 'name: test')
+
+      const instance = createRunInstance(['delete', agentName, '--force'])
+      sandbox.stub(dbModule.db, 'getDeployment').returns(null)
+      sandbox.stub(dbModule.db, 'getAgent').returns(null)
+      sandbox.stub(dbModule.db, 'deleteAgent').callsFake(() => {})
+      sandbox.stub(require('keytar'), 'getPassword').resolves(null)
+      sandbox.stub(require('keytar'), 'deletePassword').resolves(false)
+
+      const {logs, warnings, errorSpy} = captureOutput(instance)
+
+      try {
+        await instance.run()
+      } finally {
+        if (fs.existsSync(agentPath)) fs.rmSync(agentPath, {recursive: true, force: true})
+      }
+
+      expect(logs.some(line => line.includes('Removed token from keychain.'))).to.equal(false)
+      expect(logs.some(line => line.includes('No keychain available'))).to.equal(false)
+      expect(warnings).to.deep.equal([])
+      expect(errorSpy.called).to.equal(false)
+    })
+
+    it('warns once when token deletion fails for another reason', async () => {
+      const agentName = 'keychain-failed-agent'
+      const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+      fs.mkdirSync(agentPath, {recursive: true})
+      fs.writeFileSync(path.join(agentPath, 'agent.yaml'), 'name: test')
+
+      const instance = createRunInstance(['delete', agentName, '--force'])
+      sandbox.stub(dbModule.db, 'getDeployment').returns(null)
+      sandbox.stub(dbModule.db, 'getAgent').returns(null)
+      sandbox.stub(dbModule.db, 'deleteAgent').callsFake(() => {})
+      sandbox.stub(require('keytar'), 'getPassword').resolves(null)
+      sandbox.stub(require('keytar'), 'deletePassword').rejects(new Error('Keychain error'))
+
+      const {logs, warnings, errorSpy} = captureOutput(instance)
+
+      try {
+        await instance.run()
+      } finally {
+        if (fs.existsSync(agentPath)) fs.rmSync(agentPath, {recursive: true, force: true})
+      }
+
+      expect(warnings).to.deep.equal(['Failed to remove token from keychain: Keychain error'])
+      expect(logs.some(line => line.includes('Removed token from keychain.'))).to.equal(false)
+      expect(logs.some(line => line.includes('No keychain available'))).to.equal(false)
+      expect(errorSpy.called).to.equal(false)
+    })
+
+    it('prints one line when a database-only agent has no keychain', async () => {
+      const agentName = 'db-only-no-keychain'
+      const instance = createRunInstance(['delete', agentName, '--force'])
+      sandbox.stub(dbModule.db, 'getDeployment').returns(null)
+      sandbox.stub(dbModule.db, 'getAgent').returns({name: agentName})
+      sandbox.stub(dbModule.db, 'deleteAgent').callsFake(() => {})
+      sandbox.stub(require('keytar'), 'deletePassword').rejects(secretServiceError)
+
+      const {logs, warnings, errorSpy} = captureOutput(instance)
+      await instance.run()
+
+      expect(logs).to.include('No keychain available. Nothing removed.')
+      expect(logs.some(line => line.includes('Removed token from keychain.'))).to.equal(false)
+      expect(warnings.filter(line => /Removed token|Failed to delete token/.test(line))).to.deep.equal([])
+      expect(errorSpy.called).to.equal(false)
     })
   })
 
