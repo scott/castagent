@@ -6,7 +6,7 @@ import simpleGit, {SimpleGit} from 'simple-git'
 import {spawn} from 'child_process'
 import * as yaml from 'yaml'
 
-type RemoteSubcommand = 'add' | 'create' | 'list' | 'remove'
+type RemoteSubcommand = 'add' | 'create' | 'list' | 'remove' | 'set-url'
 
 export default class GitRemote extends Command {
   static description = 'Manage Git remotes for an agent'
@@ -14,15 +14,16 @@ export default class GitRemote extends Command {
   static examples = [
     '<%= config.bin %> git remote my-agent list',
     '<%= config.bin %> git remote my-agent add origin https://github.com/user/repo.git',
+    '<%= config.bin %> git remote my-agent set-url origin https://github.com/user/repo.git',
     '<%= config.bin %> git remote my-agent create origin',
     '<%= config.bin %> git remote my-agent remove origin',
   ]
 
   static args = {
     agent: Args.string({description: 'Agent name', required: true}),
-    action: Args.string({description: 'Action: add, create, list, remove', required: true}),
+    action: Args.string({description: 'Action: add, create, list, remove, set-url', required: true}),
     name: Args.string({description: 'Remote name (e.g., origin)', required: false}),
-    url: Args.string({description: 'Remote URL (for add action)', required: false}),
+    url: Args.string({description: 'Remote URL (for add and set-url)', required: false}),
   }
 
   static flags = {
@@ -191,6 +192,18 @@ export default class GitRemote extends Command {
     this.log(`Removed remote '${name}'.`)
   }
 
+  private async setRemoteUrl(git: SimpleGit, name: string, url: string, agentPath: string): Promise<void> {
+    const remotes = await git.getRemotes()
+    if (!remotes.some(r => r.name === name)) {
+      this.error(`Remote '${name}' does not exist. Use 'add' to create it.`)
+    }
+
+    await git.remote(['set-url', name, url])
+    this.updateAgentYaml(agentPath, url)
+
+    this.log(`Updated remote '${name}' → ${url}`)
+  }
+
   async run(): Promise<void> {
     const {args, flags} = await this.parse(GitRemote)
     const agentName = args.agent
@@ -243,11 +256,23 @@ export default class GitRemote extends Command {
           break
         }
 
+        case 'set-url': {
+          if (!remoteName) {
+            this.error("Remote name required. Usage: cast git remote <agent> set-url <name> <url>")
+          }
+          if (!remoteUrl) {
+            this.error("Remote URL required. Usage: cast git remote <agent> set-url <name> <url>")
+          }
+          await this.setRemoteUrl(git, remoteName, remoteUrl, agentPath)
+          break
+        }
+
         default: {
-          this.error(`Unknown action '${action}'. Use: list, add, create, remove`)
+          this.error(`Unknown action '${action}'. Use: list, add, create, remove, set-url`)
         }
       }
     } catch (error: any) {
+      if (error?.oclif) throw error
       this.error(`Failed: ${error.message}`)
     }
   }
