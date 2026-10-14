@@ -6,6 +6,7 @@ import * as fs from 'fs'
 import * as net from 'net'
 import * as readline from 'readline'
 import {db} from '../lib/sqlite'
+import {ensureMemoryDatabaseIgnored} from '../lib/cast-ignore'
 
 export default class Dev extends Command {
   static description = 'Start agent in development mode'
@@ -306,6 +307,8 @@ export default class Dev extends Command {
   }
 
   private async runRuntimeAgent(agentName: string, agentPath: string, flags: any): Promise<void> {
+    ensureMemoryDatabaseIgnored(agentPath)
+
     const port = flags.port || 0
 
     const pythonExecutable = this.getPythonExecutable()

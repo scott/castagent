@@ -1,4 +1,5 @@
 import tempfile
+import warnings
 from pathlib import Path
 from datetime import datetime, timezone
 import pytest
@@ -98,6 +99,30 @@ class TestMemoryStore:
         
         with pytest.warns(UserWarning, match="appears to be a memory directory"):
             MemoryStore(memory_path, warn_on_new=True)
+
+    def test_agent_root_does_not_warn(self, temp_dir):
+        """cast dev passes the agent root, including when memory/ already exists."""
+        agent = temp_dir / "bb-summarizer"
+        memory = agent / "memory"
+        memory.mkdir(parents=True)
+        (memory / "config.yaml").write_text("memory:\n  enabled: true\n")
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            store = MemoryStore(agent, warn_on_new=True)
+
+        assert store.db_path == agent / "memory" / "memory.db"
+        assert store.db_path.is_file()
+
+    def test_memory_substring_in_path_does_not_warn(self, temp_dir):
+        agent = temp_dir / "memory-scratch" / "bb-summarizer"
+        agent.parent.mkdir(parents=True)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", UserWarning)
+            store = MemoryStore(agent, warn_on_new=True)
+
+        assert store.db_path == agent / "memory" / "memory.db"
 
     def test_delete(self, store):
         store.append(MemoryHighlight(

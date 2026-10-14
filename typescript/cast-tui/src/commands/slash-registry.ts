@@ -3510,8 +3510,20 @@ const commands: SlashCommand[] = [
           const git = simpleGit(agentPath)
           await git.init()
 
-          const gitignorePath = path.join(agentPath, '.gitignore')
-          fs.writeFileSync(gitignorePath, `.cast/versions/\ncast.db\n*.log\n.env\n__pycache__/\n`)
+          // Keep in sync with typescript/cast-cli/src/lib/cast-ignore.ts.
+          const ignoreContents = [
+            '.cast/versions/',
+            'cast.db',
+            '*.log',
+            '.env',
+            '__pycache__/',
+            'memory/memory.db',
+            'memory/memory.db-journal',
+            'memory/memory.db-wal',
+            'memory/memory.db-shm',
+          ].join('\n') + '\n'
+          fs.writeFileSync(path.join(agentPath, '.gitignore'), ignoreContents)
+          fs.writeFileSync(path.join(agentPath, '.castignore'), ignoreContents)
 
           const configPath = path.join(agentPath, 'agent.yaml')
           if (fs.existsSync(configPath)) {
