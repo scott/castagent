@@ -58,7 +58,7 @@ describe('deployment provider registry', () => {
     expect(DeployCommand.flags.provider.options).to.deep.equal(keys)
   })
 
-  it('keeps the local deploy message and the microvm connect result', async () => {
+  it('fails unimplemented local deploy and keeps the microvm connect result', async () => {
     const logs: string[] = []
     const ctx = {
       agentName: 'agent',
@@ -76,11 +76,14 @@ describe('deployment provider registry', () => {
       error: (message: string): never => { throw new Error(message) },
       confirm: async () => true,
     } satisfies DeployContext
-    await localProvider.deploy(ctx)
-    expect(logs).to.deep.equal([
-      'Local deployment: Spawning agent in production mode...',
-      'Not yet implemented. Use --provider docker for now.',
-    ])
+    let thrown = ''
+    try {
+      await localProvider.deploy(ctx)
+    } catch (error) {
+      thrown = error instanceof Error ? error.message : String(error)
+    }
+    expect(thrown).to.equal('Not yet implemented. Use --provider docker for now.')
+    expect(logs).to.deep.equal([])
     expect(localProvider.destroy).to.equal(undefined)
 
     const previous = process.env.DIGITALOCEAN_ACCESS_TOKEN
