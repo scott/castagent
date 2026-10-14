@@ -6,6 +6,78 @@ import * as path from 'path'
 import * as yaml from 'yaml'
 import GitRemote from '../../../../typescript/cast-cli/src/commands/git/remote'
 
+function git(cwd: string, args: string[]): string {
+  return execFileSync('git', args, {cwd, encoding: 'utf8'})
+}
+
+function createCommandInstance(argv: string[]): any {
+  const instance: any = new GitRemote(argv, {color: false} as any)
+  instance.config = {
+    runHook: async () => {},
+    name: 'git:remote',
+    bin: 'cast',
+  }
+  instance.args = {
+    agent: argv[2],
+    action: argv[3],
+    name: argv[4],
+    url: argv[5],
+  }
+  instance.flags = {visibility: 'private'}
+  instance.parse = async () => ({args: instance.args, flags: instance.flags})
+  return instance
+}
+
+function capture(instance: any): {logs: string[]; errors: string[]} {
+  const logs: string[] = []
+  const errors: string[] = []
+  instance.log = (msg?: string) => {
+    logs.push(msg ?? '')
+  }
+  instance.error = (msg?: any) => {
+    const text = typeof msg === 'string' ? msg : (msg?.message ?? String(msg))
+    errors.push(text)
+    const error = new Error(text) as Error & {oclif?: {exit: number}}
+    error.oclif = {exit: 2}
+    throw error
+  }
+  return {logs, errors}
+}
+
+interface AgentRepo {
+  agentName: string
+  agentDir: string
+  configPath: string
+}
+
+function createAgentRepo(yamlBody: string): AgentRepo {
+  const agentName = `test-git-remote-${Date.now()}-${Math.random().toString(16).slice(2)}`
+  const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
+  fs.mkdirSync(agentDir, {recursive: true})
+  const configPath = path.join(agentDir, 'agent.yaml')
+  fs.writeFileSync(configPath, yamlBody)
+  git(agentDir, ['init', '-b', 'main'])
+  git(agentDir, ['config', 'user.email', 'test@test.com'])
+  git(agentDir, ['config', 'user.name', 'Test'])
+  return {agentName, agentDir, configPath}
+}
+
+function removeAgent(repo: AgentRepo): void {
+  fs.rmSync(repo.agentDir, {recursive: true, force: true})
+}
+
+const AGENT_YAML = `# agent identity
+name: bb-git
+description: keep me
+repository:
+  remote: origin
+  url: https://github.com/scott/bb-nope.git
+  branch: main
+tools:
+  builtin:
+    - bash
+`
+
 describe('Git Remote Command', () => {
   describe('static properties', () => {
     it('should have correct description', () => {
@@ -156,6 +228,181 @@ describe('Git Remote Command', () => {
     })
   })
 
+  describe('repository.url', () => {
+    it('clears repository.url when remove drops the remote it came from', async () => {
+      const repo = createAgentRepo(AGENT_YAML)
+      git(repo.agentDir, ['remote', 'add', 'origin', 'https://github.com/scott/bb-nope.git'])
+      const instance = createCommandInstance(['git', 'remote', repo.agentName, 'remove', 'origin'])
+      const {logs} = capture(instance)
+
+      try {
+        await instance.run()
+        const raw = fs.readFileSync(repo.configPath, 'utf8')
+        const config = yaml.parse(raw)
+        expect(logs.join('\n')).to.include("Removed remote 'origin'")
+        expect(git(repo.agentDir, ['remote'])).to.equal('')
+        expect(config.repository.url).to.equal(undefined)
+        expect(raw).to.not.include('bb-nope')
+        expect(config.repository.remote).to.equal('origin')
+        expect(config.repository.branch).to.equal('main')
+        expect(config.description).to.equal('keep me')
+        expect(config.tools.builtin).to.deep.equal(['bash'])
+        expect(raw).to.include('# agent identity')
+      } finally {
+        removeAgent(repo)
+      }
+    })
+
+    it('clears repository.url after add then remove', async () => {
+      const repo = createAgentRepo([
+        'name: bb-git',
+        'repository:',
+        '  remote: origin',
+        '  branch: main',
+        '',
+      ].join('\n'))
+      const url = 'https://github.com/scott/bb-nope.git'
+      const add = createCommandInstance(['git', 'remote', repo.agentName, 'add', 'origin', url])
+      capture(add)
+
+      try {
+        await add.run()
+        expect(yaml.parse(fs.readFileSync(repo.configPath, 'utf8')).repository.url).to.equal(url)
+
+        const remove = createCommandInstance(['git', 'remote', repo.agentName, 'remove', 'origin'])
+        capture(remove)
+        await remove.run()
+
+        const config = yaml.parse(fs.readFileSync(repo.configPath, 'utf8'))
+        expect(config.repository.url).to.equal(undefined)
+        expect(config.repository.remote).to.equal('origin')
+        expect(config.repository.branch).to.equal('main')
+        expect(git(repo.agentDir, ['remote'])).to.equal('')
+      } finally {
+        removeAgent(repo)
+      }
+    })
+
+    it('clears repository.url when the git remote embeds credentials', async () => {
+      const repo = createAgentRepo(AGENT_YAML)
+      git(repo.agentDir, ['remote', 'add', 'origin', 'https://user:secret@github.com/scott/bb-nope.git'])
+      const instance = createCommandInstance(['git', 'remote', repo.agentName, 'remove', 'origin'])
+      capture(instance)
+
+      try {
+        await instance.run()
+        const raw = fs.readFileSync(repo.configPath, 'utf8')
+        const config = yaml.parse(raw)
+        expect(config.repository.url).to.equal(undefined)
+        expect(raw).to.not.include('bb-nope')
+        expect(raw).to.not.include('secret')
+        expect(config.repository.remote).to.equal('origin')
+        expect(config.repository.branch).to.equal('main')
+      } finally {
+        removeAgent(repo)
+      }
+    })
+
+    it('clears repository.url when only the .git suffix differs', async () => {
+      const repo = createAgentRepo([
+        'name: bb-git',
+        'repository:',
+        '  remote: origin',
+        '  url: https://github.com/scott/bb-nope',
+        '  branch: main',
+        '',
+      ].join('\n'))
+      git(repo.agentDir, ['remote', 'add', 'origin', 'https://github.com/scott/bb-nope.git/'])
+      const instance = createCommandInstance(['git', 'remote', repo.agentName, 'remove', 'origin'])
+      capture(instance)
+
+      try {
+        await instance.run()
+        const config = yaml.parse(fs.readFileSync(repo.configPath, 'utf8'))
+        expect(config.repository.url).to.equal(undefined)
+        expect(config.repository.branch).to.equal('main')
+      } finally {
+        removeAgent(repo)
+      }
+    })
+
+    it('keeps repository.url when a different remote is removed', async () => {
+      const repo = createAgentRepo(AGENT_YAML)
+      git(repo.agentDir, ['remote', 'add', 'origin', 'https://github.com/scott/bb-nope.git'])
+      git(repo.agentDir, ['remote', 'add', 'upstream', 'https://github.com/other/fork.git'])
+      const before = fs.readFileSync(repo.configPath, 'utf8')
+      const instance = createCommandInstance(['git', 'remote', repo.agentName, 'remove', 'upstream'])
+      capture(instance)
+
+      try {
+        await instance.run()
+        expect(fs.readFileSync(repo.configPath, 'utf8')).to.equal(before)
+        expect(git(repo.agentDir, ['remote']).trim().split('\n')).to.deep.equal(['origin'])
+      } finally {
+        removeAgent(repo)
+      }
+    })
+
+    it('keeps repository.url when another remote still uses it', async () => {
+      const repo = createAgentRepo(AGENT_YAML)
+      const url = 'https://github.com/scott/bb-nope.git'
+      git(repo.agentDir, ['remote', 'add', 'origin', url])
+      git(repo.agentDir, ['remote', 'add', 'mirror', url])
+      const before = fs.readFileSync(repo.configPath, 'utf8')
+      const instance = createCommandInstance(['git', 'remote', repo.agentName, 'remove', 'origin'])
+      capture(instance)
+
+      try {
+        await instance.run()
+        expect(fs.readFileSync(repo.configPath, 'utf8')).to.equal(before)
+        expect(yaml.parse(before).repository.url).to.equal(url)
+        expect(git(repo.agentDir, ['remote']).trim()).to.equal('mirror')
+      } finally {
+        removeAgent(repo)
+      }
+    })
+
+    it('leaves agent.yaml unchanged when repository.url is absent', async () => {
+      const body = [
+        'name: bb-git',
+        'repository:',
+        '  remote: origin',
+        '  branch: main',
+        '',
+      ].join('\n')
+      const repo = createAgentRepo(body)
+      git(repo.agentDir, ['remote', 'add', 'origin', 'https://github.com/scott/bb-nope.git'])
+      const instance = createCommandInstance(['git', 'remote', repo.agentName, 'remove', 'origin'])
+      capture(instance)
+
+      try {
+        await instance.run()
+        expect(fs.readFileSync(repo.configPath, 'utf8')).to.equal(body)
+        expect(git(repo.agentDir, ['remote'])).to.equal('')
+      } finally {
+        removeAgent(repo)
+      }
+    })
+
+    it('does not change agent.yaml when the remote is missing', async () => {
+      const repo = createAgentRepo(AGENT_YAML)
+      const before = fs.readFileSync(repo.configPath, 'utf8')
+      const instance = createCommandInstance(['git', 'remote', repo.agentName, 'remove', 'origin'])
+      const {errors} = capture(instance)
+
+      try {
+        await instance.run()
+        expect.fail('expected a missing remote to fail')
+      } catch (error: any) {
+        expect(String(error.message)).to.include('does not exist')
+        expect(errors.join('\n')).to.include('does not exist')
+        expect(fs.readFileSync(repo.configPath, 'utf8')).to.equal(before)
+      } finally {
+        removeAgent(repo)
+      }
+    })
+  })
+
   describe('error handling', () => {
     it('should error if agent does not exist', () => {
       expect(GitRemote).to.be.a('function')
@@ -171,26 +418,12 @@ describe('Git Remote Command', () => {
   })
 })
 
-function git(cwd: string, args: string[]): string {
-  return execFileSync('git', args, {
-    cwd,
-    encoding: 'utf8',
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: {
-      ...process.env,
-      GIT_CONFIG_COUNT: '1',
-      GIT_CONFIG_KEY_0: 'init.defaultBranch',
-      GIT_CONFIG_VALUE_0: 'main',
-    },
-  })
-}
-
 interface RepoContext {
   agentName: string
   agentDir: string
 }
 
-function createAgentRepo(remoteUrl = 'https://example.com/original.git'): RepoContext {
+function createSetUrlRepo(remoteUrl = 'https://example.com/original.git'): RepoContext {
   const agentName = `test-remote-${Date.now()}-${Math.random().toString(16).slice(2)}`
   const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
 
@@ -215,40 +448,6 @@ function removeRepo(ctx: RepoContext): void {
   fs.rmSync(ctx.agentDir, {recursive: true, force: true})
 }
 
-function createCommandInstance(args: string[]): any {
-  const instance: any = new GitRemote(args, {color: false} as any)
-  instance.config = {
-    runHook: async () => {},
-    name: 'git:remote',
-    bin: 'cast',
-  }
-  instance.args = {
-    agent: args[2],
-    action: args[3],
-    name: args[4],
-    url: args[5],
-  }
-  instance.flags = {visibility: 'private'}
-  instance.parse = async () => ({args: instance.args, flags: instance.flags})
-  return instance
-}
-
-function capture(instance: any): {logs: string[]; errors: string[]} {
-  const logs: string[] = []
-  const errors: string[] = []
-  instance.log = (msg?: string) => {
-    logs.push(msg ?? '')
-  }
-  instance.error = (msg?: any) => {
-    const text = typeof msg === 'string' ? msg : (msg?.message ?? String(msg))
-    errors.push(text)
-    const error = new Error(text) as Error & {oclif?: {exit: number}}
-    error.oclif = {exit: 2}
-    throw error
-  }
-  return {logs, errors}
-}
-
 function remoteUrl(agentDir: string, name: string, push = false): string {
   const args = push ? ['remote', 'get-url', '--push', name] : ['remote', 'get-url', name]
   return git(agentDir, args).trim()
@@ -270,7 +469,7 @@ describe('Git Remote set-url', () => {
   })
 
   it('updates an existing remote URL and agent.yaml', async () => {
-    const ctx = createAgentRepo()
+    const ctx = createSetUrlRepo()
     repos.push(ctx)
     const next = 'https://example.com/x.git'
     const instance = createCommandInstance(['git', 'remote', ctx.agentName, 'set-url', 'up', next])
@@ -292,7 +491,7 @@ describe('Git Remote set-url', () => {
   })
 
   it('points add at set-url when the remote already exists', async () => {
-    const ctx = createAgentRepo()
+    const ctx = createSetUrlRepo()
     repos.push(ctx)
     const original = 'https://example.com/original.git'
     const instance = createCommandInstance([
@@ -314,7 +513,7 @@ describe('Git Remote set-url', () => {
   })
 
   it('rejects set-url for a remote that does not exist', async () => {
-    const ctx = createAgentRepo()
+    const ctx = createSetUrlRepo()
     repos.push(ctx)
     const original = 'https://example.com/original.git'
     const instance = createCommandInstance([
@@ -337,7 +536,7 @@ describe('Git Remote set-url', () => {
   })
 
   it('requires a remote name and url', async () => {
-    const ctx = createAgentRepo()
+    const ctx = createSetUrlRepo()
     repos.push(ctx)
 
     const missingName = createCommandInstance(['git', 'remote', ctx.agentName, 'set-url'])
@@ -362,7 +561,7 @@ describe('Git Remote set-url', () => {
   })
 
   it('rejects an unknown action and lists set-url', async () => {
-    const ctx = createAgentRepo()
+    const ctx = createSetUrlRepo()
     repos.push(ctx)
     const instance = createCommandInstance(['git', 'remote', ctx.agentName, 'rename', 'up'])
     capture(instance)

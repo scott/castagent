@@ -4,7 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 import simpleGit, {SimpleGit} from 'simple-git'
 import {spawn} from 'child_process'
-import * as yaml from 'yaml'
+import {isMap, isScalar, parseDocument, parse as parseYaml, stringify as stringifyYaml} from 'yaml'
 
 type RemoteSubcommand = 'add' | 'create' | 'list' | 'remove' | 'set-url'
 
@@ -66,7 +66,7 @@ export default class GitRemote extends Command {
     const configPath = path.join(agentPath, 'agent.yaml')
     if (fs.existsSync(configPath)) {
       const content = fs.readFileSync(configPath, 'utf-8')
-      return yaml.parse(content) || {}
+      return parseYaml(content) || {}
     }
     return {}
   }
@@ -78,7 +78,7 @@ export default class GitRemote extends Command {
     config.repository = config.repository || {}
     config.repository.url = url
 
-    fs.writeFileSync(configPath, yaml.stringify(config))
+    fs.writeFileSync(configPath, stringifyYaml(config))
   }
 
   private async listRemotes(git: SimpleGit, agentName: string): Promise<void> {
@@ -182,13 +182,95 @@ export default class GitRemote extends Command {
     }) as Promise<void>
   }
 
-  private async removeRemote(git: SimpleGit, name: string): Promise<void> {
-    const remotes = await git.getRemotes()
-    if (!remotes.some(r => r.name === name)) {
-      this.error(`Remote '${name}' does not exist.`)
+  // Match URLs written by `add` and `create`. A trailing slash, a `.git`
+  // suffix, or credentials embedded in an https remote still name the
+  // same repository.
+  private normalizeRemoteUrl(url: string): string {
+    let normalized = url.trim()
+    while (normalized.endsWith('/')) {
+      normalized = normalized.slice(0, -1)
+    }
+    if (normalized.toLowerCase().endsWith('.git')) {
+      normalized = normalized.slice(0, -4)
     }
 
+    if (/^https?:\/\//i.test(normalized)) {
+      try {
+        const parsed = new URL(normalized)
+        parsed.username = ''
+        parsed.password = ''
+        normalized = parsed.toString()
+        while (normalized.endsWith('/')) {
+          normalized = normalized.slice(0, -1)
+        }
+      } catch {
+        return normalized
+      }
+    }
+
+    return normalized
+  }
+
+  private sameRemoteUrl(left: string, right: string): boolean {
+    const normalizedLeft = this.normalizeRemoteUrl(left)
+    const normalizedRight = this.normalizeRemoteUrl(right)
+    return normalizedLeft.length > 0 && normalizedLeft === normalizedRight
+  }
+
+  private remoteUrls(remote: {refs?: {fetch?: string; push?: string}}): string[] {
+    const urls = [remote.refs?.fetch, remote.refs?.push]
+    return urls.filter((url): url is string => typeof url === 'string' && url.length > 0)
+  }
+
+  // Drop repository.url when it points at the remote being removed and no
+  // remaining remote still serves that URL. Leave the rest of agent.yaml
+  // alone, including repository.remote and repository.branch.
+  private repositoryYamlWithoutStaleUrl(
+    agentPath: string,
+    removedUrls: string[],
+    remaining: Array<{refs?: {fetch?: string; push?: string}}>,
+  ): string | null {
+    const configPath = path.join(agentPath, 'agent.yaml')
+    if (!fs.existsSync(configPath) || removedUrls.length === 0) return null
+
+    const content = fs.readFileSync(configPath, 'utf-8')
+    const doc = parseDocument(content)
+    if (!isMap(doc.contents)) return null
+
+    const repository = doc.contents.get('repository')
+    if (!isMap(repository)) return null
+
+    const urlNode = repository.get('url', true)
+    if (!isScalar(urlNode)) return null
+    const currentUrl: unknown = urlNode.value
+    if (typeof currentUrl !== 'string') return null
+    if (!removedUrls.some(url => this.sameRemoteUrl(currentUrl, url))) return null
+
+    const stillUsed = remaining.some(remote =>
+      this.remoteUrls(remote).some(url => this.sameRemoteUrl(currentUrl, url)),
+    )
+    if (stillUsed) return null
+
+    repository.delete('url')
+    return doc.toString()
+  }
+
+  private async removeRemote(git: SimpleGit, name: string, agentPath: string): Promise<void> {
+    const remotes = await git.getRemotes(true)
+    const target = remotes.find(remote => remote.name === name)
+    if (!target) {
+      this.error(`Remote '${name}' does not exist.`)
+      return
+    }
+
+    const removedUrls = this.remoteUrls(target)
+    const remaining = remotes.filter(remote => remote.name !== name)
+    const nextYaml = this.repositoryYamlWithoutStaleUrl(agentPath, removedUrls, remaining)
+
     await git.removeRemote(name)
+    if (nextYaml !== null) {
+      fs.writeFileSync(path.join(agentPath, 'agent.yaml'), nextYaml)
+    }
     this.log(`Removed remote '${name}'.`)
   }
 
@@ -252,7 +334,7 @@ export default class GitRemote extends Command {
           if (!remoteName) {
             this.error("Remote name required. Usage: cast git remote <agent> remove <name>")
           }
-          await this.removeRemote(git, remoteName)
+          await this.removeRemote(git, remoteName, agentPath)
           break
         }
 

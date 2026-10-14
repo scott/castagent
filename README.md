@@ -473,12 +473,15 @@ cast git diff my-agent --file instructions.md
 cast git remote my-agent add origin https://github.com/user/repo.git
 cast git remote my-agent set-url origin https://github.com/user/repo.git
 cast git remote my-agent list
+cast git remote my-agent remove origin
 ```
 
 `cast git init` writes ignore rules to `.gitignore` and `.castignore`.
 Those rules leave runtime files such as `memory/memory.db` out of the
 repository. `cast dev` adds the memory database rules to an agent that
 already has a Git repo.
+
+Removing a remote also deletes `repository.url` from `agent.yaml` when that URL belonged to the remote and no other remote still uses it.
 
 ## Development
 
