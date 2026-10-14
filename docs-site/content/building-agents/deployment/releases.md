@@ -33,6 +33,11 @@ Releases:
 ─────────────────────────────────────────────────────────────
 ```
 
+In the TUI, `{% ref "slash:releases" %}` lists releases for the agent
+open in the session. Inside `cast new`, that is the agent the wizard
+just created. Before an agent exists, the command replies
+`No agent is loaded.`
+
 `releases.json` is the manifest; the tarballs (`1.0.tar.gz`, `1.5.tar.gz`,
 …) sit alongside it. `agent.yaml`'s `version: "1.6"` always points at the
 current release.

@@ -72,9 +72,16 @@ In the TUI, `/undo` and `/redo` shell out to the CLI:
 /redo 3       # step forward three changes
 ```
 
-Both report success or failure in the chat. A future iteration will
-add `/undo-to` with a modal picker (see the modal design standards in
-`AGENTS.md`).
+Both report success or failure in the chat. The failure line includes
+the CLI's reason. The child process does not draw that text over the
+input line.
+
+Inside `cast new`, `/undo` and `/redo` act on the agent the wizard just
+created. Before that agent exists, they reply `No agent is loaded.`
+In `cast dev` and `cast edit`, they act on the agent open in the session.
+
+A future iteration will add `/undo-to` with a modal picker (see the
+modal design standards in `AGENTS.md`).
 
 ## How it relates to releases
 

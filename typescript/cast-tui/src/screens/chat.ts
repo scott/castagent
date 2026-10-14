@@ -85,6 +85,10 @@ export async function showChatScreen(
 
     // Mutable state for /connect
     let agentName = initialAgentName
+    // `cast new` labels this session "Cast Builder". Slash commands that
+    // touch an agent directory use this timestamp to find the agent the
+    // wizard creates after the screen opens.
+    const sessionStartedAtMs = Date.now()
     let agentUrl = initialAgentUrl
     let client = new A2AClient(agentUrl, authToken, edgeToken)
     let mode: Mode = 'plan'
@@ -280,6 +284,7 @@ export async function showChatScreen(
             currentSessionId = v
             sessionContext.start(v)
           },
+          sessionStartedAtMs,
           loadSession: async (sessionId: string) => {
             const sess: Session | null = await getSession(sessionId)
             if (!sess) {

@@ -276,6 +276,8 @@ After creation, start your agent with:
 cast dev <agent-name>
 ```
 
+Inside that wizard, `/git`, `/undo`, `/redo`, `/describe`, and `/releases` act on the agent just created. Before an agent exists, they reply `No agent is loaded.` `/undo` and `/redo` show the CLI failure reason in the chat. The CLI process does not write that text over the input line.
+
 ### Editing an Existing Agent
 
 The `cast edit` command loads an existing agent into the interactive Builder TUI, allowing you to modify its configuration, instructions, tools, and MCP integrations through conversation:

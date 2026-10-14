@@ -11,6 +11,23 @@ from langchain_core.tools import tool
 from cast.versioning import create_version
 
 AGENTS_DIR = Path.home() / ".cast" / "agents"
+BUILDER_DIR = Path.home() / ".cast" / "builder"
+CREATED_AGENT_MARKER = "created-agent"
+
+
+def _remember_created_agent(name: str) -> None:
+    """Record the agent this builder session just created.
+
+    ``cast new`` opens the TUI as "Cast Builder". Slash commands read
+    this file so they act on the new agent. A write failure must not
+    undo the scaffold.
+    """
+    try:
+        marker = BUILDER_DIR / CREATED_AGENT_MARKER
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        marker.write_text(name.strip() + "\n", encoding="utf-8")
+    except OSError:
+        return
 
 
 def _get_agent_path(name: str) -> Path:
@@ -241,6 +258,8 @@ def create_agent(name: str, description: str = "") -> str:
 
     # Create initial version
     create_version(name, source="create", message="Initial version", agents_dir=AGENTS_DIR)
+
+    _remember_created_agent(name)
 
     return f"Agent '{name}' created successfully at {agent_path}"
 

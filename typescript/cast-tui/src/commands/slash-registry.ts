@@ -47,6 +47,12 @@ import {
 } from '../lib/import-command.js'
 import type {UiMode} from '../components/header.js'
 import {formatSlashHelp} from '../lib/slash-picker.js'
+import {
+  CAPTURED_CHILD_STDIO,
+  childProcessFailureReason,
+  NO_AGENT_LOADED_MESSAGE,
+  resolveCommandAgent,
+} from '../lib/subject-agent.js'
 
 // Get agent description from agent.yaml
 function getAgentDescription(agentName: string): string {
@@ -108,6 +114,11 @@ export interface CommandContext {
    * commands to dispatch to their subcommands.
    */
   executeSubcommand?: (name: string, args: string[]) => Promise<void>
+  /**
+   * When this chat screen opened. `cast new` uses it so slash commands
+   * can tell an agent created during the wizard from older agents.
+   */
+  sessionStartedAtMs?: number
 }
 
 /**
@@ -1681,6 +1692,20 @@ function openShutdownPicker(ctx: CommandContext, rows: any[], castBinary: string
   modal.show()
 }
 
+/**
+ * Agent directory for commands that read or change files.
+ * In `cast dev` and `cast edit` this is the open agent. In `cast new`
+ * it is the agent the wizard just created, or null when none exists yet.
+ */
+function requireSubjectAgent(ctx: CommandContext): string | null {
+  const resolved = resolveCommandAgent(ctx.agentName, ctx.sessionStartedAtMs)
+  if (!resolved.ok) {
+    ctx.messages.addAgentMessage(resolved.message || NO_AGENT_LOADED_MESSAGE, ctx.mode)
+    return null
+  }
+  return resolved.name
+}
+
 const commands: SlashCommand[] = [
   {
     name: 'help',
@@ -1717,21 +1742,22 @@ const commands: SlashCommand[] = [
         ctx.messages.addAgentMessage('Usage: /undo [steps]', ctx.mode)
         return
       }
+      const agentName = requireSubjectAgent(ctx)
+      if (!agentName) return
       try {
         const out = execFileSync(
           findCastBinary() ?? 'cast',
-          ['undo', ctx.agentName, '--steps', String(steps), '--json'],
-          {encoding: 'utf-8', cwd: os.homedir()},
+          ['undo', agentName, '--steps', String(steps), '--json'],
+          {encoding: 'utf-8', cwd: os.homedir(), stdio: CAPTURED_CHILD_STDIO},
         ).trim()
         const parsed = JSON.parse(out)
         const count = Array.isArray(parsed) ? parsed.length : 0
         ctx.messages.addAgentMessage(
-          `Undid ${count} change${count === 1 ? '' : 's'} for '${ctx.agentName}'. Use /redo to bring them back.`,
+          `Undid ${count} change${count === 1 ? '' : 's'} for '${agentName}'. Use /redo to bring them back.`,
           ctx.mode,
         )
-      } catch (err: any) {
-        const msg = String(err?.stderr || err?.message || err)
-        ctx.messages.addAgentMessage(`Undo failed: ${msg.split('\n').pop() ?? 'unknown error'}`, ctx.mode)
+      } catch (err: unknown) {
+        ctx.messages.addAgentMessage(`Undo failed: ${childProcessFailureReason(err)}`, ctx.mode)
       }
     },
   },
@@ -1748,21 +1774,22 @@ const commands: SlashCommand[] = [
         ctx.messages.addAgentMessage('Usage: /redo [steps]', ctx.mode)
         return
       }
+      const agentName = requireSubjectAgent(ctx)
+      if (!agentName) return
       try {
         const out = execFileSync(
           findCastBinary() ?? 'cast',
-          ['redo', ctx.agentName, '--steps', String(steps), '--json'],
-          {encoding: 'utf-8', cwd: os.homedir()},
+          ['redo', agentName, '--steps', String(steps), '--json'],
+          {encoding: 'utf-8', cwd: os.homedir(), stdio: CAPTURED_CHILD_STDIO},
         ).trim()
         const parsed = JSON.parse(out)
         const count = Array.isArray(parsed) ? parsed.length : 0
         ctx.messages.addAgentMessage(
-          `Redid ${count} change${count === 1 ? '' : 's'} for '${ctx.agentName}'.`,
+          `Redid ${count} change${count === 1 ? '' : 's'} for '${agentName}'.`,
           ctx.mode,
         )
-      } catch (err: any) {
-        const msg = String(err?.stderr || err?.message || err)
-        ctx.messages.addAgentMessage(`Redo failed: ${msg.split('\n').pop() ?? 'unknown error'}`, ctx.mode)
+      } catch (err: unknown) {
+        ctx.messages.addAgentMessage(`Redo failed: ${childProcessFailureReason(err)}`, ctx.mode)
       }
     },
   },
@@ -2011,6 +2038,9 @@ const commands: SlashCommand[] = [
     category: 'agent',
     modes: ['dev', 'production'],
     handler: async (ctx) => {
+      const agentName = requireSubjectAgent(ctx)
+      if (!agentName) return
+
       const db = await getDb()
       if (!db) {
         ctx.messages.addAgentMessage('Unable to access agent database.', ctx.mode)
@@ -2018,12 +2048,12 @@ const commands: SlashCommand[] = [
       }
 
       try {
-        const agent = db.getAgent(ctx.agentName)
-        const localAgent = db.getLocalAgent(ctx.agentName)
-        const deployments = db.listDeployments(ctx.agentName)
+        const agent = db.getAgent(agentName)
+        const localAgent = db.getLocalAgent(agentName)
+        const deployments = db.listDeployments(agentName)
 
         const lines: string[] = []
-        lines.push(`Agent: ${ctx.agentName}`)
+        lines.push(`Agent: ${agentName}`)
         lines.push('')
 
         if (agent) {
@@ -2082,7 +2112,7 @@ const commands: SlashCommand[] = [
         const yaml = require('yaml')
 
         // Use stored yaml path or fallback to default location
-        const agentYamlPath = agent?.agent_yaml_path || path.join(os.homedir(), '.cast', 'agents', ctx.agentName, 'agent.yaml')
+        const agentYamlPath = agent?.agent_yaml_path || path.join(os.homedir(), '.cast', 'agents', agentName, 'agent.yaml')
         const agentDir = path.dirname(agentYamlPath)
 
           if (fs.existsSync(agentYamlPath)) {
@@ -3158,7 +3188,8 @@ const commands: SlashCommand[] = [
     category: 'session',
     modes: ['dev', 'production'],
     handler: async (ctx) => {
-      const agentName = ctx.agentName
+      const agentName = requireSubjectAgent(ctx)
+      if (!agentName) return
       const releases = await getReleasesForAgent(agentName)
       const db = await getDb()
       const activeDep = db ? db.getActiveDeployment(agentName) : null
@@ -3459,7 +3490,8 @@ const commands: SlashCommand[] = [
     modes: ['dev', 'production'],
     args: '[init|status|add|commit|push|log|diff]',
     handler: async (ctx, args) => {
-      const agentName = ctx.agentName
+      const agentName = requireSubjectAgent(ctx)
+      if (!agentName) return
       const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
       const gitDir = path.join(agentPath, '.git')
 

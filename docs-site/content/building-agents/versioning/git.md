@@ -153,6 +153,10 @@ subcommands:
 There is no TUI-side modal picker for Git — it shells out to the
 CLI and prints the output into the chat.
 
+Inside `cast new`, `/git` acts on the agent the wizard just created.
+Before that agent exists, it replies `No agent is loaded.` In
+`cast dev` and `cast edit`, `/git` acts on the agent open in the session.
+
 ## When NOT to use it
 
 If you only ever deploy via `cast release` on a single machine and
