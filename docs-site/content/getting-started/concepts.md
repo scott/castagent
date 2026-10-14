@@ -44,7 +44,7 @@ head, the rest of the documentation is just a list of which knob does what.
 |---|---|---|
 | **Purpose** | Helps you *create* agents | *Runs* the agents you've created |
 | **Transport** | stdio JSON-RPC | A2A over HTTP (port 10000–65535 locally) |
-| **Tools** | `create_agent`, `update_config`, `install_mcp`, `recommend_model`, `list_agents` | `bash`, `read`, `glob`, plus MCP servers and custom tools you've added |
+| **Tools** | `create_agent`, `update_config`, `install_mcp`, `recommend_model`, `list_agents` | `bash`, `read`, `glob`, plus MCP servers you've added. `tools.custom` is printed by `cast describe` and is not imported |
 | **Auth** | none (local only) | bearer token in production, none locally |
 | **User interface** | the TUI you see during `cast new` / `cast edit` | the TUI you see during `cast dev` / `cast connect` |
 | **Skills** | `~/.cast/builder/skills/<name>/SKILL.md` is appended to the builder prompt. These skills guide creation and editing. They apply on the next `cast new` or `cast edit`. | Builder skills are not runtime skills. The runtime agent does not load them. |

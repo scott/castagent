@@ -280,6 +280,43 @@ class TestRuntimeAgentLLMMode:
 
     @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")
+    def test_custom_entries_are_not_loaded(self, mock_create_react_agent, mock_provider_class, temp_agent_dir):
+        """String and path custom entries stay on the config and are not imported."""
+        tools_dir = os.path.join(temp_agent_dir, "tools")
+        os.makedirs(tools_dir, exist_ok=True)
+        with open(os.path.join(tools_dir, "email_tools.py"), "w", encoding="utf-8") as handle:
+            handle.write("def email_tools():\n    return 'unused'\n")
+
+        config_path = os.path.join(temp_agent_dir, "agent.yaml")
+        with open(config_path, encoding="utf-8") as handle:
+            text = handle.read()
+        text = text.replace(
+            "  custom: []",
+            "  custom:\n    - email_tools\n    - path: tools/email_tools.py",
+        )
+        with open(config_path, "w", encoding="utf-8") as handle:
+            handle.write(text)
+
+        config = AgentConfig.from_path(temp_agent_dir)
+        assert config.tools["custom"] == [
+            "email_tools",
+            {"path": "tools/email_tools.py"},
+        ]
+
+        mock_provider = MagicMock()
+        mock_provider.create_llm.return_value = MagicMock()
+        mock_provider_class.return_value = mock_provider
+        mock_create_react_agent.return_value = MagicMock()
+
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
+            agent = RuntimeAgent(config)
+
+        assert agent.tools == [bash_tool, read_tool, glob_tool]
+        loaded = mock_create_react_agent.call_args.kwargs["tools"]
+        assert loaded == [bash_tool, read_tool, glob_tool]
+
+    @patch("cast.agent.runtime.get_provider")
+    @patch("cast.agent.runtime.create_react_agent")
     @pytest.mark.asyncio
     async def test_process_message_llm_mode(self, mock_create_react_agent, mock_provider_class, agent_config):
         """process_message should invoke LLM graph when available."""

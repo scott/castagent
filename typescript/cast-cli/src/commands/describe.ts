@@ -5,6 +5,33 @@ import * as path from 'path'
 import * as yaml from 'yaml'
 import {db} from '../lib/sqlite'
 
+// A custom entry is a module name string or an object with path.
+// Other values are skipped so the Custom line is not blank.
+export function customToolLabel(entry: unknown): string | undefined {
+  if (typeof entry === 'string') {
+    const label = entry.trim()
+    return label.length > 0 ? label : undefined
+  }
+  if (entry !== null && typeof entry === 'object' && !Array.isArray(entry)) {
+    const pathValue = (entry as {path?: unknown}).path
+    if (typeof pathValue === 'string') {
+      const label = pathValue.trim()
+      return label.length > 0 ? label : undefined
+    }
+  }
+  return undefined
+}
+
+export function customToolLabels(entries: unknown): string[] {
+  if (!Array.isArray(entries)) return []
+  const labels: string[] = []
+  for (const entry of entries) {
+    const label = customToolLabel(entry)
+    if (label) labels.push(label)
+  }
+  return labels
+}
+
 export default class Describe extends Command {
   static description = 'Show agent description and details'
 
@@ -108,7 +135,7 @@ export default class Describe extends Command {
     this.log('───────────────────────────────────────────────────────────────')
     const builtinTools = agentConfig.tools?.builtin || []
     const mcpServers = (agentConfig.tools?.mcp || []).map((m: any) => m.server)
-    const customTools = (agentConfig.tools?.custom || []).map((c: any) => c.path)
+    const customTools = customToolLabels(agentConfig.tools?.custom)
 
     if (builtinTools.length > 0) {
       this.log(`  Built-in: ${builtinTools.join(', ')}`)

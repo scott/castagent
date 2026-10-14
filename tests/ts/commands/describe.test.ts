@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import * as yaml from 'yaml'
+import Describe, {customToolLabels} from '../../../typescript/cast-cli/src/commands/describe'
 import {db} from '../../../typescript/cast-cli/src/lib/sqlite'
 
 describe('describe command', () => {
@@ -224,6 +225,140 @@ describe('describe command', () => {
 
       expect(truncated).to.equal(10)
       expect(`... (${truncated} more lines)`).to.equal('... (10 more lines)')
+    })
+  })
+
+  describe('custom tool labels', () => {
+    it('keeps module name strings and object paths', () => {
+      expect(customToolLabels([
+        'email_tools',
+        {path: 'tools/summarize_thread.py'},
+        '  trimmed_tool  ',
+      ])).to.deep.equal([
+        'email_tools',
+        'tools/summarize_thread.py',
+        'trimmed_tool',
+      ])
+    })
+
+    it('drops blank strings, missing paths, and non-lists', () => {
+      expect(customToolLabels([
+        '',
+        '   ',
+        {},
+        {path: ''},
+        {path: '   '},
+        {name: 'email_tools'},
+        3,
+        null,
+      ])).to.deep.equal([])
+      expect(customToolLabels(undefined)).to.deep.equal([])
+      expect(customToolLabels('email_tools')).to.deep.equal([])
+    })
+  })
+
+  describe('custom tool display', () => {
+    const created: string[] = []
+
+    function writeAgent(name: string, yamlBody: string): void {
+      const agentPath = path.join(os.homedir(), '.cast', 'agents', name)
+      fs.mkdirSync(agentPath, {recursive: true})
+      fs.writeFileSync(path.join(agentPath, 'agent.yaml'), yamlBody)
+      created.push(agentPath)
+    }
+
+    function createCommand(agentName: string): any {
+      const instance: any = new Describe(['describe', agentName], {color: false} as any)
+      instance.config = {
+        runHook: async () => {},
+        name: 'describe',
+        bin: 'cast',
+      }
+      instance.args = {agent: agentName}
+      instance.parse = async () => ({args: instance.args, flags: {}})
+      return instance
+    }
+
+    async function runDescribe(agentName: string): Promise<string[]> {
+      const instance = createCommand(agentName)
+      const logs: string[] = []
+      instance.log = (msg?: string) => {
+        logs.push(msg ?? '')
+      }
+      instance.error = (msg?: any) => {
+        const text = typeof msg === 'string' ? msg : (msg?.message ?? String(msg))
+        throw new Error(text)
+      }
+      await instance.run()
+      return logs
+    }
+
+    after(() => {
+      for (const agentPath of created) {
+        fs.rmSync(agentPath, {recursive: true, force: true})
+      }
+    })
+
+    it('prints a string custom entry instead of a blank Custom line', async () => {
+      const name = `describe-test-string-${Date.now()}`
+      writeAgent(name, [
+        `name: ${name}`,
+        'description: string custom tools',
+        'tools:',
+        '  builtin: []',
+        '  mcp: []',
+        '  custom:',
+        '    - email_tools',
+        '',
+      ].join('\n'))
+
+      const logs = await runDescribe(name)
+      expect(logs).to.include('  Custom: email_tools')
+      expect(logs.some(line => line.trim() === 'Custom:')).to.equal(false)
+      expect(logs.some(line => line.includes('No tools configured'))).to.equal(false)
+    })
+
+    it('prints an object path and a mixed list', async () => {
+      const name = `describe-test-mixed-${Date.now()}`
+      writeAgent(name, [
+        `name: ${name}`,
+        'description: mixed custom tools',
+        'tools:',
+        '  builtin:',
+        '    - bash',
+        '  mcp:',
+        '    - server: gmail',
+        '  custom:',
+        '    - email_tools',
+        '    - path: tools/summarize_thread.py',
+        '    - ""',
+        '    - path: "  "',
+        '    - {}',
+        '',
+      ].join('\n'))
+
+      const logs = await runDescribe(name)
+      expect(logs).to.include('  Built-in: bash')
+      expect(logs).to.include('  MCP: gmail')
+      expect(logs).to.include('  Custom: email_tools, tools/summarize_thread.py')
+    })
+
+    it('omits Custom when every entry has no label', async () => {
+      const name = `describe-test-blank-${Date.now()}`
+      writeAgent(name, [
+        `name: ${name}`,
+        'description: blank custom tools',
+        'tools:',
+        '  custom:',
+        '    - ""',
+        '    - {}',
+        '    - path: "   "',
+        '',
+      ].join('\n'))
+
+      const logs = await runDescribe(name)
+      expect(logs.some(line => line.includes('Custom:'))).to.equal(false)
+      expect(logs).to.include('  No tools configured')
     })
   })
 })

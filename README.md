@@ -139,7 +139,8 @@ cast new
 # List all agents
 cast list
 
-# Describe an agent's configuration
+# Describe an agent's configuration.
+# Custom tools print as the string entry or the path field.
 cast describe demo-agent
 
 # Edit an existing agent (interactive TUI wizard)
