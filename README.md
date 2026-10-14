@@ -279,6 +279,12 @@ The Builder Agent will:
 4. Write meaningful initial instructions
 5. Offer to configure MCP integrations and model settings
 
+Pipe a description when stdin is not a terminal. Cast picks a name and writes the scaffold without opening the TUI:
+
+```bash
+echo "Summarises incoming email and drafts replies." | cast new
+```
+
 After creation, start your agent with:
 ```bash
 cast dev <agent-name>

@@ -45,13 +45,18 @@ Before that agent exists, those commands reply `No agent is loaded.`
 `/undo` and `/redo` print the CLI's failure reason in the chat. That
 text is not written over the input line.
 
-If you just want to write a one-line description and have Cast pick a name:
+If you just want to write a description and have Cast pick a name, pipe it
+when stdin is not a terminal:
 
 ```bash
 echo "Summarises incoming email and drafts replies." | cast new
 ```
 
-The Builder reads stdin if no TTY is available.
+`cast new` reads that text, chooses an available name, and writes the
+scaffold to `~/.cast/agents/<name>/`. It prints the agent name and path.
+It does not open the TUI. A blank pipe is an error. On a terminal, the
+same command still opens the Builder wizard and asks you to confirm the
+name.
 
 You can start the same flow for a name you already chose:
 

@@ -30,6 +30,12 @@ scaffolds a complete agent.
 cast new
 ```
 
+Pipe a description when there is no terminal. Cast picks a name and writes the agent without opening the wizard:
+
+```bash
+echo "Summarises incoming email and drafts replies." | cast new
+```
+
 The wizard will:
 
 1. Ask what the agent should do.
