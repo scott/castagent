@@ -38,6 +38,21 @@ def _get_memory_path(agent_path: Path) -> Path:
     return agent_path / "memory"
 
 
+def _passed_memory_directory(agent_path: Path) -> bool:
+    """True when agent_path points at a memory directory.
+
+    The database is stored at <agent root>/memory/memory.db. A path whose
+    last component is "memory" would nest another memory directory. A
+    directory named memory that contains agent.yaml is an agent root.
+    CAST_MEMORY_PATH stores the database outside that directory.
+    """
+    if os.environ.get("CAST_MEMORY_PATH"):
+        return False
+    if agent_path.name.lower() != "memory":
+        return False
+    return not (agent_path / "agent.yaml").is_file()
+
+
 class MemoryStore:
     def __init__(self, agent_path: Path, warn_on_new: bool = True):
         self.agent_path = Path(agent_path)
@@ -46,26 +61,18 @@ class MemoryStore:
         
         self._was_new = not self.db_path.exists()
         
-        if warn_on_new and self._was_new:
+        # A new database at the agent root is the normal cast dev path.
+        # Warn only when the caller passed the memory directory itself.
+        if warn_on_new and self._was_new and _passed_memory_directory(self.agent_path):
             import warnings
-            
-            path_str = str(self.agent_path).lower()
-            memory_dir_path = str(self.memory_dir).lower()
-            if "memory" in path_str or "memory" in memory_dir_path or self.memory_dir.exists():
-                warnings.warn(
-                    f"MemoryStore path '{agent_path}' appears to be a memory directory. "
-                    f"Expected agent root path. This will create nested structure at "
-                    f"{self.db_path}. Pass the agent root path instead.",
-                    UserWarning,
-                    stacklevel=2
-                )
-            else:
-                warnings.warn(
-                    f"Creating new memory database at {self.db_path}. "
-                    f"Expected agent path to be the agent root, not the memory directory.",
-                    UserWarning,
-                    stacklevel=2
-                )
+
+            warnings.warn(
+                f"MemoryStore path '{agent_path}' appears to be a memory directory. "
+                f"Expected agent root path. This will create nested structure at "
+                f"{self.db_path}. Pass the agent root path instead.",
+                UserWarning,
+                stacklevel=2
+            )
         
         self._ensure_memory_dir()
         self._init_db()

@@ -4,6 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 import simpleGit, {SimpleGit} from 'simple-git'
 import * as yaml from 'yaml'
+import {writeDefaultIgnoreFiles} from '../../lib/cast-ignore'
 
 export default class GitInit extends Command {
   static description = 'Initialize a Git repository for an agent'
@@ -92,14 +93,7 @@ cast dev ${agentName}
   }
 
   private createCastIgnore(agentPath: string): void {
-    const content = `.cast/versions/
-cast.db
-*.log
-.env
-__pycache__/
-`
-    const castIgnorePath = path.join(agentPath, '.castignore')
-    fs.writeFileSync(castIgnorePath, content)
+    writeDefaultIgnoreFiles(agentPath)
   }
 
   private updateAgentYaml(agentPath: string): void {

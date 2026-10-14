@@ -1,4 +1,5 @@
 import {expect} from 'chai'
+import {execFileSync} from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -152,6 +153,19 @@ describe('Git Init Command', () => {
       expect(logged).to.be.true
       // Verify .git directory was created
       expect(fs.existsSync(path.join(tempAgentDir, '.git'))).to.be.true
+
+      const castIgnore = fs.readFileSync(path.join(tempAgentDir, '.castignore'), 'utf8')
+      const gitignore = fs.readFileSync(path.join(tempAgentDir, '.gitignore'), 'utf8')
+      expect(castIgnore).to.equal(gitignore)
+      expect(castIgnore).to.contain('memory/memory.db\n')
+
+      fs.mkdirSync(path.join(tempAgentDir, 'memory'))
+      fs.writeFileSync(path.join(tempAgentDir, 'memory', 'memory.db'), '')
+      const status = execFileSync('git', ['status', '--porcelain'], {
+        cwd: tempAgentDir,
+        encoding: 'utf8',
+      })
+      expect(status).to.not.contain('memory.db')
     })
   })
 })

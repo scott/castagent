@@ -85,6 +85,9 @@ docker exec cast-<name> ls /app/agent/memory/
 docker exec -it cast-agent ls /app/agent/memory/
 ```
 
+`memory/memory.db` is the runtime SQLite database. `cast git` excludes
+it from the agent repository.
+
 ## Backing up
 
 Treat the volume like a database:

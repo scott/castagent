@@ -123,8 +123,12 @@ You can use any combination. The three tracks are independent.
 
 ## `.castignore`
 
-`cast git init` writes a `.castignore` next to the agent files. The
-default contents are:
+`cast git init` writes a `.castignore` next to the agent files and
+copies the same patterns into `.gitignore`. Git reads `.gitignore`.
+`cast dev` adds the memory database patterns to an agent that already
+has a Git repository, so `memory/memory.db` stays out of `git status`.
+
+The default contents are:
 
 ```
 .cast/versions/
@@ -132,6 +136,10 @@ cast.db
 *.log
 .env
 __pycache__/
+memory/memory.db
+memory/memory.db-journal
+memory/memory.db-wal
+memory/memory.db-shm
 ```
 
 | Path | Excluded because |
@@ -141,6 +149,7 @@ __pycache__/
 | `*.log` | runtime log output |
 | `.env` | local environment variables may contain secrets |
 | `__pycache__/` | Python bytecode |
+| `memory/memory.db` | runtime SQLite memory database, plus its journal, wal, and shm files |
 
 Releases (`.cast/releases/`) and the undo log manifest (`.cast/changes/`)
 **are** included. A fresh clone of a `cast git`-backed agent comes

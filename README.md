@@ -463,6 +463,11 @@ cast git remote my-agent add origin https://github.com/user/repo.git
 cast git remote my-agent list
 ```
 
+`cast git init` writes ignore rules to `.gitignore` and `.castignore`.
+Those rules leave runtime files such as `memory/memory.db` out of the
+repository. `cast dev` adds the memory database rules to an agent that
+already has a Git repo.
+
 ## Development
 
 ### Project Structure
