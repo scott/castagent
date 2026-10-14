@@ -3,6 +3,7 @@
 These tests cover the new releases module that supports semantic versioning
 (release 1.0, 1.6, 2.0.0) and changelog generation for deployed agents.
 """
+import builtins
 import json
 import os
 import shutil
@@ -495,6 +496,121 @@ class TestCreateRelease:
         versioning.create_version(test_agent, source="cli", message="Added MCP server")
         info = releases.create_release(test_agent, "1.0", "First")
         assert "Added MCP server" in info.changelog
+
+    def test_missing_yaml_still_creates_a_release(
+        self, test_agent, temp_agents_dir, monkeypatch
+    ):
+        """The version field is edited without PyYAML, so a system
+        interpreter that cannot import yaml still finishes the release.
+        """
+        yaml_path = temp_agents_dir / test_agent / "agent.yaml"
+        real_import = builtins.__import__
+
+        def blocking_import(name, globals=None, locals=None, fromlist=(), level=0):
+            if name == "yaml":
+                raise ModuleNotFoundError("No module named 'yaml'")
+            return real_import(name, globals, locals, fromlist, level)
+
+        monkeypatch.setattr(builtins, "__import__", blocking_import)
+        info = releases.create_release(test_agent, "1.0.0", "x")
+        assert Path(info.tarball_path).exists()
+        assert "1.0.0" in yaml_path.read_text()
+        assert _release_versions(test_agent) == ["1.0.0"]
+        manifest = json.loads(
+            (temp_agents_dir / test_agent / ".cast" / "releases" / "releases.json").read_text()
+        )
+        assert manifest["releases"][0]["tarball_path"] == ".cast/releases/1.0.0.tar.gz"
+
+    def test_pack_failure_rolls_back_artifacts(
+        self, test_agent, temp_agents_dir, monkeypatch
+    ):
+        yaml_path = temp_agents_dir / test_agent / "agent.yaml"
+        releases_dir = temp_agents_dir / test_agent / ".cast" / "releases"
+        before_yaml = yaml_path.read_bytes()
+        original_paths = releases._iter_snapshot_paths
+
+        def boom(agent_path):
+            raise RuntimeError("pack failed")
+
+        monkeypatch.setattr(releases, "_iter_snapshot_paths", boom)
+        with pytest.raises(RuntimeError, match="pack failed"):
+            releases.create_release(test_agent, "1.0.0", "x")
+
+        assert not (releases_dir / "1.0.0.tar.gz").exists()
+        assert not (releases_dir / "releases.json").exists()
+        assert yaml_path.read_bytes() == before_yaml
+        assert _release_versions(test_agent) == []
+
+        monkeypatch.setattr(releases, "_iter_snapshot_paths", original_paths)
+        info = releases.create_release(test_agent, "1.0.0", "retry")
+        assert Path(info.tarball_path).exists()
+        assert "1.0.0" in _read_tarball_text(info.tarball_path)
+        assert yaml.safe_load(yaml_path.read_text())["version"] == "1.0.0"
+        manifest = json.loads((releases_dir / "releases.json").read_text())
+        assert [entry["version"] for entry in manifest["releases"]] == ["1.0.0"]
+        assert manifest["releases"][0]["tarball_path"] == ".cast/releases/1.0.0.tar.gz"
+        assert _release_versions(test_agent) == ["1.0.0"]
+
+    def test_failed_second_create_restores_the_first_release(
+        self, test_agent, temp_agents_dir, monkeypatch
+    ):
+        info = releases.create_release(test_agent, "1.0", "First")
+        yaml_path = temp_agents_dir / test_agent / "agent.yaml"
+        releases_dir = temp_agents_dir / test_agent / ".cast" / "releases"
+        json_path = releases_dir / "releases.json"
+        tar_path = Path(info.tarball_path)
+        before_yaml = yaml_path.read_bytes()
+        before_json = json_path.read_bytes()
+        before_tar = tar_path.read_bytes()
+        original_sync = releases._sync_releases_from_json
+        calls = {"n": 0}
+
+        def boom(agent_name: str) -> None:
+            # Changelog generation syncs the existing manifest first.
+            # The write that must roll back is the sync after the new files.
+            calls["n"] += 1
+            if calls["n"] >= 2:
+                raise RuntimeError("db down")
+            return original_sync(agent_name)
+
+        monkeypatch.setattr(releases, "_sync_releases_from_json", boom)
+        with pytest.raises(RuntimeError, match="db down"):
+            releases.create_release(test_agent, "1.0", "Second")
+
+        assert yaml_path.read_bytes() == before_yaml
+        assert json_path.read_bytes() == before_json
+        assert tar_path.read_bytes() == before_tar
+        rows = {row[0]: row for row in _sqlite_rows(test_agent)}
+        assert list(rows) == ["1.0"]
+        assert rows["1.0"][2] == "First"
+
+        monkeypatch.setattr(releases, "_sync_releases_from_json", original_sync)
+        releases.create_release(test_agent, "1.1", "Next")
+        assert (releases_dir / "1.1.tar.gz").exists()
+        assert yaml.safe_load(yaml_path.read_text())["version"] == "1.1"
+        assert _release_versions(test_agent) == ["1.0", "1.1"]
+
+
+def _release_versions(agent_name: str):
+    db_path = releases._cast_db_path()
+    if not db_path.exists():
+        return []
+    conn = sqlite3.connect(str(db_path))
+    try:
+        tables = conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='releases'"
+        ).fetchall()
+        if not tables:
+            return []
+        return [
+            row[0]
+            for row in conn.execute(
+                "SELECT version FROM releases WHERE agent_name = ? ORDER BY version",
+                (agent_name,),
+            )
+        ]
+    finally:
+        conn.close()
 
 
 def _read_tarball_text(tarball_path: str, name: str = "agent.yaml") -> str:

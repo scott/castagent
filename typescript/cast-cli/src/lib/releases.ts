@@ -1,9 +1,11 @@
-import {execSync} from 'child_process'
+import {execFileSync} from 'child_process'
+import type {ExecFileSyncOptionsWithStringEncoding} from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import * as crypto from 'crypto'
 import {db} from './sqlite'
+import {resolveCastPythonRuntime, type CastPythonRuntime} from './cast-python'
 
 export interface ReleaseInfo {
   version: string
@@ -14,24 +16,68 @@ export interface ReleaseInfo {
   tarball_path: string
 }
 
-function castPythonPath(): string {
-  // Prefer this checkout so /release and `cast release` do not keep calling
-  // a stale copy under ~/.cast/python that never writes SQLite.
-  const candidates = [
-    path.resolve(__dirname, '../../../../python'),
-    path.resolve(__dirname, '../../../python'),
-    path.join(os.homedir(), '.cast', 'python'),
-  ]
-  for (const candidate of candidates) {
-    if (fs.existsSync(path.join(candidate, 'cast', 'releases.py'))) {
-      return candidate
-    }
-  }
-  return path.join(os.homedir(), '.cast', 'python')
+type PythonExec = (
+  command: string,
+  args: string[],
+  options: ExecFileSyncOptionsWithStringEncoding,
+) => string
+
+function defaultExec(
+  command: string,
+  args: string[],
+  options: ExecFileSyncOptionsWithStringEncoding,
+): string {
+  return execFileSync(command, args, options)
+}
+
+let execPython: PythonExec = defaultExec
+let runtimeOverride: CastPythonRuntime | null = null
+
+/**
+ * Test hooks. Node exposes `execFileSync` as a non-configurable binding,
+ * so tests replace this wrapper instead of patching `child_process`.
+ */
+export function _setExecPythonForTests(impl: PythonExec | null): void {
+  execPython = impl ?? defaultExec
+}
+
+export function _setPythonRuntimeForTests(runtime: CastPythonRuntime | null): void {
+  runtimeOverride = runtime
+}
+
+/**
+ * Interpreter and package directory for cast.releases.
+ *
+ * Prefer the checkout virtualenv (python/.venv). System python3 often has
+ * no PyYAML, and create_release needs it to bump agent.yaml. System
+ * python3 is only the fallback when that virtualenv has not been created.
+ * The package directory stays on this checkout so a stale ~/.cast/python
+ * copy is not the one that writes the release.
+ */
+function currentRuntime(): CastPythonRuntime {
+  return runtimeOverride ?? resolveCastPythonRuntime()
 }
 
 function pythonPrelude(): string {
-  return `import sys\nsys.path.insert(0, ${JSON.stringify(castPythonPath())})\n`
+  return `import sys\nsys.path.insert(0, ${JSON.stringify(currentRuntime().pythonPath)})\n`
+}
+
+function pythonEnv(pythonPath: string): NodeJS.ProcessEnv {
+  const env = {...process.env}
+  env.PYTHONPATH = env.PYTHONPATH
+    ? `${pythonPath}${path.delimiter}${env.PYTHONPATH}`
+    : pythonPath
+  return env
+}
+
+function pythonFailureMessage(error: unknown): string {
+  const err = error as {message?: unknown}
+  const lines = stderrText(error).split('\n').map((line) => line.trim()).filter(Boolean)
+  const exception = [...lines].reverse().find((line) => /(?:Error|Exception):/.test(line))
+  if (exception) return exception
+  if (lines.length > 0) return lines[lines.length - 1]
+  const message = String(err?.message ?? error ?? '').trim()
+  return message || 'Python failed'
 }
 
 function recordReleaseIfAbsent(agentName: string, release: ReleaseInfo): void {
@@ -48,12 +94,17 @@ function recordReleaseIfAbsent(agentName: string, release: ReleaseInfo): void {
   )
 }
 
+function stderrText(error: unknown): string {
+  const stderr = (error as {stderr?: unknown}).stderr
+  if (typeof stderr === 'string') return stderr
+  if (Buffer.isBuffer(stderr)) return stderr.toString('utf8')
+  return ''
+}
+
 function pythonValueError(error: unknown): string | null {
   // create_release raises ValueError for a backwards version. Surface
   // that sentence instead of the traceback from the temp script.
-  const stderr = (error as {stderr?: unknown}).stderr
-  if (typeof stderr !== 'string' || !stderr) return null
-  const line = stderr
+  const line = stderrText(error)
     .split('\n')
     .map(part => part.trim())
     .reverse()
@@ -63,8 +114,8 @@ function pythonValueError(error: unknown): string | null {
   return message || null
 }
 
-function runPythonScript(script: string, captureStderr = false): string {
-  const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
+function runPythonScript(script: string, _captureStderr = false): string {
+  const runtime = currentRuntime()
   // Write script to temp file to avoid quoting issues
   const scriptHash = crypto.randomBytes(8).toString('hex')
   const tempDir = os.tmpdir()
@@ -72,14 +123,19 @@ function runPythonScript(script: string, captureStderr = false): string {
 
   try {
     fs.writeFileSync(tempScript, script)
-    const result = execSync(`${pythonCmd} "${tempScript}"`, {
+    const result = execPython(runtime.command, [tempScript], {
       cwd: os.homedir(),
       encoding: 'utf-8',
-      // Default execSync forwards stderr to the terminal. A rejected
-      // release should show the ValueError sentence, not the traceback.
-      stdio: captureStderr ? ['ignore', 'pipe', 'pipe'] : undefined,
+      // Capture stderr so a rejected release can show the ValueError
+      // sentence instead of painting the traceback on the terminal.
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: pythonEnv(runtime.pythonPath),
     }).trim()
     return result
+  } catch (error: unknown) {
+    const valueError = pythonValueError(error)
+    if (valueError) throw new Error(valueError)
+    throw new Error(pythonFailureMessage(error))
   } finally {
     try {
       fs.unlinkSync(tempScript)
