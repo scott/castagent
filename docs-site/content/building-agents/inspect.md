@@ -45,7 +45,7 @@ cast describe email-assistant
 - Current status.
 - A deployments table (SHA, provider, version, URL).
 - The model.
-- Configured tools (builtin, MCP, custom).
+- Configured tools (builtin, MCP, custom). A custom entry is a module name string or an object with `path`, and the Custom line prints that string or path. The runtime loads `tools.builtin` and leaves `tools.custom` unloaded.
 - The first 10 lines of `instructions.md`, then the full content.
 - Permissions.
 - The full `agent.yaml`.

@@ -55,8 +55,9 @@ changes show up as files on disk.
   appends each loaded skill to the system prompt and publishes it on the
   agent card. Install and remove skills with `{% ref "slash:skills" %}` or
   `{% ref "cli:skills" %}`. See [Skills](configuration/skills).
-- **`tools/`** — drop in `.py` files that define new LangChain tools. Cast
-  picks them up automatically; no registration step.
+- **`tools/`** holds Python modules you can name from `tools.custom`.
+  The runtime loads `tools.builtin` and leaves these files unloaded.
+  See [Custom tools](configuration/custom-tools).
 - **`mcp/`** — one YAML file per MCP server. The Builder Agent scaffolds
   these during `cast new`/`cast edit`.
 - **`tests/`** — TypeScript tests for the CLI integration and Python tests
@@ -92,11 +93,25 @@ changes show up as files on disk.
 | `skills` | skills installed on this agent (`name`, `description`, `path`, `source`) |
 | `tools.builtin` | which of `bash` / `read` / `glob` to expose |
 | `tools.mcp` | list of MCP server YAMLs to load |
-| `tools.custom` | list of `tools/*.py` modules to load |
+| `tools.custom` | module name strings or `{path}` entries, printed by `cast describe` |
 | `harness.permissions` | per-tool permission level (`always-allow`, `ask`, or `deny`) |
 | `harness.principles` | constitutional principles appended to the system prompt |
 | `runtime.python_version` | Python version in the deployment image (`3.11` or `3.12`) |
 | `runtime.requirements` | extra pip packages to install in the image |
+
+### Custom tool entries
+
+`tools.custom` takes a module name or an object with `path`:
+
+```yaml
+tools:
+  custom:
+    - email_tools
+    - path: tools/summarize_thread.py
+```
+
+`cast describe` prints `Custom: email_tools, tools/summarize_thread.py`.
+The runtime keeps these entries on the config and loads only `tools.builtin`.
 
 Use `cast describe <name>` to see the full rendered file with defaults
 filled in. Use `cast update <name> --<flag> ...` to mutate it from the CLI

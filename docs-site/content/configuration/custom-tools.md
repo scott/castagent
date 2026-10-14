@@ -2,16 +2,36 @@
 title: Custom tools
 section: configuration
 order: 1
-description: Adding a Python tool to an agent's runtime.
-ref: ['']
+description: The tools.custom entry shape, and what the runtime loads.
+ref: ['cli:describe']
 ---
 
 # Custom tools
 
-Any `.py` file in `~/.cast/agents/<name>/tools/` is loaded as a LangChain
-tool the next time the agent starts. There is no registration step.
+`tools.custom` in `agent.yaml` records custom tool entries. `{% ref "cli:describe" %}` prints them on the Custom line. The runtime loads built-in tools from `tools.builtin` and leaves `tools.custom` on the config.
+
+## Entry shape
+
+Each entry is a module name string or an object with `path`:
+
+```yaml
+tools:
+  custom:
+    - email_tools
+    - path: tools/summarize_thread.py
+```
+
+`cast describe` prints the string as written and the object as its `path`:
+
+```
+  Custom: email_tools, tools/summarize_thread.py
+```
+
+A blank string, or an object with no string `path`, is left off that line. A list of bare names such as `email_tools` used to render as `Custom:` with an empty value, because describe read only `path`.
 
 ## Minimal example
+
+The file under `tools/` is the module you can point at with `path`. The runtime does not import it.
 
 ```python
 # ~/.cast/agents/email-assistant/tools/summarize_thread.py
@@ -50,19 +70,16 @@ def get_message(message_id: str) -> dict:
     ...
 ```
 
-## Loading order
+## What the runtime loads
 
-Cast loads all `.py` files in `tools/` alphabetically, in this order:
+The runtime agent (`python/cast/agent/runtime.py`) builds its tool list from `tools.builtin`. It keeps names that match a built-in implementation:
 
-1. `bash.py` and other names that conflict with built-in tools are
-   ignored (built-ins win).
-2. Each module is imported once per runtime start.
-3. Any `@tool`-decorated function is registered with the LangChain
-   `AgentExecutor`.
+- `bash`
+- `read`
+- `glob`
+- `git_status`, `git_commit`, `git_push`, `git_log`, `git_diff`, `git_add`
 
-If a tool fails to import (syntax error, missing dependency), the
-runtime logs the failure and continues without that tool. Other tools
-are still available.
+`tools.custom` is not part of that list. A `tools/*.py` file is not imported when the agent starts, and saving one does not register a tool.
 
 ## Permissions
 
@@ -81,22 +98,15 @@ harness:
 
 Levels:
 
-- `always-allow` — the agent calls the tool without asking.
-- `ask` — the runtime prompts the user (in the TUI) before executing.
-- `deny` — the tool call returns an error and is never executed.
+- `always-allow`: the agent calls the tool without asking.
+- `ask`: the runtime prompts the user (in the TUI) before executing.
+- `deny`: the tool call returns an error and is never executed.
 
 `cast update --permission` accepts only these three levels. Any other level
 is an error, and `agent.yaml` is left unchanged.
 
 The TUI's `ask` prompt is a modal showing the tool name, the arguments,
 and Approve / Deny buttons.
-
-## Hot-reload during development
-
-`cast dev` reloads the agent on file change, including `tools/`. Save a
-file, the runtime restarts, and the new tool is registered. If the
-restart fails (bad import, syntax error), the previous good state is
-kept and the error is shown in the TUI header.
 
 ## Dependencies
 

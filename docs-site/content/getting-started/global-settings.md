@@ -126,6 +126,7 @@ tools:
     - server: gmail
       config: mcp/gmail.yaml
   custom:
+    - email_tools
     - path: tools/summarize.py
 
 harness:
@@ -144,5 +145,8 @@ runtime:
     - beautifulsoup4
 ```
 
-See the [agent anatomy](building-agents/anatomy) page for a tour
-of the surrounding directory.
+A `tools.custom` entry is a module name string or an object with `path`.
+`cast describe` prints the string or the path. The runtime loads
+`tools.builtin` and leaves `tools.custom` unloaded. See
+[Custom tools](configuration/custom-tools) and the
+[agent anatomy](building-agents/anatomy) page.

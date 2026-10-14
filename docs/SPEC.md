@@ -284,6 +284,7 @@ tools:
     - server: gmail
       config: mcp/gmail.yaml
   custom:
+    - email_tools
     - path: tools/my_tool.py
 
 runtime:
@@ -298,6 +299,8 @@ deployment:
     memory: 512Mi
     cpu: 0.5
 ```
+
+`tools.custom` entries are module name strings or objects with `path`. `cast describe` prints the string or the path. The runtime loads `tools.builtin` and leaves `tools.custom` unloaded.
 
 ### `~/.cast/config.yaml`
 
