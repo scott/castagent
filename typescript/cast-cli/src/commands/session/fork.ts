@@ -6,7 +6,7 @@ export default class SessionFork extends Command {
 
   static examples = [
     '<%= config.bin %> <%= command.id %> 01JABC…',
-    '<%= config.bin %> <%= command.id %> 01JABC… "alt approach"',
+    '<%= config.bin %> <%= command.id %> 01JABC… --name "alt approach"',
   ]
 
   static args = {

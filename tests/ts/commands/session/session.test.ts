@@ -1,7 +1,18 @@
+import {Parser} from '@oclif/core'
 import {expect} from 'chai'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+
+function shellTokens(input: string): string[] {
+  const tokens: string[] = []
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(input))) {
+    tokens.push(match[1] ?? match[2] ?? match[3])
+  }
+  return tokens
+}
 
 async function loadTestCommand(parts: string[]): Promise<any> {
   // __dirname is tests/ts/commands/session, so we need to go up three levels
@@ -163,6 +174,53 @@ describe('session CLI commands', () => {
   })
 
   describe('session fork', () => {
+    it('help examples use --name and parse', async () => {
+      const Cmd = await loadTestCommand(['session', 'fork'])
+      const Session = await loadTestCommand(['session', 'index'])
+      const List = await loadTestCommand(['session', 'list'])
+
+      const forkExample = Session.examples.find((example: string) => example.includes('session fork'))
+      expect(forkExample).to.equal('<%= config.bin %> session fork <id> [--name <name>]')
+      expect(forkExample).to.not.include('[name]')
+
+      const hints = List.commandHints.join('\n')
+      expect(hints).to.include('cast session fork <id|name> --name')
+      expect(hints).to.not.include('[name]')
+
+      for (const example of Cmd.examples as string[]) {
+        const rendered = example
+          .replace(/<%= config.bin %>/g, 'cast')
+          .replace(/<%= command.id %>/g, 'session fork')
+        const argv = shellTokens(rendered).slice(3)
+        const parsed = await Parser.parse(argv, {
+          args: Cmd.args,
+          flags: Cmd.flags,
+          strict: true,
+        })
+        expect(parsed.args.identifier).to.be.a('string').and.not.empty
+        if (rendered.includes('--name')) {
+          expect(parsed.flags.name).to.equal('alt approach')
+        }
+      }
+    })
+
+    it('rejects a positional name and accepts --name', async () => {
+      const Cmd = await loadTestCommand(['session', 'fork'])
+      const flags = {args: Cmd.args, flags: Cmd.flags, strict: true}
+
+      try {
+        await Parser.parse(['01JABC', 'alt approach'], flags)
+        expect.fail('positional name should be rejected')
+      } catch (error: any) {
+        expect(error.message).to.match(/Unexpected argument: alt approach/)
+        expect(error.oclif.exit).to.equal(2)
+      }
+
+      const parsed = await Parser.parse(['01JABC', '--name', 'alt approach'], flags)
+      expect(parsed.args.identifier).to.equal('01JABC')
+      expect(parsed.flags.name).to.equal('alt approach')
+    })
+
     it('errors when source session is not found', async () => {
       const Cmd = await loadTestCommand(['session', 'fork'])
       const {errors} = await runCommand(

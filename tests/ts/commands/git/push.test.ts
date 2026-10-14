@@ -1,3 +1,4 @@
+import {Parser} from '@oclif/core'
 import {expect} from 'chai'
 import {execFileSync} from 'child_process'
 import * as fs from 'fs'
@@ -5,6 +6,16 @@ import * as os from 'os'
 import * as path from 'path'
 import sinon from 'sinon'
 import GitPush from '../../../../typescript/cast-cli/src/commands/git/push'
+
+function shellTokens(input: string): string[] {
+  const tokens: string[] = []
+  const re = /"([^"]*)"|'([^']*)'|(\S+)/g
+  let match: RegExpExecArray | null
+  while ((match = re.exec(input))) {
+    tokens.push(match[1] ?? match[2] ?? match[3])
+  }
+  return tokens
+}
 
 function git(cwd: string, args: string[]): string {
   return execFileSync('git', args, {
@@ -152,6 +163,31 @@ describe('Git Push Command', () => {
       expect(GitPush.examples).to.be.an('array')
       expect(GitPush.examples.length).to.be.greaterThan(0)
       expect(GitPush.examples.join('\n')).to.not.include('origin main')
+    })
+
+    it('parses flag examples and rejects a positional remote and branch', async () => {
+      for (const example of GitPush.examples) {
+        const rendered = example.replace(/<%= config.bin %>/g, 'cast')
+        const argv = shellTokens(rendered).slice(3)
+        const parsed = await Parser.parse(argv, {
+          args: GitPush.args,
+          flags: GitPush.flags,
+          strict: true,
+        })
+        expect(parsed.args.agent).to.equal('my-agent')
+      }
+
+      try {
+        await Parser.parse(['bb-summarizer', 'origin', 'main'], {
+          args: GitPush.args,
+          flags: GitPush.flags,
+          strict: true,
+        })
+        expect.fail('positional remote and branch should be rejected')
+      } catch (error: any) {
+        expect(error.message).to.match(/Unexpected arguments: origin, main/)
+        expect(error.oclif.exit).to.equal(2)
+      }
     })
   })
 

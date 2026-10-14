@@ -25,6 +25,15 @@ function relativeTime(iso: string): string {
 export default class SessionList extends Command {
   static description = 'List saved conversation sessions'
 
+  // Printed under a non-empty session list. Name is a flag, same as `cast session fork --help`.
+  static commandHints = [
+    '  cast session show <id|name>          - Print a session transcript',
+    '  cast session resume <id|name>        - Open the session in the TUI',
+    '  cast session fork <id|name> --name   - Fork into a new session',
+    '  cast session delete <id|name>        - Delete a session',
+    '  cast session prune [--days N]        - Delete ended sessions older than N days',
+  ]
+
   static examples = [
     '<%= config.bin %> <%= command.id %>',
     '<%= config.bin %> <%= command.id %> --agent my-agent',
@@ -79,10 +88,8 @@ export default class SessionList extends Command {
     this.log('──────────────────────────────────────────────────────────────────────────────')
     this.log('')
     this.log('Commands:')
-    this.log('  cast session show <id|name>          - Print a session transcript')
-    this.log('  cast session resume <id|name>        - Open the session in the TUI')
-    this.log('  cast session fork <id|name> [name]   - Fork into a new session')
-    this.log('  cast session delete <id|name>        - Delete a session')
-    this.log('  cast session prune [--days N]        - Delete ended sessions older than N days')
+    for (const hint of SessionList.commandHints) {
+      this.log(hint)
+    }
   }
 }
