@@ -1056,7 +1056,7 @@ function showUpgradeVersionPicker(
 
     try {
       console.log(`\nUpgrading ${agent.name} to ${version}...\n`)
-      execFileSync(binary, ['upgrade', agent.name, '--version', version], {stdio: 'inherit'})
+      execFileSync(binary, ['upgrade', agent.name, version], {stdio: 'inherit'})
     } catch (err: any) {
       if (err.signal === 'SIGINT') {
         // user cancelled

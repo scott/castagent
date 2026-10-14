@@ -31,6 +31,11 @@ Releases:
   1.5   5/9/2026 9:35:20 PM    Added email processing
   1.6   5/12/2026 1:08:33 PM   Updated model + permissions
 ─────────────────────────────────────────────────────────────
+
+Commands:
+  cast release email-assistant <version>  - Create a new release
+  cast deploy email-assistant --version <ver>  - Deploy a specific release
+  cast upgrade email-assistant <ver>  - Upgrade to a release
 ```
 
 In the TUI, `{% ref "slash:releases" %}` lists releases for the agent
@@ -108,9 +113,9 @@ Connect with: cast connect abc123
 ## Upgrading a live deployment
 
 ```bash
-cast upgrade abc123 --version 1.7        # by deployment SHA
-cast upgrade email-assistant --version 1.7    # most recent
-cast upgrade email-assistant                  # defaults to latest release
+cast upgrade abc123 1.7                  # by deployment SHA
+cast upgrade email-assistant 1.7         # most recent
+cast upgrade email-assistant             # defaults to latest
 ```
 
 `{% ref "cli:upgrade" %}` redeploys with the new tarball. The deployment

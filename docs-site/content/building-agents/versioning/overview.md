@@ -16,7 +16,7 @@ other — is the most common source of confusion.
 | | Undo log | Git history |
 |---|---|---|
 | **Created by** | Cast, automatically, on every modification | You, explicitly, via `cast git commit` |
-| **Identified by** | sequential id (1, 2, 3…) | Git commit hash (and optional `cast git tag`) |
+| **Identified by** | sequential id (1, 2, 3…) | Git commit hash |
 | **Stored in** | `~/.cast/agents/<name>/.cast/changes/` | `~/.cast/agents/<name>/.git/` |
 | **User-facing?** | no — internal to `cast undo` | yes — shareable, durable, browsable |
 | **Purpose** | step backwards through in-development edits | backup, sharing, code-level history |

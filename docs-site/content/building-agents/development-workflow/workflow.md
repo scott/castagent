@@ -92,7 +92,7 @@ See [Connect, shutdown, upgrade](building-agents/deployment/lifecycle).
 ```bash
 cast edit <name>            # tweak
 cast release <name> 1.1     # snapshot
-cast upgrade <name> --version 1.1   # redeploy in place
+cast upgrade <name> 1.1            # redeploy in place
 ```
 
 Edit the agent locally, make a new release, and push it without

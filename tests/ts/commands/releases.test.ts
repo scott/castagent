@@ -70,6 +70,48 @@ describe('releases command', () => {
     })
   })
 
+  describe('command output', () => {
+    const agentName = `releases-footer-${Date.now()}`
+    const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
+
+    afterEach(() => {
+      fs.rmSync(agentDir, {recursive: true, force: true})
+    })
+
+    it('prints upgrade as a positional version and deploy as --version', async () => {
+      const releasesDir = path.join(agentDir, '.cast', 'releases')
+      fs.mkdirSync(releasesDir, {recursive: true})
+      fs.writeFileSync(path.join(releasesDir, 'releases.json'), JSON.stringify({
+        releases: [{
+          version: '1.7',
+          change_number: 1,
+          message: 'ship',
+          changelog: '',
+          created_at: '2026-05-12T17:08:33.000Z',
+          tarball_path: '/tmp/1.7.tar.gz',
+        }],
+      }))
+
+      const Releases = await loadTestCommand('releases')
+      const instance = new Releases(['releases', agentName], {} as any)
+      instance.parse = async () => ({
+        args: {agent: agentName},
+        flags: {json: false},
+      })
+      const logs: string[] = []
+      instance.log = (msg?: string) => {
+        logs.push(msg ?? '')
+      }
+
+      await instance.run()
+
+      const output = logs.join('\n')
+      expect(output).to.include(`cast upgrade ${agentName} <ver>  - Upgrade to a release`)
+      expect(output).to.include(`cast deploy ${agentName} --version <ver>  - Deploy a specific release`)
+      expect(output).to.not.match(/upgrade[^\n]*--version/)
+    })
+  })
+
   describe('on-disk data shape', () => {
     const testDir = path.join(os.tmpdir(), `cast-releases-shape-${Date.now()}`)
     const agentsDir = path.join(testDir, '.cast', 'agents')

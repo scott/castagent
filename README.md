@@ -400,10 +400,10 @@ To upgrade an existing deployment to a new release:
 
 ```bash
 # Upgrade by agent name (uses most recent deployment)
-cast upgrade my-agent --version 1.6
+cast upgrade my-agent 1.6
 
 # Upgrade by deployment SHA (recommended for multi-deployment agents)
-cast upgrade abc123 --version 1.6
+cast upgrade abc123 1.6
 ```
 
 #### TUI Slash Commands

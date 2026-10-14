@@ -78,6 +78,11 @@ describe('shutdown command', () => {
       expect(Shutdown.flags.force.description).to.equal('Skip confirmation prompt')
     })
 
+    it('should not accept a --destroy-volume flag', () => {
+      expect(Shutdown.flags).to.not.have.property('destroy-volume')
+      expect(Object.keys(Shutdown.flags)).to.deep.equal(['force'])
+    })
+
     it('should have examples', () => {
       expect(Shutdown.examples).to.not.be.empty
     })
