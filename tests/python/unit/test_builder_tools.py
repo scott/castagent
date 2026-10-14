@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import sqlite3
 import pytest
 import tempfile
@@ -177,6 +178,24 @@ class TestRecommendModel:
         result = recommend_model.invoke({"requirements": "General purpose agent"})
         assert "sonnet" in result.lower()
 
+    def test_recommend_model_ids_are_in_the_catalog(self):
+        from cast.providers.registry import model_status
+
+        prompts = [
+            "Simple task to classify emails",
+            "Complex analysis and reasoning",
+            "Code review and debugging",
+            "General purpose agent",
+        ]
+        for prompt in prompts:
+            result = recommend_model.invoke({"requirements": prompt})
+            ids = re.findall(r"openrouter/\S+", result)
+            assert ids, result
+            for model_id in ids:
+                status = model_status(model_id.rstrip("."))
+                assert status["valid"], status
+            assert "brain.model" in result
+
 
 class TestListAgents:
     """Tests for list_agents tool."""
@@ -264,6 +283,132 @@ class TestUpdateAgentConfig:
                 assert config["version"] == "2.0"
                 assert config["description"] == "Updated"
                 assert config["name"] == "update-config-agent"  # Original value preserved
+                assert "Applied:" in result
+                assert "description: Updated" in result
+                assert "brain.model" not in result
+            finally:
+                tools.AGENTS_DIR = original_dir
+
+    def test_rejects_unloadable_builder_shape(self):
+        """Flat tools, top-level model, permissions, and memory are not stored."""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from cast.builder_tools import tools
+            import cast.versioning as versioning
+
+            original_dir = tools.AGENTS_DIR
+            original_versioning = versioning.AGENTS_DIR
+            tools.AGENTS_DIR = Path(tmpdir)
+            versioning.AGENTS_DIR = Path(tmpdir)
+
+            try:
+                create_agent.invoke({"name": "bb2-live", "description": "answers in one sentence"})
+                agent_yaml_path = Path(tmpdir) / "bb2-live" / "agent.yaml"
+                before = agent_yaml_path.read_text()
+
+                result = update_agent_config.invoke({
+                    "name": "bb2-live",
+                    "config_yaml": """
+model: openrouter/anthropic/claude-3-5-haiku
+tools:
+  - bash
+  - read
+  - glob
+permissions:
+  bash: approve-once
+  read: allow
+memory:
+  enabled: true
+""",
+                })
+
+                assert "Nothing was applied" in result
+                assert "brain.model is still openrouter/minimax/minimax-m2.5" in result
+                assert "approve-once" in result
+                assert "allow" in result
+                assert "not applied" in result.lower() or "was not applied" in result
+                assert agent_yaml_path.read_text() == before
+
+                config = yaml.safe_load(before)
+                assert config["tools"]["builtin"] == ["bash", "read", "glob"]
+                assert config["brain"]["model"] == "openrouter/minimax/minimax-m2.5"
+                assert "model" not in config
+                assert "permissions" not in config
+                assert "memory" not in config
+
+                changes = json.loads(
+                    (Path(tmpdir) / "bb2-live" / ".cast" / "changes" / "changes.json").read_text()
+                )
+                assert len(changes["versions"]) == 1
+                assert [entry["id"] for entry in changes["versions"]] == [1]
+            finally:
+                tools.AGENTS_DIR = original_dir
+                versioning.AGENTS_DIR = original_versioning
+
+    def test_rejects_permission_list_and_unknown_brain_model(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from cast.builder_tools import tools
+
+            original_dir = tools.AGENTS_DIR
+            tools.AGENTS_DIR = Path(tmpdir)
+            try:
+                create_agent.invoke({"name": "bb2-bskill"})
+                before = (Path(tmpdir) / "bb2-bskill" / "agent.yaml").read_text()
+                result = update_agent_config.invoke({
+                    "name": "bb2-bskill",
+                    "config_yaml": """
+brain:
+  model: claude-haiku-4-5
+permissions:
+  - approve-once
+  - allow
+""",
+                })
+                assert "Nothing was applied" in result
+                assert "claude-haiku-4-5" in result
+                assert "brain.model is still openrouter/minimax/minimax-m2.5" in result
+                assert (Path(tmpdir) / "bb2-bskill" / "agent.yaml").read_text() == before
+            finally:
+                tools.AGENTS_DIR = original_dir
+
+    def test_stores_catalog_model_and_reports_only_applied_fields(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from cast.builder_tools import tools
+
+            original_dir = tools.AGENTS_DIR
+            tools.AGENTS_DIR = Path(tmpdir)
+            try:
+                create_agent.invoke({"name": "shaped-agent"})
+                result = update_agent_config.invoke({
+                    "name": "shaped-agent",
+                    "config_yaml": """
+brain:
+  model: openrouter/anthropic/claude-3.5-haiku
+tools:
+  builtin:
+    - bash
+    - read
+harness:
+  permissions:
+    bash: ask
+""",
+                })
+                assert "Updated agent.yaml" in result
+                assert "Applied:" in result
+                assert "brain.model: openrouter/anthropic/claude-3.5-haiku" in result
+                assert "tools.builtin: bash, read" in result
+                assert "harness.permissions: bash=ask" in result
+                assert "Nothing else was changed." in result
+                assert "approve-once" not in result
+                assert "Claude 3.5" not in result
+
+                config = yaml.safe_load((Path(tmpdir) / "shaped-agent" / "agent.yaml").read_text())
+                assert config["brain"]["model"] == "openrouter/anthropic/claude-3.5-haiku"
+                assert config["tools"]["builtin"] == ["bash", "read"]
+                assert config["tools"]["mcp"] == []
+                assert config["harness"]["permissions"] == {"bash": "ask"}
+                assert "model" not in config
+                assert "permissions" not in config
+                assert "memory" not in config
             finally:
                 tools.AGENTS_DIR = original_dir
 

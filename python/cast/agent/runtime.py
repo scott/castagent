@@ -41,6 +41,7 @@ class RuntimeAgent:
         self.llm = None
         self.memory = None
         self._provider = get_provider(self.config.model)
+        self._warn_if_tools_unreadable()
 
         # A missing key stays in echo mode and does not fall back.
         if self._provider.is_available():
@@ -51,6 +52,17 @@ class RuntimeAgent:
         env_name = self._llm_env_var()
         api_key = os.environ.get(env_name) if isinstance(env_name, str) else None
         self.memory = MemoryMiddleware(self.agent_path, model_name=model_name, api_key=api_key)
+
+    def _warn_if_tools_unreadable(self) -> None:
+        """A tools list is not tools.builtin. Say that, and do not blame the provider."""
+        raw = self.config.config.get("tools", {})
+        if isinstance(raw, dict) or raw is None:
+            return
+        print(
+            "Warning: agent.yaml tools must be a mapping with builtin, mcp, and custom. "
+            "No tools were loaded.",
+            flush=True,
+        )
 
     def _llm_env_var(self) -> str:
         env_name = getattr(self._provider, "env_var", None)

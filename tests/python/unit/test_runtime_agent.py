@@ -600,3 +600,38 @@ class TestRuntimeAgentTools:
 
             # In echo mode, tools may not be set
             assert not hasattr(agent, "tools") or agent.tools is None
+
+    def test_tools_list_does_not_drop_into_echo_mode(self, tmp_path, capsys):
+        """A flat tools list must not be reported as an OpenRouter failure."""
+        agent_dir = tmp_path / "bb2-live"
+        agent_dir.mkdir()
+        (agent_dir / "agent.yaml").write_text(
+            "name: bb2-live\n"
+            "version: \"1.0\"\n"
+            "description: answers questions\n"
+            "brain:\n"
+            "  model: openrouter/minimax/minimax-m2.5\n"
+            "tools:\n"
+            "  - bash\n"
+            "  - read\n"
+            "  - glob\n"
+        )
+        (agent_dir / "instructions.md").write_text("Be brief.\n")
+        config = AgentConfig.from_path(str(agent_dir))
+
+        with patch("cast.agent.runtime.get_provider") as mock_provider:
+            instance = MagicMock()
+            instance.name = "OpenRouter"
+            instance.is_available.return_value = True
+            instance.env_var = "OPENROUTER_API_KEY"
+            instance.create_llm.return_value = MagicMock()
+            mock_provider.return_value = instance
+            with patch("cast.agent.runtime.create_react_agent", return_value=MagicMock()):
+                agent = RuntimeAgent(config, agent_path=str(agent_dir))
+
+        captured = capsys.readouterr()
+        assert "No tools were loaded" in captured.out
+        assert "has no attribute" not in captured.out
+        assert "Failed to initialize" not in captured.out
+        assert agent.graph is not None
+        assert agent.tools == []

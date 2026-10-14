@@ -282,6 +282,8 @@ The Builder Agent will:
 4. Write meaningful initial instructions
 5. Offer to configure MCP integrations and model settings
 
+The Builder stores a model, tools, and permissions only in the documented `agent.yaml` shape: `brain.model`, `tools.builtin`, and `harness.permissions`. A flat `tools` list, a top-level `model`, a top-level `permissions` block, or a top-level `memory` block is rejected and the file is left unchanged. The Builder then says those settings were not applied. Permission levels are `always-allow`, `ask`, and `deny`. Model ids must be in the catalog, including the id `recommend_model` returns. Each undo-log entry gets its own id.
+
 Pipe a description when stdin is not a terminal. Cast picks a name and writes the scaffold without opening the TUI:
 
 ```bash

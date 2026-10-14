@@ -35,12 +35,22 @@ class AgentConfig:
     @property
     def model(self) -> str:
         brain = self.config.get("brain", {})
-        return brain.get("model", "openrouter/anthropic/claude-3-7-sonnet")
+        if not isinstance(brain, dict):
+            brain = {}
+        model = brain.get("model", "openrouter/anthropic/claude-3-7-sonnet")
+        if not isinstance(model, str) or not model:
+            return "openrouter/anthropic/claude-3-7-sonnet"
+        return model
     
     @property
     def instructions_file(self) -> str:
         brain = self.config.get("brain", {})
-        return brain.get("instructions_file", "instructions.md")
+        if not isinstance(brain, dict):
+            brain = {}
+        instructions_file = brain.get("instructions_file", "instructions.md")
+        if not isinstance(instructions_file, str) or not instructions_file:
+            return "instructions.md"
+        return instructions_file
     
     @property
     def instructions(self) -> str:
@@ -134,18 +144,32 @@ class AgentConfig:
         }
     
     @property
-    def tools(self) -> List[dict]:
-        return self.config.get("tools", {})
+    def tools(self) -> dict:
+        """Tool mapping the runtime loads. A list or other shape is ignored."""
+        raw = self.config.get("tools", {})
+        if not isinstance(raw, dict):
+            return {}
+        return raw
     
     @property
     def permissions(self) -> dict:
         harness = self.config.get("harness", {})
-        return harness.get("permissions", {})
+        if not isinstance(harness, dict):
+            return {}
+        raw = harness.get("permissions", {})
+        if not isinstance(raw, dict):
+            return {}
+        return raw
     
     @property
     def principles(self) -> List[str]:
         harness = self.config.get("harness", {})
-        return harness.get("principles", [])
+        if not isinstance(harness, dict):
+            return []
+        raw = harness.get("principles", [])
+        if not isinstance(raw, list):
+            return []
+        return raw
     
     @classmethod
     def from_path(cls, path: str) -> "AgentConfig":

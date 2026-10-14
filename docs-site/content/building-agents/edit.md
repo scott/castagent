@@ -29,6 +29,16 @@ you with a summary of what's there. Every save writes a new entry to
 the internal change log at
 `~/.cast/agents/<name>/.cast/changes/`, so the agent state is
 fully recoverable via [cast undo / cast redo](building-agents/versioning/undo).
+Each log entry has its own id.
+
+The Builder writes `agent.yaml` in the shape the runtime loads:
+`brain.model`, `tools.builtin`, and `harness.permissions`. A flat
+`tools` list, a top-level `model`, a top-level `permissions` block, or
+a top-level `memory` block is not saved, and the file stays as it was.
+The reply names only the settings that were stored. If nothing was
+stored, it says so. Permission levels are `always-allow`, `ask`, and
+`deny`. A model id has to be in the catalog. Memory settings stay in
+`memory/config.yaml`.
 
 `/edit` is also a slash command — use it inside any TUI session (during
 `cast dev` or `cast connect`) to drop into the Builder without losing

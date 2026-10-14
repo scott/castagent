@@ -14,6 +14,24 @@ AGENTS_DIR = Path.home() / ".cast" / "agents"
 BUILDER_DIR = Path.home() / ".cast" / "builder"
 CREATED_AGENT_MARKER = "created-agent"
 
+# Same lists cast update stores. The runtime loads tools.builtin and
+# harness.permissions, and it ignores a top-level model or permissions key.
+VALID_BUILTIN_TOOLS = ("bash", "read", "glob")
+VALID_PERMISSION_LEVELS = ("always-allow", "ask", "deny")
+SUPPORTED_PYTHON_VERSIONS = ("3.11", "3.12")
+_AGENT_YAML_TOP_LEVEL = {
+    "name",
+    "version",
+    "description",
+    "brain",
+    "harness",
+    "tools",
+    "runtime",
+    "repository",
+    "skills",
+    "deployment",
+}
+
 
 def _remember_created_agent(name: str) -> None:
     """Record the agent this builder session just created.
@@ -322,67 +340,381 @@ def check_name_availability(name: str) -> str:
     return f"'{name}' is already taken. Try a different name."
 
 
+def _model_catalog_error(model: Any) -> Optional[str]:
+    """Return the cast update error for a model id, or None when it is valid."""
+    if not isinstance(model, str) or not model.strip():
+        return "Model id must be a non-empty string."
+    from cast.providers.registry import model_status
+
+    status = model_status(model)
+    if status.get("valid"):
+        return None
+    return status.get("error") or f"Unknown model '{model}'."
+
+
+def _unknown_top_level_error(key: str, value: Any) -> List[str]:
+    """Explain a key the runtime does not load. The file is not written."""
+    if key == "model":
+        detail = " Set brain.model to a catalog id."
+        if isinstance(value, str) and value:
+            catalog_error = _model_catalog_error(value)
+            if catalog_error:
+                detail += " " + catalog_error
+            else:
+                detail += f" '{value}' is a catalog id, but the runtime reads brain.model."
+        return ["Top-level model was not applied." + detail]
+    if key == "permissions":
+        extra = " Set harness.permissions to tool: level (always-allow, ask, or deny)."
+        if isinstance(value, dict):
+            bad = []
+            for tool, level in value.items():
+                if not isinstance(level, str) or level not in VALID_PERMISSION_LEVELS:
+                    shown = level if isinstance(level, str) else type(level).__name__
+                    bad.append(f"{tool}={shown}")
+            if bad:
+                extra += " Invalid levels: " + ", ".join(bad) + "."
+        elif isinstance(value, list):
+            extra += " A list was not written."
+        return ["Top-level permissions were not applied." + extra]
+    if key == "memory":
+        return [
+            "Top-level memory was not applied. Memory settings belong in memory/config.yaml."
+        ]
+    return [
+        f"Top-level {key} was not applied. It is not an agent.yaml setting the runtime loads."
+    ]
+
+
+def _permission_errors(permissions: Any, prefix: str) -> List[str]:
+    if not isinstance(permissions, dict):
+        return [
+            f"{prefix} must be a mapping of tool to level (always-allow, ask, or deny)."
+        ]
+    errors = []
+    for tool, level in permissions.items():
+        if not isinstance(tool, str) or not tool:
+            errors.append(f"{prefix} has a tool name that is not a string.")
+            continue
+        if not isinstance(level, str) or level not in VALID_PERMISSION_LEVELS:
+            shown = level if isinstance(level, str) else type(level).__name__
+            errors.append(
+                f"{prefix}.{tool} level '{shown}' is invalid. "
+                "Valid levels: always-allow, ask, deny."
+            )
+    return errors
+
+
+def _validate_brain(brain: Any) -> List[str]:
+    if not isinstance(brain, dict):
+        return ["brain must be a mapping with model and instructions_file."]
+    errors = []
+    for key in brain:
+        if key not in {"model", "model_override", "instructions_file"}:
+            errors.append(
+                f"brain.{key} was not applied. The runtime reads brain.model, "
+                "brain.model_override, and brain.instructions_file."
+            )
+    if "model" in brain:
+        catalog_error = _model_catalog_error(brain["model"])
+        if catalog_error:
+            errors.append(f"brain.model was not applied. {catalog_error}")
+    if "instructions_file" in brain and not isinstance(brain["instructions_file"], str):
+        errors.append("brain.instructions_file must be a string.")
+    if (
+        "model_override" in brain
+        and brain["model_override"] is not None
+        and not isinstance(brain["model_override"], str)
+    ):
+        errors.append("brain.model_override must be a string or null.")
+    return errors
+
+
+def _validate_mcp_entries(mcp: Any) -> List[str]:
+    if not isinstance(mcp, list):
+        return ["tools.mcp must be a list of server mappings."]
+    errors = []
+    for index, entry in enumerate(mcp):
+        if not isinstance(entry, dict) or not isinstance(entry.get("server"), str) or not entry.get("server"):
+            errors.append(f"tools.mcp[{index}] must be a mapping with a server name.")
+            continue
+        if "config" in entry and not isinstance(entry["config"], str):
+            errors.append(f"tools.mcp[{index}].config must be a string.")
+    return errors
+
+
+def _validate_custom_entries(custom: Any) -> List[str]:
+    if not isinstance(custom, list):
+        return ["tools.custom must be a list of module names or path mappings."]
+    errors = []
+    for index, entry in enumerate(custom):
+        if isinstance(entry, str) and entry:
+            continue
+        if isinstance(entry, dict) and isinstance(entry.get("path"), str) and entry.get("path"):
+            continue
+        errors.append(
+            f"tools.custom[{index}] must be a module name or a mapping with path."
+        )
+    return errors
+
+
+def _validate_tools(tools: Any) -> List[str]:
+    if not isinstance(tools, dict):
+        return [
+            "tools must be a mapping with builtin, mcp, and custom. "
+            "A list was not written. Built-in tools belong under tools.builtin "
+            "(bash, read, glob)."
+        ]
+    errors = []
+    for key in tools:
+        if key not in {"builtin", "mcp", "custom"}:
+            errors.append(
+                f"tools.{key} was not applied. Use tools.builtin, tools.mcp, or tools.custom."
+            )
+    if "builtin" in tools:
+        builtin = tools["builtin"]
+        if not isinstance(builtin, list) or not all(isinstance(item, str) for item in builtin):
+            errors.append("tools.builtin must be a list of tool names.")
+        else:
+            unknown = [item for item in builtin if item not in VALID_BUILTIN_TOOLS]
+            if unknown:
+                errors.append(
+                    "tools.builtin has unknown tools: "
+                    + ", ".join(unknown)
+                    + ". Valid tools: bash, read, glob."
+                )
+    if "mcp" in tools:
+        errors.extend(_validate_mcp_entries(tools["mcp"]))
+    if "custom" in tools:
+        errors.extend(_validate_custom_entries(tools["custom"]))
+    return errors
+
+
+def _validate_harness(harness: Any) -> List[str]:
+    if not isinstance(harness, dict):
+        return ["harness must be a mapping with permissions and principles."]
+    errors = []
+    for key in harness:
+        if key not in {"permissions", "principles"}:
+            errors.append(
+                f"harness.{key} was not applied. Use harness.permissions or harness.principles."
+            )
+    if "permissions" in harness:
+        errors.extend(_permission_errors(harness["permissions"], "harness.permissions"))
+    if "principles" in harness:
+        principles = harness["principles"]
+        if not isinstance(principles, list) or not all(isinstance(item, str) for item in principles):
+            errors.append("harness.principles must be a list of strings.")
+    return errors
+
+
+def _validate_runtime(runtime: Any) -> List[str]:
+    if not isinstance(runtime, dict):
+        return ["runtime must be a mapping."]
+    errors = []
+    for key in runtime:
+        if key not in {"python_version", "requirements"}:
+            errors.append(
+                f"runtime.{key} was not applied. Use runtime.python_version or runtime.requirements."
+            )
+    if "python_version" in runtime:
+        version = runtime["python_version"]
+        if not isinstance(version, str) or version not in SUPPORTED_PYTHON_VERSIONS:
+            shown = version if isinstance(version, str) else type(version).__name__
+            errors.append(
+                f"Unsupported Python version '{shown}'. Supported versions: 3.11, 3.12."
+            )
+    if "requirements" in runtime:
+        requirements = runtime["requirements"]
+        if not isinstance(requirements, list) or not all(isinstance(item, str) for item in requirements):
+            errors.append("runtime.requirements must be a list of package names.")
+    return errors
+
+
+def _validate_agent_config_update(updates: Any) -> List[str]:
+    """Return reasons this patch must not be written. Empty means it is safe to merge."""
+    if not isinstance(updates, dict):
+        return ["config_yaml must be a mapping of agent.yaml fields."]
+    if not updates:
+        return ["config_yaml had no fields."]
+    errors: List[str] = []
+    for key, value in updates.items():
+        if key not in _AGENT_YAML_TOP_LEVEL:
+            errors.extend(_unknown_top_level_error(key, value))
+    if "name" in updates and not isinstance(updates["name"], str):
+        errors.append("name must be a string.")
+    if "version" in updates and not isinstance(updates["version"], str):
+        errors.append("version must be a string.")
+    if "description" in updates and not isinstance(updates["description"], str):
+        errors.append("description must be a string.")
+    if "brain" in updates:
+        errors.extend(_validate_brain(updates["brain"]))
+    if "tools" in updates:
+        errors.extend(_validate_tools(updates["tools"]))
+    if "harness" in updates:
+        errors.extend(_validate_harness(updates["harness"]))
+    if "runtime" in updates:
+        errors.extend(_validate_runtime(updates["runtime"]))
+    if "repository" in updates and not isinstance(updates["repository"], dict):
+        errors.append("repository must be a mapping.")
+    if "skills" in updates and not isinstance(updates["skills"], list):
+        errors.append("skills must be a list.")
+    if "deployment" in updates and not isinstance(updates["deployment"], dict):
+        errors.append("deployment must be a mapping.")
+    return errors
+
+
+def _applied_lines(updates: dict) -> List[str]:
+    """Lines that name only fields this patch stores."""
+    lines: List[str] = []
+    if isinstance(updates.get("description"), str):
+        lines.append(f"description: {updates['description']}")
+    if isinstance(updates.get("version"), str):
+        lines.append(f"version: {updates['version']}")
+    if isinstance(updates.get("name"), str):
+        lines.append(f"name: {updates['name']}")
+    brain = updates.get("brain")
+    if isinstance(brain, dict):
+        if "model" in brain:
+            lines.append(f"brain.model: {brain['model']}")
+        if "instructions_file" in brain:
+            lines.append(f"brain.instructions_file: {brain['instructions_file']}")
+        if "model_override" in brain:
+            lines.append(f"brain.model_override: {brain['model_override']}")
+    tools = updates.get("tools")
+    if isinstance(tools, dict):
+        if isinstance(tools.get("builtin"), list):
+            lines.append("tools.builtin: " + ", ".join(tools["builtin"]))
+        if isinstance(tools.get("mcp"), list):
+            names = [
+                entry["server"]
+                for entry in tools["mcp"]
+                if isinstance(entry, dict) and isinstance(entry.get("server"), str)
+            ]
+            lines.append("tools.mcp: " + ", ".join(names))
+        if isinstance(tools.get("custom"), list):
+            labels = []
+            for entry in tools["custom"]:
+                if isinstance(entry, str):
+                    labels.append(entry)
+                elif isinstance(entry, dict) and isinstance(entry.get("path"), str):
+                    labels.append(entry["path"])
+            lines.append("tools.custom: " + ", ".join(labels))
+    harness = updates.get("harness")
+    if isinstance(harness, dict):
+        permissions = harness.get("permissions")
+        if isinstance(permissions, dict):
+            parts = [f"{tool}={level}" for tool, level in permissions.items()]
+            lines.append("harness.permissions: " + ", ".join(parts))
+        if isinstance(harness.get("principles"), list):
+            lines.append("harness.principles: " + "; ".join(harness["principles"]))
+    runtime = updates.get("runtime")
+    if isinstance(runtime, dict):
+        if "python_version" in runtime:
+            lines.append(f"runtime.python_version: {runtime['python_version']}")
+        if isinstance(runtime.get("requirements"), list):
+            lines.append("runtime.requirements: " + ", ".join(runtime["requirements"]))
+    if isinstance(updates.get("repository"), dict):
+        lines.append("repository")
+    if isinstance(updates.get("skills"), list):
+        lines.append("skills")
+    if isinstance(updates.get("deployment"), dict):
+        lines.append("deployment")
+    return lines
+
+
+def _current_brain_model(existing: Any) -> str:
+    if not isinstance(existing, dict):
+        return ""
+    brain = existing.get("brain")
+    if isinstance(brain, dict) and isinstance(brain.get("model"), str):
+        return brain["model"]
+    return ""
+
+
+def _rejection_message(name: str, existing: Any, errors: List[str]) -> str:
+    lines = [f"Did not update agent.yaml for '{name}'. Nothing was applied."]
+    lines.extend(f"- {error}" for error in errors)
+    current = _current_brain_model(existing)
+    if current:
+        lines.append(f"brain.model is still {current}.")
+    return "\n".join(lines)
+
+
+def _deep_merge(base: dict, updates: dict) -> dict:
+    for key, value in updates.items():
+        if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+            _deep_merge(base[key], value)
+        else:
+            base[key] = value
+    return base
+
+
 @tool
 def update_agent_config(name: str, config_yaml: str) -> str:
     """
-    Update agent.yaml for the given agent.
-    Merges the provided YAML with the existing config.
-    
+    Merge a YAML patch into agent.yaml.
+
+    The runtime loads only this shape. Other keys are not written, and this
+    tool then reports that nothing was applied:
+
+    brain:
+      model: openrouter/minimax/minimax-m2.5
+    tools:
+      builtin: [bash, read, glob]
+      mcp: []
+      custom: []
+    harness:
+      permissions:
+        bash: ask
+
+    brain.model must be a catalog id (recommend_model returns those).
+    Permission levels are always-allow, ask, and deny.
+    Do not set a top-level model, a tools list, top-level permissions, or memory.
+
+    The result lists every stored field under Applied. Tell the user only
+    those settings. If the result says nothing was applied, say that.
+
     Args:
         name: The name of the agent to update.
         config_yaml: The YAML content to merge into agent.yaml.
     """
     agent_path = _ensure_agent_exists(name)
     agent_yaml_path = agent_path / "agent.yaml"
-    
-    # Load existing config
-    with open(agent_yaml_path, "r") as f:
-        existing = yaml.safe_load(f) or {}
-    
-    # Parse new config
-    updates = yaml.safe_load(config_yaml) or {}
-    
-    # Deep merge
-    def deep_merge(base: dict, updates: dict) -> dict:
-        for key, value in updates.items():
-            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
-                deep_merge(base[key], value)
-            else:
-                base[key] = value
-        return base
 
-    merged = deep_merge(existing, updates)
+    try:
+        existing = yaml.safe_load(agent_yaml_path.read_text()) or {}
+    except yaml.YAMLError as exc:
+        return (
+            f"Did not update agent.yaml for '{name}'. Nothing was applied.\n"
+            f"- agent.yaml could not be read: {exc}"
+        )
+    if not isinstance(existing, dict):
+        existing = {}
 
-    with open(agent_yaml_path, "w") as f:
-        yaml.dump(merged, f, default_flow_style=False, sort_keys=False)
+    try:
+        updates = yaml.safe_load(config_yaml)
+    except yaml.YAMLError as exc:
+        return _rejection_message(name, existing, [f"Invalid YAML: {exc}"])
 
-    # Generate descriptive message about what changed
-    changes = []
-    if 'brain' in updates and 'model' in updates.get('brain', {}):
-        changes.append(f"model: {updates['brain']['model']}")
-    if 'description' in updates:
-        changes.append("description")
-    if 'tools' in updates:
-        if 'builtin' in updates.get('tools', {}):
-            changes.append("tools")
-        if 'mcp' in updates.get('tools', []):
-            changes.append("MCP servers")
-    if 'harness' in updates:
-        if 'permissions' in updates.get('harness', {}):
-            changes.append("permissions")
-        if 'principles' in updates.get('harness', {}):
-            changes.append("principles")
-    if 'runtime' in updates:
-        changes.append("runtime")
+    if updates is None:
+        return _rejection_message(name, existing, ["config_yaml was empty."])
 
-    if changes:
-        message = "Updated: " + ", ".join(changes)
-    else:
-        message = "Updated agent configuration"
+    errors = _validate_agent_config_update(updates)
+    if errors:
+        return _rejection_message(name, existing, errors)
 
+    merged = _deep_merge(existing, updates)
+    with open(agent_yaml_path, "w") as handle:
+        yaml.dump(merged, handle, default_flow_style=False, sort_keys=False)
+
+    applied = _applied_lines(updates)
+    message = "Updated: " + ", ".join(applied) if applied else "Updated agent configuration"
     create_version(name, source="builder", message=message, agents_dir=AGENTS_DIR)
 
-    return f"Updated agent.yaml for '{name}'"
+    lines = [f"Updated agent.yaml for '{name}'.", "Applied:"]
+    lines.extend(f"- {line}" for line in applied)
+    lines.append("Nothing else was changed.")
+    return "\n".join(lines)
 
 
 @tool
@@ -558,14 +890,29 @@ def recommend_model(requirements: str) -> str:
     is_complex = any(k in requirements_lower for k in complex_keywords)
     is_coding = any(k in requirements_lower for k in coding_keywords)
     
+    # Catalog ids only. A hyphenated alias such as claude-3-5-haiku is not stored.
+    note = " Set this id under brain.model. Do not set a top-level model key."
     if is_complex:
-        return "openrouter/anthropic/claude-sonnet-4 - Best for complex reasoning and long context tasks"
+        return (
+            "openrouter/anthropic/claude-sonnet-4.6 - Best for complex reasoning and long context tasks."
+            + note
+        )
     elif is_coding:
-        return "openrouter/anthropic/claude-3-7-sonnet - Excellent for coding and general development tasks"
+        return (
+            "openrouter/anthropic/claude-3.7-sonnet - Excellent for coding and general development tasks."
+            + note
+        )
     elif is_simple:
-        return "openrouter/anthropic/claude-3-haiku or openrouter/openai/gpt-4o-mini - Fast and cost-effective for simple automation"
+        return (
+            "openrouter/anthropic/claude-3-haiku or openrouter/openai/gpt-4o-mini - "
+            "Fast and cost-effective for simple automation."
+            + note
+        )
     else:
-        return "openrouter/anthropic/claude-3-7-sonnet - Good all-rounder for most agent tasks"
+        return (
+            "openrouter/anthropic/claude-3.7-sonnet - Good all-rounder for most agent tasks."
+            + note
+        )
 
 
 @tool
