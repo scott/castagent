@@ -61,6 +61,16 @@ cast update email-assistant --add-requirement requests
 cast update email-assistant --model openrouter/openai/gpt-4o --dry-run
 ```
 
+`cast update` rejects a value it cannot store, prints the error, and exits
+non-zero. `agent.yaml` is left unchanged, including when `--dry-run` is set.
+
+- Permission levels are `always-allow`, `ask`, and `deny`.
+- Model ids use the same known list and the same error text as `cast model`.
+  A leading `openrouter/` prefix is still accepted, including the shipped
+  default `openrouter/minimax/minimax-m2.5`. Providers that accept any model
+  id, such as `digitalocean/`, are still accepted.
+- Python versions are `3.11` and `3.12`.
+
 Every `cast update` call writes a new entry to the agent's internal
 change log with an "Updated: …" message describing what changed. The
 log is internal — to step backward or forward through it, use

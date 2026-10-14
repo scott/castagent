@@ -85,6 +85,9 @@ Levels:
 - `ask` — the runtime prompts the user (in the TUI) before executing.
 - `deny` — the tool call returns an error and is never executed.
 
+`cast update --permission` accepts only these three levels. Any other level
+is an error, and `agent.yaml` is left unchanged.
+
 The TUI's `ask` prompt is a modal showing the tool name, the arguments,
 and Approve / Deny buttons.
 
@@ -106,6 +109,9 @@ runtime:
     - requests
     - beautifulsoup4
 ```
+
+`cast update --python-version` accepts `3.11` or `3.12`. Any other version
+is an error, and `agent.yaml` is left unchanged.
 
 Cast installs the venv fresh on each `cast deploy` / `cast upgrade`.
 Locally, `cast dev` reads from `python/.venv/`.

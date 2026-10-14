@@ -6,8 +6,11 @@ import * as yaml from 'yaml'
 import {db} from '../lib/sqlite'
 import {createVersion} from '../lib/versioning'
 import {inferenceModelStatus} from '../lib/deploy/deploy-utils'
+import {unknownModelMessage} from '../lib/models'
 
 const VALID_TOOLS = ['bash', 'read', 'glob']
+const VALID_PERMISSION_LEVELS = ['always-allow', 'ask', 'deny']
+const SUPPORTED_PYTHON_VERSIONS = ['3.11', '3.12']
 
 export default class Update extends Command {
   static description = 'Update agent configuration'
@@ -25,7 +28,7 @@ export default class Update extends Command {
 
   static flags = {
     model: Flags.string({
-      description: 'Update LLM model (e.g., openrouter/anthropic/claude-3.7-sonnet)',
+      description: 'Update LLM model (known id, for example openrouter/anthropic/claude-3.7-sonnet)',
     }),
     description: Flags.string({
       description: 'Update agent description',
@@ -56,7 +59,7 @@ export default class Update extends Command {
       multiple: true,
     }),
     permission: Flags.string({
-      description: 'Set a permission (format: tool=level, e.g., bash=always-allow)',
+      description: 'Set a permission (format: tool=level, levels: always-allow, ask, deny)',
       multiple: true,
     }),
     'remove-permission': Flags.string({
@@ -64,7 +67,7 @@ export default class Update extends Command {
       multiple: true,
     }),
     'python-version': Flags.string({
-      description: 'Update runtime Python version (e.g., 3.11, 3.12)',
+      description: 'Update runtime Python version (3.11 or 3.12)',
     }),
     'add-requirement': Flags.string({
       description: 'Add a Python package requirement',
@@ -88,8 +91,24 @@ export default class Update extends Command {
     return VALID_TOOLS.includes(tool)
   }
 
-  private validateModel(model: string): {valid: boolean; warning?: string} {
-    return inferenceModelStatus(model)
+  private validateModel(model: string): {valid: boolean; error?: string} {
+    const status = inferenceModelStatus(model)
+    if (status.valid && !status.warning && !status.error) return {valid: true}
+    // OpenRouter ids use the same message as `cast model`. A leading
+    // openrouter/ prefix is still accepted by inferenceModelStatus, including
+    // the shipped default openrouter/minimax/minimax-m2.5.
+    if (!status.provider || status.provider === 'openrouter') {
+      return {valid: false, error: unknownModelMessage(model)}
+    }
+    return {valid: false, error: status.error || status.warning || unknownModelMessage(model)}
+  }
+
+  private validatePermissionLevel(level: string): boolean {
+    return VALID_PERMISSION_LEVELS.includes(level)
+  }
+
+  private validatePythonVersion(version: string): boolean {
+    return SUPPORTED_PYTHON_VERSIONS.includes(version)
   }
 
   private parsePermission(perm: string): {tool: string; level: string} | null {
@@ -147,15 +166,38 @@ export default class Update extends Command {
       }
     }
 
-    // Validate permissions format
+    // Validate permissions format and level before any writes.
     const permissionsToSet = flags.permission || []
     for (const perm of permissionsToSet) {
-      if (!this.parsePermission(perm)) {
+      const parsed = this.parsePermission(perm)
+      if (!parsed) {
         this.error(
           `Invalid permission format '${perm}'.\n` +
           `Use the format: tool=level (e.g., bash=always-allow, read=ask)`
         )
+      } else if (!this.validatePermissionLevel(parsed.level)) {
+        this.error(
+          `Invalid permission level '${parsed.level}'.\n` +
+          `Valid levels: ${VALID_PERMISSION_LEVELS.join(', ')}`
+        )
       }
+    }
+
+    if (flags.model) {
+      const validation = this.validateModel(flags.model)
+      if (!validation.valid) {
+        this.error(validation.error || `Unknown model '${flags.model}'.`)
+      }
+    }
+
+    const pythonVersion = typeof flags['python-version'] === 'string'
+      ? flags['python-version'].trim()
+      : undefined
+    if (pythonVersion && !this.validatePythonVersion(pythonVersion)) {
+      this.error(
+        `Unsupported Python version '${flags['python-version']}'.\n` +
+        `Supported versions: ${SUPPORTED_PYTHON_VERSIONS.join(', ')}`
+      )
     }
 
     let modified = false
@@ -163,11 +205,6 @@ export default class Update extends Command {
 
     // --model
     if (flags.model) {
-      const validation = this.validateModel(flags.model)
-      if (validation.warning) {
-        this.warn(validation.warning)
-      }
-
       if (!config.brain) config.brain = {}
       config.brain.model = flags.model
       changes.push(`Model: ${flags.model}`)
@@ -329,10 +366,10 @@ export default class Update extends Command {
     }
 
     // --python-version
-    if (flags['python-version']) {
+    if (pythonVersion) {
       if (!config.runtime) config.runtime = {}
-      config.runtime.python_version = flags['python-version']
-      changes.push(`Python version: ${flags['python-version']}`)
+      config.runtime.python_version = pythonVersion
+      changes.push(`Python version: ${pythonVersion}`)
       modified = true
     }
 

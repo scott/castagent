@@ -901,16 +901,32 @@ export function inferenceEnv(config: any = loadConfig()): Record<string, string>
   return out
 }
 
-export function inferenceModelStatus(model: string): {valid: boolean; warning?: string} {
+export function inferenceModelStatus(model: string): {
+  valid: boolean
+  warning?: string
+  error?: string
+  provider?: string
+} {
   const {command, env} = castPython()
   const stdout = execFileSync(command, [
     '-c',
     'import json,sys\nfrom cast.providers.registry import model_status\njson.dump(model_status(sys.argv[1]), sys.stdout)\n',
     model,
   ], {encoding: 'utf8', env})
-  const parsed = JSON.parse(stdout) as {valid?: boolean; warning?: string | null}
-  if (parsed.warning) return {valid: true, warning: parsed.warning}
-  return {valid: true}
+  const parsed = JSON.parse(stdout) as {
+    valid?: boolean
+    warning?: string | null
+    error?: string | null
+    provider?: string
+  }
+  const result: {valid: boolean; warning?: string; error?: string; provider?: string} = {
+    valid: parsed.valid !== false && !parsed.error,
+  }
+  if (typeof parsed.provider === 'string' && parsed.provider) result.provider = parsed.provider
+  if (typeof parsed.warning === 'string' && parsed.warning) result.warning = parsed.warning
+  if (typeof parsed.error === 'string' && parsed.error) result.error = parsed.error
+  if (result.warning || result.error) result.valid = false
+  return result
 }
 
 export async function execCommandIgnoreError(

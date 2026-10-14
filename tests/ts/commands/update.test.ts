@@ -1,9 +1,26 @@
 import {expect} from 'chai'
+import {execFileSync} from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import * as yaml from 'yaml'
+
+// `cast update --model` asks Python for provider acceptance. A test that
+// points HOME at a temp directory also moves Python's user site, so keep
+// the original user site on PYTHONPATH.
+const pythonUserSite = execFileSync('python3', ['-c', 'import site; print(site.getusersitepackages())'], {
+  encoding: 'utf8',
+}).trim()
+
+function withPythonUserSite(): string | undefined {
+  const previous = process.env.PYTHONPATH
+  const parts = [pythonUserSite]
+  if (previous) parts.push(previous)
+  process.env.PYTHONPATH = parts.join(path.delimiter)
+  return previous
+}
 import {db} from '../../../typescript/cast-cli/src/lib/sqlite'
+import {unknownModelMessage} from '../../../typescript/cast-cli/src/lib/models'
 import Update from '../../../typescript/cast-cli/src/commands/update'
 
 describe('update command', () => {
@@ -51,11 +68,26 @@ describe('update command', () => {
       expect(known.warning).to.equal(undefined)
     })
 
-    it('should still warn for unknown OpenRouter models', () => {
+    it('rejects unknown OpenRouter models with the cast model message', () => {
       const update = new Update(['update', 'agent'], {} as any)
       const result = (update as any).validateModel('unknown/model')
-      expect(result.valid).to.equal(true)
-      expect(result.warning).to.include('OpenRouter')
+      expect(result).to.deep.equal({
+        valid: false,
+        error: unknownModelMessage('unknown/model'),
+      })
+    })
+
+    it('rejects zzz/notreal and still accepts the shipped openrouter default', () => {
+      const update = new Update(['update', 'agent'], {} as any)
+      const unknown = (update as any).validateModel('zzz/notreal')
+      const shipped = (update as any).validateModel('openrouter/minimax/minimax-m2.5')
+      const prefixed = (update as any).validateModel('openrouter/anthropic/claude-3.7-sonnet')
+      expect(unknown).to.deep.equal({
+        valid: false,
+        error: unknownModelMessage('zzz/notreal'),
+      })
+      expect(shipped).to.deep.equal({valid: true})
+      expect(prefixed).to.deep.equal({valid: true})
     })
 
     it('accepts an external acceptsAnyModel id without an OpenRouter warning', () => {
@@ -85,6 +117,7 @@ describe('update command', () => {
         '',
       ].join('\n'))
       const previous = process.env.HOME
+      const previousPythonPath = withPythonUserSite()
       process.env.HOME = home
       try {
         const update = new Update(['update', 'agent'], {} as any)
@@ -94,6 +127,8 @@ describe('update command', () => {
       } finally {
         if (previous === undefined) delete process.env.HOME
         else process.env.HOME = previous
+        if (previousPythonPath === undefined) delete process.env.PYTHONPATH
+        else process.env.PYTHONPATH = previousPythonPath
       }
     })
 
@@ -137,10 +172,14 @@ describe('update command', () => {
     })
 
     it('should validate permission levels', () => {
-      const validLevels = ['always-allow', 'approve-once', 'ask', 'block']
+      const validLevels = ['always-allow', 'ask', 'deny']
+      const update = new Update(['update', 'agent'], {} as any)
 
       for (const level of validLevels) {
-        expect(validLevels.includes(level)).to.be.true
+        expect((update as any).validatePermissionLevel(level)).to.equal(true)
+      }
+      for (const level of ['whatever', 'approve-once', 'block', 'always-ask']) {
+        expect((update as any).validatePermissionLevel(level)).to.equal(false)
       }
     })
   })
@@ -278,6 +317,148 @@ describe('update command', () => {
 
       // Cleanup
       fs.rmSync(agentPath, {recursive: true, force: true})
+    })
+  })
+
+  describe('rejected configuration values', () => {
+    const previousHome = process.env.HOME
+    const previousPythonPath = process.env.PYTHONPATH
+    let home: string
+    let configPath: string
+    let original: string
+    const agentName = 'update-reject-agent'
+
+    async function runUpdate(flags: Record<string, unknown>): Promise<{logs: string[]; errors: string[]}> {
+      const logs: string[] = []
+      const errors: string[] = []
+      const update = new Update(['update', agentName], {} as any)
+      ;(update as any).config = {runHook: async () => ({successes: [], failures: []})}
+      ;(update as any).parse = async () => ({
+        args: {agent: agentName},
+        flags,
+        argv: [],
+        raw: [],
+        metadata: {},
+        nonExistentFlags: [],
+      })
+      ;(update as any).log = (msg?: string) => logs.push(msg ?? '')
+      ;(update as any).warn = (msg?: string) => logs.push(`WARN ${msg ?? ''}`)
+      ;(update as any).error = (msg: string, options?: {exit?: number}) => {
+        errors.push(msg)
+        const error = new Error(msg) as Error & {oclif: {exit: number}}
+        error.oclif = {exit: options?.exit === undefined ? 2 : options.exit}
+        throw error
+      }
+      try {
+        await update.run()
+      } catch (error: any) {
+        if (errors.length === 0) errors.push(error.message ?? String(error))
+      }
+      return {logs, errors}
+    }
+
+    function written(): string {
+      return fs.readFileSync(configPath, 'utf8')
+    }
+
+    beforeEach(() => {
+      home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-update-reject-'))
+      withPythonUserSite()
+      process.env.HOME = home
+      const agentPath = path.join(home, '.cast', 'agents', agentName)
+      fs.mkdirSync(agentPath, {recursive: true})
+      configPath = path.join(agentPath, 'agent.yaml')
+      original = yaml.stringify({
+        name: agentName,
+        description: 'unchanged',
+        brain: {model: 'openrouter/minimax/minimax-m2.5'},
+        harness: {permissions: {read: 'ask'}},
+        runtime: {python_version: '3.11'},
+      })
+      fs.writeFileSync(configPath, original)
+    })
+
+    afterEach(() => {
+      if (previousHome === undefined) delete process.env.HOME
+      else process.env.HOME = previousHome
+      if (previousPythonPath === undefined) delete process.env.PYTHONPATH
+      else process.env.PYTHONPATH = previousPythonPath
+      fs.rmSync(home, {recursive: true, force: true})
+    })
+
+    it('rejects an unknown permission level and leaves agent.yaml unchanged', async () => {
+      const {errors, logs} = await runUpdate({permission: ['bash=whatever']})
+      expect(errors).to.have.length(1)
+      expect(errors[0]).to.include("Invalid permission level 'whatever'")
+      expect(errors[0]).to.include('always-allow, ask, deny')
+      expect(logs.join('\n')).to.not.include('configuration updated successfully')
+      expect(written()).to.equal(original)
+    })
+
+    it('rejects a bad level in a mixed permission list before writing the valid one', async () => {
+      const {errors} = await runUpdate({permission: ['bash=ask', 'read=block']})
+      expect(errors).to.have.length(1)
+      expect(errors[0]).to.include("Invalid permission level 'block'")
+      expect(written()).to.equal(original)
+    })
+
+    it('rejects --permission bogus the same way as an unknown tool', async () => {
+      const permission = await runUpdate({permission: ['bogus']})
+      expect(permission.errors).to.have.length(1)
+      expect(permission.errors[0]).to.include("Invalid permission format 'bogus'")
+      expect(written()).to.equal(original)
+
+      const tool = await runUpdate({'add-tool': ['notatool']})
+      expect(tool.errors).to.have.length(1)
+      expect(tool.errors[0]).to.include("Invalid tool name 'notatool'")
+      expect(tool.errors[0]).to.include('bash, read, glob')
+      expect(written()).to.equal(original)
+    })
+
+    it('rejects an unknown model id and keeps the shipped default', async () => {
+      const {errors, logs} = await runUpdate({model: 'zzz/notreal', description: 'should not stick'})
+      expect(errors).to.have.length(1)
+      expect(errors[0]).to.equal(unknownModelMessage('zzz/notreal'))
+      expect(logs.join('\n')).to.not.include('configuration updated successfully')
+      expect(written()).to.equal(original)
+      expect(yaml.parse(written()).brain.model).to.equal('openrouter/minimax/minimax-m2.5')
+    })
+
+    it('rejects an unsupported Python version even with --dry-run', async () => {
+      const {errors} = await runUpdate({'python-version': '9.9', 'dry-run': true, description: 'nope'})
+      expect(errors).to.have.length(1)
+      expect(errors[0]).to.include("Unsupported Python version '9.9'")
+      expect(errors[0]).to.include('3.11, 3.12')
+      expect(written()).to.equal(original)
+    })
+
+    it('writes valid permission levels, the shipped model, and a supported Python version', async () => {
+      const {errors, logs} = await runUpdate({
+        permission: ['bash=always-allow', 'glob=deny'],
+        model: 'openrouter/minimax/minimax-m2.5',
+        'python-version': '3.12',
+      })
+      expect(errors).to.deep.equal([])
+      expect(logs.join('\n')).to.include('configuration updated successfully')
+      const config = yaml.parse(written())
+      expect(config.harness.permissions.bash).to.equal('always-allow')
+      expect(config.harness.permissions.glob).to.equal('deny')
+      expect(config.harness.permissions.read).to.equal('ask')
+      expect(config.brain.model).to.equal('openrouter/minimax/minimax-m2.5')
+      expect(config.runtime.python_version).to.equal('3.12')
+    })
+
+    it('accepts ask and 3.11', async () => {
+      const {errors} = await runUpdate({
+        permission: ['bash=ask'],
+        'python-version': '3.11',
+        model: 'openrouter/anthropic/claude-3.7-sonnet',
+      })
+      expect(errors).to.deep.equal([])
+      const config = yaml.parse(written())
+      expect(config.harness.permissions.bash).to.equal('ask')
+      expect(config.runtime.python_version).to.equal('3.11')
+      expect(config.brain.model).to.equal('openrouter/anthropic/claude-3.7-sonnet')
     })
   })
 })
