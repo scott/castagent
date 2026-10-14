@@ -77,7 +77,9 @@ changes show up as files on disk.
   [Releases](building-agents/deployment/releases).
 - **`Dockerfile`**, **`requirements.txt`**, **`docker-compose.yml`** — generated
   on each `cast deploy` (or `cast upgrade`) and overwritten on the next
-  deploy. Do not hand-edit.
+  deploy. Do not hand-edit. `requirements.txt` lists the Cast runtime's
+  Python dependencies from `python/pyproject.toml` and any packages in
+  `runtime.requirements`.
 - **`.git/`** — present if you ran `cast git init`. `cast git commit` and
   `cast git push` operate on it.
 
