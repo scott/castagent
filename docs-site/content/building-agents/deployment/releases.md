@@ -45,7 +45,11 @@ just created. Before an agent exists, the command replies
 
 `releases.json` is the manifest; the tarballs (`1.0.tar.gz`, `1.5.tar.gz`,
 …) sit alongside it. `agent.yaml`'s `version: "1.6"` always points at the
-current release.
+current release. Each release records `tarball_path` relative to the agent
+directory, for example `.cast/releases/1.0.tar.gz`. A clone or a move of
+the agent directory still finds the archive. A manifest that already stores
+an absolute path keeps using that file when it exists, and otherwise opens
+the tarball of the same name in `.cast/releases/`.
 
 ## Creating a release
 

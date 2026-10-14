@@ -94,6 +94,9 @@ describe('releases lib (TS wrapper)', () => {
         'utf-8',
       ))
       expect(manifest.current.version).to.equal('1.5.0')
+      expect(manifest.releases[0].tarball_path).to.equal('.cast/releases/1.5.0.tar.gz')
+      expect(path.isAbsolute(info.tarball_path)).to.equal(true)
+      expect(fs.existsSync(info.tarball_path)).to.equal(true)
     })
 
     it('does not overwrite a SQLite row that is already stored', async () => {

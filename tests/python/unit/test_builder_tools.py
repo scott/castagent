@@ -466,3 +466,4 @@ class TestCreateReleaseTool:
         assert row[3].endswith("1.5.0.tar.gz")
         manifest = json.loads((agent / ".cast" / "releases" / "releases.json").read_text())
         assert manifest["current"]["version"] == "1.5.0"
+        assert manifest["releases"][0]["tarball_path"] == ".cast/releases/1.5.0.tar.gz"

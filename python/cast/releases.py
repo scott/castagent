@@ -45,6 +45,47 @@ def _get_releases_json_path(name: str) -> Path:
     return _get_releases_dir(name) / "releases.json"
 
 
+def _stored_tarball_path(filename: str) -> str:
+    """Path recorded in releases.json, relative to the agent directory.
+
+    The manifest is committed with the agent, so an absolute path would
+    publish the author's home directory and break after a clone or move.
+    """
+    return f".cast/releases/{filename}"
+
+
+def _resolve_tarball_path(agent_name: str, stored: Any) -> str:
+    """Absolute path used to open a release tarball.
+
+    New manifests store a path relative to the agent directory. Older
+    manifests store an absolute path. An absolute path that is missing
+    falls back to the same filename under this agent's releases directory,
+    which is where a cloned tarball lives.
+    """
+    if stored is None:
+        return ""
+    text = str(stored).strip()
+    if not text:
+        return ""
+    path = Path(text)
+    agent_dir = Path(AGENTS_DIR) / agent_name
+    if not path.is_absolute():
+        return str((agent_dir / path).resolve())
+    if path.exists():
+        return str(path)
+    local = agent_dir / ".cast" / "releases" / path.name
+    if local.exists():
+        return str(local.resolve())
+    return str(path)
+
+
+def _release_info(agent_name: str, entry: dict[str, Any]) -> ReleaseInfo:
+    """Build ReleaseInfo, resolving tarball_path for the local agent."""
+    data = dict(entry)
+    data["tarball_path"] = _resolve_tarball_path(agent_name, data.get("tarball_path"))
+    return ReleaseInfo(**data)
+
+
 def _cast_db_path() -> Path:
     """cast.db beside the agents directory (~/.cast/cast.db).
 
@@ -216,7 +257,7 @@ def _sync_releases_from_json(agent_name: str) -> None:
                         "" if entry.get("message") is None else str(entry.get("message")),
                         "" if entry.get("changelog") is None else str(entry.get("changelog")),
                         _format_created_at(stamp),
-                        "" if entry.get("tarball_path") is None else str(entry.get("tarball_path")),
+                        _resolve_tarball_path(agent_name, entry.get("tarball_path")),
                     ),
                 )
     finally:
@@ -260,7 +301,7 @@ def list_releases(agent_name: str) -> List[ReleaseInfo]:
         data = json.load(f)
     releases = []
     for r in data.get("releases", []):
-        releases.append(ReleaseInfo(**r))
+        releases.append(_release_info(agent_name, r))
     return sorted(releases, key=lambda r: _version_tuple(r.version), reverse=True)
 
 
@@ -279,7 +320,7 @@ def get_release(agent_name: str, version: str) -> Optional[ReleaseInfo]:
         data = json.load(f)
     for r in data.get("releases", []):
         if r.get("version") == version:
-            return ReleaseInfo(**r)
+            return _release_info(agent_name, r)
     return None
 
 
@@ -452,14 +493,16 @@ def create_release(agent_name: str, version: str, message: str = "", agents_dir:
     last_release_change = get_latest_release_change_number(agent_name)
     changelog = generate_changelog(agent_name, last_release_change)
 
-    # Create release info
+    # Persist a path relative to the agent directory. Callers receive
+    # the absolute path of the tarball that was just written.
+    stored_tarball_path = _stored_tarball_path(tarball_filename)
     release_info = ReleaseInfo(
         version=version,
         change_number=change_number,
         message=message or f"Release {version}",
         changelog=changelog,
         created_at=timestamp,
-        tarball_path=str(tarball_path)
+        tarball_path=stored_tarball_path,
     )
 
     # Update releases.json
@@ -487,9 +530,11 @@ def create_release(agent_name: str, version: str, message: str = "", agents_dir:
             yaml.dump(yaml_data, f, default_flow_style=False, sort_keys=False)
 
     # Same writer the CLI, TUI, and builder use. Insert-if-absent so a
-    # pre-existing SQLite row is not replaced.
+    # pre-existing SQLite row is not replaced. SQLite is local to this
+    # machine, so the synced row stores the resolved absolute path.
     _sync_releases_from_json(agent_name)
 
+    release_info.tarball_path = str(tarball_path.resolve())
     return release_info
 
 
