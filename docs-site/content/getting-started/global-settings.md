@@ -147,6 +147,9 @@ runtime:
 
 A `tools.custom` entry is a module name string or an object with `path`.
 `cast describe` prints the string or the path. The runtime loads
-`tools.builtin` and leaves `tools.custom` unloaded. See
+`tools.builtin` and leaves `tools.custom` unloaded. The Builder rejects
+a flat `tools` list, a top-level `model`, a top-level `permissions`
+block, and a top-level `memory` block, and it leaves `agent.yaml`
+unchanged. See
 [Custom tools](configuration/custom-tools) and the
 [agent anatomy](building-agents/anatomy) page.

@@ -246,8 +246,30 @@ Through conversation, understand what the user wants their agent to do, then:
 ## Security Guidelines
 
 - Never suggest always-allow for destructive operations
-- Recommend approve-once for sending/deleting
+- Recommend ask for sending or deleting
 - Be explicit about what data the agent will access
+
+## agent.yaml shape
+
+The runtime loads only this shape. Pass it to update_agent_config:
+
+brain:
+  model: openrouter/minimax/minimax-m2.5
+tools:
+  builtin:
+    - bash
+    - read
+    - glob
+harness:
+  permissions:
+    bash: ask
+
+- Put the model under brain.model. It must be a catalog id. recommend_model returns catalog ids.
+- Put built-in tools under tools.builtin. Do not set tools to a list.
+- Put permissions under harness.permissions. Levels are always-allow, ask, and deny.
+- Do not set a top-level model, permissions, or memory key. Memory lives in memory/config.yaml.
+- Tell the user a setting changed only when the tool result lists it under Applied.
+- If the tool says nothing was applied, say that. Do not name a model or a permission level the tool did not store.
 """
 
 
@@ -1033,23 +1055,29 @@ class BuilderAgent:
         lines.append(f"**Description:** {description}\n")
 
         brain = config.get("brain", {})
+        if not isinstance(brain, dict):
+            brain = {}
         model = brain.get("model", "No model set")
+        if not isinstance(model, str) or not model:
+            model = "No model set"
         lines.append(f"**Model:** {model}")
 
         tools = config.get("tools", {})
-        builtin = tools.get("builtin", [])
-        if builtin:
-            lines.append(f"**Built-in tools:** {', '.join(builtin)}")
+        if isinstance(tools, dict):
+            builtin = tools.get("builtin", [])
+            if isinstance(builtin, list) and builtin:
+                lines.append(f"**Built-in tools:** {', '.join(str(item) for item in builtin)}")
 
-        mcp = tools.get("mcp", [])
-        if mcp:
-            mcp_names = [m.get("server", m) if isinstance(m, dict) else m for m in mcp]
-            lines.append(f"**MCP integrations:** {', '.join(mcp_names)}")
+            mcp = tools.get("mcp", [])
+            if isinstance(mcp, list) and mcp:
+                mcp_names = [m.get("server", m) if isinstance(m, dict) else m for m in mcp]
+                lines.append(f"**MCP integrations:** {', '.join(str(item) for item in mcp_names)}")
 
         harness = config.get("harness", {})
-        principles = harness.get("principles", [])
-        if principles:
-            lines.append(f"**Principles:** {', '.join(principles)}")
+        if isinstance(harness, dict):
+            principles = harness.get("principles", [])
+            if isinstance(principles, list) and principles:
+                lines.append(f"**Principles:** {', '.join(str(item) for item in principles)}")
 
         lines.append("\nWhat would you like to change?")
         return "\n".join(lines)

@@ -514,8 +514,15 @@ Through conversation, understand what the user wants their agent to do, then:
 ## Security Guidelines
 
 - Never suggest always-allow for destructive operations
-- Recommend approve-once for sending/deleting
+- Recommend ask for sending or deleting
 - Be explicit about what data the agent will access
+
+## agent.yaml shape
+
+Write brain.model, tools.builtin, and harness.permissions. Do not set a
+top-level model, a tools list, top-level permissions, or memory.
+Permission levels are always-allow, ask, and deny. Tell the user a
+setting changed only when the tool result lists it under Applied.
 ```
 
 ---

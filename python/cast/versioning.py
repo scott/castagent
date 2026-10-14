@@ -4,6 +4,7 @@ This module handles automatic version snapshots (changes).
 For semantic releases, use the releases module instead.
 """
 
+import fcntl
 import json
 import os
 import tarfile
@@ -81,6 +82,31 @@ def _get_version_filename(version_id: int) -> str:
     return f"{version_id:03d}.tar.gz"
 
 
+def _version_id_value(entry: Any) -> int:
+    """Positive integer id, or 0 when the entry has none."""
+    if not isinstance(entry, dict):
+        return 0
+    value = entry.get("id")
+    if isinstance(value, bool) or not isinstance(value, int) or value < 1:
+        return 0
+    return value
+
+
+def _allocate_version_id(entries: List[Any], changes_dir: Path) -> int:
+    """Next unused id, from the log and from tarballs already on disk.
+
+    Two builder tools can snapshot the same agent in parallel. The id has
+    to be chosen from the document that will be written, not from an
+    earlier read, or both snapshots store `"id": 2`.
+    """
+    used = {_version_id_value(entry) for entry in entries}
+    used.discard(0)
+    candidate = max(used) + 1 if used else 1
+    while candidate in used or (changes_dir / f"{candidate:03d}.tar.gz").exists():
+        candidate += 1
+    return candidate
+
+
 def _get_next_version_id(name: str) -> int:
     """Get the next version ID for a new version.
 
@@ -90,12 +116,13 @@ def _get_next_version_id(name: str) -> int:
     """
     # Try canonical location first, fall back to old location
     changes_json = _get_changes_json_path(name)
+    changes_dir = _get_changes_dir(name)
     if changes_json.exists():
         with open(changes_json, "r") as f:
             data = json.load(f)
             versions = data.get("versions", [])
-            if versions:
-                return max(v.get("id", 0) for v in versions) + 1
+            if isinstance(versions, list):
+                return _allocate_version_id(versions, changes_dir)
             return 1
 
     versions_json = _get_versions_json_path(name)
@@ -103,8 +130,8 @@ def _get_next_version_id(name: str) -> int:
         with open(versions_json, "r") as f:
             data = json.load(f)
             versions = data.get("versions", [])
-            if versions:
-                return max(v.get("id", 0) for v in versions) + 1
+            if isinstance(versions, list):
+                return _allocate_version_id(versions, changes_dir)
             return 1
     return 1
 
@@ -135,17 +162,8 @@ def create_version(agent_name: str, source: str = "builder", message: str = "", 
     if not agent_path.exists():
         raise VersioningError(f"Agent '{agent_name}' does not exist")
 
-    # Ensure both directories exist (new canonical location + old for migration)
-    changes_dir = _ensure_changes_dir(agent_name)
-    _ensure_versions_dir(agent_name)
-
-    # Get next version ID
-    version_id = _get_next_version_id(agent_name)
-
-    # Generate timestamp
-    timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
-
-    # Default message if not provided
+    # Default message if not provided. Computed before the lock so the
+    # critical section only allocates an id and writes the snapshot.
     if not message:
         if source == "create":
             message = "Initial version"
@@ -157,6 +175,13 @@ def create_version(agent_name: str, source: str = "builder", message: str = "", 
             message = "Auto-snapshot before redo"
         else:
             message = "Updated via builder agent"
+
+    # Snapshots live next to the agent this call was given. The global
+    # helpers stay on AGENTS_DIR for undo and list.
+    changes_dir = agents_dir / agent_name / ".cast" / "changes"
+    versions_dir = agents_dir / agent_name / ".cast" / "versions"
+    changes_dir.mkdir(parents=True, exist_ok=True)
+    versions_dir.mkdir(parents=True, exist_ok=True)
 
     # Files to include in the snapshot
     files_to_snapshot = [
@@ -174,7 +199,59 @@ def create_version(agent_name: str, source: str = "builder", message: str = "", 
     if tools_dir.exists() and any(tools_dir.iterdir()):
         files_to_snapshot.append("tools")
 
-    # Create tar.gz archive in canonical location (changes/)
+    lock_path = changes_dir / ".lock"
+    with open(lock_path, "a+") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            return _write_version_snapshot(
+                agent_path,
+                changes_dir,
+                versions_dir,
+                files_to_snapshot,
+                source,
+                message,
+                preserve_redo_stack,
+            )
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def _write_version_snapshot(
+    agent_path: Path,
+    changes_dir: Path,
+    versions_dir: Path,
+    files_to_snapshot: List[str],
+    source: str,
+    message: str,
+    preserve_redo_stack: bool,
+) -> VersionInfo:
+    """Allocate an id and write the tarball plus changes.json. Caller holds the lock."""
+    changes_json_path = changes_dir / "changes.json"
+    versions_json_path = versions_dir / "versions.json"
+
+    if changes_json_path.exists():
+        with open(changes_json_path, "r") as handle:
+            changes_data = json.load(handle)
+        prior = changes_data.get("versions", [])
+    else:
+        changes_data = {"versions": [], "current": 0, "redo_stack": []}
+        prior = []
+        if versions_json_path.exists():
+            with open(versions_json_path, "r") as handle:
+                legacy = json.load(handle)
+            if isinstance(legacy, dict) and isinstance(legacy.get("versions"), list):
+                prior = legacy["versions"]
+
+    if not isinstance(changes_data, dict):
+        changes_data = {"versions": [], "current": 0, "redo_stack": []}
+    if not isinstance(changes_data.get("versions"), list):
+        changes_data["versions"] = []
+    if not isinstance(prior, list):
+        prior = list(changes_data["versions"])
+
+    version_id = _allocate_version_id(prior, changes_dir)
+    timestamp = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
     version_filename = _get_version_filename(version_id)
     version_path = changes_dir / version_filename
 
@@ -182,16 +259,7 @@ def create_version(agent_name: str, source: str = "builder", message: str = "", 
         for file_or_dir in files_to_snapshot:
             file_path = agent_path / file_or_dir
             if file_path.exists():
-                # Use arcname to store relative path in archive
                 tar.add(file_path, arcname=file_or_dir)
-
-    # Update changes.json (canonical location)
-    changes_json_path = _get_changes_json_path(agent_name)
-    if changes_json_path.exists():
-        with open(changes_json_path, "r") as f:
-            changes_data = json.load(f)
-    else:
-        changes_data = {"versions": [], "current": 0, "redo_stack": []}
 
     # Any fresh edit invalidates the undo redo stack: a user who
     # edits after an undo has explicitly diverged from the redo path.
@@ -201,7 +269,6 @@ def create_version(agent_name: str, source: str = "builder", message: str = "", 
     if not preserve_redo_stack and changes_data.get("redo_stack"):
         changes_data["redo_stack"] = []
 
-    # Add new version to the list
     version_info = VersionInfo(
         id=version_id,
         timestamp=timestamp,
@@ -211,15 +278,14 @@ def create_version(agent_name: str, source: str = "builder", message: str = "", 
     changes_data["versions"].append(asdict(version_info))
     changes_data["current"] = version_id
 
-    with open(changes_json_path, "w") as f:
-        json.dump(changes_data, f, indent=2)
+    with open(changes_json_path, "w") as handle:
+        json.dump(changes_data, handle, indent=2)
 
     # Also update versions.json for backward compatibility (migration)
     # Copy the changes data to versions.json to keep them in sync
-    versions_json_path = _get_versions_json_path(agent_name)
     if versions_json_path.exists():
-        with open(versions_json_path, "w") as f:
-            json.dump(changes_data, f, indent=2)
+        with open(versions_json_path, "w") as handle:
+            json.dump(changes_data, handle, indent=2)
 
     return version_info
 

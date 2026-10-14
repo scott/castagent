@@ -239,3 +239,58 @@ class TestVersioning:
             names = tar.getnames()
             assert "tools" in names
             assert "tools/mytool.py" in names
+
+    def test_parallel_snapshots_get_unique_ids(self, test_agent, temp_agents_dir):
+        """Two writers must not both store id 2."""
+        import threading
+
+        ids = []
+        errors = []
+
+        def snapshot(index: int) -> None:
+            try:
+                info = versioning.create_version(
+                    test_agent,
+                    source="builder",
+                    message=f"parallel {index}",
+                )
+                ids.append(info.id)
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [threading.Thread(target=snapshot, args=(index,)) for index in range(8)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+
+        assert errors == []
+        assert sorted(ids) == list(range(1, 9))
+
+        changes_path = temp_agents_dir / test_agent / ".cast" / "changes" / "changes.json"
+        changes = json.loads(changes_path.read_text())
+        stored = [entry["id"] for entry in changes["versions"]]
+        assert stored == list(range(1, 9))
+        assert len(stored) == len(set(stored))
+
+    def test_next_id_skips_a_duplicated_entry(self, test_agent, temp_agents_dir):
+        """A log that already has two id 2 entries gets a new id after them."""
+        changes_dir = temp_agents_dir / test_agent / ".cast" / "changes"
+        changes_dir.mkdir(parents=True)
+        (changes_dir / "002.tar.gz").write_bytes(b"")
+        payload = {
+            "versions": [
+                {"id": 1, "timestamp": "t", "source": "create", "message": "one"},
+                {"id": 2, "timestamp": "t", "source": "builder", "message": "two"},
+                {"id": 2, "timestamp": "t", "source": "builder", "message": "two again"},
+            ],
+            "current": 2,
+            "redo_stack": [],
+        }
+        (changes_dir / "changes.json").write_text(json.dumps(payload))
+
+        info = versioning.create_version(test_agent, source="builder", message="after duplicate")
+        assert info.id == 3
+
+        changes = json.loads((changes_dir / "changes.json").read_text())
+        assert [entry["id"] for entry in changes["versions"]] == [1, 2, 2, 3]

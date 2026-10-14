@@ -659,3 +659,33 @@ class TestBuilderModelConfig:
         welcome = agent.get_welcome_message()
         assert "**minimax/minimax-m2.5**" in welcome
         assert "openrouter/minimax/minimax-m2.5" not in welcome
+
+
+class TestBuilderConfigClaims:
+    """The prompt and the edit welcome must match the file the runtime loads."""
+
+    def test_prompt_tells_the_builder_not_to_claim_unapplied_settings(self):
+        from cast.builder import DEFAULT_SYSTEM_PROMPT
+
+        assert "tools.builtin" in DEFAULT_SYSTEM_PROMPT
+        assert "brain.model" in DEFAULT_SYSTEM_PROMPT
+        assert "nothing was applied" in DEFAULT_SYSTEM_PROMPT
+        assert "approve-once" not in DEFAULT_SYSTEM_PROMPT
+        assert "always-allow, ask, and deny" in DEFAULT_SYSTEM_PROMPT
+
+    def test_edit_welcome_survives_a_tools_list(self):
+        from cast.builder import BuilderAgent
+
+        welcome = BuilderAgent._build_edit_welcome(
+            None,
+            "bb2-live",
+            {
+                "description": "answers in one sentence",
+                "brain": {"model": "openrouter/minimax/minimax-m2.5"},
+                "tools": ["bash", "read", "glob"],
+                "permissions": {"bash": "approve-once"},
+            },
+        )
+        assert "openrouter/minimax/minimax-m2.5" in welcome
+        assert "approve-once" not in welcome
+        assert "Built-in tools" not in welcome
