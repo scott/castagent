@@ -4,6 +4,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import * as yaml from 'yaml'
+import * as skillLib from '../../../typescript/cast-cli/src/lib/skills'
 
 async function loadSkillsCommand(): Promise<any> {
   const commandPath = path.join(
@@ -20,18 +21,25 @@ async function loadSkillsCommand(): Promise<any> {
   return require(commandPath).default
 }
 
-async function runCommand(Cmd: any, args: any, flags: any): Promise<{logs: string[]; errors: string[]}> {
+async function runCommand(
+  Cmd: any,
+  args: any,
+  flags: any,
+): Promise<{logs: string[]; errors: string[]; exitCode?: number}> {
   const logs: string[] = []
   const errors: string[] = []
+  let exitCode: number | undefined
   const instance = new Cmd([], {} as any)
   instance.config = {runHook: async () => ({successes: [], failures: []})}
   instance.parse = async () => ({args, flags, argv: [], raw: [], metadata: {}, nonExistentFlags: []})
   instance.log = (msg?: string) => logs.push(msg ?? '')
-  instance.error = (msg: string) => {
+  instance.error = (msg: string, options?: {exit?: number | false}) => {
     errors.push(msg)
+    if (options && typeof options.exit === 'number') exitCode = options.exit
     throw new Error(msg)
   }
   instance.exit = (code?: number) => {
+    exitCode = code ?? 0
     throw new Error(`exit ${code ?? 0}`)
   }
   try {
@@ -39,7 +47,7 @@ async function runCommand(Cmd: any, args: any, flags: any): Promise<{logs: strin
   } catch (err: any) {
     if (errors.length === 0) errors.push(err.message ?? String(err))
   }
-  return {logs, errors}
+  return {logs, errors, exitCode}
 }
 
 function writeSkill(dir: string, name: string, description: string, body: string, extra?: Record<string, string>): void {
@@ -352,6 +360,110 @@ describe('cast skills command', () => {
     )
     expect(result.errors.join('\n')).to.include(`Skill 'missing' is not on '${agent.name}'`)
     expect(readConfig(agent.dir).skills).to.equal(undefined)
+  })
+
+  it('prints a readable list when a github repo has several skills', async () => {
+    const agent = makeAgent()
+    const choices = [
+      {name: 'alpha', description: 'Alpha skill', subpath: 'skills/alpha'},
+      {name: 'zeta', description: 'Zeta skill', subpath: 'skills/zeta'},
+    ]
+    const original = skillLib.installFromGitHub
+    const mutable = skillLib as {installFromGitHub: typeof skillLib.installFromGitHub}
+    mutable.installFromGitHub = () => {
+      throw new skillLib.SkillError(
+        'Multiple SKILL.md files found in owner/multi. Re-run with --subpath or --skill.',
+        'multiple',
+        choices,
+      )
+    }
+    try {
+      const result = await runCommand(
+        Skills,
+        {target: 'add', agent: agent.name},
+        {github: 'owner/multi', json: false},
+      )
+      expect(result.logs).to.deep.equal([
+        'Multiple skills found. Re-run with --subpath <path> or --skill <name>:',
+        '  alpha  Alpha skill (skills/alpha)',
+        '  zeta  Zeta skill (skills/zeta)',
+      ])
+      expect(result.logs.join('\n')).to.not.include('"subpath"')
+      expect(result.errors).to.deep.equal(['Multiple skills found. Pass --subpath'])
+      expect(result.exitCode).to.equal(2)
+      expect(readConfig(agent.dir).skills).to.equal(undefined)
+    } finally {
+      mutable.installFromGitHub = original
+    }
+  })
+
+  it('prints the choice array as JSON when --json is set', async () => {
+    const agent = makeAgent()
+    const choices = [
+      {name: 'alpha', description: 'Alpha skill', subpath: 'skills/alpha', ref: 'main'},
+      {name: 'zeta', description: 'Zeta skill', subpath: 'skills/zeta', ref: 'main'},
+    ]
+    const original = skillLib.installFromGitHub
+    const mutable = skillLib as {installFromGitHub: typeof skillLib.installFromGitHub}
+    mutable.installFromGitHub = () => {
+      throw new skillLib.SkillError('multiple', 'multiple', choices)
+    }
+    try {
+      const result = await runCommand(
+        Skills,
+        {target: 'add', agent: agent.name},
+        {github: 'owner/multi', json: true},
+      )
+      expect(JSON.parse(result.logs.join('\n'))).to.deep.equal(choices)
+      expect(result.errors).to.deep.equal(['Multiple skills found. Pass --subpath'])
+      expect(result.exitCode).to.equal(2)
+      expect(fs.existsSync(path.join(agent.dir, 'skills'))).to.equal(false)
+    } finally {
+      mutable.installFromGitHub = original
+    }
+  })
+
+  it('passes --skill through to the github installer', async () => {
+    const agent = makeAgent()
+    const original = skillLib.installFromGitHub
+    const mutable = skillLib as {installFromGitHub: typeof skillLib.installFromGitHub}
+    let seen: {skill?: string; agentName?: string; repo?: string} | undefined
+    mutable.installFromGitHub = (options) => {
+      seen = options
+      return {
+        name: 'alpha',
+        description: 'Alpha skill',
+        path: 'skills/alpha',
+        source: {type: 'github', repo: options.repo, subpath: 'skills/alpha'},
+      }
+    }
+    try {
+      const result = await runCommand(
+        Skills,
+        {target: 'add', agent: agent.name},
+        {github: 'owner/multi', skill: 'alpha', json: false},
+      )
+      expect(result.errors).to.deep.equal([])
+      expect(seen?.skill).to.equal('alpha')
+      expect(seen?.agentName).to.equal(agent.name)
+      expect(seen?.repo).to.equal('owner/multi')
+      expect(result.logs.join('\n')).to.equal(
+        `Added skill 'alpha' to '${agent.name}' (github: owner/multi).`,
+      )
+    } finally {
+      mutable.installFromGitHub = original
+    }
+  })
+
+  it('rejects --skill unless the source is github', async () => {
+    const agent = makeAgent()
+    const result = await runCommand(
+      Skills,
+      {target: 'add', agent: agent.name},
+      {folder: '/tmp/not-used', skill: 'alpha', json: false},
+    )
+    expect(result.errors).to.deep.equal(['Pass --skill with --github.'])
+    expect(fs.existsSync(path.join(agent.dir, 'skills'))).to.equal(false)
   })
 
   it('rejects a github value that is not a repo without cloning', async () => {

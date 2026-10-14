@@ -13,6 +13,7 @@ import {
   readSkillBody,
   removeSkill,
   removedMessage,
+  type SkillChoice,
 } from '../lib/skills'
 
 export default class Skills extends Command {
@@ -23,6 +24,7 @@ export default class Skills extends Command {
     '<%= config.bin %> <%= command.id %> email-agent --json',
     '<%= config.bin %> <%= command.id %> add email-agent --github owner/repo',
     '<%= config.bin %> <%= command.id %> add email-agent --github owner/repo --ref main --subpath skills/triage',
+    '<%= config.bin %> <%= command.id %> add email-agent --github owner/repo --skill triage',
     '<%= config.bin %> <%= command.id %> add email-agent --folder ~/skills/triage',
     '<%= config.bin %> <%= command.id %> add email-agent --name triage --description "Sort mail" --body "# Triage"',
     '<%= config.bin %> <%= command.id %> add email-agent --name triage --description "Sort mail" --body -',
@@ -49,7 +51,7 @@ export default class Skills extends Command {
 
   static flags = {
     json: Flags.boolean({
-      description: 'Print installed skills as JSON',
+      description: 'Print installed skills as JSON. When a repo has several skills, print those choices as JSON.',
       default: false,
     }),
     github: Flags.string({
@@ -60,6 +62,9 @@ export default class Skills extends Command {
     }),
     subpath: Flags.string({
       description: 'Directory inside the repo that contains SKILL.md',
+    }),
+    skill: Flags.string({
+      description: 'Frontmatter name to install when a repository contains more than one skill',
     }),
     folder: Flags.string({
       description: 'Absolute path, or a path starting with ~, that contains SKILL.md',
@@ -101,9 +106,11 @@ export default class Skills extends Command {
   }
 
   private add(agentName: string | undefined, flags: {
+    json?: boolean
     github?: string
     ref?: string
     subpath?: string
+    skill?: string
     folder?: string
     name?: string
     description?: string
@@ -117,6 +124,9 @@ export default class Skills extends Command {
       this.error('Use only one of --github, --folder, or --name.')
     }
     const github = flags.github
+    if (flags.skill !== undefined && github === undefined) {
+      this.error('Pass --skill with --github.')
+    }
     if (github !== undefined) {
       const parsed = parseGitHubSource(github)
       if (!parsed) this.error(GITHUB_SOURCE_HINT)
@@ -127,8 +137,9 @@ export default class Skills extends Command {
         repo: parsed.repo,
         ref,
         subpath,
+        skill: flags.skill,
         sourceLabel: github,
-      }))
+      }), Boolean(flags.json))
       this.log(addedMessage(agentName, entry))
       return
     }
@@ -150,17 +161,36 @@ export default class Skills extends Command {
     this.log(addedMessage(agentName, entry))
   }
 
-  private install<T>(fn: () => T): T {
+  private install<T>(fn: () => T, asJson = false): T {
     try {
       return fn()
     } catch (err) {
       if (err instanceof SkillError && err.code === 'multiple') {
-        this.log(JSON.stringify(err.details, null, 2))
-        this.exit(2)
+        this.reportMultiple(err.details, asJson)
       }
       const message = err instanceof Error ? err.message : String(err)
       this.error(message)
     }
+  }
+
+  /**
+   * Text lists the choices for a person. --json prints the same array the
+   * TUI picker reads. Both paths exit 2 with the same error.
+   */
+  private reportMultiple(details: unknown, asJson: boolean): never {
+    const choices = Array.isArray(details) ? details as SkillChoice[] : []
+    if (asJson) {
+      this.log(JSON.stringify(choices, null, 2))
+    } else {
+      this.log('Multiple skills found. Re-run with --subpath <path> or --skill <name>:')
+      for (const choice of choices) {
+        const name = typeof choice?.name === 'string' ? choice.name : ''
+        const description = typeof choice?.description === 'string' ? choice.description : ''
+        const where = typeof choice?.subpath === 'string' && choice.subpath ? choice.subpath : '.'
+        this.log(`  ${name}  ${description} (${where})`)
+      }
+    }
+    this.error('Multiple skills found. Pass --subpath', {exit: 2})
   }
 
   private remove(agentName: string | undefined, skillName: string | undefined): void {

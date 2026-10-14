@@ -315,6 +315,8 @@ export function installFromGitHub(options: {
   repo: string
   ref?: string
   subpath?: string
+  /** Frontmatter name to install when the repo has more than one skill. */
+  skill?: string
   sourceLabel: string
   agentsDir?: string
   clone?: CloneFn
@@ -329,7 +331,7 @@ export function installFromGitHub(options: {
     if (!fs.existsSync(cloneDest)) {
       throw new SkillError(`Failed to clone https://github.com/${options.repo}.git.`)
     }
-    const located = locateSkill(cloneDest, options.subpath, options.sourceLabel, options.ref)
+    const located = locateSkill(cloneDest, options.subpath, options.sourceLabel, options.ref, options.skill)
     const recordedSubpath = located.subpath === '.' ? undefined : located.subpath
     return commitSkill(agent, options.agentName, {
       name: located.name,
@@ -370,7 +372,14 @@ interface LocatedSkill {
   dir: string
 }
 
-function locateSkill(root: string, subpath: string | undefined, sourceLabel: string, ref?: string): LocatedSkill {
+function locateSkill(
+  root: string,
+  subpath: string | undefined,
+  sourceLabel: string,
+  ref?: string,
+  skillName?: string,
+): LocatedSkill {
+  // A subpath already names the directory, so it wins over --skill.
   if (subpath) {
     const dir = resolveSubpath(root, subpath)
     const label = sourceLabelFor(sourceLabel, subpath)
@@ -382,6 +391,17 @@ function locateSkill(root: string, subpath: string | undefined, sourceLabel: str
 
   const found = discoverSkills(root)
   if (found.length === 0) throw new SkillError(`No SKILL.md in ${sourceLabel}.`)
+  const wanted = skillName?.trim()
+  if (wanted) {
+    const matches = found.filter((skill) => skill.name === wanted)
+    if (matches.length === 0) {
+      throw new SkillError(`Skill '${wanted}' was not found in ${sourceLabel}.`)
+    }
+    if (matches.length > 1) {
+      throw new SkillError(`Skill name '${wanted}' matches more than one directory in ${sourceLabel}.`)
+    }
+    return matches[0]
+  }
   if (found.length === 1) return found[0]
   const choices: SkillChoice[] = found.map((skill) => ({
     name: skill.name,
@@ -390,7 +410,7 @@ function locateSkill(root: string, subpath: string | undefined, sourceLabel: str
     ...(ref ? {ref} : {}),
   }))
   throw new SkillError(
-    `Multiple SKILL.md files found in ${sourceLabel}. Re-run with --subpath.`,
+    `Multiple SKILL.md files found in ${sourceLabel}. Re-run with --subpath or --skill.`,
     'multiple',
     choices,
   )

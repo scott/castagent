@@ -194,7 +194,7 @@ export function addSkillFromSource(ctx: SkillsModalContext, source: string): voi
   const expanded = expandHome(source)
   const result = isDirectory(expanded)
     ? runCastSkills(['add', ctx.agentName, '--folder', path.resolve(expanded)])
-    : runCastSkills(['add', ctx.agentName, '--github', source])
+    : runCastSkills(['add', ctx.agentName, '--github', source, '--json'])
   if (result.status === 2) {
     const choices = parseChoices(result.stdout)
     if (choices && choices.length > 0) {
@@ -317,7 +317,10 @@ export function openSkillsModal(ctx: SkillsModalContext, initial: SkillsStep): v
   }
 
   function runAdd(extra: string[], githubSource?: string): void {
-    const result = runCastSkills(['add', ctx.agentName, ...extra])
+    // --json keeps the multi-skill choice list machine-readable for the picker.
+    const args = ['add', ctx.agentName, ...extra]
+    if (githubSource) args.push('--json')
+    const result = runCastSkills(args)
     if (result.status === 2 && githubSource) {
       const choices = parseChoices(result.stdout)
       if (!choices || choices.length === 0) {

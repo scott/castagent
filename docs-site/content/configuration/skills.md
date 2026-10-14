@@ -36,6 +36,7 @@ edit `agent.yaml` itself.
 cast skills email-agent
 cast skills add email-agent --github owner/repo
 cast skills add email-agent --github owner/repo --ref main --subpath skills/triage
+cast skills add email-agent --github owner/repo --skill triage
 cast skills add email-agent --folder ~/skills/triage
 cast skills add email-agent --name triage --description "Sort incoming mail into buckets" --body "# Triage"
 echo '# Triage' | cast skills add email-agent --name triage --description "Sort incoming mail into buckets" --body -
@@ -46,8 +47,13 @@ cast skills remove email-agent triage
 
 GitHub installs shallow-clone the repo. If `SKILL.md` or `skill.md` is at the
 repo root or at `--subpath`, that directory is the skill. If the repo contains
-more than one skill and you did not pass `--subpath`, the TUI asks you to pick
-one. The copy includes `scripts/` and omits `.git`. Cast does not run those
+more than one skill and you did not pass `--subpath` or `--skill`, the command
+prints each skill's name, description, and path, then exits with
+`Error: Multiple skills found. Pass --subpath`. Pass `--subpath <path>` or
+`--skill <name>` to install one of them. `--skill` selects the frontmatter
+`name`. When two directories share that name, pass `--subpath` instead.
+`--json` prints the same choices as JSON so the TUI can ask you to pick one.
+The copy includes `scripts/` and omits `.git`. Cast does not run those
 scripts.
 
 A folder or GitHub source is valid when it is an Agent Skills directory:

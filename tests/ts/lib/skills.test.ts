@@ -300,12 +300,86 @@ describe('installFromGitHub', () => {
       expect(err).to.be.instanceOf(SkillError)
       const skillErr = err as SkillError
       expect(skillErr.code).to.equal('multiple')
-      const choices = skillErr.details as Array<{name: string}>
+      const choices = skillErr.details as Array<{name: string; subpath: string}>
       expect(choices.map((choice) => choice.name)).to.deep.equal(['alpha', 'zeta'])
+      expect(choices[0].subpath).to.equal('skills/alpha')
     }
     expect(fs.readFileSync(path.join(agentsDir, agentName, 'agent.yaml'), 'utf8')).to.equal(before)
     expect(fs.existsSync(path.join(agentsDir, agentName, 'skills', 'alpha'))).to.equal(false)
     expect(fs.existsSync(path.join(agentsDir, agentName, 'skills', 'zeta'))).to.equal(false)
+    fs.rmSync(src, {recursive: true, force: true})
+  })
+
+  it('installs the named skill from a repo that has several', () => {
+    const src = fixture((root) => {
+      for (const name of ['zeta', 'alpha']) {
+        const dir = path.join(root, 'skills', name)
+        fs.mkdirSync(dir, {recursive: true})
+        fs.writeFileSync(path.join(dir, 'SKILL.md'), skillMarkdown(name, `${name} skill`, `Body ${name}`))
+      }
+    })
+    const entry = installFromGitHub({
+      agentName,
+      repo: 'owner/repo',
+      skill: 'zeta',
+      sourceLabel: 'owner/repo',
+      agentsDir,
+      clone: (_url, dest) => fs.cpSync(src, dest, {recursive: true}),
+    })
+    expect(entry.name).to.equal('zeta')
+    expect(entry.source).to.deep.equal({type: 'github', repo: 'owner/repo', subpath: 'skills/zeta'})
+    expect(fs.existsSync(path.join(agentsDir, agentName, 'skills', 'alpha'))).to.equal(false)
+    fs.rmSync(src, {recursive: true, force: true})
+  })
+
+  it('prefers --subpath when --skill is also set', () => {
+    const src = fixture((root) => {
+      for (const name of ['zeta', 'alpha']) {
+        const dir = path.join(root, 'skills', name)
+        fs.mkdirSync(dir, {recursive: true})
+        fs.writeFileSync(path.join(dir, 'SKILL.md'), skillMarkdown(name, `${name} skill`, `Body ${name}`))
+      }
+    })
+    const entry = installFromGitHub({
+      agentName,
+      repo: 'owner/repo',
+      subpath: 'skills/alpha',
+      skill: 'zeta',
+      sourceLabel: 'owner/repo',
+      agentsDir,
+      clone: (_url, dest) => fs.cpSync(src, dest, {recursive: true}),
+    })
+    expect(entry.name).to.equal('alpha')
+    expect(entry.source.subpath).to.equal('skills/alpha')
+    fs.rmSync(src, {recursive: true, force: true})
+  })
+
+  it('errors when --skill does not match or matches two directories', () => {
+    const src = fixture((root) => {
+      for (const [dirName, skillName] of [['one', 'same'], ['two', 'same'], ['three', 'other']] as const) {
+        const dir = path.join(root, 'skills', dirName)
+        fs.mkdirSync(dir, {recursive: true})
+        fs.writeFileSync(path.join(dir, 'SKILL.md'), skillMarkdown(skillName, `${dirName} skill`, `Body ${dirName}`))
+      }
+    })
+    const clone = (_url: string, dest: string) => fs.cpSync(src, dest, {recursive: true})
+    expect(() => installFromGitHub({
+      agentName,
+      repo: 'owner/repo',
+      skill: 'missing',
+      sourceLabel: 'owner/repo',
+      agentsDir,
+      clone,
+    })).to.throw(SkillError, "Skill 'missing' was not found in owner/repo.")
+    expect(() => installFromGitHub({
+      agentName,
+      repo: 'owner/repo',
+      skill: 'same',
+      sourceLabel: 'owner/repo',
+      agentsDir,
+      clone,
+    })).to.throw(SkillError, "Skill name 'same' matches more than one directory in owner/repo.")
+    expect(fs.existsSync(path.join(agentsDir, agentName, 'skills', 'same'))).to.equal(false)
     fs.rmSync(src, {recursive: true, force: true})
   })
 
