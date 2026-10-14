@@ -426,7 +426,7 @@ Highlighting text with the mouse copies that selection to the clipboard.
 |---------|----------|--------------|
 | `/undo [steps]` | agent | Step back one (or N) changes. Shells out to `cast undo`. |
 | `/redo [steps]` | agent | Step forward one (or N) changes. |
-| `/skills [add <github-or-folder>]` | agent | Add or remove skills on this agent. Hidden in on-host. |
+| `/skills [add <github-or-folder>]` | agent | Add or remove skills on this agent. `cast skills add --github` prints each skill and exits with an error when a repo has more than one, so you can pass `--subpath` or `--skill`. Hidden in on-host. |
 | `/sessions` | session | Modal picker over saved sessions. `Enter` or `R` resumes, `F` forks, `N` renames, `D` deletes. |
 | `/session new [name]` | session | Start a fresh session and model context, and switch the chat to it. |
 | `/session resume [id\|name]` | session | Replay a session's transcript into the chat and the model context. Opens the picker if no argument. |
