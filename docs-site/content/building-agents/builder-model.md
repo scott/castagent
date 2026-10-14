@@ -27,6 +27,7 @@ stripped). The API call uses the raw stored id.
 ```bash
 cast model
 cast model anthropic/claude-3.5-sonnet
+cast model openrouter/minimax/minimax-m2.5
 cast model --list
 cast model --list --json
 cast model --current --json
@@ -50,9 +51,15 @@ records as the docs model catalog: `id`, `provider`, and `family`.
 `--current --json` prints the raw id, for example
 `{"id":"openrouter/minimax/minimax-m2.5"}`.
 
-Only ids from that curated list are accepted. An unknown id exits
-non-zero and the message includes the available ids. There is no
-custom-id escape hatch. If `~/.cast/config.yaml` is not valid YAML, the
+Only ids from that curated list are accepted. A single leading
+`openrouter/` on one of those ids is also accepted and stored as given.
+`cast model openrouter/minimax/minimax-m2.5` writes the shipped default
+back, which is the id `cast model --current` prints on a fresh install.
+`cast model minimax/minimax-m2.5` writes the catalog id without that
+prefix. Both select the same model, and either stored string can be
+passed to `cast model` again. An unknown id exits non-zero and the
+message includes the available ids. There is no custom-id escape hatch.
+If `~/.cast/config.yaml` is not valid YAML, the
 command exits non-zero and tells you to fix the file or delete it. It
 does not overwrite a broken file. If the file cannot be written, the OS
 error is printed.

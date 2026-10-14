@@ -6,8 +6,11 @@ import * as yaml from 'yaml'
 /**
  * Curated builder models. Copied from the OpenRouter knownModels list that
  * docs-site/scripts/extract-providers.ts turns into data/models.json.
- * Ids are validated against this list. There is no custom-id escape hatch.
+ * Ids are validated against this list. A single leading `openrouter/` is
+ * accepted and stored as given, so the shipped default round-trips.
+ * There is no custom-id escape hatch.
  */
+const OPENROUTER_PREFIX = 'openrouter/'
 const MODEL_IDS = [
   'anthropic/claude-opus-4.5',
   'anthropic/claude-sonnet-4.6',
@@ -143,8 +146,25 @@ export function configFilePath(): string {
   return path.join(os.homedir(), '.cast', 'config.yaml')
 }
 
+/**
+ * Catalog id, or the same id with one leading `openrouter/`.
+ * Returns the string to store, or null when it is not in the catalog.
+ * The prefix is kept so `openrouter/minimax/minimax-m2.5` writes the
+ * shipped default instead of a different bare id.
+ */
+export function resolveBuilderModelId(id: string): string | null {
+  const trimmed = id.trim()
+  if (trimmed.length === 0) return null
+  const catalogId = trimmed.startsWith(OPENROUTER_PREFIX)
+    ? trimmed.slice(OPENROUTER_PREFIX.length)
+    : trimmed
+  if (catalogId.length === 0 || catalogId.startsWith(OPENROUTER_PREFIX)) return null
+  if (!MODELS.some(model => model.id === catalogId)) return null
+  return trimmed
+}
+
 export function isKnownModel(id: string): boolean {
-  return MODELS.some(model => model.id === id)
+  return resolveBuilderModelId(id) != null
 }
 
 export function unknownModelMessage(id: string): string {
@@ -216,22 +236,24 @@ export function getCurrentBuilderModel(): string {
 /**
  * Set `defaults.builder_model`. Creates the install scaffold when the file
  * is missing. Other keys are kept. The write is a temp file plus rename,
- * then a re-read.
+ * then a re-read. Returns the id written.
  */
-export function setBuilderModel(id: string): void {
-  if (!isKnownModel(id)) {
-    throw new Error(unknownModelMessage(id))
+export function setBuilderModel(id: string): string {
+  const stored = resolveBuilderModelId(id)
+  if (stored == null) {
+    throw new Error(unknownModelMessage(id.trim()))
   }
   const file = configFilePath()
   const config = fs.existsSync(file) ? readConfigDocument() : parseConfigDocument(DEFAULT_CONFIG_SCAFFOLD)
-  ensureDefaults(config).builder_model = id
+  ensureDefaults(config).builder_model = stored
   writeConfigDocument(config)
   const confirmed = readConfigDocument()
-  if (confirmed.defaults?.builder_model !== id) {
+  if (confirmed.defaults?.builder_model !== stored) {
     throw new Error(
-      `Failed to confirm builder model write. Read back ${String(confirmed.defaults?.builder_model)}, expected ${id}.`,
+      `Failed to confirm builder model write. Read back ${String(confirmed.defaults?.builder_model)}, expected ${stored}.`,
     )
   }
+  return stored
 }
 
 export function formatModelCatalog(current: string): string {

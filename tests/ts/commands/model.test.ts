@@ -3,7 +3,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import * as yaml from 'yaml'
-import {INVALID_CONFIG_YAML, MODELS} from '../../../typescript/cast-cli/src/lib/models'
+import {INVALID_CONFIG_YAML, MODELS, resolveBuilderModelId} from '../../../typescript/cast-cli/src/lib/models'
 
 const privateHome = process.env.HOME
 
@@ -134,6 +134,108 @@ describe('cast model', () => {
     expect(errors[0]).to.include('anthropic/claude-3.5-sonnet')
     expect(errors[0]).to.include('minimax/minimax-m2.5')
     expect(fs.existsSync(configPath())).to.equal(false)
+  })
+
+  it('resolves a catalog id and one leading openrouter prefix', () => {
+    expect(resolveBuilderModelId('minimax/minimax-m2.5')).to.equal('minimax/minimax-m2.5')
+    expect(resolveBuilderModelId('openrouter/minimax/minimax-m2.5')).to.equal('openrouter/minimax/minimax-m2.5')
+    expect(resolveBuilderModelId('openrouter/anthropic/claude-3.5-sonnet')).to.equal(
+      'openrouter/anthropic/claude-3.5-sonnet',
+    )
+    expect(resolveBuilderModelId('  openrouter/minimax/minimax-m2.5  ')).to.equal('openrouter/minimax/minimax-m2.5')
+    expect(resolveBuilderModelId('openrouter/not-a-model')).to.equal(null)
+    expect(resolveBuilderModelId('openrouter/openrouter/minimax/minimax-m2.5')).to.equal(null)
+    expect(resolveBuilderModelId('digitalocean/llama3.3-70b-instruct')).to.equal(null)
+    expect(resolveBuilderModelId('openrouter/')).to.equal(null)
+    expect(resolveBuilderModelId('')).to.equal(null)
+  })
+
+  it('accepts the openrouter id printed by --current and restores the shipped default', async () => {
+    const current = await runCommand(Model, {}, {list: false, json: false, current: true})
+    expect(current.errors).to.deep.equal([])
+    expect(current.logs).to.deep.equal(['openrouter/minimax/minimax-m2.5'])
+
+    const changed = await runCommand(
+      Model,
+      {model: 'anthropic/claude-3.5-sonnet'},
+      {list: false, json: false, current: false},
+    )
+    expect(changed.errors).to.deep.equal([])
+
+    const restored = await runCommand(
+      Model,
+      {model: '  openrouter/minimax/minimax-m2.5  '},
+      {list: false, json: false, current: false},
+    )
+    expect(restored.errors).to.deep.equal([])
+    expect(restored.logs.join('\n')).to.include('✓ Builder model set to: openrouter/minimax/minimax-m2.5')
+
+    const config = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(config.defaults.builder_model).to.equal('openrouter/minimax/minimax-m2.5')
+    expect(config.defaults.agent_storage).to.equal('~/.cast/agents')
+    expect(config.providers.openrouter.api_key).to.equal('${OPENROUTER_API_KEY}')
+
+    const again = await runCommand(Model, {}, {list: false, json: true, current: true})
+    expect(again.errors).to.deep.equal([])
+    expect(again.logs).to.deep.equal(['{"id":"openrouter/minimax/minimax-m2.5"}'])
+
+    const fedBack = await runCommand(
+      Model,
+      {model: JSON.parse(again.logs[0]).id},
+      {list: false, json: false, current: false},
+    )
+    expect(fedBack.errors).to.deep.equal([])
+    expect(yaml.parse(fs.readFileSync(configPath(), 'utf8')).defaults.builder_model).to.equal(
+      'openrouter/minimax/minimax-m2.5',
+    )
+  })
+
+  it('stores a bare catalog id and a prefixed catalog id as given', async () => {
+    const bare = await runCommand(
+      Model,
+      {model: 'minimax/minimax-m2.5'},
+      {list: false, json: false, current: false},
+    )
+    expect(bare.errors).to.deep.equal([])
+    expect(yaml.parse(fs.readFileSync(configPath(), 'utf8')).defaults.builder_model).to.equal('minimax/minimax-m2.5')
+
+    const prefixed = await runCommand(
+      Model,
+      {model: 'openrouter/anthropic/claude-3.5-sonnet'},
+      {list: false, json: false, current: false},
+    )
+    expect(prefixed.errors).to.deep.equal([])
+    expect(prefixed.logs.join('\n')).to.include('✓ Builder model set to: openrouter/anthropic/claude-3.5-sonnet')
+    expect(yaml.parse(fs.readFileSync(configPath(), 'utf8')).defaults.builder_model).to.equal(
+      'openrouter/anthropic/claude-3.5-sonnet',
+    )
+
+    const current = await runCommand(Model, {}, {list: false, json: false, current: true})
+    expect(current.logs).to.deep.equal(['openrouter/anthropic/claude-3.5-sonnet'])
+    const roundTrip = await runCommand(
+      Model,
+      {model: current.logs[0]},
+      {list: false, json: false, current: false},
+    )
+    expect(roundTrip.errors).to.deep.equal([])
+  })
+
+  it('rejects a prefixed id that is not in the catalog', async () => {
+    for (const id of [
+      'openrouter/not-a-real-model',
+      'openrouter/openrouter/minimax/minimax-m2.5',
+      'digitalocean/llama3.3-70b-instruct',
+    ]) {
+      const {errors} = await runCommand(
+        Model,
+        {model: id},
+        {list: false, json: false, current: false},
+      )
+      expect(errors).to.have.length(1)
+      expect(errors[0]).to.include(`Unknown model '${id}'`)
+      expect(errors[0]).to.include('minimax/minimax-m2.5')
+      expect(fs.existsSync(configPath())).to.equal(false)
+    }
   })
 
   it('prints one model per line for --list', async () => {
