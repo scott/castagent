@@ -366,7 +366,7 @@
     {
       "name": "stop",
       "category": "agent",
-      "description": "Stop the current local agent"
+      "description": "Stop the current local agent and stay in the TUI"
     },
     {
       "name": "undo",

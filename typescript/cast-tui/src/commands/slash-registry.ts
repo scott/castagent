@@ -2163,7 +2163,7 @@ const commands: SlashCommand[] = [
 
   {
     name: 'stop',
-    description: 'Stop the current local agent',
+    description: 'Stop the current local agent and stay in the TUI',
     category: 'agent',
     modes: ['dev', 'production'],
     handler: async (ctx) => {

@@ -92,8 +92,9 @@ When you launch with the TUI:
 5. When the TUI exits, Cast tears down the runtime and you land back at
    the shell.
 
-Inside the TUI, `{% ref "slash:stop" %}` does the same thing as
-`cast stop` from the CLI — it tears down the runtime and exits.
+Inside the TUI, `{% ref "slash:stop" %}` stops the local runtime the
+same way `{% ref "cli:stop" %}` does from another shell. The TUI stays
+open and shows that the agent stopped. Leave with `/quit` or Ctrl+C.
 
 ## When the agent doesn't exist yet
 

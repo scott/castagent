@@ -1,8 +1,10 @@
 import {expect} from 'chai'
+import {EventEmitter} from 'events'
 import * as path from 'path'
 import * as os from 'os'
 import * as fs from 'fs'
 import * as sinon from 'sinon'
+import {db} from '../../../typescript/cast-cli/src/lib/sqlite'
 
 // Helper function to load command
 async function loadTestCommand(commandName: string): Promise<any> {
@@ -537,5 +539,175 @@ describe('dev command - runBuilderConversation', () => {
     } catch (e: any) {
       expect(e.message).to.include('error') || expect(e.message).to.include('Builder')
     }
+  })
+})
+
+describe('dev command - /stop keeps the TUI open', () => {
+  let Dev: any
+  let sandbox: sinon.SinonSandbox
+  let sigintListeners: NodeJS.SignalsListener[]
+  const agentName = 'test-stop-tui-agent'
+
+  before(async () => {
+    // Earlier tests swap fs in require.cache and reload this command.
+    // Load a fresh copy against the real fs module so the TUI path
+    // lookup is not stuck on that mock.
+    restoreFsModule()
+    for (const key of Object.keys(require.cache)) {
+      if (key.includes(`${path.sep}commands${path.sep}dev.ts`)) {
+        delete require.cache[key]
+      }
+    }
+    Dev = await loadTestCommand('dev')
+  })
+
+  beforeEach(() => {
+    sandbox = sinon.createSandbox()
+    sigintListeners = process.listeners('SIGINT') as NodeJS.SignalsListener[]
+  })
+
+  afterEach(() => {
+    sandbox.restore()
+    process.removeAllListeners('SIGINT')
+    for (const listener of sigintListeners) {
+      process.on('SIGINT', listener)
+    }
+    const tuiEntry = path.join(__dirname, '../../../typescript/cast-tui/dist/index.js')
+    if (fs.existsSync(tuiEntry)) {
+      const body = fs.readFileSync(tuiEntry, 'utf8')
+      if (body.includes('test stand-in')) {
+        fs.rmSync(tuiEntry, {force: true})
+      }
+    }
+  })
+
+  function fakeChild() {
+    const child = new EventEmitter() as EventEmitter & {
+      stdout: EventEmitter
+      pid: number
+      exitCode: number | null
+      killed: boolean
+      kill: (signal?: NodeJS.Signals) => boolean
+    }
+    child.stdout = new EventEmitter()
+    child.pid = 4242
+    child.exitCode = null
+    child.killed = false
+    child.kill = (signal?: NodeJS.Signals) => {
+      child.killed = true
+      child.emit('close', null, signal ?? 'SIGTERM')
+      return true
+    }
+    return child
+  }
+
+  function harness(flags: {'no-tui': boolean}) {
+    const instance = new Dev(['dev', agentName], {color: false})
+    const logs: string[] = []
+    const errors: string[] = []
+    instance.log = (msg?: string) => {
+      logs.push(String(msg ?? ''))
+    }
+    instance.warn = (msg?: string) => {
+      logs.push('WARN ' + String(msg ?? ''))
+    }
+    instance.error = (msg?: string) => {
+      errors.push(String(msg ?? ''))
+    }
+    sandbox.stub(db, 'setLocalAgent').returns(undefined)
+    sandbox.stub(db, 'removeLocalAgent').returns(undefined)
+    sandbox.stub(process.stdin, 'pause').returns(process.stdin)
+    sandbox.stub(process.stdin, 'resume').returns(process.stdin)
+    const exitStub = sandbox.stub(process, 'exit')
+    // existsSync cannot be stubbed (non-configurable). Put a stand-in
+    // bundle where cast dev looks for the TUI so connectToAgent spawns it.
+    const tuiDist = path.join(__dirname, '../../../typescript/cast-tui/dist')
+    fs.mkdirSync(tuiDist, {recursive: true})
+    fs.writeFileSync(path.join(tuiDist, 'index.js'), '// test stand-in\n')
+    const runtime = fakeChild()
+    const tui = fakeChild()
+    let spawnCount = 0
+    instance.launch = () => {
+      spawnCount += 1
+      return spawnCount === 1 ? runtime : tui
+    }
+    return {instance, logs, errors, exitStub, runtime, tui, spawnCount: () => spawnCount, flags}
+  }
+
+  function boot(flags: {'no-tui': boolean}) {
+    const ctx = harness(flags)
+    // runRuntimeAgent waits forever. Drive the child events directly.
+    void ctx.instance.runRuntimeAgent(agentName, path.join(os.tmpdir(), agentName), {port: 0, ...flags})
+    ctx.runtime.stdout.emit('data', Buffer.from('Agent ready on port 4321\n'))
+    return ctx
+  }
+
+  it('stays in the TUI when /stop terminates the runtime with SIGTERM', () => {
+    const {logs, errors, exitStub, runtime, spawnCount} = boot({'no-tui': false})
+    expect(spawnCount(), JSON.stringify(logs)).to.equal(2)
+
+    runtime.emit('close', null, 'SIGTERM')
+
+    expect(exitStub.called).to.equal(false)
+    expect(errors).to.deep.equal([])
+    expect(logs.some((line) => line.includes('code null'))).to.equal(false)
+    expect(logs.some((line) => line.includes('Agent exited'))).to.equal(false)
+    expect((db.removeLocalAgent as sinon.SinonStub).calledWith(agentName)).to.equal(true)
+  })
+
+  it('exits a headless session without printing a null status code', () => {
+    const {logs, exitStub, runtime, spawnCount} = boot({'no-tui': true})
+    expect(spawnCount()).to.equal(1)
+
+    runtime.emit('close', null, 'SIGTERM')
+
+    expect(exitStub.calledOnceWith(0)).to.equal(true)
+    expect(logs.some((line) => line.includes('Agent exited with signal SIGTERM'))).to.equal(true)
+    expect(logs.some((line) => line.includes('code null'))).to.equal(false)
+  })
+
+  it('still exits on Ctrl+C after the TUI is attached', () => {
+    const {logs, exitStub, runtime} = boot({'no-tui': false})
+
+    process.emit('SIGINT')
+
+    expect(runtime.killed).to.equal(true)
+    expect(exitStub.calledOnceWith(0)).to.equal(true)
+    expect(logs.some((line) => line.includes('Agent exited with signal SIGTERM'))).to.equal(true)
+    expect(logs.some((line) => line.includes('code null'))).to.equal(false)
+  })
+
+  it('still surfaces a non-zero runtime crash', () => {
+    const {logs, errors, exitStub, runtime} = boot({'no-tui': false})
+
+    runtime.emit('close', 1, null)
+
+    expect(errors.some((line) => line.includes('Agent exited with error code 1'))).to.equal(true)
+    expect(exitStub.calledOnceWith(0)).to.equal(true)
+    expect(logs.some((line) => line.includes('Agent exited with code 1'))).to.equal(true)
+    expect(logs.some((line) => line.includes('code null'))).to.equal(false)
+  })
+
+  it('decides to keep the TUI only for a signaled stop', () => {
+    const instance = new Dev(['dev', agentName], {color: false})
+    instance.attachedTui = {exitCode: null, killed: false}
+    instance.runtimeShutdownRequested = false
+
+    expect(instance.shouldKeepTuiAfterRuntimeExit(null, 'SIGTERM')).to.equal(true)
+    expect(instance.shouldKeepTuiAfterRuntimeExit(null, 'SIGKILL')).to.equal(true)
+    expect(instance.shouldKeepTuiAfterRuntimeExit(null, null)).to.equal(true)
+    expect(instance.shouldKeepTuiAfterRuntimeExit(1, null)).to.equal(false)
+    expect(instance.runtimeExitLine(null, null)).to.equal('Agent exited')
+    expect(instance.runtimeExitLine(null, 'SIGTERM')).to.equal('Agent exited with signal SIGTERM')
+
+    instance.runtimeShutdownRequested = true
+    expect(instance.shouldKeepTuiAfterRuntimeExit(null, 'SIGTERM')).to.equal(false)
+
+    instance.runtimeShutdownRequested = false
+    instance.attachedTui = null
+    expect(instance.shouldKeepTuiAfterRuntimeExit(null, 'SIGTERM')).to.equal(false)
+
+    instance.attachedTui = {exitCode: 0, killed: false}
+    expect(instance.shouldKeepTuiAfterRuntimeExit(null, 'SIGTERM')).to.equal(false)
   })
 })

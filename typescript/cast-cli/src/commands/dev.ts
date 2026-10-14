@@ -317,16 +317,24 @@ export default class Dev extends Command {
     return {agent_name: agentName, new_mode: true}
   }
 
+  // TUI child spawned for this dev session. Null in headless mode.
+  private attachedTui: ChildProcess | null = null
+
+  // Set when the user hits Ctrl+C in this process. /stop does not set it:
+  // that command signals only the Python runtime.
+  private runtimeShutdownRequested = false
+
   private async runRuntimeAgent(agentName: string, agentPath: string, flags: any): Promise<void> {
     ensureMemoryDatabaseIgnored(agentPath)
-
+    this.attachedTui = null
+    this.runtimeShutdownRequested = false
     const port = flags.port || 0
 
     const pythonExecutable = this.getPythonExecutable()
     const pythonPath = this.getPythonPath()
 
     // Spawn Python runtime agent
-    const runtime = spawn(pythonExecutable, [
+    const runtime = this.launch(pythonExecutable, [
       '-m', 'cast.runtime',
       '--agent-path', agentPath,
       '--port', port.toString(),
@@ -371,26 +379,44 @@ export default class Dev extends Command {
       }
     })
 
-    // Handle process exit
-    runtime.on('close', (code) => {
+    // Handle process exit. /stop kills the runtime with SIGTERM, which
+    // Node reports as a null status code. The TUI owns the terminal
+    // after it attaches, so writing here paints over the input line and
+    // process.exit drops the user out of the stopped session.
+    runtime.on('close', (code: number | null, signal: NodeJS.Signals | null) => {
       clearTimeout(startupTimeout)
+      db.removeLocalAgent(agentName)
+
+      if (this.shouldKeepTuiAfterRuntimeExit(code, signal)) {
+        return
+      }
+
       if (code !== 0 && code !== null) {
         this.error(`Agent exited with error code ${code}`)
       }
 
-      this.log(`Agent exited with code ${code}`)
-      db.removeLocalAgent(agentName)
+      this.log(this.runtimeExitLine(code, signal))
       process.exit(0)
     })
 
-    // Handle Ctrl+C
+    // Handle Ctrl+C. This is a full shutdown, unlike /stop.
     process.on('SIGINT', () => {
+      this.runtimeShutdownRequested = true
       this.log('\nShutting down agent...')
       runtime.kill('SIGTERM')
     })
 
     // Keep the CLI alive
     await new Promise(() => {})
+  }
+
+  // Indirection so tests can substitute a fake child process.
+  private launch(
+    command: string,
+    args: readonly string[],
+    options: Parameters<typeof spawn>[2],
+  ): ChildProcess {
+    return spawn(command, args, options)
   }
 
   private resolveBun(): string {
@@ -408,7 +434,36 @@ export default class Dev extends Command {
     return 'bun'
   }
 
-  private async connectToAgent(agentName: string, port: number, flags: any): Promise<void> {
+  // True when /stop (or `cast stop`) signaled the runtime and the TUI
+  // is still on screen. Ctrl+C sets runtimeShutdownRequested and still exits.
+  private shouldKeepTuiAfterRuntimeExit(code: number | null, signal: NodeJS.Signals | null): boolean {
+    if (this.runtimeShutdownRequested) return false
+    if (!this.tuiStillOwnsTerminal()) return false
+    return this.runtimeStoppedBySignal(code, signal)
+  }
+
+  private tuiStillOwnsTerminal(): boolean {
+    const tui = this.attachedTui
+    if (!tui) return false
+    if (tui.exitCode !== null) return false
+    if (tui.killed) return false
+    return true
+  }
+
+  // SIGTERM is /stop and `cast stop`. SIGKILL is `cast stop --force`.
+  // Node sets the exit code to null in both cases.
+  private runtimeStoppedBySignal(code: number | null, signal: NodeJS.Signals | null): boolean {
+    if (signal === 'SIGTERM' || signal === 'SIGKILL') return true
+    return code === null && (signal === null || signal === undefined)
+  }
+
+  private runtimeExitLine(code: number | null, signal: NodeJS.Signals | null): string {
+    if (signal) return `Agent exited with signal ${signal}`
+    if (code === null) return 'Agent exited'
+    return `Agent exited with code ${code}`
+  }
+
+  private connectToAgent(agentName: string, port: number, flags: any): void {
     if (flags['no-tui']) {
       // Headless mode - just provide the A2A endpoint
       this.log(`Agent A2A endpoint: http://localhost:${port}`)
@@ -435,7 +490,7 @@ export default class Dev extends Command {
     // Spawn TUI with inherited stdio so it controls the terminal
     // for interactive input. Not detached so it shares the process
     // group and controlling terminal with the parent.
-    const opentui = spawn(bunPath, [
+    const opentui = this.launch(bunPath, [
       tuiPath,
       '--agent', agentName,
       '--url', `http://localhost:${port}`,
@@ -444,13 +499,16 @@ export default class Dev extends Command {
       stdio: 'inherit',
       detached: false,
     })
+    this.attachedTui = opentui
 
     opentui.on('error', (err) => {
+      this.attachedTui = null
       this.warn(`Failed to launch OpenTUI: ${err.message}`)
       this.log(`Agent is still running at http://localhost:${port}`)
     })
 
     opentui.on('exit', (code) => {
+      this.attachedTui = null
       this.log(`OpenTUI exited with code ${code}`)
       process.stdin.resume()
       process.exit(0)
