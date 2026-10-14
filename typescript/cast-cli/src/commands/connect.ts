@@ -5,7 +5,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import {db} from '../lib/sqlite'
 import {A2AClient, A2AClientError} from '../lib/a2a/client'
-import {resolveDeploymentAuthToken, resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
+import {deploymentAuthFailureReason, missingDeploymentAuthMessage, resolveDeploymentAuthToken, resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
 import {deploymentProviderLoadErrors, getDeploymentProvider} from '../lib/deploy/registry'
 import {
   checkNeedsProxy as spriteNeedsProxy,
@@ -78,12 +78,8 @@ export default class Connect extends Command {
     const provider = deployment.provider
     let token: string | null = await resolveDeploymentAuthToken(deployment)
     if (!token && deployment.auth_token_hash) {
-      this.error(
-        `No auth token found for deployment '${deployment.id}' (${agentName}).\n` +
-        `The keychain token for this agent belongs to a different deployment.\n` +
-        `Redeploy this one:\n` +
-        `  cast deploy ${agentName} --provider ${provider}`
-      )
+      const reason = await deploymentAuthFailureReason(deployment)
+      this.error(missingDeploymentAuthMessage(deployment, reason))
     }
     let edgeToken: string | undefined
     let proxyProcess: ChildProcess | undefined

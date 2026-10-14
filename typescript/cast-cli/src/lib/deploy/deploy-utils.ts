@@ -310,6 +310,37 @@ export async function resolveDeploymentAuthToken(deployment: {
   return null
 }
 
+/** Why connect could not load a bearer token. A hash mismatch is the only case that means another deployment owns the agent entry. */
+export async function deploymentAuthFailureReason(deployment: {
+  agent_name: string
+  auth_token_hash?: string | null
+}): Promise<'missing' | 'mismatch'> {
+  const byAgent = await keychain.getToken(deployment.agent_name)
+  if (
+    byAgent
+    && deployment.auth_token_hash
+    && keychain.hashToken(byAgent) !== deployment.auth_token_hash
+  ) {
+    return 'mismatch'
+  }
+  return 'missing'
+}
+
+export function missingDeploymentAuthMessage(
+  deployment: {id?: string | null; agent_name: string; provider?: string | null},
+  reason: 'missing' | 'mismatch',
+): string {
+  const providerFlag = deployment.provider ? ` --provider ${deployment.provider}` : ''
+  const lines = [
+    `No auth token found for deployment '${deployment.id}' (${deployment.agent_name}).`,
+  ]
+  if (reason === 'mismatch') {
+    lines.push('The keychain token for this agent belongs to a different deployment.')
+  }
+  lines.push('Redeploy this one:', `  cast deploy ${deployment.agent_name}${providerFlag}`)
+  return lines.join('\n')
+}
+
 /** Drop keychain entries that belong to the rows just shut down. Leave tokens other live rows still need. */
 export async function forgetDeploymentTokens(
   agentName: string,

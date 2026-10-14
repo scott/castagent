@@ -3,11 +3,14 @@ import sinon from 'sinon'
 import * as path from 'path'
 import * as os from 'os'
 import * as fs from 'fs'
+import {KeychainManager} from '../../../typescript/cast-cli/src/lib/keychain'
 import {
   deploymentIdsToRemove,
+  deploymentAuthFailureReason,
   forgetDeploymentTokens,
   getAgentPath,
   isShaPattern,
+  missingDeploymentAuthMessage,
   resolveDeploymentAuthToken,
   resolveDeploymentTarget,
   generateDeploymentSha,
@@ -475,5 +478,97 @@ describe('per-deployment auth tokens', () => {
     expect(forgotten).to.equal('deployment')
     expect(deleteDeploymentToken.calledOnceWith('bb7590')).to.equal(true)
     expect(deleteToken.called).to.equal(false)
+  })
+
+  it('stores and resolves the deployment token from a file when Secret Service is missing', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-token-fallback-'))
+    const tokens = path.join(root, 'tokens')
+    const marker = path.join(root, 'marker')
+    fs.writeFileSync(marker, 'leave-me')
+    fs.chmodSync(marker, 0o755)
+    const local = new KeychainManager(tokens)
+    const secretServiceError = new Error(
+      'The name org.freedesktop.secrets was not provided by any .service files',
+    )
+    sandbox.stub(require('keytar'), 'setPassword').rejects(secretServiceError)
+    sandbox.stub(require('keytar'), 'getPassword').rejects(secretServiceError)
+    const errorSpy = sandbox.stub(console, 'error')
+    sandbox.stub(keychain, 'setDeploymentToken').callsFake((...args: unknown[]) => (
+      local.setDeploymentToken(String(args[0]), String(args[1]))
+    ))
+    sandbox.stub(keychain, 'setToken').callsFake((...args: unknown[]) => (
+      local.setToken(String(args[0]), String(args[1]))
+    ))
+    sandbox.stub(keychain, 'getDeploymentToken').callsFake((...args: unknown[]) => (
+      local.getDeploymentToken(String(args[0]))
+    ))
+    sandbox.stub(keychain, 'getToken').callsFake((...args: unknown[]) => (
+      local.getToken(String(args[0]))
+    ))
+    const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
+    sandbox.stub(db, 'listDeployments').returns([])
+
+    try {
+      await storeAuthToken('bb2-chat', 'deploy-token', 'f6559e')
+
+      const deploymentFile = path.join(tokens, 'deployments', 'f6559e.token')
+      const agentFile = path.join(tokens, 'bb2-chat.token')
+      expect(fs.readFileSync(deploymentFile, 'utf8')).to.equal('deploy-token')
+      expect(fs.readFileSync(agentFile, 'utf8')).to.equal('deploy-token')
+      expect(deploymentFile.includes(`${path.sep}agents${path.sep}`)).to.equal(false)
+      expect(agentFile.includes(`${path.sep}agents${path.sep}`)).to.equal(false)
+      expect(fs.statSync(deploymentFile).mode & 0o777).to.equal(0o600)
+      expect(fs.statSync(agentFile).mode & 0o777).to.equal(0o600)
+      expect(fs.statSync(tokens).mode & 0o777).to.equal(0o700)
+      expect(fs.statSync(marker).mode & 0o777).to.equal(0o755)
+      expect(errorSpy.called).to.equal(false)
+
+      const token = await resolveDeploymentAuthToken({
+        id: 'f6559e',
+        agent_name: 'bb2-chat',
+        auth_token_hash: local.hashToken('deploy-token'),
+      })
+      expect(token).to.equal('deploy-token')
+    } finally {
+      fs.rmSync(root, {recursive: true, force: true})
+    }
+  })
+
+  it('describes a missing token without claiming it belongs to another deployment', async () => {
+    sandbox.stub(keychain, 'getToken').resolves(null)
+
+    const reason = await deploymentAuthFailureReason({
+      agent_name: 'bb2-chat',
+      auth_token_hash: 'abc123',
+    })
+    const message = missingDeploymentAuthMessage({
+      id: 'f6559e',
+      agent_name: 'bb2-chat',
+      provider: 'docker',
+    }, reason)
+
+    expect(reason).to.equal('missing')
+    expect(message).to.equal(
+      "No auth token found for deployment 'f6559e' (bb2-chat).\n" +
+      'Redeploy this one:\n' +
+      '  cast deploy bb2-chat --provider docker',
+    )
+  })
+
+  it('keeps the mismatch explanation when the agent token is for another deployment', async () => {
+    sandbox.stub(keychain, 'getToken').resolves('other-token')
+
+    const reason = await deploymentAuthFailureReason({
+      agent_name: 'bb2-chat',
+      auth_token_hash: keychain.hashToken('this-token'),
+    })
+    const message = missingDeploymentAuthMessage({
+      id: 'f6559e',
+      agent_name: 'bb2-chat',
+      provider: 'docker',
+    }, reason)
+
+    expect(reason).to.equal('mismatch')
+    expect(message).to.include('The keychain token for this agent belongs to a different deployment.')
   })
 })

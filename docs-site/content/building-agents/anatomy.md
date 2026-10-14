@@ -85,6 +85,8 @@ changes show up as files on disk.
   published port, and memory volume. It does not contain the deployment
   bearer token or provider API keys. Deploy passes those to the container
   as environment variables and stores the bearer token in the keychain.
+  With no Secret Service, the token is written under `~/.cast/tokens/`
+  instead, outside this directory.
   The default ignore file excludes these three paths and `.cast-runtime/`,
   so `cast git commit` does not publish them.
 - **`.git/`** — present if you ran `cast git init`. `cast git commit` and

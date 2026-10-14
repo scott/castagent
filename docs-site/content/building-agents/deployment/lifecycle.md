@@ -25,7 +25,11 @@ database and fetches the bearer token stored for that SHA. It uses the
 agent-level keychain entry only when the hash matches this deployment, so
 connecting to one host does not send another host's token. No token ever
 appears in shell output. Deploying the same agent to a second provider
-stores a second token and leaves the first one in place.
+stores a second token and leaves the first one in place. On a machine
+with no Secret Service, those tokens are read from
+`~/.cast/tokens/deployments/<sha>.token` and
+`~/.cast/tokens/<agent>.token` instead of the keychain. The files are
+outside the agent directory.
 
 In the TUI, `{% ref "slash:connect" %}` opens a modal listing recent
 deployments — pick by SHA or by name.

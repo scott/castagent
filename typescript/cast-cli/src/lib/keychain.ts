@@ -1,12 +1,19 @@
 import * as keytar from 'keytar'
 import * as crypto from 'crypto'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
 
 const SERVICE_NAME = 'cast'
+const AGENT_NAME = /^[A-Za-z0-9][A-Za-z0-9-]*$/
+const DEPLOYMENT_SHA = /^[a-z0-9]{6}$/
 
 export type AgentTokenRemoval = {
   result: 'removed' | 'absent' | 'unavailable' | 'failed'
   message?: string
 }
+
+const FILE_TOKEN_REMOVED = 'Removed bearer token from ~/.cast/tokens.'
 
 function keychainErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message
@@ -26,32 +33,98 @@ export function isKeychainUnavailable(error: unknown): boolean {
     || message.includes('dbus-launch')
 }
 
+function defaultTokenRoot(): string {
+  return path.join(os.homedir(), '.cast', 'tokens')
+}
+
+function ensurePrivateDir(dir: string): void {
+  fs.mkdirSync(dir, {recursive: true, mode: 0o700})
+  fs.chmodSync(dir, 0o700)
+}
+
+function readTokenFile(filePath: string | null): string | null {
+  if (!filePath) return null
+  try {
+    if (!fs.existsSync(filePath)) return null
+    const value = fs.readFileSync(filePath, 'utf8').replace(/\n$/, '')
+    return value.length > 0 ? value : null
+  } catch {
+    return null
+  }
+}
+
+function writeTokenFile(root: string, filePath: string | null, token: string): boolean {
+  if (!filePath || !token) return false
+  const resolvedRoot = path.resolve(root)
+  ensurePrivateDir(resolvedRoot)
+  const dir = path.dirname(filePath)
+  if (dir !== resolvedRoot) ensurePrivateDir(dir)
+  fs.writeFileSync(filePath, token, {mode: 0o600})
+  fs.chmodSync(filePath, 0o600)
+  return true
+}
+
+function removeTokenFile(filePath: string | null): boolean {
+  if (!filePath || !fs.existsSync(filePath)) return false
+  fs.rmSync(filePath, {force: true})
+  return true
+}
+
 export class KeychainManager {
+  constructor(private tokensDir?: string) {}
+
+  private tokenRoot(): string {
+    return this.tokensDir ?? defaultTokenRoot()
+  }
+
+  private agentTokenPath(agentName: string): string | null {
+    if (!AGENT_NAME.test(agentName)) return null
+    return path.join(path.resolve(this.tokenRoot()), `${agentName}.token`)
+  }
+
+  private deploymentTokenPath(deploymentSha: string): string | null {
+    if (!DEPLOYMENT_SHA.test(deploymentSha)) return null
+    return path.join(path.resolve(this.tokenRoot()), 'deployments', `${deploymentSha}.token`)
+  }
+
   async getToken(agentName: string, options?: {silent?: boolean}): Promise<string | null> {
     try {
-      return await keytar.getPassword(SERVICE_NAME, `token:${agentName}`)
+      const stored = await keytar.getPassword(SERVICE_NAME, `token:${agentName}`)
+      if (stored) return stored
     } catch (error) {
-      if (!options?.silent) {
-        console.error('Failed to get token from keychain:', error)
+      if (!isKeychainUnavailable(error)) {
+        if (!options?.silent) console.error('Failed to get token from keychain:', error)
+        return null
       }
+      const fromFile = readTokenFile(this.agentTokenPath(agentName))
+      if (fromFile) return fromFile
+      if (!options?.silent) console.error('Failed to get token from keychain:', error)
       return null
     }
+    return readTokenFile(this.agentTokenPath(agentName))
   }
 
   async setToken(agentName: string, token: string): Promise<void> {
+    const filePath = this.agentTokenPath(agentName)
     try {
       await keytar.setPassword(SERVICE_NAME, `token:${agentName}`, token)
+      removeTokenFile(filePath)
     } catch (error) {
+      if (isKeychainUnavailable(error) && writeTokenFile(this.tokenRoot(), filePath, token)) return
       console.error('Failed to set token in keychain:', error)
     }
   }
 
   async deleteToken(agentName: string): Promise<boolean> {
+    const fileRemoved = removeTokenFile(this.agentTokenPath(agentName))
     try {
-      return await keytar.deletePassword(SERVICE_NAME, `token:${agentName}`)
+      const removed = await keytar.deletePassword(SERVICE_NAME, `token:${agentName}`)
+      return removed || fileRemoved
     } catch (error) {
-      console.error('Failed to delete token from keychain:', error)
-      return false
+      if (!isKeychainUnavailable(error)) {
+        console.error('Failed to delete token from keychain:', error)
+      }
+      return fileRemoved
     }
   }
 
@@ -60,12 +133,18 @@ export class KeychainManager {
    * `cast delete` uses this so a missing keychain is one accurate line.
    */
   async removeAgentToken(agentName: string): Promise<AgentTokenRemoval> {
+    const fileRemoved = removeTokenFile(this.agentTokenPath(agentName))
     try {
       const removed = await keytar.deletePassword(SERVICE_NAME, `token:${agentName}`)
-      return {result: removed ? 'removed' : 'absent'}
+      if (removed) return {result: 'removed'}
+      if (fileRemoved) return {result: 'removed', message: FILE_TOKEN_REMOVED}
+      return {result: 'absent'}
     } catch (error) {
       const message = keychainErrorMessage(error)
-      if (isKeychainUnavailable(error)) return {result: 'unavailable', message}
+      if (isKeychainUnavailable(error)) {
+        if (fileRemoved) return {result: 'removed', message: FILE_TOKEN_REMOVED}
+        return {result: 'unavailable', message}
+      }
       return {result: 'failed', message}
     }
   }
@@ -73,27 +152,42 @@ export class KeychainManager {
   /** Token baked into one deployment. A later deploy of the same agent must not replace it. */
   async getDeploymentToken(deploymentSha: string): Promise<string | null> {
     try {
-      return await keytar.getPassword(SERVICE_NAME, `token:deployment:${deploymentSha}`)
+      const stored = await keytar.getPassword(SERVICE_NAME, `token:deployment:${deploymentSha}`)
+      if (stored) return stored
     } catch (error) {
+      if (!isKeychainUnavailable(error)) {
+        console.error('Failed to get deployment token from keychain:', error)
+        return null
+      }
+      const fromFile = readTokenFile(this.deploymentTokenPath(deploymentSha))
+      if (fromFile) return fromFile
       console.error('Failed to get deployment token from keychain:', error)
       return null
     }
+    return readTokenFile(this.deploymentTokenPath(deploymentSha))
   }
 
   async setDeploymentToken(deploymentSha: string, token: string): Promise<void> {
+    const filePath = this.deploymentTokenPath(deploymentSha)
     try {
       await keytar.setPassword(SERVICE_NAME, `token:deployment:${deploymentSha}`, token)
+      removeTokenFile(filePath)
     } catch (error) {
+      if (isKeychainUnavailable(error) && writeTokenFile(this.tokenRoot(), filePath, token)) return
       console.error('Failed to set deployment token in keychain:', error)
     }
   }
 
   async deleteDeploymentToken(deploymentSha: string): Promise<boolean> {
+    const fileRemoved = removeTokenFile(this.deploymentTokenPath(deploymentSha))
     try {
-      return await keytar.deletePassword(SERVICE_NAME, `token:deployment:${deploymentSha}`)
+      const removed = await keytar.deletePassword(SERVICE_NAME, `token:deployment:${deploymentSha}`)
+      return removed || fileRemoved
     } catch (error) {
-      console.error('Failed to delete deployment token from keychain:', error)
-      return false
+      if (!isKeychainUnavailable(error)) {
+        console.error('Failed to delete deployment token from keychain:', error)
+      }
+      return fileRemoved
     }
   }
 
@@ -132,6 +226,13 @@ export class KeychainManager {
   }
 
   async renameAgentEntries(currentName: string, newName: string): Promise<void> {
+    const from = this.agentTokenPath(currentName)
+    const to = this.agentTokenPath(newName)
+    if (from && to && fs.existsSync(from)) {
+      ensurePrivateDir(path.dirname(to))
+      fs.renameSync(from, to)
+      fs.chmodSync(to, 0o600)
+    }
     try {
       const allCredentials = await keytar.findCredentials(SERVICE_NAME)
       for (const cred of allCredentials) {
