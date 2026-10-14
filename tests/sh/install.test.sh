@@ -285,6 +285,13 @@ fi
 exit 0
 EOF
 
+cat > "$TMP/stubs/pkg-config" << 'EOF'
+#!/bin/bash
+# A developer machine may already have libsecret. Report it missing so the
+# install test always exercises the package-install path.
+exit 1
+EOF
+
 cat > "$TMP/stubs/brew" << 'EOF'
 #!/bin/bash
 printf 'brew %s\n' "$*" >> "${CAST_INSTALL_LOG:?}"
@@ -354,7 +361,9 @@ printf '%s\n' "1.1.0"
 exit 0
 EOF
 
-chmod +x "$TMP/stubs/"* "$TMP/tools/"* "$TMP/fixtures/uv"
+mkdir -p "$TMP/py-ok"
+cp "$TMP/tools/python3" "$TMP/py-ok/python3"
+chmod +x "$TMP/stubs/"* "$TMP/tools/"* "$TMP/py-ok/python3" "$TMP/fixtures/uv"
 
 SYSTEM_CAST_BEFORE=""
 if [[ -L /usr/local/bin/cast || -e /usr/local/bin/cast ]]; then
@@ -501,6 +510,10 @@ export CAST_UNAME_M=arm64
 rm -f "$CAST_GIT_READY"
 BREW_HOME="$TMP/brew-home"
 reset_log
+# Debian's /usr/bin/python3 cannot create a venv. Give the Darwin run a
+# working interpreter so it does not fall through to apt-get.
+PATH="$TMP/py-ok:$TMP/stubs:/usr/bin:/bin"
+export PATH
 run_piped "$BREW_HOME" "$TMP/brew.out"
 [[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/brew.out" >&2; fail "macOS one-liner failed ($RUN_STATUS)"; }
 assert_contains "$CAST_INSTALL_LOG" "brew install git" "macOS installs git with Homebrew"
