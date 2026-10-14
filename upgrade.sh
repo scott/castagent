@@ -39,9 +39,12 @@ usage() {
     cat << 'EOF'
 Usage: ./upgrade.sh
 
-Fast-forward this Cast checkout to the newest origin/main commit
-(origin/master when main is absent) and rebuild the CLI, TUI, and Python
-runtime in place.
+Move this Cast checkout onto the newest origin/main commit and rebuild
+the CLI, TUI, and Python runtime in place.
+
+Any local branch is switched onto origin/main, including a checkout on
+master that tracks origin/master. origin/master is used only when the
+remote has no main branch.
 
 Leaves ~/.cast agents, config, and tokens untouched. Stops without rebuilding
 when the checkout has uncommitted changes, or when the local upstream branch
@@ -270,20 +273,70 @@ assert_clean_worktree() {
     fi
 }
 
-choose_target_branch() {
-    if git -C "$ROOT" show-ref --verify --quiet refs/remotes/origin/main; then
-        printf '%s\n' main
+# Fetch one remote branch into refs/remotes/origin/<branch>, ignoring the
+# clone's fetch refspec. A checkout cloned when master was the default, or
+# cloned with a master-only refspec, still learns about main.
+# Returns 0 when the branch exists, 2 when it does not, and 1 on any other
+# failure (the git message is printed).
+fetch_upstream_branch() {
+    local branch="$1"
+    local err rc
+    err="$(mktemp "${TMPDIR:-/tmp}/cast-upgrade-fetch.XXXXXX")"
+    set +e
+    git -C "$ROOT" fetch origin "+refs/heads/${branch}:refs/remotes/origin/${branch}" </dev/null >/dev/null 2>"$err"
+    rc=$?
+    set -e
+    if [[ "$rc" -eq 0 ]]; then
+        rm -f "$err"
         return 0
     fi
-    if git -C "$ROOT" show-ref --verify --quiet refs/remotes/origin/master; then
-        printf '%s\n' master
-        return 0
+    if grep -qiE 'could not find remote ref|couldn.t find remote ref|remote ref does not exist' "$err"; then
+        rm -f "$err"
+        return 2
     fi
+    cat "$err" >&2
+    rm -f "$err"
     return 1
 }
 
+choose_target_branch() {
+    local rc=0
+    fetch_upstream_branch main || rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+        printf '%s\n' main
+        return 0
+    fi
+    if [[ "$rc" -eq 1 ]]; then
+        return 1
+    fi
+    rc=0
+    fetch_upstream_branch master || rc=$?
+    if [[ "$rc" -eq 0 ]]; then
+        printf '%s\n' master
+        return 0
+    fi
+    return "$rc"
+}
+
+# `git checkout --track origin/<branch>` only accepts a remote-tracking branch
+# that matches remote.origin.fetch. A master-only clone does not match main,
+# and a fetch spec for a deleted master makes a later plain `git fetch` fail.
+ensure_branch_can_track() {
+    local branch="$1"
+    local specs
+    specs="$(git -C "$ROOT" config --get-all remote.origin.fetch || true)"
+    if printf '%s\n' "$specs" | grep -q 'refs/heads/\*'; then
+        return 0
+    fi
+    if printf '%s\n' "$specs" | grep -q "refs/heads/${branch}:"; then
+        return 0
+    fi
+    git -C "$ROOT" config --unset-all remote.origin.fetch || true
+    git -C "$ROOT" config --add remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+}
+
 fast_forward() {
-    local target current
+    local target current choose_rc=0
 
     if ! git -C "$ROOT" remote get-url origin >/dev/null 2>&1; then
         log_error "This checkout has no origin remote."
@@ -291,13 +344,13 @@ fast_forward() {
     fi
 
     log_info "Fetching origin..."
-    if ! git -C "$ROOT" fetch origin </dev/null; then
-        log_error "Could not fetch origin. Check the network and this checkout's origin remote."
-        exit 1
-    fi
-
-    if ! target="$(choose_target_branch)"; then
-        log_error "origin has neither main nor master."
+    target="$(choose_target_branch)" || choose_rc=$?
+    if [[ "$choose_rc" -ne 0 || -z "$target" ]]; then
+        if [[ "$choose_rc" -eq 2 ]]; then
+            log_error "origin has neither main nor master."
+        else
+            log_error "Could not fetch origin. Check the network and this checkout's origin remote."
+        fi
         exit 1
     fi
 
@@ -309,14 +362,34 @@ fast_forward() {
         fi
     fi
 
+    ensure_branch_can_track "$target"
+
     current="$(git -C "$ROOT" rev-parse --abbrev-ref HEAD)"
+    if [[ "$current" != "$target" && "$current" != "HEAD" ]]; then
+        if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$current"; then
+            if ! git -C "$ROOT" merge-base --is-ancestor "$current" "origin/$target"; then
+                log_warn "Local $current has commits that are not on origin/$target. Those commits stay on $current."
+            fi
+        fi
+    fi
+
     if [[ "$current" != "$target" ]]; then
         log_info "Switching from $current to $target"
         if git -C "$ROOT" show-ref --verify --quiet "refs/heads/$target"; then
-            git -C "$ROOT" checkout "$target" </dev/null
+            if ! git -C "$ROOT" checkout "$target" </dev/null; then
+                log_error "Could not switch to $target. The checkout was not rebuilt."
+                exit 1
+            fi
         else
-            git -C "$ROOT" checkout -b "$target" --track "origin/$target" </dev/null
+            if ! git -C "$ROOT" checkout -b "$target" --track "origin/$target" </dev/null; then
+                log_error "Could not switch to $target. The checkout was not rebuilt."
+                exit 1
+            fi
         fi
+    fi
+
+    if ! git -C "$ROOT" branch --set-upstream-to="origin/$target" "$target" >/dev/null 2>&1; then
+        log_warn "Could not set $target to track origin/$target."
     fi
 
     if [[ "$(git -C "$ROOT" rev-parse HEAD)" == "$(git -C "$ROOT" rev-parse "origin/$target")" ]]; then

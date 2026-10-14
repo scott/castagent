@@ -246,6 +246,8 @@ help_out="$TMP/help.out"
 bash "$SCRIPT_SRC" --help >"$help_out"
 assert_contains "$help_out" "Usage: ./upgrade.sh" "help prints usage"
 assert_contains "$help_out" "origin/main" "help follows main"
+assert_contains "$help_out" "tracks origin/master" "help moves a master checkout onto main"
+assert_contains "$help_out" "no main branch" "help falls back to master only when main is absent"
 assert_contains "$help_out" "cast upgrade <agent>" "help distinguishes deployed-agent upgrade"
 set +e
 bash "$SCRIPT_SRC" --nope >"$TMP/bad.out" 2>&1
@@ -375,6 +377,50 @@ assert_eq "$(git -C "$PAIR_REPO" rev-parse HEAD)" "$(git -C "$PAIR_REPO" rev-par
 assert_eq "$(git -C "$PAIR_REPO" rev-parse master)" "$prefer_old" "stale master ref is not the upstream"
 assert_contains "$PAIR_REPO/typescript/cast-cli/package.json" '"version": "2.0.0"' "main commit is the one that is built"
 assert_contains "$TMP/prefermain/out" "Switching from master to main" "upgrade says it left master for main"
+
+# A clone from before main existed: local master tracks origin/master, the
+# fetch refspec is master only, and the remote master branch is gone. main
+# has the commits upgrade must build.
+make_pair "stuckmaster"
+stuck_tip="$(git -C "$PAIR_REPO" rev-parse HEAD)"
+git -C "$PAIR_REPO" push origin master:main >/dev/null
+git --git-dir "$PAIR_ORIGIN" symbolic-ref HEAD refs/heads/main
+advance_origin "$PAIR_ORIGIN" "2.0.0"
+git -C "$PAIR_REPO" push origin --delete master >/dev/null
+git -C "$PAIR_REPO" update-ref refs/remotes/origin/master "$stuck_tip"
+git -C "$PAIR_REPO" update-ref -d refs/remotes/origin/main
+git -C "$PAIR_REPO" config remote.origin.fetch '+refs/heads/master:refs/remotes/origin/master'
+prepare_home "$TMP/stuckmaster/home" "$PAIR_REPO"
+prepare_venv "$PAIR_REPO"
+reset_log
+run_upgrade "$PAIR_REPO/upgrade.sh" "$TMP/stuckmaster/home" "$TMP/stuckmaster/out"
+[[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/stuckmaster/out" >&2; fail "stuck master upgrade failed ($RUN_STATUS)"; }
+assert_eq "$(git -C "$PAIR_REPO" rev-parse --abbrev-ref HEAD)" "main" "stuck master checkout switches to main"
+assert_eq "$(git -C "$PAIR_REPO" rev-parse HEAD)" "$(git -C "$PAIR_REPO" rev-parse origin/main)" "stuck master checkout fast-forwards to origin/main"
+assert_eq "$(git -C "$PAIR_REPO" rev-parse master)" "$stuck_tip" "old master tip stays on the local master branch"
+assert_eq "$(git -C "$PAIR_REPO" rev-parse --abbrev-ref --symbolic-full-name '@{upstream}')" "origin/main" "main tracks origin/main"
+assert_eq "$(git -C "$PAIR_REPO" config --get-all remote.origin.fetch)" "+refs/heads/*:refs/remotes/origin/*" "master-only fetch refspec is widened"
+assert_contains "$PAIR_REPO/typescript/cast-cli/package.json" '"version": "2.0.0"' "stuck master checkout builds the main commit"
+assert_contains "$TMP/stuckmaster/out" "Switching from master to main" "stuck master upgrade says it left master"
+
+# Local commits on master are not on origin/main. Upgrade still moves to
+# main and leaves those commits on the local master branch.
+make_pair "keptlocal"
+kept_base="$(git -C "$PAIR_REPO" rev-parse HEAD)"
+git -C "$PAIR_REPO" commit --allow-empty -m "local only" >/dev/null
+kept_sha="$(git -C "$PAIR_REPO" rev-parse HEAD)"
+git -C "$PAIR_REPO" push origin "$kept_base:refs/heads/main" >/dev/null
+git --git-dir "$PAIR_ORIGIN" symbolic-ref HEAD refs/heads/main
+advance_origin "$PAIR_ORIGIN" "2.0.0"
+prepare_home "$TMP/keptlocal/home" "$PAIR_REPO"
+prepare_venv "$PAIR_REPO"
+reset_log
+run_upgrade "$PAIR_REPO/upgrade.sh" "$TMP/keptlocal/home" "$TMP/keptlocal/out"
+[[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/keptlocal/out" >&2; fail "local master commits upgrade failed ($RUN_STATUS)"; }
+assert_eq "$(git -C "$PAIR_REPO" rev-parse HEAD)" "$(git -C "$PAIR_REPO" rev-parse origin/main)" "local master commits still land on origin/main"
+assert_eq "$(git -C "$PAIR_REPO" rev-parse master)" "$kept_sha" "local master commits stay on master"
+assert_contains "$TMP/keptlocal/out" "Those commits stay on master." "local master commits are called out"
+assert_contains "$PAIR_REPO/typescript/cast-cli/package.json" '"version": "2.0.0"' "local master commits do not hide the main update"
 
 cat > "$TMP/stubs/uv" << 'EOF'
 #!/bin/bash
