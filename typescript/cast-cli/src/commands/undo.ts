@@ -39,7 +39,15 @@ export default class Undo extends Command {
       this.error('--steps must be >= 1')
     }
 
-    if (!(await canUndo(agentName))) {
+    let undoable = false
+    try {
+      undoable = await canUndo(agentName)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.error(message)
+    }
+
+    if (!undoable) {
       this.error(`Nothing to undo for agent '${agentName}'.`)
     }
 

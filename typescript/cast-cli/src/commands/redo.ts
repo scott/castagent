@@ -38,7 +38,15 @@ export default class Redo extends Command {
       this.error('--steps must be >= 1')
     }
 
-    if (!(await canRedo(agentName))) {
+    let redoable = false
+    try {
+      redoable = await canRedo(agentName)
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.error(message)
+    }
+
+    if (!redoable) {
       this.error(`Nothing to redo for agent '${agentName}'.`)
     }
 
