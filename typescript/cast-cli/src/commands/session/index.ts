@@ -9,7 +9,7 @@ export default class Session extends Command {
     '<%= config.bin %> session new <agent>',
     '<%= config.bin %> session resume <id|name>',
     '<%= config.bin %> session rename <id> <name>',
-    '<%= config.bin %> session fork <id> [name]',
+    '<%= config.bin %> session fork <id> [--name <name>]',
     '<%= config.bin %> session delete <id>',
     '<%= config.bin %> session export <id> [--out file]',
     '<%= config.bin %> session import <file>',
