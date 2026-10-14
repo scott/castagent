@@ -176,29 +176,18 @@ print('true' if result else 'false')
 }
 
 export async function extractRelease(agentName: string, version: string, targetDir: string): Promise<void> {
-  const tar = await import('tar')
-  const release = await getRelease(agentName, version)
-  if (!release) {
-    throw new Error(`Release ${version} not found for agent '${agentName}'`)
+  // Python extract_release writes the snapshot over targetDir and removes
+  // project files that are not in it. .castignore paths, .cast/, and .git/ stay.
+  try {
+    runPythonScript(`
+${pythonPrelude()}from cast.releases import extract_release
+from pathlib import Path
+extract_release(${JSON.stringify(agentName)}, ${JSON.stringify(version)}, Path(${JSON.stringify(targetDir)}))
+`)
+  } catch (error: unknown) {
+    const err = error as {stderr?: Buffer | string; message?: string}
+    const stderr = Buffer.isBuffer(err.stderr) ? err.stderr.toString('utf8') : String(err.stderr || '')
+    const line = stderr.trim().split('\n').filter(Boolean).pop()
+    throw new Error(line || err.message || `Failed to extract release ${version}`)
   }
-
-  if (!fs.existsSync(release.tarball_path)) {
-    throw new Error(`Release tarball not found: ${release.tarball_path}`)
-  }
-
-  // Clear agent files first (keep .cast and .git directories)
-  const agentFiles = fs.readdirSync(targetDir).filter(f =>
-    !f.startsWith('.cast') && !f.startsWith('.git')
-  )
-  for (const file of agentFiles) {
-    const filePath = path.join(targetDir, file)
-    if (fs.statSync(filePath).isDirectory()) {
-      fs.rmSync(filePath, {recursive: true})
-    } else {
-      fs.unlinkSync(filePath)
-    }
-  }
-
-  // Extract release tarball
-  await tar.extract({file: release.tarball_path, cwd: targetDir})
 }

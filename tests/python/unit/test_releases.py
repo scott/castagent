@@ -386,6 +386,87 @@ class TestCreateRelease:
             assert "tools" in names
             assert "tools/mytool.py" in names
 
+    def test_packs_full_agent_except_castignore(self, test_agent, temp_agents_dir):
+        """The release is the working tree, not the old allowlist.
+
+        instructions.md can be an unused leftover. The configured prompt
+        (bb-prompt.md), skills, tools, memory notes, mcp, and tests belong
+        in the tarball. .castignore state, .cast/, and .git/ do not.
+        """
+        agent = temp_agents_dir / test_agent
+        (agent / "instructions.md").write_text("# unused leftover\n")
+        (agent / "bb-prompt.md").write_text("PROMPT v1\n")
+        config = yaml.safe_load((agent / "agent.yaml").read_text())
+        config["brain"]["instructions_file"] = "bb-prompt.md"
+        (agent / "agent.yaml").write_text(yaml.dump(config))
+
+        (agent / "skills" / "triage").mkdir(parents=True)
+        (agent / "skills" / "triage" / "SKILL.md").write_text("# triage\n")
+        (agent / "tools" / "bb.py").write_text("# tool\n")
+        (agent / "memory").mkdir()
+        (agent / "memory" / "user.md").write_text("notes\n")
+        (agent / "memory" / "memory.db").write_bytes(b"db")
+        (agent / "memory" / "memory.db-wal").write_bytes(b"wal")
+        (agent / "mcp" / "gmail.yaml").write_text("server: gmail\n")
+        (agent / "tests").mkdir()
+        (agent / "tests" / "scenario.yaml").write_text("name: t\n")
+        (agent / ".env").write_text("SECRET=1\n")
+        (agent / "debug.log").write_text("log\n")
+        (agent / "pkg" / "__pycache__").mkdir(parents=True)
+        (agent / "pkg" / "__pycache__" / "x.pyc").write_bytes(b"pyc")
+        (agent / "pkg" / "keep.py").write_text("# keep\n")
+        (agent / ".git").mkdir()
+        (agent / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+        (agent / ".cast" / "changes").mkdir(parents=True, exist_ok=True)
+        (agent / ".cast" / "changes" / "changes.json").write_text("{}\n")
+        (agent / ".castignore").write_text(
+            ".cast/versions/\n"
+            "cast.db\n"
+            "*.log\n"
+            ".env\n"
+            "__pycache__/\n"
+            "memory/memory.db\n"
+            "memory/memory.db-journal\n"
+            "memory/memory.db-wal\n"
+            "memory/memory.db-shm\n"
+        )
+
+        info = releases.create_release(test_agent, "1.0", "bb rel")
+        with tarfile.open(info.tarball_path) as tar:
+            names = set(tar.getnames())
+            prompt = tar.extractfile("bb-prompt.md").read().decode()
+            leftover = tar.extractfile("instructions.md").read().decode()
+
+        assert prompt == "PROMPT v1\n"
+        assert leftover == "# unused leftover\n"
+        assert "skills/triage/SKILL.md" in names
+        assert "tools/bb.py" in names
+        assert "memory/user.md" in names
+        assert "mcp/gmail.yaml" in names
+        assert "tests/scenario.yaml" in names
+        assert "pkg/keep.py" in names
+        assert ".castignore" in names
+        assert "agent.yaml" in names
+        assert "memory/memory.db" not in names
+        assert "memory/memory.db-wal" not in names
+        assert ".env" not in names
+        assert "debug.log" not in names
+        assert "pkg/__pycache__/x.pyc" not in names
+        assert not any(name == ".git" or name.startswith(".git/") for name in names)
+        assert not any(name == ".cast" or name.startswith(".cast/") for name in names)
+
+    def test_without_castignore_includes_env(self, test_agent, temp_agents_dir):
+        agent = temp_agents_dir / test_agent
+        (agent / ".env").write_text("SECRET=1\n")
+        (agent / "skills" / "triage").mkdir(parents=True)
+        (agent / "skills" / "triage" / "SKILL.md").write_text("# triage\n")
+
+        info = releases.create_release(test_agent, "1.0", "no ignore")
+        with tarfile.open(info.tarball_path) as tar:
+            names = set(tar.getnames())
+        assert ".env" in names
+        assert "skills/triage/SKILL.md" in names
+
     def test_rejects_invalid_version(self, test_agent, temp_agents_dir):
         with pytest.raises(ValueError, match="Invalid semantic version"):
             releases.create_release(test_agent, "not-a-version", "msg")
@@ -461,6 +542,50 @@ class TestExtractRelease:
 
             assert (target / ".cast" / "important.json").exists()
             assert (target / ".git").exists()
+
+    def test_restore_reverts_prompt_and_drops_new_files(self, test_agent, temp_agents_dir):
+        """cast restore puts the released tree back.
+
+        The configured prompt returns to the released bytes, a tool added
+        later is removed, and .castignore state stays.
+        """
+        agent = temp_agents_dir / test_agent
+        (agent / "bb-prompt.md").write_text("PROMPT v1\n")
+        (agent / "tools" / "old.py").write_text("# old\n")
+        (agent / "skills" / "triage").mkdir(parents=True)
+        (agent / "skills" / "triage" / "SKILL.md").write_text("# triage\n")
+        (agent / "memory").mkdir()
+        (agent / "memory" / "memory.db").write_bytes(b"db")
+        (agent / ".env").write_text("SECRET=1\n")
+        (agent / ".git").mkdir()
+        (agent / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+        (agent / ".castignore").write_text(
+            "*.log\n.env\n__pycache__/\n"
+            "memory/memory.db\nmemory/memory.db-wal\n"
+            "memory/memory.db-shm\nmemory/memory.db-journal\n"
+        )
+
+        releases.create_release(test_agent, "1.0", "bb rel")
+
+        (agent / "bb-prompt.md").write_text("AFTER\n")
+        (agent / "tools" / "bbnew.py").write_text("# new\n")
+        (agent / "skills" / "triage" / "SKILL.md").write_text("# edited\n")
+        (agent / "notes.md").write_text("later\n")
+        (agent / ".env").write_text("SECRET=changed\n")
+        (agent / "memory" / "memory.db").write_bytes(b"db2")
+
+        releases.extract_release(test_agent, "1.0", agent)
+
+        assert (agent / "bb-prompt.md").read_text() == "PROMPT v1\n"
+        assert (agent / "tools" / "old.py").read_text() == "# old\n"
+        assert not (agent / "tools" / "bbnew.py").exists()
+        assert (agent / "skills" / "triage" / "SKILL.md").read_text() == "# triage\n"
+        assert not (agent / "notes.md").exists()
+        assert (agent / ".env").read_text() == "SECRET=changed\n"
+        assert (agent / "memory" / "memory.db").read_bytes() == b"db2"
+        assert (agent / ".git" / "HEAD").read_text() == "ref: refs/heads/main\n"
+        assert (agent / ".cast" / "releases" / "releases.json").exists()
+        assert (agent / ".cast" / "releases" / "1.0.tar.gz").exists()
 
     def test_missing_release_raises(self, test_agent, temp_agents_dir):
         with tempfile.TemporaryDirectory() as tmpdir:

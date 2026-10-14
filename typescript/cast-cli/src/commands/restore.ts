@@ -2,8 +2,7 @@ import {Args, Command, Flags} from '@oclif/core'
 import * as path from 'path'
 import * as os from 'os'
 import * as fs from 'fs'
-import * as tar from 'tar'
-import {listReleases} from '../lib/releases'
+import {extractRelease, listReleases} from '../lib/releases'
 
 export default class Restore extends Command {
   static description = 'Restore an agent to a previous release'
@@ -38,8 +37,9 @@ export default class Restore extends Command {
 
     this.log(`Restoring ${agentName} to release ${flags.release}...`)
 
-    // Extract the release tarball
-    await tar.extract({file: release.tarball_path, cwd: agentPath})
+    // Put the working tree back to the snapshot. extractRelease also
+    // removes project files that were added after the release.
+    await extractRelease(agentName, flags.release, agentPath)
 
     this.log(`Restored to release ${flags.release}.`)
     this.log('Note: This restored local files only. Use /deploy to update deployment.')
