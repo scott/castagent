@@ -1,10 +1,13 @@
 import asyncio
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from .store import MemoryStore, MemoryHighlight
 from .config import MemoryConfig
 from .retriever import MemoryRetriever
 from .reflection import ReflectionAgent
+from .explicit import explicit_remember_fact
+from .filter import PrivacyFilter
 
 
 class MemoryMiddleware:
@@ -43,6 +46,52 @@ class MemoryMiddleware:
             self._enforce_limits(highlight.category)
         
         return highlight
+
+    def remember_explicit(self, user_message: str) -> Optional[MemoryHighlight]:
+        """Store an explicit remember request before the model replies.
+
+        Reflection can decide a fact is not notable. The user asked for
+        this one to persist, so it is written to memory/notes.md and the
+        highlights table even when no model is available.
+        """
+        if not self.enabled or self.store is None:
+            return None
+
+        fact = explicit_remember_fact(user_message)
+        if not fact:
+            return None
+
+        scrubber = self.reflection.filter if self.reflection is not None else PrivacyFilter()
+        fact = " ".join(scrubber.scrub(fact).split())
+        if not fact:
+            return None
+
+        self._append_note(fact)
+        for existing in self.store.get_all():
+            if existing.category == "preference" and existing.content == fact:
+                return existing
+
+        highlight = MemoryHighlight(
+            timestamp=datetime.now(timezone.utc).isoformat(),
+            category="preference",
+            content=fact,
+            source="explicit_remember",
+            tags=["explicit", "remember"],
+        )
+        self.store.append(highlight)
+        self._enforce_limits("preference")
+        return highlight
+
+    def _append_note(self, fact: str) -> None:
+        notes = self.store.memory_dir / "notes.md"
+        bullet = f"- {fact}"
+        existing = notes.read_text(encoding="utf-8") if notes.is_file() else ""
+        if bullet in (line.strip() for line in existing.splitlines()):
+            return
+        notes.parent.mkdir(parents=True, exist_ok=True)
+        prefix = "\n" if existing and not existing.endswith("\n") else ""
+        with notes.open("a", encoding="utf-8") as handle:
+            handle.write(f"{prefix}{bullet}\n")
 
     def record_sync(self, user_message: str, agent_response: str, source: str) -> Optional[MemoryHighlight]:
         if not self.enabled:

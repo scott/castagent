@@ -211,6 +211,14 @@ describe('dev command', () => {
       expect(env.CAST_AGENT_PATH).to.equal('/tmp/bb-devnew')
       expect(env.PYTHONPATH).to.equal('/tmp/python')
     })
+
+    it('passes the agent directory to the runtime as CAST_AGENT_PATH', () => {
+      const instance = new Dev(['bb-devnew'], {color: false})
+      const env = instance.runtimeLaunchEnv('bb-devnew', '/tmp/bb-devnew', '/tmp/python')
+      expect(env.CAST_AGENT_NAME).to.equal('bb-devnew')
+      expect(env.CAST_AGENT_PATH).to.equal('/tmp/bb-devnew')
+      expect(env.PYTHONPATH).to.equal('/tmp/python')
+    })
   })
 })
 

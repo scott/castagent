@@ -66,6 +66,18 @@ Inside the container, the volume is mounted at `/app/agent/memory/`.
 The runtime Python module reads `CAST_AGENT_PATH` to know where the
 agent lives and joins `memory/` to that path.
 
+`cast dev` sets `CAST_AGENT_PATH` to `~/.cast/agents/<name>` before it
+starts the runtime. The runtime also sets that variable from
+`--agent-path`. The `read`, `glob`, and `bash` tools resolve relative
+paths against that directory, so `memory/notes.md` is the notes file
+in the agent directory.
+
+A user message that starts with `remember:` or `remember that` is
+saved before the model replies. The fact is appended to
+`memory/notes.md` and inserted into `memory/memory.db` as a
+preference. The next session includes recent rows from that database
+in the prompt. The system prompt tells the agent this store exists.
+
 If the agent wants to use the memory from a custom tool:
 
 ```python

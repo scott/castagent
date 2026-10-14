@@ -313,6 +313,15 @@ export default class Dev extends Command {
     }
   }
 
+  runtimeLaunchEnv(agentName: string, agentPath: string, pythonPath: string): NodeJS.ProcessEnv {
+    return {
+      ...process.env,
+      CAST_AGENT_NAME: agentName,
+      CAST_AGENT_PATH: agentPath,
+      PYTHONPATH: pythonPath,
+    }
+  }
+
   missingAgentInitializeParams(agentName: string): {agent_name: string; new_mode: boolean} {
     return {agent_name: agentName, new_mode: true}
   }
@@ -340,11 +349,7 @@ export default class Dev extends Command {
       '--port', port.toString(),
     ], {
       stdio: ['pipe', 'pipe', 'inherit'],
-      env: {
-        ...process.env,
-        CAST_AGENT_NAME: agentName,
-        PYTHONPATH: pythonPath,
-      },
+      env: this.runtimeLaunchEnv(agentName, agentPath, pythonPath),
     })
 
     runtime.on('error', (err) => {

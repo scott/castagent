@@ -8,6 +8,7 @@ from langgraph.prebuilt import create_react_agent
 from .base import AgentConfig
 from ..harness.permissions import ApprovalBroker, PermissionGate, PermissionPrompt, guard_tool
 from ..memory import MemoryMiddleware
+from ..memory.prompt import append_persistent_memory_instructions
 from ..providers.registry import get_provider
 from ..tools.bash import bash_tool
 from ..tools.read import read_tool
@@ -59,19 +60,19 @@ class RuntimeAgent:
         self.session_histories: Dict[str, list] = {}
         self.graph = None
         self.llm = None
-        self.memory = None
         self._provider = get_provider(self.config.model)
         self._warn_if_tools_unreadable()
 
-        # A missing key stays in echo mode and does not fall back.
-        if self._provider.is_available():
-            self._setup_llm()
-
         # Pass the raw model so reflection uses the same provider.
+        # Memory is ready before the graph so the prompt can describe it.
         model_name = self.config.model
         env_name = self._llm_env_var()
         api_key = os.environ.get(env_name) if isinstance(env_name, str) else None
         self.memory = MemoryMiddleware(self.agent_path, model_name=model_name, api_key=api_key)
+
+        # A missing key stays in echo mode and does not fall back.
+        if self._provider.is_available():
+            self._setup_llm()
 
     def _warn_if_tools_unreadable(self) -> None:
         """A tools list is not tools.builtin. Say that, and do not blame the provider."""
@@ -125,11 +126,14 @@ class RuntimeAgent:
                 if name in BUILTIN_TOOLS
             ]
             
-            # Create the ReAct agent graph with instructions as system prompt
+            # Instructions, plus how persistent memory is stored when enabled.
+            prompt = self.config.rendered_prompt()
+            if self.memory is not None and self.memory.enabled:
+                prompt = append_persistent_memory_instructions(prompt)
             self.graph = create_react_agent(
                 model=self.llm,
                 tools=guarded,
-                prompt=self.config.rendered_prompt(),
+                prompt=prompt,
             )
         except Exception as e:
             # Log error but don't crash - fall back to echo mode.
@@ -215,6 +219,9 @@ class RuntimeAgent:
     ) -> str:
         """Process a user message and return the response."""
         
+        # Save an explicit remember request before the model can refuse.
+        self.memory.remember_explicit(message)
+
         # If no LLM available, use echo mode
         if self.graph is None:
             return self._echo_response(message)
@@ -271,6 +278,9 @@ class RuntimeAgent:
         permission/respond resolves it. Text chunks stay strings.
         """
         
+        # Save an explicit remember request before the model can refuse.
+        self.memory.remember_explicit(message)
+
         # If no LLM available, use echo mode with streaming simulation
         if self.graph is None:
             async for chunk in self._echo_response_stream(message):
