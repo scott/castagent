@@ -46,6 +46,45 @@ class TestCreateAgent:
             finally:
                 tools.AGENTS_DIR = original_dir
 
+    def test_apply_process_dirs_creates_in_cast_agents_dir(self, tmp_path, monkeypatch):
+        """CAST_AGENTS_DIR is the directory create_agent writes, including for meta tests."""
+        from cast import versioning
+        from cast.builder_tools import tools
+
+        agents = tmp_path / "agents"
+        builder = tmp_path / "builder"
+        agents.mkdir()
+        previous_agents = tools.AGENTS_DIR
+        previous_builder = tools.BUILDER_DIR
+        previous_versioning = versioning.AGENTS_DIR
+        home_yaml = Path.home() / ".cast" / "agents" / "email-agent" / "agent.yaml"
+        home_before = home_yaml.read_text(encoding="utf-8") if home_yaml.exists() else None
+        monkeypatch.setenv("CAST_AGENTS_DIR", str(agents))
+        monkeypatch.setenv("CAST_BUILDER_DIR", str(builder))
+
+        try:
+            tools.apply_process_dirs()
+            assert tools.AGENTS_DIR == agents
+            assert tools.BUILDER_DIR == builder
+            assert versioning.AGENTS_DIR == agents
+            created = create_agent.invoke({"name": "email-agent", "description": "reads email"})
+            assert "created successfully" in created
+            agent_yaml = agents / "email-agent" / "agent.yaml"
+            assert agent_yaml.is_file()
+            assert "email-agent" in agent_yaml.read_text(encoding="utf-8")
+            agent_yaml.write_text("name: stale\n", encoding="utf-8")
+            again = create_agent.invoke({"name": "email-agent"})
+            assert "already exists" in again
+            assert agent_yaml.read_text(encoding="utf-8") == "name: stale\n"
+            assert (builder / "created-agent").read_text(encoding="utf-8").strip() == "email-agent"
+        finally:
+            tools.AGENTS_DIR = previous_agents
+            tools.BUILDER_DIR = previous_builder
+            versioning.AGENTS_DIR = previous_versioning
+
+        home_after = home_yaml.read_text(encoding="utf-8") if home_yaml.exists() else None
+        assert home_after == home_before
+
     def test_create_agent_already_exists(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             from cast.builder_tools import tools

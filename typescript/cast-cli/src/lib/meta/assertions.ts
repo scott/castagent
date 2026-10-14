@@ -18,14 +18,38 @@ export interface AssertionResult {
 
 export interface AssertionContext {
   response?: string
+  /** Isolated agents directory. Rewrites `~/.cast/agents` assertion paths. */
+  agentsDir?: string
+  /**
+   * Absolute paths that existed before this scenario ran.
+   * File assertions on those paths fail: the run did not create them.
+   */
+  preexisting?: ReadonlySet<string>
 }
 
-function expandPath(filePath: string): string {
-  if (filePath.startsWith('~/')) {
-    return path.join(homedir(), filePath.slice(2))
+export function resolveAssertionPath(filePath: string, agentsDir?: string): string {
+  const expanded = filePath.startsWith('~/')
+    ? path.join(homedir(), filePath.slice(2))
+    : filePath
+  const absolute = path.resolve(expanded)
+  if (!agentsDir) return absolute
+
+  const homeAgents = path.resolve(homedir(), '.cast', 'agents')
+  const relative = path.relative(homeAgents, absolute)
+  const inside = relative === '' || (!relative.startsWith('..') && !path.isAbsolute(relative))
+  if (!inside) return absolute
+  return path.resolve(agentsDir, relative)
+}
+
+export function collectPreexistingPaths(assertions: Assertion[], agentsDir?: string): Set<string> {
+  const found = new Set<string>()
+  for (const assertion of assertions) {
+    if (!assertion.path) continue
+    const resolved = resolveAssertionPath(assertion.path, agentsDir)
+    if (fs.existsSync(resolved)) found.add(resolved)
   }
 
-  return filePath
+  return found
 }
 
 export class AssertionEngine {
@@ -40,17 +64,28 @@ export class AssertionEngine {
   }
 
   private async runOne(assertion: Assertion, context: AssertionContext): Promise<AssertionResult> {
+    const filePath = assertion.path
+      ? resolveAssertionPath(assertion.path, context.agentsDir)
+      : ''
+    if (assertion.path && context.preexisting?.has(filePath)) {
+      return {
+        assertion,
+        passed: false,
+        message: `Path already existed before this scenario and was not created by this run: ${filePath}`,
+      }
+    }
+
     switch (assertion.type) {
     case 'file_exists':
-      return this.fileExists(expandPath(assertion.path || ''), assertion)
+      return this.fileExists(filePath, assertion)
     case 'directory_exists':
-      return this.directoryExists(expandPath(assertion.path || ''), assertion)
+      return this.directoryExists(filePath, assertion)
     case 'file_contains':
-      return this.fileContains(expandPath(assertion.path || ''), assertion)
+      return this.fileContains(filePath, assertion)
     case 'yaml_contains':
-      return this.yamlContains(expandPath(assertion.path || ''), assertion)
+      return this.yamlContains(filePath, assertion)
     case 'yaml_not_always_allow':
-      return this.yamlNotAlwaysAllow(expandPath(assertion.path || ''), assertion)
+      return this.yamlNotAlwaysAllow(filePath, assertion)
     case 'response_contains':
       return this.responseContains(context.response || '', assertion)
     default:
