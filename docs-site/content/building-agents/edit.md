@@ -2,8 +2,8 @@
 title: Edit an agent
 section: building-agents
 order: 3
-description: Modifying an existing agent — in the Builder, with cast update, or by hand.
-ref: ['cli:edit', 'cli:update', 'cli:dev']
+description: Modifying an existing agent in the Builder, with cast update, or by hand.
+ref: ['cli:edit', 'cli:update', 'slash:update', 'cli:dev']
 ---
 
 # Edit an agent
@@ -13,7 +13,7 @@ There are three ways to modify an agent after the initial `cast new`:
 1. **The Builder** (`cast edit`, `{% ref "slash:edit" %}`) — interactive,
    conversational, best for substantial changes to instructions, tools,
    or MCP integrations.
-2. **`{% ref "cli:update" %}`** — flag-driven, best for precise, atomic
+2. **`{% ref "cli:update" %}`** and `{% ref "slash:update" %}`, for precise, atomic
    mutations of `agent.yaml` (model, permissions, requirements, etc.).
 3. **Hand edit** — `vim agent.yaml` then `cast dev` to reload. Best for
    one-off tweaks you understand.
@@ -73,9 +73,36 @@ non-zero. `agent.yaml` is left unchanged, including when `--dry-run` is set.
 
 Every `cast update` call writes a new entry to the agent's internal
 change log with an "Updated: …" message describing what changed. The
-log is internal — to step backward or forward through it, use
+log is internal. To step backward or forward through it, use
 [cast undo / cast redo](building-agents/versioning/undo) (or `/undo` / `/redo` in the
 TUI).
+
+## TUI
+
+`{% ref "slash:update" %}` updates the agent open in this TUI. In `cast dev`
+and `cast edit` that is the agent on screen. In `cast new`, it is the agent
+the wizard just created. Before an agent exists, the command replies
+`No agent is loaded.`
+
+With no arguments, `/update` opens a modal titled `Update: <agent>`. Up and
+down wrap through the fields. The selected row starts with `▸`. Enter opens
+a text prompt or a choice list (tools, Python version, permission level).
+Enter again runs `cast update <agent>` with that one flag. ESC steps back,
+and from the field list it closes the modal and returns focus to the input.
+
+You can also pass the CLI flags directly:
+
+```text
+/update --model openrouter/anthropic/claude-3.7-sonnet
+/update --description A short summary
+/update --add-tool bash --permission bash=ask
+```
+
+A value `cast update` cannot store is shown in the modal, or in the chat
+when the flags were typed. `agent.yaml` is left unchanged. The running
+process keeps the configuration it started with, so restart it with
+`cast dev <agent>` after a successful write. `/update` is hidden on-host.
+It does not redeploy a live agent.
 
 ## Hand edit
 

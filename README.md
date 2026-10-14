@@ -345,6 +345,8 @@ cast update my-agent --model openrouter/openai/gpt-4o --dry-run
 
 `cast update` checks these values before it writes. A permission level other than `always-allow`, `ask`, or `deny`, an unknown model id, or a Python version other than `3.11` or `3.12` prints an error and exits non-zero. `agent.yaml` is not changed. Unknown models use the same message as `cast model`. A leading `openrouter/` prefix is still accepted, including the shipped default `openrouter/minimax/minimax-m2.5`. A provider that accepts any model id, such as `digitalocean/`, is still accepted.
 
+In the TUI, `/update` updates that same local agent. With no arguments it opens a modal titled `Update: <agent>`. Up and down move through the fields, Enter chooses one, and a second prompt or list collects the value. Enter writes it with `cast update`. ESC closes the modal and returns focus to the input. The same flags work on the command, for example `/update --model openrouter/anthropic/claude-3.7-sonnet`. A rejected value is shown in the modal, or in the chat when you passed flags, and `agent.yaml` is left unchanged. Restart the local agent (`cast dev <agent>`) so a running session picks up the change. `/update` is available in dev and production and hidden on-host. It does not redeploy a live agent.
+
 ### Agent versioning
 
 Cast Agent tracks an agent with three independent concepts:
@@ -432,6 +434,7 @@ Highlighting text with the mouse copies that selection to the clipboard.
 | `/release` | agent | Opens a modal to create a new semantic release. Suggests patch/minor/major versions based on the current release. |
 | `/deploy` | agent | Release picker → provider picker → live deploy with SHA shown on success. |
 | `/upgrade` | agent | Operates on the current agent. Modal lists releases to upgrade to. |
+| `/update [flags]` | agent | Update the current agent's local configuration. No arguments opens a field modal. Dev and production. Hidden on-host. |
 | `/shutdown` | agent | Lists active deployments (every provider) and shuts one down after Y/N. Streams `cast shutdown --force`. Dev and production only. |
 | `/registry` | session | Modal table of every live deployment (agent, SHA, provider, version, time, URL). Release history stays on `/releases`. |
 | `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a SHA directly. Connecting starts a new session for that agent. |
