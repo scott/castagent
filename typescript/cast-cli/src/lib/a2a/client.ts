@@ -10,9 +10,16 @@ export interface AgentResponse {
   uiAction?: Record<string, unknown>
 }
 
+export interface PermissionRequest {
+  id: string
+  tool: string
+  arguments: Record<string, unknown>
+}
+
 export interface StreamChunk {
   text: string
   uiAction?: Record<string, unknown>
+  permissionRequest?: PermissionRequest
 }
 
 /** One saved turn. Sent once when resuming or forking a session. */
@@ -33,6 +40,18 @@ export interface SendMessageOptions {
 
 /** Extra connections after the MicroVM edge closes a chat response. */
 export const STREAM_RESUME_LIMIT = 8
+
+function readPermissionRequest(value: unknown): PermissionRequest | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  if (typeof record.id !== 'string' || record.id.length === 0) return undefined
+  if (typeof record.tool !== 'string' || record.tool.length === 0) return undefined
+  const args = record.arguments
+  const parsed = args && typeof args === 'object' && !Array.isArray(args)
+    ? args as Record<string, unknown>
+    : {}
+  return {id: record.id, tool: record.tool, arguments: parsed}
+}
 
 export class A2AClientError extends Error {
   constructor(
@@ -295,6 +314,20 @@ export class A2AClient {
     }
   }
 
+  /** Answer an ask prompt emitted on the chat stream. */
+  async respondToPermission(id: string, approved: boolean): Promise<void> {
+    const data = await this.requestWithRetry<A2AResponse>({
+      jsonrpc: '2.0',
+      id: this.generateId(),
+      method: 'permission/respond',
+      params: {id, approved},
+    })
+
+    if (data.error) {
+      throw new A2AClientError(`A2A error: ${data.error.message}`, 'A2A_ERROR')
+    }
+  }
+
   async *sendMessageStream(text: string, options?: SendMessageOptions): AsyncGenerator<StreamChunk> {
     const built = this.messageParams(text, options)
     // The MicroVM edge ends the HTTP response about 15 seconds after it
@@ -368,6 +401,10 @@ export class A2AClient {
               const parts: A2APart[] = parsed.result?.parts || []
               const metadata = parsed.result?.metadata
               const uiAction = metadata?.uiAction as Record<string, unknown> | undefined
+              const permissionRequest = readPermissionRequest(metadata?.permissionRequest)
+              if (permissionRequest) {
+                yield {text: '', permissionRequest}
+              }
 
               for (const part of parts) {
                 if (part.text) {

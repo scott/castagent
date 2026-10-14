@@ -96,17 +96,26 @@ harness:
     get_message: always-allow
 ```
 
+The runtime checks the level when the model calls a built-in tool, including
+calls that arrive over A2A. A tool with no entry runs as `always-allow`.
+
 Levels:
 
 - `always-allow`: the agent calls the tool without asking.
-- `ask`: the runtime prompts the user (in the TUI) before executing.
+- `ask`: in the TUI, the runtime opens a modal before the tool runs. The
+  modal shows the tool name, the arguments, and Approve / Deny. Deny starts
+  selected. Up and down move, Enter confirms, and ESC denies and returns
+  focus to the input. The tool runs only after Approve. A headless
+  `message/send` has no modal, so an `ask` call returns an error and does
+  not run.
 - `deny`: the tool call returns an error and is never executed.
 
-`cast update --permission` accepts only these three levels. Any other level
-is an error, and `agent.yaml` is left unchanged.
+A level other than these three is treated as `deny`. `cast update
+--permission` accepts only these three levels. Any other level is an error,
+and `agent.yaml` is left unchanged.
 
-The TUI's `ask` prompt is a modal showing the tool name, the arguments,
-and Approve / Deny buttons.
+Restart `cast dev` after changing permissions. A running process keeps the
+levels it loaded at startup.
 
 ## Dependencies
 

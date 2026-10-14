@@ -11,6 +11,7 @@ from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
 
 from .agent.base import AgentConfig
 from .agent.runtime import RuntimeAgent
+from .harness.permissions import PermissionPrompt
 
 # Proxies that idle out a quiet response still need bytes on the wire.
 # The MicroVM edge is different: it closes the response about 15 seconds
@@ -338,6 +339,8 @@ class A2AServer:
                 return await self._handle_agent_card(msg_id)
             elif method == "message/send":
                 return await self._handle_message_send(msg_id, params)
+            elif method == "permission/respond":
+                return self._handle_permission_respond(msg_id, params)
             elif method == "task/get":
                 return await self._handle_task_get(msg_id, params)
             else:
@@ -404,6 +407,27 @@ class A2AServer:
                 msg_id, JSONRPC_SERVER_ERROR, error_msg
             )
 
+    def _handle_permission_respond(self, msg_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
+        """Resolve an ask prompt. approved must be a boolean."""
+        if not isinstance(params, dict):
+            return self._make_error_response(msg_id, JSONRPC_INVALID_PARAMS, "'params' must be an object")
+        request_id = params.get("id")
+        approved = params.get("approved")
+        if not isinstance(request_id, str) or not request_id.strip():
+            return self._make_error_response(msg_id, JSONRPC_INVALID_PARAMS, "'id' must be a string")
+        if not isinstance(approved, bool):
+            return self._make_error_response(msg_id, JSONRPC_INVALID_PARAMS, "'approved' must be a boolean")
+        broker = getattr(self.agent, "approval_broker", None)
+        if broker is None or not broker.respond(request_id, approved):
+            return self._make_error_response(
+                msg_id, JSONRPC_INVALID_PARAMS, "No pending permission request"
+            )
+        return {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {"ok": True},
+        }
+
     async def _handle_task_get(self, msg_id: Any, params: Dict[str, Any]) -> Dict[str, Any]:
         return {
             "jsonrpc": "2.0",
@@ -452,6 +476,17 @@ class A2AServer:
             async for chunk in self.agent.process_message_stream(
                 text, session_id=session_id, history=history,
             ):
+                if isinstance(chunk, PermissionPrompt):
+                    event = {
+                        "jsonrpc": "2.0",
+                        "id": request_id,
+                        "result": {
+                            "parts": [],
+                            "metadata": {"permissionRequest": chunk.request},
+                        },
+                    }
+                    yield f"data: {json.dumps(event)}\n\n"
+                    continue
                 event = {
                     "jsonrpc": "2.0",
                     "id": request_id,

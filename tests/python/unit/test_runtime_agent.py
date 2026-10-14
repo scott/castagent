@@ -313,7 +313,9 @@ class TestRuntimeAgentLLMMode:
 
         assert agent.tools == [bash_tool, read_tool, glob_tool]
         loaded = mock_create_react_agent.call_args.kwargs["tools"]
-        assert loaded == [bash_tool, read_tool, glob_tool]
+        # The graph runs permission-guarded copies. Custom entries stay off that list.
+        assert [tool.name for tool in loaded] == ["bash_tool", "read_tool", "glob_tool"]
+        assert all(tool is not raw for tool, raw in zip(loaded, agent.tools))
 
     @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")

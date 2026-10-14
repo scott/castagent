@@ -838,4 +838,35 @@ describe('A2AClient session metadata', () => {
     })
     expect(post.firstCall.args[2].headers.Accept).to.equal('text/event-stream')
   })
+
+  it('yields an ask permission request from stream metadata', async () => {
+    post.resolves({
+      data: Readable.from([
+        'data: {"jsonrpc":"2.0","result":{"parts":[],"metadata":{"permissionRequest":{"id":"req-1","tool":"bash","arguments":{"command":"date"}}}}}\n\n',
+        'data: {"jsonrpc":"2.0","result":{"parts":[{"kind":"text","text":"denied"}]}}\n\n',
+        'data: [DONE]\n\n',
+      ]),
+    })
+    const client = new A2AClient('http://localhost:8812')
+    const chunks = []
+    for await (const chunk of client.sendMessageStream('run date')) {
+      chunks.push(chunk)
+    }
+    expect(chunks[0].permissionRequest).to.deep.equal({
+      id: 'req-1',
+      tool: 'bash',
+      arguments: {command: 'date'},
+    })
+    expect(chunks[0].text).to.equal('')
+    expect(chunks[1].text).to.equal('denied')
+  })
+
+  it('sends permission/respond with a boolean', async () => {
+    post.resolves({data: {jsonrpc: '2.0', id: '1', result: {ok: true}}})
+    const client = new A2AClient('http://localhost:8812')
+    await client.respondToPermission('req-1', false)
+    const payload = post.firstCall.args[1]
+    expect(payload.method).to.equal('permission/respond')
+    expect(payload.params).to.deep.equal({id: 'req-1', approved: false})
+  })
 })
