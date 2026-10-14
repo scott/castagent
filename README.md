@@ -325,12 +325,14 @@ cast update my-agent --add-principle "Be concise" --remove-principle "Be verbose
 # Manage permissions (levels: always-allow, ask, deny)
 cast update my-agent --permission bash=always-allow --permission read=ask
 
-# Manage Python runtime requirements
+# Manage Python runtime requirements (3.11 or 3.12)
 cast update my-agent --python-version 3.12 --add-requirement requests
 
 # Preview changes without applying
 cast update my-agent --model openrouter/openai/gpt-4o --dry-run
 ```
+
+`cast update` checks these values before it writes. A permission level other than `always-allow`, `ask`, or `deny`, an unknown model id, or a Python version other than `3.11` or `3.12` prints an error and exits non-zero. `agent.yaml` is not changed. Unknown models use the same message as `cast model`. A leading `openrouter/` prefix is still accepted, including the shipped default `openrouter/minimax/minimax-m2.5`. A provider that accepts any model id, such as `digitalocean/`, is still accepted.
 
 ### Agent versioning
 

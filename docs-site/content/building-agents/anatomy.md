@@ -92,9 +92,9 @@ changes show up as files on disk.
 | `tools.builtin` | which of `bash` / `read` / `glob` to expose |
 | `tools.mcp` | list of MCP server YAMLs to load |
 | `tools.custom` | list of `tools/*.py` modules to load |
-| `harness.permissions` | per-tool permission level (`always-allow` / `ask` / `deny`) |
+| `harness.permissions` | per-tool permission level (`always-allow`, `ask`, or `deny`) |
 | `harness.principles` | constitutional principles appended to the system prompt |
-| `runtime.python_version` | Python version in the deployment image |
+| `runtime.python_version` | Python version in the deployment image (`3.11` or `3.12`) |
 | `runtime.requirements` | extra pip packages to install in the image |
 
 Use `cast describe <name>` to see the full rendered file with defaults

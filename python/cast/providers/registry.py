@@ -450,24 +450,26 @@ def model_status(model: str) -> dict:
 
     ``knownModels`` is not part of the catalog payload. This helper is the
     path that still sees them.
+
+    Providers with ``acceptsAnyModel`` accept every id. Otherwise the id
+    must be in ``knownModels``. A matching provider prefix, including
+    ``openrouter/``, is removed before that check, so the shipped default
+    ``openrouter/minimax/minimax-m2.5`` stays valid. Unknown ids are
+    rejected. ``cast model`` keeps its own prefix rules.
     """
     provider = get_provider(model)
     if provider.accepts_any_model:
-        return {"valid": True, "warning": None, "provider": provider.key}
+        return {"valid": True, "warning": None, "error": None, "provider": provider.key}
     candidate = model
     for prefix in sorted(provider.prefixes, key=len, reverse=True):
         if candidate.startswith(prefix):
             candidate = candidate[len(prefix):]
             break
     if candidate in provider.known_models:
-        return {"valid": True, "warning": None, "provider": provider.key}
-    known = ", ".join(provider.known_models)
-    warning = (
-        f"Model '{model}' is not in the known model list. "
-        f"If you get a 404 error, the model may not be available on {provider.name}. "
-        f"Known models: {known}"
-    )
-    return {"valid": True, "warning": warning, "provider": provider.key}
+        return {"valid": True, "warning": None, "error": None, "provider": provider.key}
+    known = ", ".join(sorted(provider.known_models))
+    error = f"Unknown model '{model}'.\nAvailable models: {known}"
+    return {"valid": False, "warning": None, "error": error, "provider": provider.key}
 
 
 def catalog_entries(registry: Optional[Registry] = None) -> list[dict]:

@@ -277,12 +277,32 @@ class TestSelection:
     def test_model_status_matches_update_rules(self, monkeypatch, tmp_path):
         home = _home(monkeypatch, tmp_path)
         _write_provider(home, "example")
-        assert model_status("digitalocean/some-new-id")["warning"] is None
-        assert model_status("example/my-model")["warning"] is None
+        digitalocean = model_status("digitalocean/some-new-id")
+        assert digitalocean["valid"] is True
+        assert digitalocean["warning"] is None
+        assert digitalocean["error"] is None
+        example = model_status("example/my-model")
+        assert example["valid"] is True
+        assert example["warning"] is None
         unknown = model_status("unknown/model")
-        assert unknown["warning"]
-        assert "OpenRouter" in unknown["warning"]
-        assert model_status("anthropic/claude-sonnet-4.6")["warning"] is None
+        assert unknown["valid"] is False
+        assert unknown["warning"] is None
+        assert unknown["error"].startswith("Unknown model 'unknown/model'.")
+        assert "anthropic/claude-sonnet-4.6" in unknown["error"]
+        assert "minimax/minimax-m2.5" in unknown["error"]
+        bogus = model_status("zzz/notreal")
+        assert bogus["valid"] is False
+        assert "Unknown model 'zzz/notreal'." in bogus["error"]
+        known = model_status("anthropic/claude-sonnet-4.6")
+        assert known["valid"] is True
+        assert known["warning"] is None
+        shipped = model_status("openrouter/minimax/minimax-m2.5")
+        assert shipped["valid"] is True
+        assert shipped["warning"] is None
+        assert shipped["error"] is None
+        prefixed = model_status("openrouter/anthropic/claude-3.7-sonnet")
+        assert prefixed["valid"] is True
+        assert prefixed["error"] is None
 
     def test_manifest_rows_match_provider_modules(self):
         manifest = json.loads((PROVIDERS / "manifest.json").read_text())
