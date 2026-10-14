@@ -38,6 +38,13 @@ When the conversation ends, the agent lives at `~/.cast/agents/<name>/`
 with everything wired up. Cast prints a final summary and offers to start
 the agent in dev mode.
 
+Inside the same TUI, `{% ref "slash:git" %}`, `{% ref "slash:undo" %}`,
+`{% ref "slash:redo" %}`, `{% ref "slash:describe" %}`, and
+`{% ref "slash:releases" %}` act on the agent the wizard just created.
+Before that agent exists, those commands reply `No agent is loaded.`
+`/undo` and `/redo` print the CLI's failure reason in the chat. That
+text is not written over the input line.
+
 If you just want to write a one-line description and have Cast pick a name:
 
 ```bash

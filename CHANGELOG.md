@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.5.1] - 2026-10-14
+
+### Fixed
+- Inside `cast new`, `/git`, `/undo`, `/redo`, `/describe`, and `/releases` act on the agent the wizard just created. Before an agent exists they say no agent is loaded. `/undo` and `/redo` show the CLI reason in the chat, and child stderr is not painted over the input ([#169](https://github.com/scott/castagent/pull/169)).
+
 ## [2.5.0] - 2026-10-13
 
 ### Added

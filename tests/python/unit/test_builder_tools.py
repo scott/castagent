@@ -58,6 +58,24 @@ class TestCreateAgent:
             finally:
                 tools.AGENTS_DIR = original_dir
 
+    def test_create_agent_records_marker_for_the_wizard(self):
+        with tempfile.TemporaryDirectory() as tmpdir:
+            from cast.builder_tools import tools
+            original_dir = tools.AGENTS_DIR
+            original_builder = tools.BUILDER_DIR
+            root = Path(tmpdir)
+            tools.AGENTS_DIR = root / "agents"
+            tools.BUILDER_DIR = root / "builder"
+
+            try:
+                result = create_agent.invoke({"name": "bb-summarizer", "description": "summarizes"})
+                assert "created successfully" in result
+                marker = tools.BUILDER_DIR / tools.CREATED_AGENT_MARKER
+                assert marker.read_text(encoding="utf-8").strip() == "bb-summarizer"
+            finally:
+                tools.AGENTS_DIR = original_dir
+                tools.BUILDER_DIR = original_builder
+
     def test_create_agent_yaml_content(self):
         with tempfile.TemporaryDirectory() as tmpdir:
             from cast.builder_tools import tools

@@ -51,6 +51,10 @@ cast describe email-assistant
 - The full `agent.yaml`.
 - Quick actions (`cast dev`, `cast deploy`, `cast update`).
 
+In the TUI, `{% ref "slash:describe" %}` shows the agent open in the
+session. Inside `cast new`, that is the agent the wizard just created.
+Before an agent exists, the command replies `No agent is loaded.`
+
 The deployment table uses the same SHA you'll see in `cast registry` and
 when connecting. `cast registry` lists every live deployment — agent, SHA,
 provider, deployed version, time, and URL — including a blank version.
