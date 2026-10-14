@@ -52,3 +52,26 @@ export function numberKeyIndex(keyName: string | undefined, count: number): numb
   if (num < 1 || num > count) return null
   return num - 1
 }
+
+export type SourceListAction =
+  | {type: 'move'; index: number}
+  | {type: 'open'; index: number}
+  | {type: 'ignore'}
+
+/**
+ * Number keys highlight a source row. Enter opens it.
+ * Opening on the number key consumes the Enter that follows, and the
+ * new-skill form treats that Enter as leaving Name.
+ */
+export function sourceListAction(keyName: string | undefined, selected: number, count: number): SourceListAction {
+  if (count <= 0) return {type: 'ignore'}
+  if (keyName === 'up') return {type: 'move', index: wrapIndex(selected, -1, count)}
+  if (keyName === 'down') return {type: 'move', index: wrapIndex(selected, 1, count)}
+  const numbered = numberKeyIndex(keyName, count)
+  if (numbered !== null) return {type: 'move', index: numbered}
+  if (keyName === 'return' || keyName === 'enter') {
+    const index = selected >= 0 && selected < count ? selected : 0
+    return {type: 'open', index}
+  }
+  return {type: 'ignore'}
+}
