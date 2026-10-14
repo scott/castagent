@@ -25,16 +25,22 @@ cast git init my-agent
 
 This does four things:
 
-1. Runs `git init` inside `~/.cast/agents/my-agent/`.
-2. Writes a `.castignore` (see below) so undo snapshots and other
-   internal state stay out of the repo.
+1. Runs `git init` inside `~/.cast/agents/my-agent/`. The checked-out
+   branch is Git's default (`init.defaultBranch`, or `master` when
+   that setting is unset). `cast git init` does not pass `-b main`.
+2. Writes a `.castignore` and copies the same patterns into
+   `.gitignore` (see below).
 3. Regenerates a `README.md` from `agent.yaml` (description, model,
    tools, runtime, version) and stages it.
 4. Adds a `repository:` block to `agent.yaml` with `remote: origin`
    and `branch: main`, then makes the initial commit stamped with
    the current version (e.g. `Initial commit: my-agent v1.0`).
 
-The agent's files are now in a Git repo on `main`, with one commit.
+The agent's files are now in a Git repo with one commit. That commit
+is on Git's default branch, which is `master` when
+`init.defaultBranch` is unset. `repository.branch` is recorded as
+`main` either way. `cast git push` sends the checked-out branch, not
+the branch name stored in `agent.yaml`.
 
 ## Add a remote
 
@@ -129,7 +135,7 @@ provider supports. The CLI prints a hint if it detects
 | Shipping | never | never (push is separate) | yes — `cast deploy` ships it |
 | Survives agent delete? | no (cascade) | no (it's inside the agent dir) | no (same) |
 | Survives machine loss? | no | yes, if pushed | yes, tarball is in the agent dir but you can back it up |
-| Excluded from `cast git`? | yes (`.castignore`) | — | no |
+| Excluded from `cast git`? | no (not in `.castignore`) | n/a | no |
 
 Recommended pattern:
 
@@ -164,18 +170,21 @@ memory/memory.db-shm
 
 | Path | Excluded because |
 |---|---|
-| `.cast/versions/` | undo log snapshots (internal state, not source) |
+| `.cast/versions/` | legacy undo snapshot directory. The current undo log is `.cast/changes/` and is not listed here |
 | `cast.db` | runtime SQLite index (deployment / session metadata) |
 | `*.log` | runtime log output |
 | `.env` | local environment variables may contain secrets |
 | `__pycache__/` | Python bytecode |
 | `memory/memory.db` | runtime SQLite memory database, plus its journal, wal, and shm files |
 
-Releases (`.cast/releases/`) and the undo log manifest (`.cast/changes/`)
-**are** included. A fresh clone of a `cast git`-backed agent comes
-with its releases but not with the undo log. `releases.json` stores each
-`tarball_path` relative to the agent directory, so the published manifest
-does not contain the author's home directory.
+Releases (`.cast/releases/`) and the undo log (`.cast/changes/`,
+including `changes.json` and the snapshot tarballs) are not listed
+above, so `cast git` commits them. A fresh clone of a
+`cast git`-backed agent includes both its releases and its undo log.
+The default ignore file excludes the legacy `.cast/versions/`
+directory, not `.cast/changes/`. `releases.json` stores each
+`tarball_path` relative to the agent directory, so the published
+manifest does not contain the author's home directory.
 
 ## TUI
 

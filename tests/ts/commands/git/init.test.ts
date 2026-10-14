@@ -166,6 +166,25 @@ describe('Git Init Command', () => {
         encoding: 'utf8',
       })
       expect(status).to.not.contain('memory.db')
+
+      const control = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-git-default-branch-'))
+      try {
+        execFileSync('git', ['init'], {cwd: control})
+        const expectedBranch = execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], {
+          cwd: control,
+          encoding: 'utf8',
+        }).trim()
+        const actualBranch = execFileSync('git', ['symbolic-ref', '--short', 'HEAD'], {
+          cwd: tempAgentDir,
+          encoding: 'utf8',
+        }).trim()
+        expect(actualBranch).to.equal(expectedBranch)
+      } finally {
+        fs.rmSync(control, {recursive: true, force: true})
+      }
+
+      const agentYaml = fs.readFileSync(path.join(tempAgentDir, 'agent.yaml'), 'utf8')
+      expect(agentYaml).to.contain('branch: main')
     })
   })
 })

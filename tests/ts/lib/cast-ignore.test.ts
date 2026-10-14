@@ -48,6 +48,37 @@ describe('cast ignore rules', () => {
     expect(castIgnore).to.equal(defaultCastIgnoreContents())
   })
 
+  it('ignores the legacy versions directory and tracks the undo log', () => {
+    const agent = path.join(root, 'undo-log')
+    initRepo(agent)
+    writeDefaultIgnoreFiles(agent)
+
+    const changes = path.join(agent, '.cast', 'changes', '001.tar.gz')
+    const legacy = path.join(agent, '.cast', 'versions', '001.tar.gz')
+    fs.mkdirSync(path.dirname(changes), {recursive: true})
+    fs.mkdirSync(path.dirname(legacy), {recursive: true})
+    fs.writeFileSync(changes, '')
+    fs.writeFileSync(legacy, '')
+
+    const ignored = (file: string): boolean => {
+      try {
+        git(agent, ['check-ignore', '-q', '--', file])
+        return true
+      } catch {
+        return false
+      }
+    }
+
+    expect(ignored('.cast/versions/001.tar.gz')).to.equal(true)
+    expect(ignored('.cast/changes/001.tar.gz')).to.equal(false)
+    expect(ignored('.cast/changes/changes.json')).to.equal(false)
+    expect(ignored('.cast/releases/1.0.tar.gz')).to.equal(false)
+
+    const status = git(agent, ['status', '--porcelain', '--untracked-files=all'])
+    expect(status).to.contain('.cast/changes/001.tar.gz')
+    expect(status).to.not.contain('.cast/versions/')
+  })
+
   it('ignores memory/memory.db in a repository created from the defaults', () => {
     const agent = path.join(root, 'init-defaults')
     initRepo(agent)
