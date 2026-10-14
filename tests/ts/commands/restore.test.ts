@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import * as sinon from 'sinon'
+import {db} from '../../../typescript/cast-cli/src/lib/sqlite'
 
 async function loadTestCommand(commandName: string): Promise<any> {
   const commandPath = path.join(
@@ -127,6 +128,56 @@ describe('restore command', () => {
         expect(errorMessage).to.include('not found')
       } finally {
         sandbox.restore()
+      }
+    })
+
+    it('restores the configured prompt and removes files added later', async () => {
+      const prompt = path.join(realAgentDir, 'bb-prompt.md')
+      const skillDir = path.join(realAgentDir, 'skills', 'triage')
+      const toolsDir = path.join(realAgentDir, 'tools')
+      fs.mkdirSync(skillDir, {recursive: true})
+      fs.mkdirSync(toolsDir, {recursive: true})
+      fs.writeFileSync(path.join(realAgentDir, 'agent.yaml'), 'name: bb-git\nversion: "0.0"\nbrain:\n  instructions_file: bb-prompt.md\n')
+      fs.writeFileSync(path.join(realAgentDir, 'instructions.md'), '# unused leftover\n')
+      fs.writeFileSync(prompt, 'PROMPT v1\n')
+      fs.writeFileSync(path.join(skillDir, 'SKILL.md'), '# triage\n')
+      fs.writeFileSync(path.join(toolsDir, 'old.py'), '# old\n')
+      fs.writeFileSync(path.join(realAgentDir, '.env'), 'SECRET=1\n')
+      fs.writeFileSync(path.join(realAgentDir, '.castignore'), '*.log\n.env\n__pycache__/\n')
+
+      const releases = require('../../../typescript/cast-cli/src/lib/releases')
+      await releases.createRelease(agentName, '1.0', 'bb rel')
+
+      fs.writeFileSync(prompt, 'AFTER\n')
+      fs.writeFileSync(path.join(toolsDir, 'bbnew.py'), '# new\n')
+      fs.writeFileSync(path.join(realAgentDir, '.env'), 'SECRET=changed\n')
+
+      try {
+        const instance = new Restore(['restore', agentName, '--release', '1.0'], {} as any)
+        instance.config = {runHook: async () => ({successes: [], failures: []})}
+        instance.parse = async () => ({
+          args: {agent: agentName},
+          flags: {release: '1.0'},
+          argv: [],
+          raw: [],
+          metadata: {},
+          nonExistentFlags: [],
+        })
+        instance.error = (msg: string) => {
+          throw new Error(msg)
+        }
+        instance.log = () => {}
+
+        await instance.run()
+
+        expect(fs.readFileSync(prompt, 'utf8')).to.equal('PROMPT v1\n')
+        expect(fs.readFileSync(path.join(skillDir, 'SKILL.md'), 'utf8')).to.equal('# triage\n')
+        expect(fs.readFileSync(path.join(toolsDir, 'old.py'), 'utf8')).to.equal('# old\n')
+        expect(fs.existsSync(path.join(toolsDir, 'bbnew.py'))).to.equal(false)
+        expect(fs.readFileSync(path.join(realAgentDir, '.env'), 'utf8')).to.equal('SECRET=changed\n')
+        expect(fs.readFileSync(path.join(realAgentDir, 'instructions.md'), 'utf8')).to.equal('# unused leftover\n')
+      } finally {
+        try { db.deleteRelease(agentName, '1.0') } catch {}
       }
     })
   })

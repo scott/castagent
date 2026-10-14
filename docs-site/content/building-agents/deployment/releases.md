@@ -58,6 +58,13 @@ cast release email-assistant 1.7 --message "Switched model + tightened permissio
 
 1. Validates the semver format (`MAJOR.MINOR.PATCH`).
 2. Snapshots the current working tree into `releases/<version>.tar.gz`.
+   The tarball is the full agent: `agent.yaml`, the prompt named by
+   `brain.instructions_file` (that file is not always `instructions.md`),
+   `skills/`, `tools/`, `mcp/`, `tests/`, memory notes, and any other
+   project file. Paths listed in `.castignore` are left out, including
+   the runtime memory database, logs, `.env`, `__pycache__/`, and
+   `.cast/versions/`. `.cast/` (the undo log and release history) and
+   `.git/` are not packed; restore leaves them on disk.
 3. Updates `agent.yaml` with `version: "<version>"`.
 4. Writes a row to `releases.json` with timestamp, message, and
    auto-generated changelog.
@@ -100,8 +107,12 @@ starting point.
 cast deploy email-assistant --version 1.7 --provider railway
 ```
 
-`{% ref "cli:deploy" %}` extracts the `1.7.tar.gz` over the working tree
-before building the deployment image. The resulting deployment's
+`{% ref "cli:deploy" %}` restores the working tree from `1.7.tar.gz`
+before building the deployment image. Files in that release replace
+the working copies, and project files that are not in the release are
+removed. `.castignore` paths, `.cast/`, and `.git/` stay in place.
+`cast restore <agent> --release 1.7` does the same restore without
+deploying. The resulting deployment's
 `deployed_version` is recorded as `1.7` in the database. A unique
 **deployment SHA** is also generated and printed:
 

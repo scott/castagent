@@ -4,13 +4,14 @@ import json
 import os
 import sqlite3
 import tarfile
-import shutil
 import re
 import warnings
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
+
+from cast.castignore import is_ignored, load_rules
 
 AGENTS_DIR = Path.home() / ".cast" / "agents"
 
@@ -424,29 +425,16 @@ def create_release(agent_name: str, version: str, message: str = "", agents_dir:
     # Generate timestamp
     timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
-    # Files to include in the snapshot (same as versioning.py)
-    files_to_snapshot = [
-        "agent.yaml",
-        "instructions.md",
-    ]
-
-    mcp_dir = agent_path / "mcp"
-    if mcp_dir.exists() and any(mcp_dir.iterdir()):
-        files_to_snapshot.append("mcp")
-
-    tools_dir = agent_path / "tools"
-    if tools_dir.exists() and any(tools_dir.iterdir()):
-        files_to_snapshot.append("tools")
-
-    # Create tar.gz archive
+    # Create tar.gz archive. The snapshot is the agent working tree:
+    # the configured prompt, skills, tools, mcp, tests, and any other
+    # project file. .castignore paths are left out. .cast (undo log and
+    # this archive) and .git stay on disk and are not packed.
     tarball_filename = f"{version}.tar.gz"
     tarball_path = releases_dir / tarball_filename
 
     with tarfile.open(tarball_path, "w:gz") as tar:
-        for file_or_dir in files_to_snapshot:
-            file_path = agent_path / file_or_dir
-            if file_path.exists():
-                tar.add(file_path, arcname=file_or_dir)
+        for full, rel in _iter_snapshot_paths(agent_path):
+            tar.add(full, arcname=rel, recursive=False, filter=_reject_metadata)
 
     # Generate changelog
     last_release_change = get_latest_release_change_number(agent_name)
@@ -494,7 +482,11 @@ def create_release(agent_name: str, version: str, message: str = "", agents_dir:
 
 
 def extract_release(agent_name: str, version: str, target_dir: Path) -> None:
-    """Extract a release tarball to a directory.
+    """Replace a working tree with a release snapshot.
+
+    Files in the tarball are written over target_dir. Project files that
+    are not in the release are removed. Paths matched by .castignore, plus
+    .cast/ and .git/, are left in place.
 
     Args:
         agent_name: The name of the agent.
@@ -509,14 +501,120 @@ def extract_release(agent_name: str, version: str, target_dir: Path) -> None:
     if not tarball_path.exists():
         raise FileNotFoundError(f"Release tarball not found: {tarball_path}")
 
-    # Clear existing files in target_dir (except .cast, .git)
-    for item in target_dir.iterdir():
-        if item.name not in ('.cast', '.git'):
-            if item.is_dir():
-                shutil.rmtree(item)
-            else:
-                item.unlink()
-
-    # Extract tarball
     with tarfile.open(tarball_path, "r:gz") as tar:
-        tar.extractall(target_dir)
+        members = []
+        archived: set[str] = set()
+        for member in tar.getmembers():
+            name = _safe_member_name(member.name)
+            if name is None:
+                continue
+            members.append(member)
+            archived.add(name)
+        _remove_unreleased(target_dir, archived, load_rules(target_dir))
+        _extract_members(tar, target_dir, members)
+
+
+def _iter_snapshot_paths(agent_path: Path) -> list[tuple[Path, str]]:
+    """Project files and directories to pack, in tar-friendly order."""
+    rules = load_rules(agent_path)
+    items: list[tuple[Path, str]] = []
+    for dirpath, dirnames, filenames in os.walk(agent_path, followlinks=False):
+        rel_dir = Path(dirpath).relative_to(agent_path).as_posix()
+        if rel_dir == ".":
+            rel_dir = ""
+        kept: list[str] = []
+        for dirname in dirnames:
+            rel = f"{rel_dir}/{dirname}" if rel_dir else dirname
+            full = Path(dirpath) / dirname
+            if full.is_symlink():
+                if not _snapshot_excluded(rel, False, rules):
+                    items.append((full, rel))
+                continue
+            if _snapshot_excluded(rel, True, rules):
+                continue
+            kept.append(dirname)
+            items.append((full, rel))
+        dirnames[:] = kept
+        for filename in filenames:
+            rel = f"{rel_dir}/{filename}" if rel_dir else filename
+            full = Path(dirpath) / filename
+            if _snapshot_excluded(rel, False, rules):
+                continue
+            if not (full.is_symlink() or full.is_file()):
+                continue
+            items.append((full, rel))
+    return items
+
+
+def _snapshot_excluded(rel: str, is_dir: bool, rules: list) -> bool:
+    if _preserved(rel):
+        return True
+    return is_ignored(rel, is_dir, rules)
+
+
+def _preserved(rel: str) -> bool:
+    """Cast bookkeeping and the git repo are not part of a release."""
+    return rel == ".cast" or rel.startswith(".cast/") or rel == ".git" or rel.startswith(".git/")
+
+
+def _reject_metadata(info: tarfile.TarInfo) -> Optional[tarfile.TarInfo]:
+    if _safe_member_name(info.name) is None or _preserved(info.name.replace("\\", "/").strip("/")):
+        return None
+    return info
+
+
+def _safe_member_name(name: str) -> Optional[str]:
+    rel = name.replace("\\", "/").strip("/")
+    while rel.startswith("./"):
+        rel = rel[2:]
+    if not rel or rel.startswith("/") or ".." in rel.split("/"):
+        return None
+    if _preserved(rel):
+        return None
+    return rel
+
+
+def _extract_members(tar: tarfile.TarFile, target: Path, members: list) -> None:
+    """Extract members. filter='data' is the safe default on Python 3.12+."""
+    try:
+        tar.extractall(target, members=members, filter="data")
+    except TypeError:
+        tar.extractall(target, members=members)
+
+
+def _remove_unreleased(target: Path, archived: set[str], rules: list) -> None:
+    """Delete project files that are not in the release snapshot."""
+    for dirpath, dirnames, filenames in os.walk(target, topdown=True, followlinks=False):
+        rel_dir = Path(dirpath).relative_to(target).as_posix()
+        if rel_dir == ".":
+            rel_dir = ""
+        kept: list[str] = []
+        for dirname in list(dirnames):
+            rel = f"{rel_dir}/{dirname}" if rel_dir else dirname
+            full = Path(dirpath) / dirname
+            if full.is_symlink():
+                if rel not in archived and not _preserved(rel) and not is_ignored(rel, False, rules):
+                    full.unlink()
+                continue
+            if _preserved(rel) or is_ignored(rel, True, rules):
+                continue
+            kept.append(dirname)
+        dirnames[:] = kept
+        for filename in filenames:
+            rel = f"{rel_dir}/{filename}" if rel_dir else filename
+            if rel in archived or _preserved(rel) or is_ignored(rel, False, rules):
+                continue
+            (Path(dirpath) / filename).unlink()
+
+    for dirpath, _dirnames, _filenames in os.walk(target, topdown=False, followlinks=False):
+        rel_dir = Path(dirpath).relative_to(target).as_posix()
+        if rel_dir == ".":
+            continue
+        if _preserved(rel_dir) or is_ignored(rel_dir, True, rules) or rel_dir in archived:
+            continue
+        current = Path(dirpath)
+        if current.is_symlink():
+            current.unlink()
+            continue
+        if current.is_dir() and not any(current.iterdir()):
+            current.rmdir()

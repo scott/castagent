@@ -60,8 +60,10 @@ before that service existed.
 
 The deployment is a single Docker image that contains:
 
-- The agent's working directory (`agent.yaml`, `instructions.md`, `tools/`,
-  `mcp/`) — extracted from the requested release tarball.
+- The agent's working directory, taken from the requested release
+  tarball: `agent.yaml`, the prompt file, `skills/`, `tools/`, `mcp/`,
+  `tests/`, and other project files. Paths listed in `.castignore` are
+  not in that tarball.
 - A Python venv with `cast` runtime + the agent's `runtime.requirements`
   packages.
 - For DigitalOcean with `--with-tui`: the `cast-tui` binary + Bun, so you

@@ -371,7 +371,9 @@ cast release my-agent 1.6 --message "Added email parsing"
 cast registry
 cast registry my-agent
 
-# Restore local files to a previous release
+# Restore local files to a previous release. The tarball is the full
+# agent except .castignore paths. Restore puts those files back and
+# removes project files added after the release.
 cast restore my-agent --release 1.0
 
 # Sessions
