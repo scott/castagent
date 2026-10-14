@@ -74,6 +74,10 @@ cast git diff my-agent --staged             # staged changes
 cast git diff my-agent --file instructions.md  # one file only
 ```
 
+`--file` limits the diff to that path. This includes `--staged` and a
+commit reference. A path that is not in the agent repository is an
+error, so a missing file does not fall back to the full diff.
+
 `cast git commit` regenerates the `README.md` from `agent.yaml`
 before staging, so a `cast update` that changed the description or
 model will produce a clean diff in the commit.
