@@ -6,12 +6,30 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langgraph.prebuilt import create_react_agent
 
 from .base import AgentConfig
+from ..harness.permissions import ApprovalBroker, PermissionGate, PermissionPrompt, guard_tool
 from ..memory import MemoryMiddleware
 from ..providers.registry import get_provider
 from ..tools.bash import bash_tool
 from ..tools.read import read_tool
 from ..tools.glob import glob_tool
 from ..tools.git import git_status, git_commit, git_push, git_log, git_diff, git_add
+
+def _chunk_text(msg: Any) -> str:
+    """Text from one streamed model chunk. Tool messages contribute nothing."""
+    if not isinstance(msg, AIMessageChunk) or not msg.content:
+        return ""
+    if isinstance(msg.content, str):
+        return msg.content
+    if isinstance(msg.content, list):
+        parts = []
+        for block in msg.content:
+            if isinstance(block, dict) and block.get("type") == "text":
+                text = block.get("text", "")
+                if isinstance(text, str) and text:
+                    parts.append(text)
+        return "".join(parts)
+    return ""
+
 
 # Map of built-in tool names to their implementations
 BUILTIN_TOOLS = {
@@ -33,6 +51,8 @@ class RuntimeAgent:
     def __init__(self, config: AgentConfig, agent_path: str = None):
         self.config = config
         self.agent_path = agent_path or os.environ.get("AGENT_PATH", ".")
+        self.approval_broker = ApprovalBroker()
+        self.permission_gate = PermissionGate(self.config.permissions, self.approval_broker)
         # Callers that omit a session id keep appending to this one list.
         # A missing id is not a new session.
         self.chat_history = []
@@ -90,10 +110,17 @@ class RuntimeAgent:
             model = self.config.model
             self.llm = provider.create_llm(model=model)
             
-            # Load built-in tools from config
+            # Load built-in tools from config. The graph receives guarded
+            # copies so harness.permissions is checked before each call.
+            # self.tools stays the raw implementations.
             builtin_tool_names = self.config.tools.get("builtin", [])
             self.tools = [
                 BUILTIN_TOOLS[name]
+                for name in builtin_tool_names
+                if name in BUILTIN_TOOLS
+            ]
+            guarded = [
+                guard_tool(BUILTIN_TOOLS[name], name, self.permission_gate)
                 for name in builtin_tool_names
                 if name in BUILTIN_TOOLS
             ]
@@ -101,7 +128,7 @@ class RuntimeAgent:
             # Create the ReAct agent graph with instructions as system prompt
             self.graph = create_react_agent(
                 model=self.llm,
-                tools=self.tools,
+                tools=guarded,
                 prompt=self.config.rendered_prompt(),
             )
         except Exception as e:
@@ -237,8 +264,12 @@ class RuntimeAgent:
         message: str,
         session_id: Optional[str] = None,
         history: Optional[List[Dict[str, Any]]] = None,
-    ) -> AsyncGenerator[str, None]:
-        """Process a user message and yield response tokens as they're generated."""
+    ) -> AsyncGenerator[Any, None]:
+        """Process a user message and yield response tokens as they're generated.
+
+        An `ask` tool yields a PermissionPrompt and waits until
+        permission/respond resolves it. Text chunks stay strings.
+        """
         
         # If no LLM available, use echo mode with streaming simulation
         if self.graph is None:
@@ -248,35 +279,57 @@ class RuntimeAgent:
         
         # Enrich message with relevant memories and append to this session.
         messages = self._append_user_turn(message, session_id, history)
-        
-        # Process through LLM with streaming
+        events: asyncio.Queue = asyncio.Queue()
+        task: Optional[asyncio.Task] = None
         try:
-            full_content = ""
-            async for msg, metadata in self.graph.astream(
+            self.approval_broker.attach(events)
+            task = asyncio.create_task(self._pump_graph_stream(message, messages, events))
+            while True:
+                kind, payload = await events.get()
+                if kind == "permission":
+                    yield PermissionPrompt(payload)
+                elif kind == "text":
+                    yield payload
+                elif kind == "error":
+                    yield f"Error processing message: {payload}"
+                    return
+                elif kind == "done":
+                    return
+        finally:
+            self.approval_broker.detach()
+            if task is not None and not task.done():
+                task.cancel()
+                try:
+                    await task
+                except asyncio.CancelledError:
+                    pass
+
+    async def _pump_graph_stream(self, message: str, messages: list, events: asyncio.Queue) -> None:
+        """Run the graph and push text or errors onto `events`.
+
+        Tool calls that need approval push onto this same queue from the
+        broker, so the HTTP handler can emit them while the tool waits.
+        """
+        full_content = ""
+        try:
+            async for msg, _metadata in self.graph.astream(
                 {"messages": messages},
                 stream_mode="messages",
             ):
-                if isinstance(msg, AIMessageChunk) and msg.content:
-                    if isinstance(msg.content, str):
-                        yield msg.content
-                        full_content += msg.content
-                    elif isinstance(msg.content, list):
-                        for block in msg.content:
-                            if isinstance(block, dict) and block.get("type") == "text":
-                                text = block.get("text", "")
-                                if text:
-                                    yield text
-                                    full_content += text
-            
-            # Update chat history with the final accumulated message
+                text = _chunk_text(msg)
+                if text:
+                    full_content += text
+                    await events.put(("text", text))
+            # The list is the live session history. Appending keeps the reply.
             messages.append(AIMessage(content=full_content))
-            
-            # Record this exchange for future memory
             asyncio.create_task(
                 self.memory.record(message, full_content, f"stream_exchange_{len(messages)//2}")
             )
-        except Exception as e:
-            yield f"Error processing message: {str(e)}"
+            await events.put(("done", None))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            await events.put(("error", str(exc)))
     
     async def _echo_response_stream(self, message: str) -> AsyncGenerator[str, None]:
         """Generate an echo response with word-by-word streaming simulation."""

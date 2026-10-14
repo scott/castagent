@@ -355,6 +355,8 @@ cast update my-agent --python-version 3.12 --add-requirement requests
 cast update my-agent --model openrouter/openai/gpt-4o --dry-run
 ```
 
+Permission levels are enforced while the agent is running. `always-allow` runs the tool. `deny` returns an error and does not run it. `ask` runs it only after the TUI approves in a modal that shows the tool name, the arguments, and Approve / Deny. A headless `message/send` does not run an `ask` tool. Restart `cast dev` after a permission change so the running process reloads `agent.yaml`.
+
 `cast update` checks these values before it writes. A permission level other than `always-allow`, `ask`, or `deny`, an unknown model id, or a Python version other than `3.11` or `3.12` prints an error and exits non-zero. `agent.yaml` is not changed. Unknown models use the same message as `cast model`. A leading `openrouter/` prefix is still accepted, including the shipped default `openrouter/minimax/minimax-m2.5`. A provider that accepts any model id, such as `digitalocean/`, is still accepted.
 
 In the TUI, `/update` updates that same local agent. With no arguments it opens a modal titled `Update: <agent>`. Up and down move through the fields, Enter chooses one, and a second prompt or list collects the value. Enter writes it with `cast update`. ESC closes the modal and returns focus to the input. The same flags work on the command, for example `/update --model openrouter/anthropic/claude-sonnet-4.6`. A rejected value is shown in the modal, or in the chat when you passed flags, and `agent.yaml` is left unchanged. Restart the local agent (`cast dev <agent>`) so a running session picks up the change. `/update` is available in dev and production and hidden on-host. It does not redeploy a live agent.

@@ -1,170 +1,153 @@
-"""Tests for permissions module."""
+"""Runtime enforcement of harness.permissions."""
+
+import asyncio
+from pathlib import Path
+
 import pytest
-from unittest.mock import patch, MagicMock
+from cast.harness.permissions import (
+    ALWAYS_ALLOW,
+    ASK,
+    DENY,
+    ApprovalBroker,
+    PermissionGate,
+    guard_tool,
+    normalize_level,
+    permission_denied_message,
+)
+from cast.tools.bash import bash_tool
 
 
-class TestPermissionsModule:
-    """Tests for permissions module existence and structure."""
-
-    def test_module_exists(self):
-        """Permissions module should exist."""
-        try:
-            from cast.harness import permissions
-            assert permissions is not None
-        except ImportError:
-            pytest.skip("Permissions module not yet implemented")
-
-    def test_module_can_be_imported(self):
-        """Should be able to import permissions module."""
-        try:
-            from cast.harness.permissions import Something
-            assert True
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions module is placeholder")
+def _quote(path: Path) -> str:
+    return "'" + str(path).replace("'", "'\\''") + "'"
 
 
-class TestPermissionLevels:
-    """Tests for permission level definitions."""
+class TestNormalizeLevel:
+    def test_documented_levels(self):
+        assert normalize_level("always-allow") == ALWAYS_ALLOW
+        assert normalize_level("ask") == ASK
+        assert normalize_level("deny") == DENY
 
-    def test_permission_levels_defined(self):
-        """Should define permission levels."""
-        try:
-            from cast.harness.permissions import PermissionLevel
-            assert hasattr(PermissionLevel, 'ALWAYS_ALLOW')
-            assert hasattr(PermissionLevel, 'APPROVE_ONCE')
-            assert hasattr(PermissionLevel, 'ALWAYS_ASK')
-            assert hasattr(PermissionLevel, 'BLOCK')
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions not yet implemented")
+    def test_case_and_space(self):
+        assert normalize_level("  Deny ") == DENY
 
-    def test_permission_level_values(self):
-        """Should have correct permission level values."""
-        try:
-            from cast.harness.permissions import PermissionLevel
-            # Check that levels are distinct
-            levels = [
-                PermissionLevel.ALWAYS_ALLOW,
-                PermissionLevel.APPROVE_ONCE,
-                PermissionLevel.ALWAYS_ASK,
-                PermissionLevel.BLOCK
-            ]
-            assert len(set(levels)) == 4
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions not yet implemented")
+    def test_legacy_names(self):
+        assert normalize_level("block") == DENY
+        assert normalize_level("always-ask") == ASK
+        assert normalize_level("approve-once") == ASK
+
+    def test_unknown(self):
+        assert normalize_level("yolo") is None
+        assert normalize_level(None) is None
 
 
-class TestPermissionChecking:
-    """Tests for permission checking functionality."""
+class TestPermissionGate:
+    def test_missing_entry_is_allow(self):
+        gate = PermissionGate({})
+        assert gate.action_for("bash") == ALWAYS_ALLOW
 
-    def test_check_permission_method_exists(self):
-        """Should have method to check permissions."""
-        try:
-            from cast.harness.permissions import check_permission
-            assert callable(check_permission)
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions not yet implemented")
+    def test_unknown_level_is_not_allow(self):
+        gate = PermissionGate({"bash": "sometimes"})
+        assert gate.action_for("bash") is None
 
-    def test_permission_check_for_tool(self):
-        """Should check permission for specific tool."""
-        try:
-            from cast.harness.permissions import check_tool_permission
-            assert callable(check_tool_permission)
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions not yet implemented")
-
-    def test_permission_check_for_bash(self):
-        """Should check bash tool permission."""
-        try:
-            from cast.harness.permissions import check_bash_permission
-            assert callable(check_bash_permission)
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions not yet implemented")
+    def test_non_mapping_config_allows(self):
+        gate = PermissionGate(None)
+        assert gate.action_for("bash") == ALWAYS_ALLOW
 
 
-class TestPermissionConfiguration:
-    """Tests for permission configuration."""
+class TestGuardedBash:
+    """The bug: bash=deny and bash=ask still executed the command."""
 
-    def test_load_permissions_from_config(self):
-        """Should load permissions from agent config."""
-        try:
-            from cast.harness.permissions import load_permissions
-            assert callable(load_permissions)
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions not yet implemented")
+    @pytest.mark.asyncio
+    async def test_deny_does_not_run_the_command(self, tmp_path):
+        target = tmp_path / "deny-proof.txt"
+        tool = guard_tool(bash_tool, "bash", PermissionGate({"bash": "deny"}))
+        result = await tool.ainvoke({"command": f"printf ran > {_quote(target)}"})
 
-    def test_default_permissions_defined(self):
-        """Should have default permission configuration."""
-        try:
-            from cast.harness.permissions import DEFAULT_PERMISSIONS
-            assert isinstance(DEFAULT_PERMISSIONS, dict)
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions not yet implemented")
+        assert not target.exists()
+        assert "bash" in result
+        assert "not executed" in result
+        assert result == permission_denied_message("bash", DENY)
 
+    @pytest.mark.asyncio
+    async def test_ask_without_a_prompt_does_not_run(self, tmp_path):
+        target = tmp_path / "ask-proof.txt"
+        tool = guard_tool(bash_tool, "bash", PermissionGate({"bash": "ask"}))
+        result = await tool.ainvoke({"command": f"printf ran > {_quote(target)}"})
 
-class TestPermissionEnforcement:
-    """Tests for permission enforcement."""
+        assert not target.exists()
+        assert result == permission_denied_message("bash", ASK)
 
-    def test_enforce_permission_method_exists(self):
-        """Should have method to enforce permissions."""
-        try:
-            from cast.harness.permissions import enforce_permission
-            assert callable(enforce_permission)
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions not yet implemented")
+    @pytest.mark.asyncio
+    async def test_ask_runs_only_after_approval(self, tmp_path):
+        target = tmp_path / "approved.txt"
+        broker = ApprovalBroker()
+        queue: asyncio.Queue = asyncio.Queue()
+        broker.attach(queue)
+        tool = guard_tool(bash_tool, "bash", PermissionGate({"bash": "ask"}, broker))
 
-    def test_block_action_on_deny(self):
-        """Should block action when permission is denied."""
-        try:
-            from cast.harness.permissions import block_on_deny
-            assert callable(block_on_deny)
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions not yet implemented")
+        async def approve():
+            kind, payload = await queue.get()
+            assert kind == "permission"
+            assert payload["tool"] == "bash"
+            assert "printf" in payload["arguments"]["command"]
+            assert broker.respond(payload["id"], True)
 
-    def test_permission_denied_response(self):
-        """Should return appropriate response when permission denied."""
-        try:
-            from cast.harness.permissions import permission_denied_message
-            result = permission_denied_message("bash")
-            assert "bash" in result.lower() or "denied" in result.lower()
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions not yet implemented")
+        waiter = asyncio.create_task(approve())
+        result = await tool.ainvoke({"command": f"printf yes > {_quote(target)}"})
+        await waiter
 
+        assert target.read_text() == "yes"
+        assert "denied" not in result.lower()
 
-class TestPermissionCaching:
-    """Tests for permission caching."""
+    @pytest.mark.asyncio
+    async def test_ask_deny_response_does_not_run(self, tmp_path):
+        target = tmp_path / "rejected.txt"
+        broker = ApprovalBroker()
+        queue: asyncio.Queue = asyncio.Queue()
+        broker.attach(queue)
+        tool = guard_tool(bash_tool, "bash", PermissionGate({"bash": "ask"}, broker))
 
-    def test_approval_caching(self):
-        """Should cache approved permissions."""
-        try:
-            from cast.harness.permissions import cache_approval
-            assert callable(cache_approval)
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions not yet implemented")
+        async def reject():
+            _kind, payload = await queue.get()
+            assert broker.respond(payload["id"], False)
 
-    def test_clear_cached_approvals(self):
-        """Should clear cached approvals."""
-        try:
-            from cast.harness.permissions import clear_approvals
-            assert callable(clear_approvals)
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions not yet implemented")
+        waiter = asyncio.create_task(reject())
+        result = await tool.ainvoke({"command": f"printf yes > {_quote(target)}"})
+        await waiter
 
+        assert not target.exists()
+        assert result == permission_denied_message("bash", ASK)
 
-class TestPermissionAudit:
-    """Tests for permission auditing."""
+    @pytest.mark.asyncio
+    async def test_always_allow_runs(self, tmp_path):
+        target = tmp_path / "allowed.txt"
+        tool = guard_tool(bash_tool, "bash", PermissionGate({"bash": "always-allow"}))
+        await tool.ainvoke({"command": f"printf ok > {_quote(target)}"})
+        assert target.read_text() == "ok"
 
-    def test_log_permission_check(self):
-        """Should log permission checks."""
-        try:
-            from cast.harness.permissions import log_permission_check
-            assert callable(log_permission_check)
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions not yet implemented")
+    @pytest.mark.asyncio
+    async def test_missing_permission_runs(self, tmp_path):
+        target = tmp_path / "default.txt"
+        tool = guard_tool(bash_tool, "bash", PermissionGate({}))
+        await tool.ainvoke({"command": f"printf ok > {_quote(target)}"})
+        assert target.read_text() == "ok"
 
-    def test_audit_trail_exists(self):
-        """Should maintain audit trail."""
-        try:
-            from cast.harness.permissions import get_audit_trail
-            assert callable(get_audit_trail)
-        except (ImportError, AttributeError):
-            pytest.skip("Permissions not yet implemented")
+    def test_sync_deny_does_not_run(self, tmp_path):
+        target = tmp_path / "sync-deny.txt"
+        tool = guard_tool(bash_tool, "bash", PermissionGate({"bash": "deny"}))
+        result = tool.invoke({"command": f"printf ran > {_quote(target)}"})
+        assert not target.exists()
+        assert "not executed" in result
+
+    @pytest.mark.asyncio
+    async def test_unknown_level_does_not_run(self, tmp_path):
+        target = tmp_path / "unknown.txt"
+        tool = guard_tool(bash_tool, "bash", PermissionGate({"bash": "sometimes"}))
+        result = await tool.ainvoke({"command": f"printf ran > {_quote(target)}"})
+        assert not target.exists()
+        assert "not allowed" in result
+
+    def test_guard_keeps_the_model_tool_name(self):
+        tool = guard_tool(bash_tool, "bash", PermissionGate({"bash": "deny"}))
+        assert tool.name == "bash_tool"
+        assert "command" in tool.args

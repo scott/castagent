@@ -18,6 +18,7 @@ import {
 } from '../lib/sessions.js'
 import {SessionContext} from '../lib/session-context.js'
 import type {A2AClient} from '../../../cast-cli/dist/lib/a2a/client.js'
+import {promptToolPermission} from '../commands/permission-modal.js'
 
 /**
  * Fetch the agent's card via A2A and display a natural-language
@@ -357,8 +358,18 @@ export async function showChatScreen(
         let uiAction: Record<string, unknown> | undefined
 
         for await (const chunk of client.sendMessageStream(text, outbound)) {
-          stream.update(chunk.text)
-          fullResponse += chunk.text
+          if (chunk.permissionRequest) {
+            const approved = await promptToolPermission(
+              renderer,
+              inputComp.input,
+              chunk.permissionRequest,
+            )
+            await client.respondToPermission(chunk.permissionRequest.id, approved)
+          }
+          if (chunk.text) {
+            stream.update(chunk.text)
+            fullResponse += chunk.text
+          }
           if (chunk.uiAction) {
             uiAction = chunk.uiAction
           }

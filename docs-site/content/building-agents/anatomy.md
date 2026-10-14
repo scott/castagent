@@ -101,7 +101,7 @@ changes show up as files on disk.
 | `tools.builtin` | which of `bash` / `read` / `glob` to expose |
 | `tools.mcp` | list of MCP server YAMLs to load |
 | `tools.custom` | module name strings or `{path}` entries, printed by `cast describe` |
-| `harness.permissions` | per-tool permission level (`always-allow`, `ask`, or `deny`) |
+| `harness.permissions` | per-tool permission level (`always-allow`, `ask`, or `deny`), enforced before the tool runs |
 | `harness.principles` | constitutional principles appended to the system prompt |
 | `runtime.python_version` | Python version in the deployment image (`3.11` or `3.12`) |
 | `runtime.requirements` | extra pip packages to install in the image |
