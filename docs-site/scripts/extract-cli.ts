@@ -7,10 +7,11 @@
  *   - Walk the commands directory recursively.
  *   - For each .ts file, use ts-morph to find the default-exported class.
  *   - Pull `static description`, `static examples`, `static flags`, `static args`.
- *   - Derive the command path from the file location:
- *       src/commands/new.ts           -> "cast new"
- *       src/commands/git/init.ts      -> "cast git init"
- *       src/commands/meta/test.ts     -> "cast meta test"
+ *   - Derive the command path the same way oclif does. A file named
+ *     index.ts is the topic command. The filename is not a command segment:
+ *       src/commands/new.ts              -> "cast new"
+ *       src/commands/git/init.ts         -> "cast git init"
+ *       src/commands/session/index.ts    -> "cast session"
  *
  * Why ts-morph: gives a typed AST and a forgiving parser that won't choke on
  * the few .ts files in commands/ that import side-effectful modules.
@@ -292,12 +293,26 @@ function parseExamples(init: any, id: string): string[] {
 
 // --- main ---
 
+/**
+ * oclif command id for a file under src/commands.
+ * `session/index.ts` is `session`, because a filename of `index` is the
+ * topic command (`cast session`). It is not a subcommand named `index`.
+ */
 function derivePath(file: string): { id: string; topic: string; full: string } {
   const rel = relative(COMMANDS_DIR, file).replace(/\\/g, '/').replace(/\.ts$/, '')
-  const segments = rel.split('/')
+  const segments = rel.split('/').filter((segment) => segment.length > 0)
+  if (segments[segments.length - 1] === 'index') segments.pop()
+  if (segments.length === 0) {
+    throw new Error(`topic index ${relative(REPO, file)} has no command id`)
+  }
   const id = segments[segments.length - 1]
   const topic = segments.length > 1 ? segments.slice(0, -1).join(' ') : id
   return { id, topic, full: `cast ${segments.join(' ')}` }
+}
+
+/** A command path segment named `index` is not a real oclif command. */
+function isPhantomIndexCommand(command: {id: string; full: string}): boolean {
+  return command.id === 'index' || command.full.split(/\s+/).includes('index')
 }
 
 const project = new Project({
@@ -341,6 +356,19 @@ for (const file of files) {
 }
 
 commands.sort((a, b) => a.full.localeCompare(b.full))
+
+const topicIndexes = files.filter((file) => file.replace(/\\/g, '/').endsWith('/index.ts'))
+for (const file of topicIndexes) {
+  const mapped = derivePath(file)
+  console.log(`topic index ${relative(REPO, file)} -> ${mapped.full}`)
+}
+
+const phantoms = commands.filter(isPhantomIndexCommand)
+if (phantoms.length > 0) {
+  console.error('phantom index commands:')
+  for (const command of phantoms) console.error(`  ${command.full} (${command.source})`)
+  process.exit(1)
+}
 
 writeFileSync(join(DATA, 'cli.json'), JSON.stringify(commands, null, 2) + '\n')
 console.log(`extracted ${commands.length} CLI commands -> data/cli.json`)

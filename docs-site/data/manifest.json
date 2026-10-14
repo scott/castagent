@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-12T19:09:05Z",
+  "generatedAt": "2026-10-14T04:48:25Z",
   "cli": [
     {
       "id": "builder-skills",
@@ -137,6 +137,11 @@
       "description": "Restore an agent to a previous release"
     },
     {
+      "id": "session",
+      "full": "cast session",
+      "description": "Manage conversation sessions"
+    },
+    {
       "id": "delete",
       "full": "cast session delete",
       "description": "Delete a session"
@@ -155,11 +160,6 @@
       "id": "import",
       "full": "cast session import",
       "description": "Import a session from a JSON file"
-    },
-    {
-      "id": "index",
-      "full": "cast session index",
-      "description": "Manage conversation sessions"
     },
     {
       "id": "list",
