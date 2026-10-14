@@ -37,6 +37,8 @@ import {
 } from '../lib/shutdown-flow.js'
 import {openBuilderSkillsCommand} from './builder-skills-modal.js'
 import {openBuilderModelModal} from './builder-model-modal.js'
+import {openAgentUpdateModal, runAgentUpdateFromArgs} from './agent-update-modal.js'
+import {parseUpdateArgs} from '../lib/agent-update.js'
 import {addSkillFromSource, openSkillsModal} from './skills-modal.js'
 import {
   handleImportCommand,
@@ -2803,8 +2805,20 @@ const commands: SlashCommand[] = [
     description: 'Update the current agent',
     category: 'agent',
     modes: ['dev', 'production'],
-    handler: async (ctx) => {
-      ctx.messages.addAgentMessage(`Use \`cast update ${ctx.agentName}\` from the CLI for now.`, ctx.mode)
+    args: '[flags]',
+    handler: async (ctx, args) => {
+      const agentName = requireSubjectAgent(ctx)
+      if (!agentName) return
+      if (args.length === 0) {
+        openAgentUpdateModal(ctx, agentName, findCastBinary)
+        return
+      }
+      const parsed = parseUpdateArgs(args)
+      if (!parsed.ok) {
+        ctx.messages.addAgentMessage(parsed.message, ctx.mode)
+        return
+      }
+      runAgentUpdateFromArgs(ctx, agentName, parsed.flags, findCastBinary)
     },
   },
 

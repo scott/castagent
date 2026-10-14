@@ -26,10 +26,11 @@ a dynamic port. The header is **purple** and shows just the agent name.
 
 - The runtime is killed when you quit the TUI.
 - `/undo`, `/redo`, `/sessions`, `/session …`, `/releases`, `/release`,
-  `/deploy`, `/upgrade`, `/import`, `/shutdown`, and `/model` are available —
-  you're working on the agent on this machine. `/import` is also available in
-  production. `/model` changes the builder's model only. It is hidden from
-  `/help` in production and on-host, and the running builder does not hot-swap.
+  `/deploy`, `/upgrade`, `/update`, `/import`, `/shutdown`, and `/model` are available.
+  You are working on the agent on this machine. `/import` is also available in
+  production. `/update` writes the local `agent.yaml` for the current agent and
+  does not redeploy. It is hidden on-host. `/model` changes the builder's model only.
+  It is hidden from `/help` in production and on-host, and the running builder does not hot-swap.
 - `/connect` switches to a *different* deployed agent (useful for
   comparing local behaviour to production).
 - No bearer token is required.
@@ -52,6 +53,8 @@ deployed version.
   (`/release`, `/deploy`, `/upgrade`) are scoped to the
   *currently-connected* deployment's agent. `/shutdown` lists every
   active deployment and can tear one down.
+- `/update` writes the local `agent.yaml` for that agent name. It does not
+  redeploy. Restart a local session with `cast dev` to pick up the change.
 - `/connect` lets you jump to a different deployment or to a different
   agent's deployment without exiting the TUI.
 
