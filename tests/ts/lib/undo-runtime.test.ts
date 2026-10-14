@@ -55,7 +55,10 @@ describe('cast undo python runtime', () => {
     const pythonDir = path.join(root, 'python')
     fs.mkdirSync(path.join(pythonDir, 'cast'), {recursive: true})
     fs.writeFileSync(path.join(pythonDir, 'cast', 'versioning.py'), 'pass\n')
-    writePackage(path.join(home, '.cast', 'python'), 'raise ImportError("stale")\n')
+    const stale = path.join(home, '.cast', 'python', 'cast')
+    fs.mkdirSync(stale, {recursive: true})
+    fs.writeFileSync(path.join(stale, 'migrate.py'), 'pass\n')
+    fs.writeFileSync(path.join(stale, 'versioning.py'), 'pass\n')
     const moduleDir = path.join(root, 'typescript', 'cast-cli', 'dist', 'lib')
     fs.mkdirSync(moduleDir, {recursive: true})
 

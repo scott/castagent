@@ -5,6 +5,30 @@ import * as os from 'os'
 import * as path from 'path'
 import {resolveCastPythonRuntime} from './cast-python'
 
+type PythonExec = (
+  command: string,
+  args: string[],
+  options: childProcess.ExecFileSyncOptionsWithStringEncoding,
+) => string
+
+function defaultExec(
+  command: string,
+  args: string[],
+  options: childProcess.ExecFileSyncOptionsWithStringEncoding,
+): string {
+  return childProcess.execFileSync(command, args, options)
+}
+
+let execPython: PythonExec = defaultExec
+
+/**
+ * Test hook. Node exposes `execFileSync` as a non-configurable binding,
+ * so tests replace this wrapper instead of patching `child_process`.
+ */
+export function _setExecPythonForTests(impl: PythonExec | null): void {
+  execPython = impl ?? defaultExec
+}
+
 /**
  * One entry in the change log (used by undo/redo).
  */
@@ -31,7 +55,7 @@ function runPython(body: string): string {
   )
   try {
     fs.writeFileSync(tmp, script)
-    return childProcess.execFileSync(runtime.command, [tmp], {
+    return execPython(runtime.command, [tmp], {
       cwd: os.homedir(),
       encoding: 'utf-8',
       stdio: ['ignore', 'pipe', 'pipe'],

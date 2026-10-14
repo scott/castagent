@@ -3,7 +3,6 @@ import * as childProcess from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import sinon from 'sinon'
 
 async function loadTestCommand(name: string): Promise<any> {
   const commandPath = path.join(
@@ -126,16 +125,16 @@ describe('cast undo / cast redo commands', () => {
       fs.mkdirSync(agentDir, {recursive: true})
       const checkout = path.resolve(__dirname, '../../../python')
       const stale = path.join(os.homedir(), '.cast', 'python')
-      const sandbox = sinon.createSandbox()
+      const undoLib = loadUndoLib()
       let command = ''
       let script = ''
       let options: childProcess.ExecFileSyncOptions | undefined
-      sandbox.stub(childProcess, 'execFileSync').callsFake(((file: string, args: string[], opts: childProcess.ExecFileSyncOptions) => {
+      undoLib._setExecPythonForTests((file: string, args: string[], opts: childProcess.ExecFileSyncOptionsWithStringEncoding) => {
         command = file
         options = opts
         script = fs.readFileSync(args[0], 'utf8')
         return 'false'
-      }) as typeof childProcess.execFileSync)
+      })
       try {
         const {errors} = await runCommand(
           Undo,
@@ -156,7 +155,7 @@ describe('cast undo / cast redo commands', () => {
         else if (fs.existsSync(venvPython)) expect(command).to.equal(venvPython)
         else expect(command).to.equal(process.platform === 'win32' ? 'python' : 'python3')
       } finally {
-        sandbox.restore()
+        undoLib._setExecPythonForTests(null)
         fs.rmSync(agentDir, {recursive: true, force: true})
       }
     })
@@ -166,7 +165,7 @@ describe('cast undo / cast redo commands', () => {
       const agentName = 'undo-cli-test-import-' + Date.now()
       const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
       fs.mkdirSync(agentDir, {recursive: true})
-      const sandbox = sinon.createSandbox()
+      const undoLib = loadUndoLib()
       const failure = Object.assign(new Error('Command failed: python3 /tmp/cast_undo.py'), {
         stderr: [
           'Traceback (most recent call last):',
@@ -176,7 +175,9 @@ describe('cast undo / cast redo commands', () => {
         ].join('\n'),
         status: 1,
       })
-      sandbox.stub(childProcess, 'execFileSync').throws(failure)
+      undoLib._setExecPythonForTests(() => {
+        throw failure
+      })
       try {
         const {errors} = await runCommand(
           Undo,
@@ -189,7 +190,7 @@ describe('cast undo / cast redo commands', () => {
         expect(text).to.not.include('Nothing to undo')
         expect(text).to.not.include('Traceback')
       } finally {
-        sandbox.restore()
+        undoLib._setExecPythonForTests(null)
         fs.rmSync(agentDir, {recursive: true, force: true})
       }
     })
@@ -240,12 +241,14 @@ describe('cast undo / cast redo commands', () => {
       const agentName = 'redo-cli-test-import-' + Date.now()
       const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
       fs.mkdirSync(agentDir, {recursive: true})
-      const sandbox = sinon.createSandbox()
+      const undoLib = loadUndoLib()
       const failure = Object.assign(new Error('Command failed: python3 /tmp/cast_undo.py'), {
         stderr: "ModuleNotFoundError: No module named 'cast.undo'\n",
         status: 1,
       })
-      sandbox.stub(childProcess, 'execFileSync').throws(failure)
+      undoLib._setExecPythonForTests(() => {
+        throw failure
+      })
       try {
         const {errors} = await runCommand(
           Redo,
@@ -257,12 +260,22 @@ describe('cast undo / cast redo commands', () => {
         expect(text).to.include("No module named 'cast.undo'")
         expect(text).to.not.include('Nothing to redo')
       } finally {
-        sandbox.restore()
+        undoLib._setExecPythonForTests(null)
         fs.rmSync(agentDir, {recursive: true, force: true})
       }
     })
   })
 })
+
+function loadUndoLib(): {
+  _setExecPythonForTests: (impl: ((
+    command: string,
+    args: string[],
+    options: childProcess.ExecFileSyncOptionsWithStringEncoding,
+  ) => string) | null) => void
+} {
+  return require('../../../typescript/cast-cli/src/lib/undo')
+}
 
 function captureStderr(): (() => string) & {restore: () => void} {
   const chunks: string[] = []

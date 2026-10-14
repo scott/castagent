@@ -10,6 +10,8 @@
 
 - `cast undo` and `cast redo` run in Cast's Python environment. A Python failure is reported as an error instead of "Nothing to undo".
 
+  - PR #171
+
 ## 2.5.0
 
 ### Minor Changes
