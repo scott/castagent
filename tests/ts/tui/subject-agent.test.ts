@@ -15,7 +15,7 @@ function loadSubjectAgent(): typeof import('../../../typescript/cast-tui/src/lib
     compilerOptions: {module: ts.ModuleKind.CommonJS, target: ts.ScriptTarget.ES2022},
   }).outputText
   const module = {exports: {} as any}
-  const sandbox = {exports: module.exports, module, require}
+  const sandbox = {exports: module.exports, module, require, Buffer, process, console}
   vm.createContext(sandbox)
   vm.runInContext(js, sandbox)
   return module.exports
