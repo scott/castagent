@@ -19,6 +19,18 @@ function loadHelper(): {
   formatBuilderModelRow: (id: string, selected: boolean, current: boolean) => string
   builderModelFocusReturnTarget: () => string
   builderModelSuccessMessage: (id: string, agentName: string) => string
+  builderModelModalInnerRows: (termHeight: number) => number
+  builderModelMaxRows: (termHeight: number, hasError?: boolean) => number
+  builderModelContentColumns: (termWidth: number) => number
+  fitBuilderModelLine: (text: string, columns: number) => string
+  buildBuilderModelLines: (options: {
+    models: readonly {id: string}[]
+    selected: number
+    currentId: string
+    termHeight: number
+    columns: number
+    error?: string | null
+  }) => Array<{text: string; tone: string}>
   CAST_CLI_NOT_FOUND: string
 } {
   const file = path.resolve(__dirname, '../../../typescript/cast-tui/src/lib/builder-model.ts')
@@ -108,6 +120,123 @@ describe('builder model picker', () => {
     expect(helper.wrapBuilderModelIndex(0, -1, 3)).to.equal(2)
     expect(helper.wrapBuilderModelIndex(2, 1, 3)).to.equal(0)
     expect(helper.wrapBuilderModelIndex(1, 1, 3)).to.equal(2)
+  })
+
+  function catalogIds(): string[] {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, '../../../typescript/cast-cli/src/lib/models.ts'),
+      'utf8',
+    )
+    const start = source.indexOf('const MODEL_IDS = [')
+    const end = source.indexOf(']', start)
+    return [...source.slice(start, end).matchAll(/'([^']+)'/g)].map(match => match[1])
+  }
+
+  function frame(ids: string[], selected: number, termHeight = 50, termWidth = 200, error: string | null = null) {
+    const columns = helper.builderModelContentColumns(termWidth)
+    const lines = helper.buildBuilderModelLines({
+      models: ids.map(id => ({id})),
+      selected,
+      currentId: 'openrouter/minimax/minimax-m2.5',
+      termHeight,
+      columns,
+      error,
+    })
+    return {columns, lines}
+  }
+
+  function highlighted(lines: Array<{text: string}>): string {
+    const rows = lines.filter(line => line.text.startsWith('▸ '))
+    expect(rows).to.have.length(1)
+    return rows[0].text.trimEnd()
+  }
+
+  it('fits every catalog id on its own row while scrolling', () => {
+    const ids = helper.sortBuilderModels(catalogIds().map(id => ({id}))).map(model => model.id)
+    expect(ids).to.have.length(55)
+    expect(ids).to.include('meta-llama/llama-3.2-90b-vision-instruct')
+    expect(ids).to.include('meta-llama/llama-3.3-70b-instruct')
+    expect(ids).to.include('openai/gpt-4-turbo')
+    expect(ids).to.include('cohere/command-r-plus')
+    expect(ids).to.include('kimi/k2.5')
+
+    const termHeight = 50
+    const inner = helper.builderModelModalInnerRows(termHeight)
+    const maxRows = helper.builderModelMaxRows(termHeight, false)
+    // The old budget reserved a fixed 6 rows from the outer 80% and
+    // then forced at least 5. That is taller than the inner box, so
+    // the rows flex-shrink onto each other.
+    const oldMax = Math.max(5, Math.floor(termHeight * 0.8) - 6)
+    expect(oldMax + 6).to.be.greaterThan(inner)
+    expect(maxRows + 6).to.be.at.most(inner)
+
+    const seen = new Set<string>()
+    let previousStart = 0
+    for (let selected = 0; selected < ids.length; selected++) {
+      const {columns, lines} = frame(ids, selected, termHeight, 200)
+      expect(lines.length).to.be.at.most(inner)
+      for (const line of lines) {
+        expect(line.text).to.have.length(columns)
+        expect(line.text).to.not.include('instructnstruct')
+      }
+      const span = helper.builderModelWindow(ids.length, selected, maxRows)
+      expect(span.end - span.start).to.equal(maxRows)
+      expect(selected).to.be.at.least(span.start)
+      expect(selected).to.be.below(span.end)
+      expect(span.start - previousStart).to.be.at.most(1)
+      previousStart = span.start
+
+      const visible = ids.slice(span.start, span.end)
+      for (const id of visible) {
+        const row = helper.formatBuilderModelRow(id, id === ids[selected], id === 'minimax/minimax-m2.5')
+        expect(lines.filter(line => line.text.trimEnd() === row)).to.have.length(1)
+        seen.add(id)
+      }
+      expect(highlighted(lines)).to.equal(
+        helper.formatBuilderModelRow(ids[selected], true, ids[selected] === 'minimax/minimax-m2.5'),
+      )
+    }
+    expect([...seen].sort()).to.deep.equal([...ids].sort())
+
+    const longer = ids.indexOf('meta-llama/llama-3.2-90b-vision-instruct')
+    const shorter = ids.indexOf('meta-llama/llama-3.3-70b-instruct')
+    expect(shorter - longer).to.equal(1)
+    const glued = frame(ids, shorter, termHeight, 200)
+    const longerRow = helper.formatBuilderModelRow(ids[longer], false, false)
+    const shorterRow = helper.formatBuilderModelRow(ids[shorter], true, false)
+    expect(glued.lines.filter(line => line.text.trimEnd() === longerRow)).to.have.length(1)
+    expect(glued.lines.filter(line => line.text.trimEnd() === shorterRow)).to.have.length(1)
+    expect(helper.fitBuilderModelLine(shorterRow, glued.columns).length).to.be.at.least(longerRow.length)
+
+    let selected = ids.indexOf('cohere/command-r7b-12-2024')
+    const moved: string[] = []
+    for (let press = 0; press < 3; press++) {
+      selected = helper.wrapBuilderModelIndex(selected, -1, ids.length)
+      const {lines} = frame(ids, selected)
+      expect(highlighted(lines)).to.equal(helper.formatBuilderModelRow(ids[selected], true, false))
+      moved.push(ids[selected])
+    }
+    expect(moved).to.deep.equal([
+      'cohere/command-r-plus-08-2024',
+      'cohere/command-r-plus',
+      'cohere/command-r',
+    ])
+
+    const withError = frame(ids, shorter, termHeight, 200, 'could not write config')
+    expect(withError.lines.length).to.be.at.most(inner)
+    expect(withError.lines.some(line => line.text.trimEnd() === 'could not write config')).to.equal(true)
+    expect(highlighted(withError.lines)).to.equal(shorterRow)
+
+    const modal = fs.readFileSync(
+      path.resolve(__dirname, '../../../typescript/cast-tui/src/commands/builder-model-modal.ts'),
+      'utf8',
+    )
+    expect(modal).to.include('buildBuilderModelLines')
+    expect(modal).to.not.include('Math.floor(height * 0.8) - 6')
+    expect(modal).to.include("wrapMode: 'none'")
+    expect(modal).to.include('flexShrink: 0')
+    expect(modal).to.include('height: 1')
+    expect(modal).to.include("overflow: 'hidden'")
   })
 
   it('returns focus to the input', () => {
