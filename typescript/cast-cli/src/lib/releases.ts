@@ -48,7 +48,22 @@ function recordReleaseIfAbsent(agentName: string, release: ReleaseInfo): void {
   )
 }
 
-function runPythonScript(script: string): string {
+function pythonValueError(error: unknown): string | null {
+  // create_release raises ValueError for a backwards version. Surface
+  // that sentence instead of the traceback from the temp script.
+  const stderr = (error as {stderr?: unknown}).stderr
+  if (typeof stderr !== 'string' || !stderr) return null
+  const line = stderr
+    .split('\n')
+    .map(part => part.trim())
+    .reverse()
+    .find(part => part.startsWith('ValueError:'))
+  if (!line) return null
+  const message = line.slice('ValueError:'.length).trim()
+  return message || null
+}
+
+function runPythonScript(script: string, captureStderr = false): string {
   const pythonCmd = process.platform === 'win32' ? 'python' : 'python3'
   // Write script to temp file to avoid quoting issues
   const scriptHash = crypto.randomBytes(8).toString('hex')
@@ -60,6 +75,9 @@ function runPythonScript(script: string): string {
     const result = execSync(`${pythonCmd} "${tempScript}"`, {
       cwd: os.homedir(),
       encoding: 'utf-8',
+      // Default execSync forwards stderr to the terminal. A rejected
+      // release should show the ValueError sentence, not the traceback.
+      stdio: captureStderr ? ['ignore', 'pipe', 'pipe'] : undefined,
     }).trim()
     return result
   } finally {
@@ -72,7 +90,9 @@ function runPythonScript(script: string): string {
 }
 
 export async function createRelease(agentName: string, version: string, message: string = ''): Promise<ReleaseInfo> {
-  const output = runPythonScript(`
+  let output: string
+  try {
+    output = runPythonScript(`
 ${pythonPrelude()}from cast.releases import create_release
 import json
 result = create_release('${agentName}', '${version}', '${message.replace(/'/g, "\\'")}')
@@ -84,7 +104,12 @@ print(json.dumps({
   'created_at': result.created_at,
   'tarball_path': str(result.tarball_path)
 }))
-`)
+`, true)
+  } catch (error) {
+    const message = pythonValueError(error)
+    if (message) throw new Error(message)
+    throw error
+  }
   const release = JSON.parse(output) as ReleaseInfo
   recordReleaseIfAbsent(agentName, release)
   return release

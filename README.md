@@ -384,6 +384,8 @@ cast session fork <id>
 cast session export <id> --out backup.json
 ```
 
+`cast release` rejects a version lower than the `version` in `agent.yaml` and leaves that file unchanged. A release that succeeds updates only the `version` field, keeps the rest of the file's formatting, and then packs the working tree (project files except `.castignore` paths, `.cast/`, and `.git/`) so the tarball's `agent.yaml` matches.
+
 `cast undo` and `cast redo` run in the Python environment installed with
 Cast. If that runtime fails, the command prints the Python error.
 `Nothing to undo` means the undo log is empty, and `Nothing to redo`

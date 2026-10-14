@@ -8,7 +8,7 @@ import re
 import warnings
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import Dict, List, Any, NamedTuple, Optional
 from dataclasses import dataclass, asdict
 
 from cast.castignore import is_ignored, load_rules
@@ -435,8 +435,192 @@ def _get_latest_change_number(agent_name: str) -> int:
     return data.get("current", 0)
 
 
+class _VersionField(NamedTuple):
+    """One top-level `version:` line, split so only the scalar is replaced."""
+
+    value: str
+    prefix: str
+    style: Optional[str]
+    trail: str
+
+
+def _semver_key(version: str) -> Optional[tuple]:
+    """Pad a valid semver to (major, minor, patch). `1.0` and `1.0.0` match."""
+    if not validate_semver(version):
+        return None
+    parts = [int(part) for part in version.split(".")]
+    while len(parts) < 3:
+        parts.append(0)
+    return tuple(parts)
+
+
+def _is_lower_semver(candidate: str, current: str) -> bool:
+    """True when candidate is an older semver than current.
+
+    Versions that are not semver do not count as a floor. Comparison is
+    numeric, so 1.2 is lower than 1.10.
+    """
+    left = _semver_key(candidate)
+    right = _semver_key(current.strip())
+    if left is None or right is None:
+        return False
+    return left < right
+
+
+def _read_preserved_text(path: Path) -> str:
+    """Read text without translating newlines."""
+    with open(path, "r", encoding="utf-8", newline="") as handle:
+        return handle.read()
+
+
+def _write_preserved_text(path: Path, text: str) -> None:
+    """Write text without translating newlines."""
+    with open(path, "w", encoding="utf-8", newline="") as handle:
+        handle.write(text)
+
+
+def _parse_top_level_version(body: str) -> Optional[_VersionField]:
+    """Parse a top-level `version:` scalar. Block values return None."""
+    match = re.match(r"^(version)([ \t]*:)(.*)$", body)
+    if match is None:
+        return None
+    key, colon, after = match.group(1), match.group(2), match.group(3)
+    space_match = re.match(r"[ \t]*", after)
+    spaces = space_match.group(0) if space_match else ""
+    rest = after[len(spaces):]
+    if rest == "" or rest.startswith("#"):
+        return _VersionField("", key + colon, None, spaces + rest)
+    if rest[0] in ('"', "'"):
+        quote = rest[0]
+        end = rest.find(quote, 1)
+        if end < 0:
+            return None
+        return _VersionField(rest[1:end], key + colon + spaces, quote, rest[end + 1:])
+    if rest[0] in ("|", ">"):
+        return None
+    comment_match = re.search(r"[ \t]+#", rest)
+    if comment_match:
+        value = rest[:comment_match.start()]
+        trail = rest[comment_match.start():]
+    else:
+        value = rest.rstrip(" \t")
+        trail = rest[len(value):]
+    return _VersionField(value, key + colon + spaces, None, trail)
+
+
+def _bare_version_is_yaml_string(version: str) -> bool:
+    """True when an unquoted version stays a string under YAML 1.1.
+
+    PyYAML reads `1.0` and `1.10` as floats. `1.0.0` stays a string.
+    """
+    return bool(re.fullmatch(r"(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)", version))
+
+
+def _render_version_scalar(version: str, style: Optional[str]) -> str:
+    """Render a version scalar that loads back as a string.
+
+    An existing quote style is kept. A bare two-part version is quoted
+    so PyYAML does not turn it into a float.
+    """
+    if style == '"':
+        return f'"{version}"'
+    if style == "'":
+        return f"'{version}'"
+    if _bare_version_is_yaml_string(version):
+        return version
+    return f'"{version}"'
+
+
+def _join_version_line(prefix: str, scalar: str, trail: str) -> str:
+    if trail.startswith("#") and not prefix.endswith((" ", "\t")):
+        return f"{prefix}{scalar} {trail}"
+    return f"{prefix}{scalar}{trail}"
+
+
+def _read_agent_yaml_version(path: Path) -> Optional[str]:
+    """Return the top-level version scalar as written.
+
+    Reading the line avoids PyYAML turning an unquoted `1.10` into `1.1`.
+    """
+    if not path.is_file():
+        return None
+    text = _read_preserved_text(path)
+    for line in text.splitlines():
+        parsed = _parse_top_level_version(line)
+        if parsed is not None:
+            return parsed.value
+    try:
+        import yaml
+        data = yaml.safe_load(text) or {}
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    value = data.get("version")
+    if value is None or isinstance(value, bool):
+        return None
+    if isinstance(value, float) and value.is_integer():
+        return f"{int(value)}.0"
+    return str(value).strip()
+
+
+def _set_agent_yaml_version(path: Path, version: str) -> None:
+    """Replace the top-level version scalar and leave every other byte alone.
+
+    yaml.dump rewrites quotes and list indentation. A release only needs
+    the version field to change.
+    """
+    if not path.is_file():
+        return
+    original = _read_preserved_text(path)
+    pieces = original.splitlines(keepends=True)
+    saw_unparsed = False
+    for index, line in enumerate(pieces):
+        ending = ""
+        body = line
+        if body.endswith("\r\n"):
+            body, ending = body[:-2], "\r\n"
+        elif body.endswith("\n"):
+            body, ending = body[:-1], "\n"
+        elif body.endswith("\r"):
+            body, ending = body[:-1], "\r"
+        if re.match(r"version[ \t]*:", body) is None:
+            continue
+        parsed = _parse_top_level_version(body)
+        if parsed is None:
+            saw_unparsed = True
+            continue
+        if parsed.value == version:
+            return
+        scalar = _render_version_scalar(version, parsed.style)
+        pieces[index] = _join_version_line(parsed.prefix, scalar, parsed.trail) + ending
+        _write_preserved_text(path, "".join(pieces))
+        return
+    if saw_unparsed:
+        raise ValueError(
+            "Could not update agent.yaml version without rewriting the file"
+        )
+    if "\r\n" in original:
+        newline = "\r\n"
+    elif "\r" in original:
+        newline = "\r"
+    else:
+        newline = "\n"
+    updated = original
+    if updated and not updated.endswith(("\n", "\r")):
+        updated += newline
+    updated += f'version: "{version}"{newline}'
+    _write_preserved_text(path, updated)
+
+
 def create_release(agent_name: str, version: str, message: str = "", agents_dir: Optional[Path] = None) -> ReleaseInfo:
     """Create a semantic release snapshot.
+
+    A version lower than agent.yaml is rejected and no files are changed.
+    On success, only the version field in agent.yaml is updated. The
+    tarball is then the working tree (project files except .castignore
+    paths, .cast/, and .git/), so it records that version. tarball_path
+    in releases.json is relative to the agent directory.
 
     Args:
         agent_name: The name of the agent.
@@ -457,6 +641,13 @@ def create_release(agent_name: str, version: str, message: str = "", agents_dir:
     if not validate_semver(version):
         raise ValueError(f"Invalid semantic version: '{version}'")
 
+    agent_yaml_path = agent_path / "agent.yaml"
+    current_yaml_version = _read_agent_yaml_version(agent_yaml_path)
+    if current_yaml_version is not None and _is_lower_semver(version, current_yaml_version):
+        raise ValueError(
+            f"Release version '{version}' is lower than agent.yaml version '{current_yaml_version}'"
+        )
+
     # Ensure releases directory exists
     releases_dir = _ensure_releases_dir(agent_name)
 
@@ -466,16 +657,29 @@ def create_release(agent_name: str, version: str, message: str = "", agents_dir:
     # Generate timestamp
     timestamp = datetime.now(timezone.utc).isoformat().replace('+00:00', 'Z')
 
-    # Create tar.gz archive. The snapshot is the agent working tree:
-    # the configured prompt, skills, tools, mcp, tests, and any other
-    # project file. .castignore paths are left out. .cast (undo log and
-    # this archive) and .git stay on disk and are not packed.
+    # Stamp agent.yaml before packing so the tarball and the working
+    # copy record the same release version. Only the version scalar
+    # changes. The snapshot is the agent working tree: the configured
+    # prompt, skills, tools, mcp, tests, and any other project file.
+    # .castignore paths are left out. .cast (undo log and this archive)
+    # and .git stay on disk and are not packed. If packing fails, put
+    # the original file back.
     tarball_filename = f"{version}.tar.gz"
     tarball_path = releases_dir / tarball_filename
+    original_yaml = agent_yaml_path.read_bytes() if agent_yaml_path.is_file() else None
+    if original_yaml is not None:
+        _set_agent_yaml_version(agent_yaml_path, version)
 
-    with tarfile.open(tarball_path, "w:gz") as tar:
-        for full, rel in _iter_snapshot_paths(agent_path):
-            tar.add(full, arcname=rel, recursive=False, filter=_reject_metadata)
+    try:
+        with tarfile.open(tarball_path, "w:gz") as tar:
+            for full, rel in _iter_snapshot_paths(agent_path):
+                tar.add(full, arcname=rel, recursive=False, filter=_reject_metadata)
+    except Exception:
+        if original_yaml is not None:
+            agent_yaml_path.write_bytes(original_yaml)
+        if tarball_path.exists():
+            tarball_path.unlink()
+        raise
 
     # Generate changelog
     last_release_change = get_latest_release_change_number(agent_name)
@@ -506,16 +710,6 @@ def create_release(agent_name: str, version: str, message: str = "", agents_dir:
 
     with open(releases_json_path, "w") as f:
         json.dump(releases_data, f, indent=2)
-
-    # Update agent.yaml version
-    agent_yaml_path = agent_path / "agent.yaml"
-    if agent_yaml_path.exists():
-        import yaml
-        with open(agent_yaml_path, "r") as f:
-            yaml_data = yaml.safe_load(f) or {}
-        yaml_data["version"] = version
-        with open(agent_yaml_path, "w") as f:
-            yaml.dump(yaml_data, f, default_flow_style=False, sort_keys=False)
 
     # Same writer the CLI, TUI, and builder use. Insert-if-absent so a
     # pre-existing SQLite row is not replaced. SQLite is local to this

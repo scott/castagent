@@ -58,23 +58,27 @@ cast release email-assistant 1.7
 cast release email-assistant 1.7 --message "Switched model + tightened permissions"
 ```
 
-`{% ref "cli:release" %}` does six things:
+`{% ref "cli:release" %}` does the following:
 
 1. Validates the semver format (`MAJOR.MINOR.PATCH`).
-2. Snapshots the current working tree into `releases/<version>.tar.gz`.
-   The tarball is the full agent: `agent.yaml`, the prompt named by
+2. Rejects a version lower than the `version` already in `agent.yaml`.
+   That file is left unchanged.
+3. Updates only the `version` field in `agent.yaml`. Other quoting,
+   comments, and list indentation stay as they were.
+4. Snapshots that working tree into `releases/<version>.tar.gz`, so the
+   tarball's `agent.yaml` records the release version. The tarball is
+   the full agent: `agent.yaml`, the prompt named by
    `brain.instructions_file` (that file is not always `instructions.md`),
    `skills/`, `tools/`, `mcp/`, `tests/`, memory notes, and any other
    project file. Paths listed in `.castignore` are left out, including
    the runtime memory database, logs, `.env`, `__pycache__/`, and
    `.cast/versions/`. `.cast/` (the undo log and release history) and
    `.git/` are not packed; restore leaves them on disk.
-3. Updates `agent.yaml` with `version: "<version>"`.
-4. Writes a row to `releases.json` with timestamp, message, and
+5. Writes a row to `releases.json` with timestamp, message, and
    auto-generated changelog.
-5. Records the release in the `releases` table of `cast.db`.
-6. Auto-generates a changelog from the changes since the previous release
-   and groups them by category (Features / Improvements / Config).
+6. Records the release in the `releases` table of `cast.db`.
+
+The changelog groups those changes by category (Features / Improvements / Config).
 
 The `--message` flag overrides the auto-generated message. If the version
 you're about to release corresponds to a breaking change (e.g. you removed

@@ -183,5 +183,50 @@ describe('release command', () => {
 
       expect(errorMessage).to.include('already exists')
     })
+
+    it('should reject a release lower than agent.yaml and leave the file unchanged', async () => {
+      const yamlPath = path.join(realAgentDir, 'agent.yaml')
+      const original = [
+        'name: bb-git',
+        'version: 1.1.0',
+        'description: "Keep this quoting"',
+        'tools:',
+        '  builtin:',
+        '    - bash',
+        '    - read',
+        '    - glob',
+        '',
+      ].join('\n')
+      fs.writeFileSync(yamlPath, original)
+
+      const instance = new Release(['release', agentName, '1.0'], {} as any)
+      instance.config = {runHook: async () => ({successes: [], failures: []})}
+      instance.parse = async () => ({
+        args: {agent: agentName, version: '1.0'},
+        flags: {},
+        argv: [],
+        raw: [],
+        metadata: {},
+        nonExistentFlags: [],
+      })
+
+      let errorMessage = ''
+      instance.error = (msg: string) => {
+        errorMessage = msg
+        throw new Error(msg)
+      }
+      instance.log = () => {}
+
+      try {
+        await instance.run()
+      } catch (e: any) {
+        // Expected
+      }
+
+      expect(errorMessage).to.include('lower than')
+      expect(errorMessage).to.include('1.1.0')
+      expect(fs.readFileSync(yamlPath, 'utf8')).to.equal(original)
+      expect(fs.existsSync(path.join(realAgentDir, '.cast', 'releases', 'releases.json'))).to.equal(false)
+    })
   })
 })
