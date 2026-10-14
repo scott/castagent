@@ -436,9 +436,12 @@ class TestCreateRelease:
             names = set(tar.getnames())
             prompt = tar.extractfile("bb-prompt.md").read().decode()
             leftover = tar.extractfile("instructions.md").read().decode()
+            packed_yaml = yaml.safe_load(tar.extractfile("agent.yaml").read().decode())
 
         assert prompt == "PROMPT v1\n"
         assert leftover == "# unused leftover\n"
+        assert packed_yaml["version"] == "1.0"
+        assert packed_yaml["brain"]["instructions_file"] == "bb-prompt.md"
         assert "skills/triage/SKILL.md" in names
         assert "tools/bb.py" in names
         assert "memory/user.md" in names
@@ -492,6 +495,130 @@ class TestCreateRelease:
         versioning.create_version(test_agent, source="cli", message="Added MCP server")
         info = releases.create_release(test_agent, "1.0", "First")
         assert "Added MCP server" in info.changelog
+
+
+def _read_tarball_text(tarball_path: str, name: str = "agent.yaml") -> str:
+    with tarfile.open(tarball_path) as tar:
+        extracted = tar.extractfile(name)
+        assert extracted is not None
+        return extracted.read().decode("utf-8")
+
+
+# =============================================================================
+# agent.yaml version stamping
+# =============================================================================
+class TestReleaseAgentYaml:
+    """create_release must not move agent.yaml backwards or reformat it.
+
+    The tarball is packed after the version field is updated, so restore
+    sees the release version.
+    """
+
+    def _write(self, temp_agents_dir, test_agent, text: str) -> Path:
+        path = temp_agents_dir / test_agent / "agent.yaml"
+        path.write_bytes(text.encode("utf-8"))
+        return path
+
+    def test_rejects_lower_version_without_touching_files(self, test_agent, temp_agents_dir):
+        original = (
+            "name: bb-git\n"
+            "version: 1.1.0\n"
+            'description: "Keep this quoting"\n'
+            "tools:\n"
+            "  builtin:\n"
+            "    - bash\n"
+            "    - read\n"
+            "    - glob\n"
+        )
+        yaml_path = self._write(temp_agents_dir, test_agent, original)
+        with pytest.raises(ValueError, match="lower than agent.yaml version '1.1.0'"):
+            releases.create_release(test_agent, "1.0", "backwards")
+        assert yaml_path.read_bytes() == original.encode("utf-8")
+        releases_dir = temp_agents_dir / test_agent / ".cast" / "releases"
+        assert not (releases_dir / "1.0.tar.gz").exists()
+        assert not (releases_dir / "releases.json").exists()
+
+    def test_preserves_formatting_and_tarball_matches(self, test_agent, temp_agents_dir):
+        original = (
+            "name: bb-git\n"
+            "version: 1.1.0\n"
+            'description: "Keep this quoting"\n'
+            "tools:\n"
+            "  builtin:\n"
+            "    - bash\n"
+            "    - read\n"
+            "    - glob\n"
+        )
+        expected = original.replace("version: 1.1.0", "version: 1.2.0", 1)
+        yaml_path = self._write(temp_agents_dir, test_agent, original)
+        info = releases.create_release(test_agent, "1.2.0", "forward")
+        assert yaml_path.read_bytes() == expected.encode("utf-8")
+        assert _read_tarball_text(info.tarball_path) == expected
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "restored"
+            target.mkdir()
+            releases.extract_release(test_agent, "1.2.0", target)
+            assert (target / "agent.yaml").read_text(encoding="utf-8") == expected
+
+    def test_keeps_quote_style_for_two_part_version(self, test_agent, temp_agents_dir):
+        original = "name: bb-git\nversion: '1.1.0'\ndescription: \"Keep this quoting\"\n"
+        expected = "name: bb-git\nversion: '1.2'\ndescription: \"Keep this quoting\"\n"
+        yaml_path = self._write(temp_agents_dir, test_agent, original)
+        info = releases.create_release(test_agent, "1.2", "minor")
+        assert yaml_path.read_bytes() == expected.encode("utf-8")
+        assert _read_tarball_text(info.tarball_path) == expected
+        loaded = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        assert loaded["version"] == "1.2"
+        assert isinstance(loaded["version"], str)
+
+    def test_same_version_keeps_file_bytes(self, test_agent, temp_agents_dir):
+        original = "name: bb-git\nversion: 1.1.0\ndescription: \"Keep\"\n"
+        yaml_path = self._write(temp_agents_dir, test_agent, original)
+        info = releases.create_release(test_agent, "1.1.0", "same")
+        assert yaml_path.read_bytes() == original.encode("utf-8")
+        assert _read_tarball_text(info.tarball_path) == original
+
+    def test_equivalent_two_part_is_not_a_downgrade(self, test_agent, temp_agents_dir):
+        original = "name: bb-git\nversion: 1.1.0\n"
+        expected = 'name: bb-git\nversion: "1.1"\n'
+        yaml_path = self._write(temp_agents_dir, test_agent, original)
+        info = releases.create_release(test_agent, "1.1", "same number")
+        assert yaml_path.read_bytes() == expected.encode("utf-8")
+        assert _read_tarball_text(info.tarball_path) == expected
+        loaded = yaml.safe_load(yaml_path.read_text(encoding="utf-8"))
+        assert loaded["version"] == "1.1"
+        assert isinstance(loaded["version"], str)
+
+    def test_numeric_compare_rejects_1_2_against_1_10(self, test_agent, temp_agents_dir):
+        original = "name: bb-git\nversion: 1.10.0\n"
+        yaml_path = self._write(temp_agents_dir, test_agent, original)
+        with pytest.raises(ValueError, match="lower than agent.yaml version '1.10.0'"):
+            releases.create_release(test_agent, "1.2", "not newer")
+        assert yaml_path.read_bytes() == original.encode("utf-8")
+
+    def test_preserves_comment_and_crlf(self, test_agent, temp_agents_dir):
+        original = "name: bb-git\r\nversion: 1.1.0 # current\r\ndescription: \"Keep\"\r\n"
+        expected = "name: bb-git\r\nversion: 1.2.0 # current\r\ndescription: \"Keep\"\r\n"
+        yaml_path = self._write(temp_agents_dir, test_agent, original)
+        info = releases.create_release(test_agent, "1.2.0", "crlf")
+        assert yaml_path.read_bytes() == expected.encode("utf-8")
+        assert _read_tarball_text(info.tarball_path) == expected
+
+    def test_appends_version_when_key_is_missing(self, test_agent, temp_agents_dir):
+        original = "name: bb-git\ndescription: \"Keep this quoting\"\n"
+        expected = original + 'version: "1.0"\n'
+        yaml_path = self._write(temp_agents_dir, test_agent, original)
+        info = releases.create_release(test_agent, "1.0", "first")
+        assert yaml_path.read_bytes() == expected.encode("utf-8")
+        assert _read_tarball_text(info.tarball_path) == expected
+
+    def test_non_semver_current_version_does_not_block(self, test_agent, temp_agents_dir):
+        original = "name: bb-git\nversion: latest\ndescription: \"Keep\"\n"
+        expected = 'name: bb-git\nversion: "1.0"\ndescription: "Keep"\n'
+        yaml_path = self._write(temp_agents_dir, test_agent, original)
+        releases.create_release(test_agent, "1.0", "replace label")
+        assert yaml_path.read_bytes() == expected.encode("utf-8")
 
 
 # =============================================================================

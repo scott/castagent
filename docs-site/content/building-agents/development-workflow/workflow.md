@@ -58,11 +58,12 @@ See [TUI overview](building-agents/development-workflow/tui/overview),
 cast release <name> 1.0
 ```
 
-`cast release` snapshots the working tree into
-`releases/1.0.tar.gz` (project files except `.castignore` paths,
-`.cast/`, and `.git/`) and updates `agent.yaml`'s `version`. The
-auto-generated changelog is your record of what changed since the
-last release.
+`cast release` sets `agent.yaml`'s `version` to the release you named,
+then snapshots that working tree into `releases/1.0.tar.gz`. The
+tarball is the project files except `.castignore` paths, `.cast/`, and
+`.git/`. A version lower than the one already in `agent.yaml` is
+rejected and the file is left unchanged. The auto-generated changelog
+is your record of what changed since the last release.
 
 See [Releases](building-agents/deployment/releases).
 
