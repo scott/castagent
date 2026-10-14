@@ -13,7 +13,7 @@ linked from the sidebar.
 Two kinds of pages:
 
 1. **Reference** — auto-generated from the Cast Agent source code.
-   - `/cli/reference` — every `cast <command>`, parsed from `typescript/cast-cli/src/commands/`.
+   - `/cli/reference` — every `cast <command>`, parsed from `typescript/cast-cli/src/commands/`. A file named `index.ts` is the oclif topic command (`commands/session/index.ts` is `cast session`). The extractor does not publish a command segment named `index`.
    - `/tui/slash-commands` — every `/command`, parsed from `typescript/cast-tui/src/commands/slash-registry.ts`.
    - `/deployment/providers` — every built-in provider, read from `typescript/cast-cli/src/lib/deploy/providers.manifest.json`.
    - `/changelog` — every release, parsed from `CHANGELOG.md`.

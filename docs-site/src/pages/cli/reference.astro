@@ -6,10 +6,18 @@ import { getCliCommands } from '../../lib/manifest.ts'
 const commands = getCliCommands().sort((a, b) => a.full.localeCompare(b.full))
 const pagePath = Astro.url.pathname.replace(/\/$/, '') || ''
 
-// Group by topic (first segment of the command path)
+// Top-level commands live under Core. A topic command such as `cast session`
+// (from session/index.ts) stays with the subcommands that share its name.
+function groupKey(command: (typeof commands)[number]): string {
+  const name = command.full.replace(/^cast /, '')
+  if (name.includes(' ')) return command.topic
+  const hasSubcommands = commands.some((other) => other.full.startsWith(`${command.full} `))
+  return hasSubcommands ? name : 'core'
+}
+
 const groups = new Map<string, typeof commands>()
 for (const c of commands) {
-  const topic = c.topic === c.id ? 'core' : c.topic
+  const topic = groupKey(c)
   const list = groups.get(topic) ?? []
   list.push(c)
   groups.set(topic, list)
