@@ -71,7 +71,9 @@ that registry write fails, Cast stops and removes the container and its
 memory volume before exiting. A container that exits before it is ready
 stays in place so `docker logs cast-<name>` still works. `cast logs <name>`
 prints those same container logs. Pass the deployment SHA when more than
-one live deployment exists.
+one live deployment exists. `cast stop <name>` stops the running
+container and leaves the deployment row and the `cast-<name>` memory
+volume in place. `cast shutdown` removes both.
 
 ## What gets shipped
 

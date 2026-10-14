@@ -412,7 +412,7 @@ export default class DockerDeploy extends Command {
     this.log(`  docker logs -f ${containerName}`)
     this.log('')
     this.log('To stop:')
-    this.log(`  docker stop ${containerName}`)
+    this.log(`  cast stop ${agentName}`)
   }
 
   static async destroy(agentName: string): Promise<void> {
