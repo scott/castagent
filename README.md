@@ -152,7 +152,7 @@ cast dev demo-agent
 # Start without TUI (headless)
 cast dev demo-agent --no-tui
 
-# View agent logs
+# View agent logs (local runtime output, or Docker container logs)
 cast logs demo-agent
 
 # Stop a running agent

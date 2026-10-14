@@ -84,7 +84,7 @@
     {
       "id": "logs",
       "full": "cast logs",
-      "description": "View runtime logs"
+      "description": "Print local runtime logs or Docker container logs"
     },
     {
       "id": "test",

@@ -22,6 +22,7 @@ import {
   tuiEntryCandidates,
   type ResumeUiMode,
 } from '../../lib/session-resume'
+import {attachRuntimeLog} from '../../lib/runtime-logs'
 
 /**
  * Open the TUI on a saved session.
@@ -214,13 +215,14 @@ export default class SessionResume extends Command {
 
     this.log(`Starting ${agentName} in development mode...`)
     const runtime = spawn(python.command, devRuntimeArgs(agentPath, 0), {
-      stdio: ['pipe', 'pipe', 'inherit'],
+      stdio: ['pipe', 'pipe', 'pipe'],
       env: {
         ...process.env,
         CAST_AGENT_NAME: agentName,
         PYTHONPATH: python.pythonPath,
       },
     })
+    attachRuntimeLog(agentName, runtime)
 
     let agentPort: number | null = null
     try {
