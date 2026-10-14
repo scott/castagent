@@ -129,6 +129,36 @@ export function dockerVolumeRemovalMessage(volumeId: string, result: DockerComma
   return `Note: Memory volume '${volumeId}' could not be removed (may be in use or already deleted).`
 }
 
+/** Local image tag `cast deploy --provider docker` builds and runs. */
+export function dockerImageName(agentName: string): string {
+  return `cast-${agentName}:latest`
+}
+
+export function dockerImageRemovalMessage(imageName: string, result: DockerCommandResult): string | null {
+  if (result.exitCode === 0) return `Docker image '${imageName}' has been removed.`
+  const detail = `${result.stderr}\n${result.stdout}`
+  if (/no such image/i.test(detail)) return null
+  return `Note: Docker image '${imageName}' could not be removed (may be in use or already deleted).`
+}
+
+export async function removeDockerImage(
+  agentName: string,
+  run: DockerRunner,
+  log: (message: string) => void = console.log,
+): Promise<void> {
+  const imageName = dockerImageName(agentName)
+  let result: DockerCommandResult
+  try {
+    result = await run(['rmi', imageName])
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    log(`Note: Docker image '${imageName}' could not be removed (${message}).`)
+    return
+  }
+  const line = dockerImageRemovalMessage(imageName, result)
+  if (line) log(line)
+}
+
 async function readDockerVolumeNames(run: DockerRunner): Promise<string[] | null> {
   try {
     const result = await run(['volume', 'ls', '--format', '{{.Name}}'])
@@ -309,7 +339,7 @@ export default class DockerDeploy extends Command {
     this.createDockerignore(agentPath)
     this.createRequirementsTxt(projectRoot, agentPath)
 
-    const imageName = `cast-${agentName}:latest`
+    const imageName = dockerImageName(agentName)
     const containerName = `cast-${agentName}`
 
     // Build Docker image
@@ -433,6 +463,7 @@ export default class DockerDeploy extends Command {
       .filter((row: {provider?: string}) => row.provider === 'docker')
       .map((row: {volume_id?: string | null}) => row.volume_id)
     await removeDockerMemoryVolumes(agentName, recorded, dockerRunner())
+    await removeDockerImage(agentName, dockerRunner())
   }
 
   private createDockerfile(agentPath: string): void {

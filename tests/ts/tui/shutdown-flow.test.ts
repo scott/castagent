@@ -179,6 +179,8 @@ describe('shutdown flow helpers', () => {
     expect(shutdownStageFromLine('Marked all deployments as deleted in database.')).to.equal('Updating database')
     expect(shutdownStageFromLine('Marked deployment d6b12f as deleted in database.')).to.equal('Updating database')
     expect(shutdownStageFromLine('Removed auth token from keychain.')).to.equal('Removing credentials')
+    expect(shutdownStageFromLine('Removed auth token from token file.')).to.equal('Removing credentials')
+    expect(shutdownStageFromLine('Removed auth token for deployment bb7590 from token file.')).to.equal('Removing credentials')
     expect(shutdownStageFromLine("Agent 'email' has been shut down.")).to.equal('Finished')
     expect(shutdownStageFromLine('nothing to see')).to.equal(null)
   })

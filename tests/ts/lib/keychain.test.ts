@@ -161,7 +161,7 @@ describe('KeychainManager', () => {
 
       expect(keytarStub.calledOnce).to.be.true
       expect(keytarStub.firstCall.args).to.deep.equal(['cast', 'token:my-agent'])
-      expect(result).to.be.true
+      expect(result).to.deep.equal({removed: true, stores: ['keychain']})
     })
 
     it('should return false on error', async () => {
@@ -169,7 +169,7 @@ describe('KeychainManager', () => {
 
       const result = await keychain.deleteToken('my-agent')
 
-      expect(result).to.be.false
+      expect(result).to.deep.equal({removed: false, stores: []})
     })
 
     it('should return false when token does not exist', async () => {
@@ -177,7 +177,7 @@ describe('KeychainManager', () => {
 
       const result = await keychain.deleteToken('my-agent')
 
-      expect(result).to.be.false
+      expect(result).to.deep.equal({removed: false, stores: []})
     })
   })
 
@@ -463,7 +463,7 @@ describe('KeychainManager - Error Handling', () => {
     sandbox.stub(require('keytar'), 'deletePassword').rejects(new Error('Keychain error'))
 
     const result = await keychain.deleteToken('my-agent')
-    expect(result).to.be.false
+    expect(result).to.deep.equal({removed: false, stores: []})
   })
 
   it('should handle set errors gracefully without throwing', async () => {

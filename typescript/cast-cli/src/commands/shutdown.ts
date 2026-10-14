@@ -8,6 +8,29 @@ import {
   listDeploymentProviders,
 } from '../lib/deploy/registry'
 import type {DeploymentRow} from '../lib/deploy/types'
+import type {TokenStore} from '../lib/keychain'
+
+/** Empty stores keep the historical keychain line when a delete result named no place. */
+export function shutdownTokenPlace(stores: ReadonlyArray<TokenStore>): string {
+  const names = new Set(stores)
+  const parts: string[] = []
+  if (names.has('keychain')) parts.push('keychain')
+  if (names.has('file')) parts.push('token file')
+  if (parts.length === 0) parts.push('keychain')
+  return parts.join(' and ')
+}
+
+export function shutdownTokenRemovalMessage(
+  scope: 'agent' | 'deployment',
+  stores: ReadonlyArray<TokenStore>,
+  deploymentSha: string,
+): string {
+  const place = shutdownTokenPlace(stores)
+  if (scope === 'deployment') {
+    return `Removed auth token for deployment ${deploymentSha} from ${place}.`
+  }
+  return `Removed auth token from ${place}.`
+}
 
 export const PROVIDER_DESTROYERS: Record<string, (agentName: string, deployment?: DeploymentRow) => Promise<void>> = {}
 
@@ -153,10 +176,8 @@ export default class Shutdown extends Command {
 
     try {
       const forgotten = await forgetDeploymentTokens(agentName, removed, remaining)
-      if (forgotten === 'agent') {
-        this.log('Removed auth token from keychain.')
-      } else if (forgotten === 'deployment') {
-        this.log(`Removed auth token for deployment ${deploymentSha} from keychain.`)
+      if (forgotten.scope === 'agent' || forgotten.scope === 'deployment') {
+        this.log(shutdownTokenRemovalMessage(forgotten.scope, forgotten.stores, deploymentSha))
       } else if (remaining.length > 0) {
         this.log('Left the auth token in place for the remaining deployment.')
       }

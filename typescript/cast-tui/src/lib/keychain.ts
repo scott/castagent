@@ -2,7 +2,7 @@ const isBun = typeof (globalThis as any).Bun !== 'undefined'
 
 export interface KeychainApi {
   getToken(agentName: string): Promise<string | null>
-  deleteToken(agentName: string): Promise<boolean>
+  deleteToken(agentName: string): Promise<{removed: boolean; stores: Array<'keychain' | 'file'>}>
 }
 
 let keychainInstance: KeychainApi | null = null

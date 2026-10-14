@@ -5,7 +5,7 @@ import * as fs from 'fs'
 import crypto from 'crypto'
 import YAML from 'yaml'
 import { db } from '../sqlite'
-import { keychain } from '../keychain'
+import { keychain, type TokenStore } from '../keychain'
 
 const CAST_DIR = path.join(os.homedir(), '.cast')
 const CONFIG_PATH = path.join(CAST_DIR, 'config.yaml')
@@ -341,30 +341,76 @@ export function missingDeploymentAuthMessage(
   return lines.join('\n')
 }
 
-/** Drop keychain entries that belong to the rows just shut down. Leave tokens other live rows still need. */
+export interface ForgottenDeploymentTokens {
+  scope: 'agent' | 'deployment' | 'none'
+  stores: TokenStore[]
+}
+
+/** A boolean `true` is the older deleteToken result and means the keychain. */
+export function storesFromTokenDelete(result: unknown): TokenStore[] {
+  if (result === true) return ['keychain']
+  if (!result || typeof result !== 'object' || !('stores' in result)) return []
+  const stores = (result as {stores?: unknown}).stores
+  if (!Array.isArray(stores)) return []
+  const found = new Set<TokenStore>()
+  for (const store of stores) {
+    if (store === 'keychain' || store === 'file') found.add(store)
+  }
+  return orderedTokenStores(found)
+}
+
+export function orderedTokenStores(stores: Iterable<TokenStore>): TokenStore[] {
+  const found = stores instanceof Set ? stores : new Set(stores)
+  const ordered: TokenStore[] = []
+  if (found.has('keychain')) ordered.push('keychain')
+  if (found.has('file')) ordered.push('file')
+  return ordered
+}
+
+function tokenDeleteRemoved(result: unknown): boolean {
+  if (typeof result === 'boolean') return result
+  if (result && typeof result === 'object' && 'removed' in result) {
+    return (result as {removed?: unknown}).removed === true
+  }
+  return storesFromTokenDelete(result).length > 0
+}
+
+function absorbTokenStores(into: Set<TokenStore>, result: unknown): boolean {
+  for (const store of storesFromTokenDelete(result)) into.add(store)
+  return tokenDeleteRemoved(result)
+}
+
+/** Drop stored tokens that belong to the rows just shut down. Leave tokens other live rows still need. */
 export async function forgetDeploymentTokens(
   agentName: string,
   removed: ShutdownTargetRow[],
   remaining: ShutdownTargetRow[],
-): Promise<'agent' | 'deployment' | 'none'> {
+): Promise<ForgottenDeploymentTokens> {
+  const stores = new Set<TokenStore>()
   let removedDeploymentToken = false
   for (const row of removed) {
     if (!row.id) continue
-    if (await keychain.deleteDeploymentToken(row.id)) removedDeploymentToken = true
+    if (absorbTokenStores(stores, await keychain.deleteDeploymentToken(row.id))) {
+      removedDeploymentToken = true
+    }
   }
+  const finish = (scope: ForgottenDeploymentTokens['scope']): ForgottenDeploymentTokens => ({
+    scope,
+    stores: orderedTokenStores(stores),
+  })
   if (remaining.length === 0) {
-    await keychain.deleteToken(agentName)
-    return 'agent'
+    absorbTokenStores(stores, await keychain.deleteToken(agentName))
+    return finish('agent')
   }
   const agentToken = await keychain.getToken(agentName)
-  if (!agentToken) return removedDeploymentToken ? 'deployment' : 'none'
+  if (!agentToken) return finish(removedDeploymentToken ? 'deployment' : 'none')
   const hash = keychain.hashToken(agentToken)
   const owns = (row: ShutdownTargetRow) => Boolean(row.auth_token_hash) && row.auth_token_hash === hash
   if (removed.some(owns) && !remaining.some(owns)) {
-    await keychain.deleteToken(agentName)
-    return 'agent'
+    absorbTokenStores(stores, await keychain.deleteToken(agentName))
+    return finish('agent')
   }
-  return removedDeploymentToken ? 'deployment' : 'none'
+  return finish(removedDeploymentToken ? 'deployment' : 'none')
 }
 
 export function ensureDockerfile(agentPath: string): void {
