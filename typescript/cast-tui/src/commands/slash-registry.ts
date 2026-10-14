@@ -3539,6 +3539,10 @@ const commands: SlashCommand[] = [
             'memory/memory.db-journal',
             'memory/memory.db-wal',
             'memory/memory.db-shm',
+            '/Dockerfile',
+            '/docker-compose.yml',
+            '/requirements.txt',
+            '/.cast-runtime/',
           ].join('\n') + '\n'
           fs.writeFileSync(path.join(agentPath, '.gitignore'), ignoreContents)
           fs.writeFileSync(path.join(agentPath, '.castignore'), ignoreContents)

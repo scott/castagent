@@ -13,6 +13,10 @@ memory/memory.db
 memory/memory.db-journal
 memory/memory.db-wal
 memory/memory.db-shm
+/Dockerfile
+/docker-compose.yml
+/requirements.txt
+/.cast-runtime/
 """
 
 
@@ -32,6 +36,17 @@ def test_default_rules_skip_runtime_state():
     assert _ignored(DEFAULT, ".cast/versions/001.tar.gz")
     assert _ignored(DEFAULT, "pkg/__pycache__", is_dir=True)
     assert _ignored(DEFAULT, "pkg/__pycache__/x.pyc")
+
+
+def test_default_rules_skip_docker_deploy_artifacts():
+    assert _ignored(DEFAULT, "Dockerfile")
+    assert _ignored(DEFAULT, "docker-compose.yml")
+    assert _ignored(DEFAULT, "requirements.txt")
+    assert _ignored(DEFAULT, ".cast-runtime", is_dir=True)
+    assert _ignored(DEFAULT, ".cast-runtime/cast/runtime.py")
+    assert not _ignored(DEFAULT, "tools/requirements.txt")
+    assert not _ignored(DEFAULT, "tools/Dockerfile")
+    assert not _ignored(DEFAULT, "pkg/docker-compose.yml")
 
 
 def test_default_rules_keep_project_files():

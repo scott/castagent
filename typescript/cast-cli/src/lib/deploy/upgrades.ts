@@ -10,6 +10,7 @@ import {
   inferenceEnv,
   resolveDeploymentAuthToken,
 } from './deploy-utils'
+import {writeDockerCompose} from './docker'
 import {writeHostMotdOverSsh} from './motd'
 import {writeRequirementsTxt} from './requirements'
 
@@ -157,6 +158,11 @@ export async function upgradeDockerDeployment(
   createDockerfile(agentPath)
   createDockerignore(agentPath)
   createRequirementsTxt(projectRoot, agentPath)
+  writeDockerCompose(agentPath, {
+    agentName,
+    port: 8080,
+    volumeId: existingVolumeId || undefined,
+  })
 
   host.log('Building Docker image...')
   const {spawn} = await import('child_process')

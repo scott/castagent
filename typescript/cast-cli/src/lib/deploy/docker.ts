@@ -5,6 +5,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 
+import {ensureDockerDeployArtifactsIgnored} from '../cast-ignore'
 import {db} from '../sqlite'
 import {containerHealthFailureMessage, probeDockerContainer, waitForContainerHealth} from './container-health'
 import {execCommand, inferenceEnv, generateDeploymentId, getVolumeName, createMemoryVolume, deleteMemoryVolume, createDockerignore, storeAuthToken} from './deploy-utils'
@@ -112,7 +113,7 @@ export default class DockerDeploy extends Command {
 
     this.createDockerignore(agentPath)
     this.createRequirementsTxt(projectRoot, agentPath)
-    this.createDockerCompose(agentPath, agentName, flags.port, authToken, volumeId)
+    writeDockerCompose(agentPath, {agentName, port: flags.port, volumeId})
 
     const imageName = `cast-${agentName}:latest`
     const containerName = `cast-${agentName}`
@@ -264,40 +265,47 @@ CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "80
     // pyproject.toml dependencies and agent.yaml runtime.requirements are kept.
     writeRequirementsTxt(projectRoot, agentPath)
   }
+}
 
-  private createDockerCompose(
-    agentPath: string,
-    agentName: string,
-    port: number,
-    authToken: string,
-    volumeId: string,
-  ): void {
-    const inferenceLines = Object.entries(inferenceEnv())
-      .map(([key, value]) => `      - ${key}=${value}`)
-      .join('\n')
-    const compose = `version: '3.8'
+export interface DockerComposeOptions {
+  agentName: string
+  port: number
+  volumeId?: string
+}
 
-services:
-  ${agentName}:
-    build:
-      context: .
-      dockerfile: Dockerfile
-    container_name: cast-${agentName}
-    ports:
-      - "${port}:8080"
-    environment:
-      - CAST_AGENT_NAME=${agentName}
-      - CAST_AGENT_PATH=/app/agent
-      - AUTH_TOKEN=${authToken}
-      - PYTHONPATH=/app
-${inferenceLines}
-    volumes:
-      - ${volumeId}:/app/agent/memory
-    restart: unless-stopped
-
-volumes:
-  ${volumeId}:
-`
-    fs.writeFileSync(path.join(agentPath, 'docker-compose.yml'), compose)
+/**
+ * Compose file for a local Docker deploy.
+ * The bearer token and provider API keys are passed to `docker run` and
+ * are not written here. `cast git` ignores this file.
+ */
+export function renderDockerCompose(opts: DockerComposeOptions): string {
+  const lines = [
+    "version: '3.8'",
+    '',
+    'services:',
+    `  ${opts.agentName}:`,
+    '    build:',
+    '      context: .',
+    '      dockerfile: Dockerfile',
+    `    container_name: cast-${opts.agentName}`,
+    '    ports:',
+    `      - "${opts.port}:8080"`,
+    '    environment:',
+    `      - CAST_AGENT_NAME=${opts.agentName}`,
+    '      - CAST_AGENT_PATH=/app/agent',
+    '      - PYTHONPATH=/app',
+  ]
+  if (opts.volumeId) {
+    lines.push('    volumes:', `      - ${opts.volumeId}:/app/agent/memory`)
   }
+  lines.push('    restart: unless-stopped')
+  if (opts.volumeId) {
+    lines.push('', 'volumes:', `  ${opts.volumeId}:`)
+  }
+  return `${lines.join('\n')}\n`
+}
+
+export function writeDockerCompose(agentPath: string, opts: DockerComposeOptions): void {
+  fs.writeFileSync(path.join(agentPath, 'docker-compose.yml'), renderDockerCompose(opts))
+  ensureDockerDeployArtifactsIgnored(agentPath)
 }

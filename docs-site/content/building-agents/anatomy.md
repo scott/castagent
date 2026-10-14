@@ -75,11 +75,16 @@ changes show up as files on disk.
   semantic versions; `cast release` writes here. `releases.json` stores
   `tarball_path` relative to the agent directory. See
   [Releases](building-agents/deployment/releases).
-- **`Dockerfile`**, **`requirements.txt`**, **`docker-compose.yml`** — generated
+- **`Dockerfile`**, **`requirements.txt`**, **`docker-compose.yml`** are generated
   on each `cast deploy` (or `cast upgrade`) and overwritten on the next
   deploy. Do not hand-edit. `requirements.txt` lists the Cast runtime's
   Python dependencies from `python/pyproject.toml` and any packages in
-  `runtime.requirements`.
+  `runtime.requirements`. The compose file records the service name,
+  published port, and memory volume. It does not contain the deployment
+  bearer token or provider API keys. Deploy passes those to the container
+  as environment variables and stores the bearer token in the keychain.
+  The default ignore file excludes these three paths and `.cast-runtime/`,
+  so `cast git commit` does not publish them.
 - **`.git/`** — present if you ran `cast git init`. `cast git commit` and
   `cast git push` operate on it.
 
