@@ -40,6 +40,12 @@ The volume is **keyed by the agent name**, not the deployment SHA. So
 when you `cast upgrade <sha> 1.7`, the new container
 reattaches the same volume and the agent's memories are intact.
 
+A Docker deploy mounts `cast-<name>`. The next deploy reuses that volume
+instead of creating another one. If the registry still points at an older
+`cast-<name>-<deployment-id>-memory` volume, Cast copies its files into
+`cast-<name>` and mounts that. The log says `Creating memory volume` only
+when a volume is created, and `Reusing memory volume` when it is not.
+
 ## The volume_config field
 
 Cast records the volume configuration in the `deployments` table
@@ -50,8 +56,10 @@ upgrade.
 which skips the confirmation prompt. Shutdown runs that provider's
 destroy handler:
 
-- Docker removes the container, then removes the memory volume recorded
-  for that deployment.
+- Docker removes the container, then removes the `cast-<name>` memory
+  volume. Older volumes named `cast-<name>-<deployment-id>-memory` are
+  removed as well. Cast reports a volume as removed only when Docker
+  deletes it.
 - Railway runs `railway down` and leaves the Railway volume in place.
 - Fly destroys the app and then attempts to delete its memory volume.
 - DigitalOcean Droplet shutdown deletes the droplet and then attempts
