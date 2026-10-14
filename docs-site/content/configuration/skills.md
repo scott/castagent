@@ -38,8 +38,11 @@ cast skills add email-agent --github owner/repo
 cast skills add email-agent --github owner/repo --ref main --subpath skills/triage
 cast skills add email-agent --folder ~/skills/triage
 cast skills add email-agent --name triage --description "Sort incoming mail into buckets" --body "# Triage"
+echo '# Triage' | cast skills add email-agent --name triage --description "Sort incoming mail into buckets" --body -
 cast skills remove email-agent triage
 ```
+
+`--body -` reads the markdown body from stdin. `cast builder-skills add` accepts the same `--body -`.
 
 GitHub installs shallow-clone the repo. If `SKILL.md` or `skill.md` is at the
 repo root or at `--subpath`, that directory is the skill. If the repo contains

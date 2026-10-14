@@ -9,6 +9,7 @@ import {
   removeBuilderSkill,
   type SkillCandidate,
 } from '../lib/builder-skills'
+import {readSkillBody} from '../lib/skills'
 
 export default class BuilderSkills extends Command {
   static description = 'List, add, or remove skills the builder uses when creating agents'
@@ -20,16 +21,21 @@ export default class BuilderSkills extends Command {
     '<%= config.bin %> <%= command.id %> add --github owner/repo --ref main --subpath skills/tool-style',
     '<%= config.bin %> <%= command.id %> add --folder ./my-skill',
     '<%= config.bin %> <%= command.id %> add --name cast-tool-style --description "How this team writes a Python tool" --body "When scaffolding a custom tool, ..."',
+    '<%= config.bin %> <%= command.id %> add --name cast-tool-style --description "How this team writes a Python tool" --body -',
     '<%= config.bin %> <%= command.id %> remove cast-tool-style',
   ]
 
+  // oclif feeds stdin to the first missing arg. That would consume the pipe
+  // before `--body -` can read the markdown, so every arg opts out.
   static args = {
     action: Args.string({
       description: 'add or remove. Omit to list builder skills.',
       options: ['add', 'remove'],
+      ignoreStdin: true,
     }),
     skillName: Args.string({
       description: 'Skill name to remove',
+      ignoreStdin: true,
     }),
   }
 
@@ -131,7 +137,7 @@ export default class BuilderSkills extends Command {
     if (!flags.name || flags.description === undefined || flags.body === undefined) {
       throw new BuilderSkillError('Adding a skill directly requires --name, --description, and --body.')
     }
-    const body = flags.body === '-' ? fs.readFileSync(0, 'utf8') : flags.body
+    const body = readSkillBody(flags.body, () => fs.readFileSync(0, 'utf8'))
     const skill = installFromFields({name: flags.name, description: flags.description, body})
     this.reportInstalled(skill, flags.json)
   }
