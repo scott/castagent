@@ -8,6 +8,8 @@ import {Command} from '@oclif/core'
 // Import the deploy command to test its structure
 import DeployCommand from '../../../typescript/cast-cli/src/commands/deploy'
 import {resetDeploymentProviderRegistry} from '../../../typescript/cast-cli/src/lib/deploy/registry'
+import {_setExecPythonForTests} from '../../../typescript/cast-cli/src/lib/releases'
+import {db} from '../../../typescript/cast-cli/src/lib/sqlite'
 
 beforeEach(() => {
   resetDeploymentProviderRegistry()
@@ -608,4 +610,97 @@ describe('Deploy Command - Run Method', () => {
       expect(e.message).to.include('not found') || expect(e.message).to.include('Docker')
     }
   })
+})
+
+describe('Deploy Command - local provider', () => {
+  const NOT_IMPLEMENTED = 'Not yet implemented. Use --provider docker for now.'
+
+  function oclifError(message: string): never {
+    const error = new Error(message) as Error & {oclif: {exit: number}}
+    error.oclif = {exit: 1}
+    throw error
+  }
+
+  async function deployLocal(agentName: string, version: string): Promise<{logs: string[]; error: Error & {oclif?: {exit: number}}}> {
+    const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
+    fs.mkdirSync(agentDir, {recursive: true})
+    fs.writeFileSync(path.join(agentDir, 'agent.yaml'), `name: ${agentName}\ndescription: local deploy test\n`)
+
+    const instance = new DeployCommand(['deploy', agentName, '--provider', 'local', '--version', version], {} as any)
+    ;(instance as any).config = {
+      runHook: async () => ({successes: [], failures: []}),
+      name: 'deploy',
+      bin: 'cast',
+    }
+    ;(instance as any).parse = async () => ({
+      args: {agent: agentName},
+      flags: {provider: 'local', version, force: true, port: 8080, 'with-tui': false},
+      argv: [],
+      raw: [],
+      metadata: {},
+      nonExistentFlags: [],
+    })
+    const logs: string[] = []
+    instance.log = (message?: string) => {
+      logs.push(message ?? '')
+    }
+    instance.error = ((message: string) => oclifError(message)) as typeof instance.error
+
+    let error: Error & {oclif?: {exit: number}} | undefined
+    try {
+      await instance.run()
+    } catch (caught) {
+      error = caught as Error & {oclif?: {exit: number}}
+    }
+    if (!error) throw new Error('local deploy resolved')
+    return {logs, error}
+  }
+
+  afterEach(() => {
+    _setExecPythonForTests(null)
+  })
+
+  for (const version of ['latest', '1.0']) {
+    it(`exits with an error for --version ${version} and does not record a deployment`, async () => {
+      const agentName = `deploy-test-local-${version}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      const previousSha = process.env.CAST_DEPLOYMENT_SHA
+      if (version !== 'latest') {
+        _setExecPythonForTests((_command, args) => {
+          const script = fs.readFileSync(String(args[0]), 'utf8')
+          if (script.includes('get_release')) {
+            return JSON.stringify({
+              version: '1.0',
+              change_number: 1,
+              message: 'ship',
+              changelog: '',
+              created_at: '2026-05-12T17:08:33.000Z',
+              tarball_path: '/tmp/1.0.tar.gz',
+            })
+          }
+          if (script.includes('extract_release')) return ''
+          throw new Error(`unexpected release script: ${script.slice(0, 120)}`)
+        })
+      }
+
+      try {
+        const {logs, error} = await deployLocal(agentName, version)
+        const output = logs.join('\n')
+        expect(error.message).to.equal(NOT_IMPLEMENTED)
+        expect(error.oclif?.exit).to.equal(1)
+        expect(output).to.not.include('Deployed ')
+        expect(output).to.not.include('deployment SHA')
+        expect(output).to.not.include('Connect with:')
+        expect(output).to.not.include('Spawning agent')
+        if (version !== 'latest') {
+          expect(output).to.include('Using release 1.0 from /tmp/1.0.tar.gz')
+        }
+        expect(db.listDeployments(agentName)).to.deep.equal([])
+      } finally {
+        if (previousSha === undefined) delete process.env.CAST_DEPLOYMENT_SHA
+        else process.env.CAST_DEPLOYMENT_SHA = previousSha
+        db.deleteAgent(agentName)
+        fs.rmSync(path.join(os.homedir(), '.cast', 'agents', agentName), {recursive: true, force: true})
+      }
+    })
+  }
 })

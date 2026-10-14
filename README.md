@@ -208,6 +208,8 @@ Cast Agent supports deploying agents to multiple platforms:
 | **Fly.io** | Deploy to Fly.io's global edge network | `cast deploy demo-agent --provider fly` |
 | **Sprites** | Firecracker VMs on Fly.io. The agent runs as a sprite service and comes back after the VM wakes. | `cast deploy demo-agent --provider sprites` |
 
+`--provider local` is not implemented. `cast deploy <agent> --provider local` exits with an error and does not record a deployment. Use `--provider docker` to run on this machine.
+
 Each provider handles the complete deployment lifecycle including building, provisioning, and configuration. After deployment, connect to your running agent with:
 
 ```bash

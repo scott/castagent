@@ -43,7 +43,12 @@ short version:
 | **DigitalOcean MicroVM** | pause/resume Firecracker VM in MKC1 (public preview) | yes | no |
 | **Sprites** | tiny Firecracker VMs on Fly | yes | no |
 | **Docker** | self-hosted Docker on this machine | yes | n/a |
-| **Local** | no container, run on this host | no | n/a |
+| **Local** | not implemented; use Docker on this machine | no | n/a |
+
+`cast deploy --provider local` is not implemented. The command exits with
+`Not yet implemented. Use --provider docker for now.` and does not record
+a deployment. `cast registry` stays empty, and `cast connect` reports that
+no deployment was found. Use `--provider docker` to run on this machine.
 
 Each provider has its own CLI auth (`railway login`, `flyctl auth login`,
 `doctl auth init`, `sprite login`). `cast deploy` walks you through any
