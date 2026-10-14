@@ -5,6 +5,7 @@ import * as path from 'path'
 import simpleGit, {SimpleGit} from 'simple-git'
 import * as yaml from 'yaml'
 import {writeDefaultIgnoreFiles} from '../../lib/cast-ignore'
+import {assertGitAuthorIdentity, GIT_IDENTITY_HINT, isGitIdentityFailure} from '../../lib/git-identity'
 
 export default class GitInit extends Command {
   static description = 'Initialize a Git repository for an agent'
@@ -117,18 +118,22 @@ cast dev ${agentName}
 
     if (!fs.existsSync(agentPath)) {
       this.error(`Agent '${agentName}' not found at ${agentPath}`)
+      return
     }
 
     const gitDir = path.join(agentPath, '.git')
     if (fs.existsSync(gitDir)) {
       this.error(`Git repository already exists for '${agentName}'. Use 'cast git status ${agentName}' to see the current state.`)
+      return
     }
 
-    this.log(`Initializing Git repository for agent '${agentName}'...`)
-
     try {
+      await assertGitAuthorIdentity(agentPath)
+
+      this.log(`Initializing Git repository for agent '${agentName}'...`)
+
       const git: SimpleGit = simpleGit(agentPath)
-      await git.init()
+      await git.raw(['init', '-b', 'main'])
 
       this.createCastIgnore(agentPath)
 
@@ -148,6 +153,10 @@ cast dev ${agentName}
       this.log(`  - Add a remote: cast git remote ${agentName} create origin`)
       this.log(`  - Check status: cast git status ${agentName}`)
     } catch (error: any) {
+      if (isGitIdentityFailure(error)) {
+        this.error(GIT_IDENTITY_HINT)
+        return
+      }
       this.error(`Failed to initialize Git repository: ${error.message}`)
     }
   }

@@ -43,15 +43,18 @@ describe('Git versioning docs', () => {
     expect(flat).to.not.include('yes (`.castignore`)')
   })
 
-  it('does not claim cast git init checks out main', () => {
+  it('says cast git init checks out main and hints at git config', () => {
     const flat = gitPage.replace(/\s+/g, ' ')
-    expect(flat).to.not.include('Git repo on `main`')
-    expect(flat).to.include('`master` when `init.defaultBranch` is unset')
-    expect(flat).to.include('`cast git init` does not pass `-b main`')
-    expect(flat).to.include('`repository.branch` is recorded as `main` either way')
-    expect(initSource).to.include('await git.init()')
+    expect(flat).to.include('Runs `git init -b main`')
+    expect(flat).to.include('checked-out branch is `main`')
+    expect(flat).to.include('Git repo on `main`')
+    expect(flat).to.include('git config --global user.email')
+    expect(flat).to.include('`/git init` checks out `main`')
+    expect(flat).to.not.include('does not pass `-b main`')
+    expect(flat).to.not.include('`master` when `init.defaultBranch` is unset')
+    expect(initSource).to.include("git.raw(['init', '-b', 'main'])")
+    expect(initSource).to.include('assertGitAuthorIdentity')
     expect(initSource).to.include("branch: 'main'")
-    expect(initSource).to.not.match(/git\.init\([^)]*-b/)
   })
 
   it('keeps the release path, remote removal, and TUI commit docs', () => {

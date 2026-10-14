@@ -25,22 +25,30 @@ cast git init my-agent
 
 This does four things:
 
-1. Runs `git init` inside `~/.cast/agents/my-agent/`. The checked-out
-   branch is Git's default (`init.defaultBranch`, or `master` when
-   that setting is unset). `cast git init` does not pass `-b main`.
+1. Runs `git init -b main` inside `~/.cast/agents/my-agent/`. The
+   checked-out branch is `main`, even when `init.defaultBranch` is
+   unset or names another branch.
 2. Writes a `.castignore` and copies the same patterns into
-   `.gitignore` (see below).
+   `.gitignore` (see below). Git reads `.gitignore`, so
+   `tools/__pycache__/` and the other default patterns stay out of
+   the initial commit.
 3. Regenerates a `README.md` from `agent.yaml` (description, model,
    tools, runtime, version) and stages it.
 4. Adds a `repository:` block to `agent.yaml` with `remote: origin`
    and `branch: main`, then makes the initial commit stamped with
    the current version (e.g. `Initial commit: my-agent v1.0`).
 
-The agent's files are now in a Git repo with one commit. That commit
-is on Git's default branch, which is `master` when
-`init.defaultBranch` is unset. `repository.branch` is recorded as
-`main` either way. `cast git push` sends the checked-out branch, not
-the branch name stored in `agent.yaml`.
+The agent's files are now in a Git repo on `main`, with one commit.
+`repository.branch` matches that branch. `cast git push` sends the
+checked-out branch.
+
+If Git has no `user.name` and `user.email`, init stops before it
+creates the repository and prints:
+
+```bash
+git config --global user.name "Your Name"
+git config --global user.email "you@example.com"
+```
 
 ## Add a remote
 
@@ -189,7 +197,9 @@ manifest does not contain the author's home directory.
 ## TUI
 
 In the TUI, `{% ref "slash:git" %}` dispatches to the same
-subcommands:
+subcommands. `/git init` checks out `main` and, when Git has no name
+or email, prints the same `git config` hint instead of creating the
+repository.
 
 ```
 /git status

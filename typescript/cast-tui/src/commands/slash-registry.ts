@@ -51,6 +51,7 @@ import {
 import type {UiMode} from '../components/header.js'
 import {formatSlashHelp} from '../lib/slash-picker.js'
 import {formatGitLog, loadRecentCommits, parseGitLogCount} from '../lib/git-log.js'
+import {assertGitAuthorIdentity, GIT_IDENTITY_HINT, isGitIdentityFailure} from '../lib/git-identity.js'
 import {
   CAPTURED_CHILD_STDIO,
   childProcessFailureReason,
@@ -3523,8 +3524,9 @@ const commands: SlashCommand[] = [
         }
 
         try {
+          await assertGitAuthorIdentity(agentPath)
           const git = simpleGit(agentPath)
-          await git.init()
+          await git.raw(['init', '-b', 'main'])
 
           // Keep in sync with typescript/cast-cli/src/lib/cast-ignore.ts.
           const ignoreContents = [
@@ -3607,10 +3609,10 @@ cast dev ${agentName}
             ctx.mode
           )
         } catch (err) {
-          ctx.messages.addAgentMessage(
-            `Failed to initialize Git: ${err instanceof Error ? err.message : String(err)}`,
-            ctx.mode
-          )
+          const message = isGitIdentityFailure(err)
+            ? GIT_IDENTITY_HINT
+            : `Failed to initialize Git: ${err instanceof Error ? err.message : String(err)}`
+          ctx.messages.addAgentMessage(message, ctx.mode)
         }
         return
       }
