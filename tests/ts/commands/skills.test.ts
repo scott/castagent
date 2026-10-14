@@ -195,6 +195,22 @@ describe('cast skills command', () => {
     )
     expect(inline.errors.join('\n')).to.include('Skill description is required.')
     expect(readConfig(agent.dir).skills).to.equal(undefined)
+
+    const empty = await runCommand(
+      Skills,
+      {target: 'add', agent: agent.name},
+      {name: 'bb-nodesc', description: '', body: 'y', json: false},
+    )
+    expect(empty.errors.join('\n')).to.equal('Skill description is required.')
+    expect(readConfig(agent.dir).skills).to.equal(undefined)
+    expect(fs.existsSync(path.join(agent.dir, 'skills'))).to.equal(false)
+
+    const omitted = await runCommand(
+      Skills,
+      {target: 'add', agent: agent.name},
+      {name: 'bb-nodesc', body: 'y', json: false},
+    )
+    expect(omitted.errors.join('\n')).to.include('Usage: cast skills add <agent> --name <name> --description <text> --body <markdown>')
     fs.rmSync(folder, {recursive: true, force: true})
     fs.rmSync(missingDir, {recursive: true, force: true})
   })
