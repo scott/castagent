@@ -377,6 +377,11 @@ cast session fork <id>
 cast session export <id> --out backup.json
 ```
 
+`cast undo` and `cast redo` run in the Python environment installed with
+Cast. If that runtime fails, the command prints the Python error.
+`Nothing to undo` means the undo log is empty, and `Nothing to redo`
+means the redo stack is empty.
+
 `cast connect` starts a new session. It does not continue the previous
 conversation. Resume a saved session when you want the model to see
 that transcript again. An unnamed session in `cast session list` and
@@ -384,10 +389,11 @@ the `/sessions` picker shows a one-line topic from that agent's model.
 The first user message remains the fallback until that summary exists.
 A name you set still wins.
 
-In the TUI, use `/undo` and `/redo` for iteration, `/sessions` to
-browse saved conversations (with a modal picker that follows the
-AGENTS.md design standards), and `/release`, `/deploy`, `/upgrade`,
-and `/shutdown` to manage releases and deployments interactively.
+In the TUI, use `/undo` and `/redo` for iteration. A failure is shown in
+the chat. Use `/sessions` to browse saved conversations (with a modal
+picker that follows the AGENTS.md design standards), and `/release`,
+`/deploy`, `/upgrade`, and `/shutdown` to manage releases and
+deployments interactively.
 Restore a local agent with `cast restore <agent> --release <version>`.
 
 To upgrade an existing deployment to a new release:

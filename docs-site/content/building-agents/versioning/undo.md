@@ -55,6 +55,16 @@ cast redo email-assistant --steps 3
 `cast redo` pops the most recent entry from the redo stack and
 restores that state. If the redo stack is empty, the command errors.
 
+## Errors
+
+`cast undo` and `cast redo` run in the Python environment installed
+with Cast (the checkout virtualenv and the `cast` package from that
+install). If that runtime fails, the command prints the Python error.
+`Nothing to undo` is reserved for an empty undo log, and `Nothing to
+redo` is reserved for an empty redo stack.
+
+`/undo` and `/redo` show that same error in the chat.
+
 ## The redo stack is cleared by a new edit
 
 If you make a new edit after an undo, the redo stack is cleared. This
