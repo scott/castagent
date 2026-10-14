@@ -384,7 +384,10 @@ means the redo stack is empty.
 
 `cast connect` starts a new session. It does not continue the previous
 conversation. Resume a saved session when you want the model to see
-that transcript again. An unnamed session in `cast session list` and
+that transcript again. `cast session resume` opens the TUI on that
+session. A dev session uses the local agent and starts it when it is
+not already running. A production session connects to the agent's
+deployment. An unnamed session in `cast session list` and
 the `/sessions` picker shows a one-line topic from that agent's model.
 The first user message remains the fallback until that summary exists.
 A name you set still wins.

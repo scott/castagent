@@ -141,6 +141,17 @@ describe('session CLI commands', () => {
       const Cmd = await loadTestCommand(['session', 'resume'])
       expect(Cmd.args.identifier.required).to.be.true
     })
+
+    it('errors when the session is not found', async () => {
+      const Cmd = await loadTestCommand(['session', 'resume'])
+      const {errors} = await runCommand(
+        Cmd,
+        ['session', 'resume', 'missing-session-zzz'],
+        {identifier: 'missing-session-zzz'},
+        {},
+      )
+      expect(errors.join('\n')).to.include('not found')
+    })
   })
 
   describe('session rename', () => {
