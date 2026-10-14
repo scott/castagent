@@ -110,7 +110,7 @@ export PATH="$HOME/.local/bin:$PATH"
 ./upgrade.sh
 ```
 
-`upgrade.sh` fast-forwards this checkout to the newest `origin/master` commit (`origin/main` when that is the only upstream branch) and rebuilds the CLI, TUI, and Python runtime in place. Agents, config, and tokens under `~/.cast` stay in place. A stale pre-TypeScript binary at `~/.cast/bin/cast` is removed so it cannot shadow the rebuilt CLI.
+`upgrade.sh` fast-forwards this checkout to the newest `origin/main` commit (`origin/master` when that is the only upstream branch) and rebuilds the CLI, TUI, and Python runtime in place. Agents, config, and tokens under `~/.cast` stay in place. A stale pre-TypeScript binary at `~/.cast/bin/cast` is removed so it cannot shadow the rebuilt CLI.
 
 The script stops without rebuilding when the checkout has uncommitted changes, or when the local upstream branch has commits that cannot fast-forward. It does not upgrade a deployed agent. That command is still `cast upgrade <agent>`.
 
@@ -495,13 +495,13 @@ cast meta test --scenario create-simple
 
 ### Continuous Integration
 
-Every push to `master` and every pull request runs the **Test Coverage** workflow (`.github/workflows/test.yml`):
+Every push to `main` and every pull request runs the **Test Coverage** workflow (`.github/workflows/test.yml`):
 
 - **TypeScript tests with coverage** — Node 18.x and 20.x in parallel, with `nyc` instrumentation and `tsc --noEmit` type checking.
 - **Python tests with coverage** — Python 3.11 and 3.12. The `pip install` step intentionally installs only test tooling; runtime deps (`pyyaml`, `langchain-core`) are tracked separately and the Python test step is `continue-on-error` until that lands.
 - **Quality checks** — `tsc --noEmit`, `ruff`/`flake8` linting, and `mypy` type checking on the same Python 3.11 + Node 20 runner.
 - **Coverage Summary** — downloads the matrix artifacts and posts a sticky PR comment summarising per-language coverage runs. The comment is updated in place on subsequent runs (it is identified by an HTML marker, so only one coverage comment accumulates per PR).
-- **Coverage Threshold Check** — enforces the `COVERAGE_THRESHOLD` env var (default 70%). Skipped on PRs by default; opt in by including `[enforce-coverage]` in the PR title or commit message, or by pushing to `master`.
+- **Coverage Threshold Check** — enforces the `COVERAGE_THRESHOLD` env var (default 70%). Skipped on PRs by default; opt in by including `[enforce-coverage]` in the PR title or commit message, or by pushing to `main`.
 - **Build Verification** — runs `npm run build` to confirm the TypeScript projects still produce their `dist/` artifacts.
 
 ## Configuration
@@ -584,7 +584,7 @@ npm run docs:check
 
 A pull request that adds, removes, or renames a CLI command, TUI slash
 command, deployment provider, or known model surfaces a manifest diff as
-a PR comment via `.github/workflows/docs.yml`. The `master` branch builds
+a PR comment via `.github/workflows/docs.yml`. The `main` branch builds
 and deploys the site to GitHub Pages at [castagent.dev](https://castagent.dev).
 
 ## Versioning
@@ -602,7 +602,7 @@ Both are bumped together in lockstep (changesets `fixed: [["*"]]` config) and sh
 
 ### Making a Change
 
-You do **not** need to hand-author a changeset. When a PR is merged to `master` (or `main`), the `Auto Create Changeset` workflow automatically generates a changeset file from:
+You do **not** need to hand-author a changeset. When a PR is merged to `main`, the `Auto Create Changeset` workflow automatically generates a changeset file from:
 
 - The PR's labels (`major` / `breaking`, `minor` / `feature` / `enhancement`, `fix` / `bugfix` / `hotfix`) and/or
 - Conventional commit prefixes in the PR title (`feat:`, `fix:`, `BREAKING CHANGE:`)
@@ -630,7 +630,7 @@ When running `npx changeset`:
 
 ### Release Process
 
-1. PR with changeset merged to `main`/`master`
+1. PR with changeset merged to `main`
 2. GitHub Actions workflow automatically:
    - Bumps version in all package.json files (`cast-cli`, `cast-tui`)
    - Updates `CHANGELOG.md` files

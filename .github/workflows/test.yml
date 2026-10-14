@@ -102,7 +102,7 @@ jobs:
 
       - name: Run Python tests with coverage
         # continue-on-error: the Python test step is currently broken on
-        # master: pyyaml and langchain-core are imported by
+        # main: pyyaml and langchain-core are imported by
         # python/cast/agent/base.py and python/cast/tools/bash.py but
         # are NOT declared in python/pyproject.toml, and the workflow's
         # pip install step doesn't install them. This blocks the

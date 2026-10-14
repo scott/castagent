@@ -13,7 +13,7 @@ permissions:
 jobs:
   create-changeset:
     name: Create Changeset
-    # Only run for merge commits (PR merges to master/main).
+    # Only run for merge commits (PR merges to main).
     # Merge commit messages follow the pattern "Merge pull request #N ..."
     if: startsWith(github.event.head_commit.message, 'Merge pull request #')
     runs-on: ubuntu-latest

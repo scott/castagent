@@ -39,8 +39,8 @@ usage() {
     cat << 'EOF'
 Usage: ./upgrade.sh
 
-Fast-forward this Cast checkout to the newest origin/master commit
-(origin/main when master is absent) and rebuild the CLI, TUI, and Python
+Fast-forward this Cast checkout to the newest origin/main commit
+(origin/master when main is absent) and rebuild the CLI, TUI, and Python
 runtime in place.
 
 Leaves ~/.cast agents, config, and tokens untouched. Stops without rebuilding
@@ -271,12 +271,12 @@ assert_clean_worktree() {
 }
 
 choose_target_branch() {
-    if git -C "$ROOT" show-ref --verify --quiet refs/remotes/origin/master; then
-        printf '%s\n' master
-        return 0
-    fi
     if git -C "$ROOT" show-ref --verify --quiet refs/remotes/origin/main; then
         printf '%s\n' main
+        return 0
+    fi
+    if git -C "$ROOT" show-ref --verify --quiet refs/remotes/origin/master; then
+        printf '%s\n' master
         return 0
     fi
     return 1
@@ -297,7 +297,7 @@ fast_forward() {
     fi
 
     if ! target="$(choose_target_branch)"; then
-        log_error "origin has neither master nor main."
+        log_error "origin has neither main nor master."
         exit 1
     fi
 

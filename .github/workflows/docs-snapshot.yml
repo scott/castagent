@@ -1,7 +1,7 @@
 name: Docs snapshot
 
 # Build a frozen docs archive when a product release is published and attach
-# it to that release. The master docs workflow unpacks these assets later.
+# it to that release. The main docs workflow unpacks these assets later.
 # contents: write is required to upload a release asset.
 
 on:

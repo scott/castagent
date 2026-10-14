@@ -71,7 +71,7 @@ env:
 from the deployed files and keeps as the custom domain. `CNAME` stays only at
 the site root. Snapshot archives do not include it.
 
-`/` is the current docs, built from `master` and labeled with the version in
+`/` is the current docs, built from `main` and labeled with the version in
 the root `package.json`. `/vX.Y.Z/` is a frozen snapshot of a published product
 release (`vX.Y.Z`, not `cast-cli@*` or `cast-tui@*`). The snapshot is built
 once when that GitHub release is published, attached as `docs-vX.Y.Z.tar.gz`,
@@ -79,7 +79,7 @@ and copied back into the site on every docs deploy. Later deploys do not
 rebuild it. While a version is still the latest package version, it is served
 at `/` and is not also copied to `/vX.Y.Z/`.
 
-Every master deploy also writes two files at the site root, not under a
+Every main deploy also writes two files at the site root, not under a
 version prefix:
 
 - `/versions.json` — the current version, then frozen releases newest first
@@ -94,7 +94,7 @@ The picker reads `/versions.json` at runtime and navigates with the absolute
 tag matching `vX.Y.Z` whose commit contains `docs-site/`, it checks out the
 tag, builds with `PUBLIC_SITE_URL=https://castagent.dev` and
 `PUBLIC_SITE_BASE=/vX.Y.Z/`, drops `CNAME`, and uploads `docs-vX.Y.Z.tar.gz`.
-That workflow needs `contents: write` so it can attach the asset. The master
+That workflow needs `contents: write` so it can attach the asset. The main
 docs workflow only reads those assets. After it builds the current site into
 `dist/`, it downloads every retained `docs-v*.tar.gz` and unpacks it to
 `dist/vX.Y.Z/`, skipping the version that is currently latest. A docs-only
@@ -115,7 +115,7 @@ is the exception: its script and its version links are absolute site paths.
 - the regenerated manifest differs from the committed one (intentional — surfaces added/removed commands in PRs),
 - a `{% ref %}` tag in a prose page targets a command that no longer exists.
 
-The `.github/workflows/docs.yml` workflow runs `npm run check` on every PR and on pushes to `master`. It comments the manifest diff on the PR and deploys `dist/` to GitHub Pages on `master`.
+The `.github/workflows/docs.yml` workflow runs `npm run check` on every PR and on pushes to `main`. It comments the manifest diff on the PR and deploys `dist/` to GitHub Pages on `main`.
 
 ## Adding a new docs page
 
