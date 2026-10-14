@@ -1,5 +1,5 @@
 import pytest
-from cast.builder import StdioJsonRpcServer, BuilderAgent, EchoChatModel
+from cast.builder import StdioJsonRpcServer, BuilderAgent, EchoChatModel, create_llm
 import asyncio
 from pathlib import Path
 import yaml
@@ -69,6 +69,65 @@ class TestStdioJsonRpcServer:
         assert "inbox-agent" in result["message"]
         assert "loaded its current configuration" not in result["message"].lower()
         assert "what would you like to change" in result["message"].lower()
+
+    @pytest.mark.asyncio
+    async def test_handle_initialize_harness_stays_in_normal_mode(self, tmp_path, monkeypatch):
+        """Meta tests must not enter the new-agent flow for a missing name."""
+        from cast.builder_tools import tools
+
+        agents = tmp_path / "agents"
+        agents.mkdir()
+        monkeypatch.setattr(tools, "AGENTS_DIR", agents)
+
+        server = StdioJsonRpcServer()
+        result = await server.handle_initialize({
+            "agent_name": "meta-test",
+            "harness": True,
+        })
+
+        assert result["status"] == "ready"
+        assert result["new_mode"] is False
+        assert result["message"] == "Meta-builder harness ready."
+        assert server.agent.new_mode is False
+        assert not (agents / "meta-test").exists()
+
+    @pytest.mark.asyncio
+    async def test_harness_create_simple_uses_echo_with_api_key(self, tmp_path, monkeypatch):
+        """create-simple creates email-agent without calling a live model."""
+        from cast import versioning
+        from cast.builder_tools import tools
+
+        agents = tmp_path / "agents"
+        agents.mkdir()
+        monkeypatch.setattr(tools, "AGENTS_DIR", agents)
+        monkeypatch.setattr(tools, "BUILDER_DIR", tmp_path / "builder")
+        monkeypatch.setattr(versioning, "AGENTS_DIR", agents)
+        monkeypatch.setenv("CAST_BUILDER_ECHO", "1")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+
+        server = StdioJsonRpcServer()
+        assert isinstance(server.agent.llm, EchoChatModel)
+        init = await server.handle_initialize({"agent_name": "meta-test", "harness": True})
+        assert init["new_mode"] is False
+
+        result = await server.handle_output({
+            "message": "Create an email agent",
+            "content": "Create an email agent",
+            "text": "Create an email agent",
+        })
+
+        assert "email-agent" in result["response"]
+        agent_yaml = agents / "email-agent" / "agent.yaml"
+        assert agent_yaml.is_file()
+        config = yaml.safe_load(agent_yaml.read_text(encoding="utf-8"))
+        assert config["name"] == "email-agent"
+        assert not (agents / "meta-test").exists()
+
+    def test_create_llm_echo_env_ignores_api_key(self, monkeypatch):
+        """CAST_BUILDER_ECHO wins over a configured API key."""
+        monkeypatch.setenv("CAST_BUILDER_ECHO", "1")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+        assert isinstance(create_llm(), EchoChatModel)
 
     @pytest.mark.asyncio
     async def test_handle_initialize_new_mode(self):

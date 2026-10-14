@@ -60,8 +60,10 @@ changes show up as files on disk.
   See [Custom tools](configuration/custom-tools).
 - **`mcp/`** — one YAML file per MCP server. The Builder Agent scaffolds
   these during `cast new`/`cast edit`.
-- **`tests/`** — TypeScript tests for the CLI integration and Python tests
-  for agent behaviour. `cast meta test` runs the meta-builder against these.
+- **`tests/`** holds TypeScript tests for the CLI integration and Python tests
+  for agent behaviour. `cast meta test` does not run this directory. It runs
+  the scenarios under `~/.cast/meta/scenarios/`. See
+  [Create an agent](building-agents/create).
 
 ## The files Cast owns
 

@@ -191,7 +191,7 @@ cast model openrouter/minimax/minimax-m2.5
 # Delete agent
 cast delete demo-agent --force
 
-# Run meta-builder tests
+# Run meta-builder tests (checkout virtualenv, offline echo builder)
 cast meta test
 ```
 
@@ -581,6 +581,8 @@ cast meta test
 # Run specific scenario
 cast meta test --scenario create-simple
 ```
+
+`cast meta test` uses the checkout virtualenv (`python/.venv`) and the offline echo builder. Scenarios live in `~/.cast/meta/scenarios/`. They run without a live model call, including when an API key is set. If `python/.venv` is missing, the command falls back to `python3` and prints a warning.
 
 ### Continuous Integration
 

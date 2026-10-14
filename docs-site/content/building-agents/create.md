@@ -129,6 +129,28 @@ and in `agent.yaml`.
 On success the TUI reports the agent name and suggests `cast dev`,
 `cast edit`, and `cast deploy <name> --provider docker`.
 
+## Check the builder
+
+`cast meta test` runs the scenarios in `~/.cast/meta/scenarios/`. The first
+run writes the defaults there, including `create-simple`.
+
+```bash
+cast meta test
+cast meta test --scenario create-simple
+cast meta test --verbose
+```
+
+The command starts the Builder with this checkout's virtualenv
+(`python/.venv`). It sets `CAST_BUILDER_ECHO=1`, so the scenarios stay on
+the offline echo builder even when an API key is configured. A missing
+virtualenv falls back to `python3` on `PATH` and prints a warning.
+
+The builder is initialized in harness mode. Scenario text is the user
+message. It is not treated as a description of a new agent named
+`meta-test`. If the builder process exits, the scenario reports that
+exit, including `No module named cast`, instead of waiting and then
+printing `Request timeout`.
+
 ## Editing an existing agent
 
 Both `cast new` and `cast edit <name>` are powered by the same Builder. The

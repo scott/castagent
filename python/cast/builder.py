@@ -900,7 +900,14 @@ def create_llm() -> BaseChatModel:
     The model string is the raw ``defaults.builder_model`` (default
     ``openrouter/minimax/minimax-m2.5``). ``get_provider`` selects the
     provider. A missing key does not fall back to another provider.
+
+    ``CAST_BUILDER_ECHO=1`` forces echo mode. ``cast meta test`` sets it
+    so scenario checks stay deterministic and do not wait on a live model.
     """
+    if os.getenv("CAST_BUILDER_ECHO") == "1":
+        print("Using echo mode for the meta-builder harness.", file=sys.stderr)
+        return EchoChatModel()
+
     from .providers.registry import get_provider
 
     model = get_builder_model_id()
@@ -1284,6 +1291,19 @@ class StdioJsonRpcServer:
             return {"error": {"code": JSONRPC_INVALID_PARAMS, "message": "Missing 'agent_name' parameter"}}
 
         self.agent.set_agent_name(agent_name)
+
+        # Meta tests send scenario text as the user message. Entering the
+        # new-agent flow for a missing "meta-test" directory would treat
+        # that text as a description of meta-test.
+        if params.get("harness"):
+            self.agent.set_new_mode(False)
+            print("Builder Agent initialized for meta tests", file=sys.stderr)
+            return {
+                "status": "ready",
+                "agent_name": agent_name,
+                "new_mode": False,
+                "message": "Meta-builder harness ready.",
+            }
 
         # A missing directory is a new agent, even when the caller forgot
         # to set new_mode. Editing that name would claim a config exists.
