@@ -83,8 +83,10 @@ cast delete email-assistant --force     # skip confirmation
 
 `{% ref "cli:delete" %}` removes the agent directory, all release tarballs,
 all deployment rows, and the database entry. **This is destructive and
-unrecoverable** — Cast refuses without confirmation unless `--force` is
-passed. To delete safely, first:
+unrecoverable.** Cast refuses without confirmation unless `--force` is
+passed. If no system keychain is available, for example Linux without
+Secret Service, the command prints `No keychain available. Nothing removed.`
+and does not claim that a token was removed. To delete safely, first:
 
 ```bash
 cast git push <name>          # backup to a remote

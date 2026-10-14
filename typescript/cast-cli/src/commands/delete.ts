@@ -54,11 +54,7 @@ export default class Delete extends Command {
         this.warn(`Agent directory not found, but '${agentName}' exists in the database.`)
         this.warn('Cleaning up database records...')
         db.deleteAgent(agentName)
-        try {
-          await keychain.deleteToken(agentName)
-        } catch {
-          // Ignore keychain errors during cleanup
-        }
+        await this.reportTokenRemoval(agentName)
         this.log(`Agent '${agentName}' removed from database.`)
         return
       }
@@ -77,7 +73,8 @@ export default class Delete extends Command {
     }
 
     try {
-      const token = await keychain.getToken(agentName)
+      // Stay quiet here. The removal step below prints the one keychain line.
+      const token = await keychain.getToken(agentName, {silent: true})
       if (token) {
         itemsToDelete.push('Auth token from keychain')
       }
@@ -117,14 +114,27 @@ export default class Delete extends Command {
       this.warn('Failed to remove from database: ' + error.message)
     }
 
-    // Remove from keychain
-    try {
-      await keychain.deleteToken(agentName)
-      this.log('Removed token from keychain.')
-    } catch (error: any) {
-      this.warn('Failed to remove token from keychain: ' + error.message)
-    }
+    await this.reportTokenRemoval(agentName)
 
     this.log(`Agent '${agentName}' deleted successfully.`)
+  }
+
+  /**
+   * keytar throws when no secret service is running and returns false when
+   * no token is stored. Only claim a removal when one actually happened.
+   */
+  private async reportTokenRemoval(agentName: string): Promise<void> {
+    const outcome = await keychain.removeAgentToken(agentName)
+    if (outcome.result === 'removed') {
+      this.log('Removed token from keychain.')
+      return
+    }
+    if (outcome.result === 'unavailable') {
+      this.log('No keychain available. Nothing removed.')
+      return
+    }
+    if (outcome.result === 'failed') {
+      this.warn(`Failed to remove token from keychain: ${outcome.message || 'unknown error'}`)
+    }
   }
 }

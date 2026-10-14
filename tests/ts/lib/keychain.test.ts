@@ -1,6 +1,6 @@
 import {expect} from 'chai'
 import sinon from 'sinon'
-import {KeychainManager} from '../../../typescript/cast-cli/dist/lib/keychain'
+import {KeychainManager, isKeychainUnavailable} from '../../../typescript/cast-cli/dist/lib/keychain'
 
 describe('KeychainManager', () => {
   let keychain: KeychainManager
@@ -121,6 +121,18 @@ describe('KeychainManager', () => {
 
       expect(result).to.be.null
     })
+
+    it('should not log when silent and the keychain is unavailable', async () => {
+      sandbox.stub(require('keytar'), 'getPassword').rejects(
+        new Error('The name org.freedesktop.secrets was not provided by any .service files'),
+      )
+      const errorSpy = sandbox.stub(console, 'error')
+
+      const result = await keychain.getToken('my-agent', {silent: true})
+
+      expect(result).to.be.null
+      expect(errorSpy.called).to.equal(false)
+    })
   })
 
   describe('setToken', () => {
@@ -166,6 +178,66 @@ describe('KeychainManager', () => {
       const result = await keychain.deleteToken('my-agent')
 
       expect(result).to.be.false
+    })
+  })
+
+  describe('removeAgentToken', () => {
+    const secretServiceError = new Error(
+      'The name org.freedesktop.secrets was not provided by any .service files',
+    )
+
+    it('should report removed when keytar deletes a token', async () => {
+      sandbox.stub(require('keytar'), 'deletePassword').resolves(true)
+
+      const result = await keychain.removeAgentToken('my-agent')
+
+      expect(result).to.deep.equal({result: 'removed'})
+    })
+
+    it('should report absent when no token is stored', async () => {
+      sandbox.stub(require('keytar'), 'deletePassword').resolves(false)
+
+      const result = await keychain.removeAgentToken('my-agent')
+
+      expect(result).to.deep.equal({result: 'absent'})
+    })
+
+    it('should report unavailable without logging when Secret Service is missing', async () => {
+      sandbox.stub(require('keytar'), 'deletePassword').rejects(secretServiceError)
+      const errorSpy = sandbox.stub(console, 'error')
+
+      const result = await keychain.removeAgentToken('my-agent')
+
+      expect(result.result).to.equal('unavailable')
+      expect(result.message).to.equal(secretServiceError.message)
+      expect(errorSpy.called).to.equal(false)
+    })
+
+    it('should report failed without logging for other keychain errors', async () => {
+      sandbox.stub(require('keytar'), 'deletePassword').rejects(new Error('Keychain error'))
+      const errorSpy = sandbox.stub(console, 'error')
+
+      const result = await keychain.removeAgentToken('my-agent')
+
+      expect(result).to.deep.equal({result: 'failed', message: 'Keychain error'})
+      expect(errorSpy.called).to.equal(false)
+    })
+  })
+
+  describe('isKeychainUnavailable', () => {
+    it('should match the Secret Service D-Bus error from issue 147', () => {
+      const error = new Error('The name org.freedesktop.secrets was not provided by any .service files')
+      expect(isKeychainUnavailable(error)).to.equal(true)
+    })
+
+    it('should match a headless D-Bus autolaunch failure', () => {
+      expect(isKeychainUnavailable(new Error('Cannot autolaunch D-Bus without X11 $DISPLAY'))).to.equal(true)
+      expect(isKeychainUnavailable('dbus-launch: not found')).to.equal(true)
+    })
+
+    it('should not treat a locked keychain or a generic error as unavailable', () => {
+      expect(isKeychainUnavailable(new Error('org.freedesktop.Secret.Error.IsLocked'))).to.equal(false)
+      expect(isKeychainUnavailable(new Error('Keychain error'))).to.equal(false)
     })
   })
 

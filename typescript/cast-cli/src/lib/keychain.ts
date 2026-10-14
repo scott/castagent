@@ -3,12 +3,37 @@ import * as crypto from 'crypto'
 
 const SERVICE_NAME = 'cast'
 
+export type AgentTokenRemoval = {
+  result: 'removed' | 'absent' | 'unavailable' | 'failed'
+  message?: string
+}
+
+function keychainErrorMessage(error: unknown): string {
+  if (error instanceof Error) return error.message
+  if (typeof error === 'string') return error
+  if (error && typeof error === 'object' && 'message' in error) {
+    const message = (error as {message?: unknown}).message
+    if (typeof message === 'string') return message
+  }
+  return String(error)
+}
+
+/** True when the OS has no secret service for keytar to talk to. */
+export function isKeychainUnavailable(error: unknown): boolean {
+  const message = keychainErrorMessage(error)
+  return message.includes('org.freedesktop.secrets')
+    || message.includes('Cannot autolaunch D-Bus')
+    || message.includes('dbus-launch')
+}
+
 export class KeychainManager {
-  async getToken(agentName: string): Promise<string | null> {
+  async getToken(agentName: string, options?: {silent?: boolean}): Promise<string | null> {
     try {
       return await keytar.getPassword(SERVICE_NAME, `token:${agentName}`)
     } catch (error) {
-      console.error('Failed to get token from keychain:', error)
+      if (!options?.silent) {
+        console.error('Failed to get token from keychain:', error)
+      }
       return null
     }
   }
@@ -27,6 +52,21 @@ export class KeychainManager {
     } catch (error) {
       console.error('Failed to delete token from keychain:', error)
       return false
+    }
+  }
+
+  /**
+   * Delete an agent token and report what happened, without logging.
+   * `cast delete` uses this so a missing keychain is one accurate line.
+   */
+  async removeAgentToken(agentName: string): Promise<AgentTokenRemoval> {
+    try {
+      const removed = await keytar.deletePassword(SERVICE_NAME, `token:${agentName}`)
+      return {result: removed ? 'removed' : 'absent'}
+    } catch (error) {
+      const message = keychainErrorMessage(error)
+      if (isKeychainUnavailable(error)) return {result: 'unavailable', message}
+      return {result: 'failed', message}
     }
   }
 
