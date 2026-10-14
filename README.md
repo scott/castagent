@@ -482,6 +482,7 @@ cast git diff my-agent --file instructions.md
 
 # Manage remotes
 cast git remote my-agent add origin https://github.com/user/repo.git
+cast git remote my-agent create origin
 cast git remote my-agent set-url origin https://github.com/user/repo.git
 cast git remote my-agent list
 cast git remote my-agent remove origin
@@ -499,6 +500,8 @@ as `memory/memory.db` and `tools/__pycache__/` out of the repository.
 has no `user.name` and `user.email`, init stops before creating the
 repository and tells you to set them with `git config`. `cast dev`
 adds the memory database rules to an agent that already has a Git repo.
+
+`cast git remote <agent> create` uses `gh` to create the GitHub repository and writes `repository.url` from that repository's owner and host. It does not use the local username, and it leaves the rest of `agent.yaml` unchanged.
 
 Removing a remote also deletes `repository.url` from `agent.yaml` when that URL belonged to the remote and no other remote still uses it.
 
