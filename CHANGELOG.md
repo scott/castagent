@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `cast session resume` opens the TUI on the saved session. It launches cast-tui with `--agent`, `--url`, `--mode`, and `--session` ([#179](https://github.com/scott/castagent/pull/179)).
 - Inside `cast new`, `/git`, `/undo`, `/redo`, `/describe`, and `/releases` act on the agent the wizard just created. Before an agent exists they say no agent is loaded. `/undo` and `/redo` show the CLI reason in the chat, and child stderr is not painted over the input ([#169](https://github.com/scott/castagent/pull/169)).
 - `cast undo` and `cast redo` run in Cast's Python environment. A Python failure is reported as an error instead of "Nothing to undo" ([#171](https://github.com/scott/castagent/pull/171)).
 
