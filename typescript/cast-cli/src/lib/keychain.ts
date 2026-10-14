@@ -13,6 +13,14 @@ export type AgentTokenRemoval = {
   message?: string
 }
 
+export type TokenStore = 'keychain' | 'file'
+
+/** `stores` lists each place that actually held a token. Empty when nothing was deleted. */
+export interface TokenDeleteResult {
+  removed: boolean
+  stores: TokenStore[]
+}
+
 const FILE_TOKEN_REMOVED = 'Removed bearer token from ~/.cast/tokens.'
 
 function keychainErrorMessage(error: unknown): string {
@@ -115,17 +123,29 @@ export class KeychainManager {
     }
   }
 
-  async deleteToken(agentName: string): Promise<boolean> {
-    const fileRemoved = removeTokenFile(this.agentTokenPath(agentName))
+  private async deleteStoredToken(
+    account: string,
+    filePath: string | null,
+    failureLabel: string,
+  ): Promise<TokenDeleteResult> {
+    const stores: TokenStore[] = []
+    if (removeTokenFile(filePath)) stores.push('file')
     try {
-      const removed = await keytar.deletePassword(SERVICE_NAME, `token:${agentName}`)
-      return removed || fileRemoved
+      if (await keytar.deletePassword(SERVICE_NAME, account)) stores.push('keychain')
     } catch (error) {
       if (!isKeychainUnavailable(error)) {
-        console.error('Failed to delete token from keychain:', error)
+        console.error(failureLabel, error)
       }
-      return fileRemoved
     }
+    return {removed: stores.length > 0, stores}
+  }
+
+  async deleteToken(agentName: string): Promise<TokenDeleteResult> {
+    return this.deleteStoredToken(
+      `token:${agentName}`,
+      this.agentTokenPath(agentName),
+      'Failed to delete token from keychain:',
+    )
   }
 
   /**
@@ -178,17 +198,12 @@ export class KeychainManager {
     }
   }
 
-  async deleteDeploymentToken(deploymentSha: string): Promise<boolean> {
-    const fileRemoved = removeTokenFile(this.deploymentTokenPath(deploymentSha))
-    try {
-      const removed = await keytar.deletePassword(SERVICE_NAME, `token:deployment:${deploymentSha}`)
-      return removed || fileRemoved
-    } catch (error) {
-      if (!isKeychainUnavailable(error)) {
-        console.error('Failed to delete deployment token from keychain:', error)
-      }
-      return fileRemoved
-    }
+  async deleteDeploymentToken(deploymentSha: string): Promise<TokenDeleteResult> {
+    return this.deleteStoredToken(
+      `token:deployment:${deploymentSha}`,
+      this.deploymentTokenPath(deploymentSha),
+      'Failed to delete deployment token from keychain:',
+    )
   }
 
   generateToken(): string {

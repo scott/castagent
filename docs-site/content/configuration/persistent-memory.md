@@ -56,10 +56,11 @@ upgrade.
 which skips the confirmation prompt. Shutdown runs that provider's
 destroy handler:
 
-- Docker removes the container, then removes the `cast-<name>` memory
-  volume. Older volumes named `cast-<name>-<deployment-id>-memory` are
-  removed as well. Cast reports a volume as removed only when Docker
-  deletes it.
+- Docker removes the container and the `cast-<name>:latest` image, then
+  removes the `cast-<name>` memory volume. Older volumes named
+  `cast-<name>-<deployment-id>-memory` are removed as well. Cast reports
+  a volume as removed only when Docker deletes it, and reports the image
+  as removed only when Docker deletes it.
 - Railway runs `railway down` and leaves the Railway volume in place.
 - Fly destroys the app and then attempts to delete its memory volume.
 - DigitalOcean Droplet shutdown deletes the droplet and then attempts

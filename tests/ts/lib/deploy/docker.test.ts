@@ -5,6 +5,8 @@ import * as os from 'os'
 import * as path from 'path'
 import sinon from 'sinon'
 import DockerDeploy, {
+  dockerImageName,
+  dockerImageRemovalMessage,
   dockerMemoryVolumeName,
   dockerMemoryVolumesToRemove,
   dockerVolumeRemovalMessage,
@@ -12,6 +14,7 @@ import DockerDeploy, {
   planDockerMemoryVolume,
   prepareDockerMemoryVolume,
   recordDockerDeployment,
+  removeDockerImage,
   removeDockerMemoryVolumes,
   renderDockerCompose,
   writeDockerCompose,
@@ -490,8 +493,10 @@ describe('Docker Deploy Provider', () => {
       expect(removed.sort()).to.deep.equal(['cast-bb2-chat', legacy, older].sort())
       expect(removed).to.not.include('cast-bb2-chatbot')
       expect(removed).to.not.include('cast-bb2-chat-fly')
-      const removedLogs = logs.filter(line => line.includes('has been removed'))
-      expect(removedLogs).to.have.length(3)
+      const volumeLogs = logs.filter(line => line.startsWith('Memory volume') && line.includes('has been removed'))
+      expect(volumeLogs).to.have.length(3)
+      expect(logs).to.include("Docker image 'cast-bb2-chat:latest' has been removed.")
+      expect(exec.calledWith('docker', ['rmi', 'cast-bb2-chat:latest'])).to.equal(true)
       expect(exec.called).to.equal(true)
     })
 
@@ -526,6 +531,55 @@ describe('Docker Deploy Provider', () => {
         return {exitCode: 1, stdout: '', stderr: 'Error: No such volume: cast-bb2-chat'}
       }, (line) => logs.push(line))
       expect(logs).to.deep.equal([])
+    })
+
+    it('removes the agent image cast-<name>:latest', async () => {
+      expect(dockerImageName('bb3-chat')).to.equal('cast-bb3-chat:latest')
+      const calls: string[][] = []
+      const logs: string[] = []
+      await removeDockerImage('bb3-chat', async (args) => {
+        calls.push(args)
+        return {exitCode: 0, stdout: 'Untagged: cast-bb3-chat:latest', stderr: ''}
+      }, (line) => logs.push(line))
+      expect(calls).to.deep.equal([['rmi', 'cast-bb3-chat:latest']])
+      expect(logs).to.deep.equal(["Docker image 'cast-bb3-chat:latest' has been removed."])
+    })
+
+    it('stays quiet when the agent image is already gone', async () => {
+      const logs: string[] = []
+      await removeDockerImage('bb3-chat', async () => ({
+        exitCode: 1,
+        stdout: '',
+        stderr: 'Error: No such image: cast-bb3-chat:latest',
+      }), (line) => logs.push(line))
+      expect(logs).to.deep.equal([])
+      expect(dockerImageRemovalMessage('cast-bb3-chat:latest', {
+        exitCode: 1,
+        stdout: 'No such image: cast-bb3-chat:latest',
+        stderr: '',
+      })).to.equal(null)
+    })
+
+    it('notes when the agent image is still in use', async () => {
+      const logs: string[] = []
+      await removeDockerImage('bb3-chat', async () => ({
+        exitCode: 1,
+        stdout: '',
+        stderr: 'Error response from daemon: conflict: unable to delete cast-bb3-chat:latest (must be forced) - container abc is using its referenced image',
+      }), (line) => logs.push(line))
+      expect(logs).to.deep.equal([
+        "Note: Docker image 'cast-bb3-chat:latest' could not be removed (may be in use or already deleted).",
+      ])
+    })
+
+    it('notes when docker cannot be asked to remove the image', async () => {
+      const logs: string[] = []
+      await removeDockerImage('bb3-chat', async () => {
+        throw new Error('spawn docker ENOENT')
+      }, (line) => logs.push(line))
+      expect(logs).to.deep.equal([
+        "Note: Docker image 'cast-bb3-chat:latest' could not be removed (spawn docker ENOENT).",
+      ])
     })
   })
 })

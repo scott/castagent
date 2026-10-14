@@ -58,6 +58,12 @@ cast shutdown email-assistant --force
 one MicroVM), then soft-deletes the matching row. The SHA stays on the
 deleted row for audit. The remote resources for that row are gone.
 
+Docker shutdown stops and removes the container `cast-<agent>`, removes
+the image `cast-<agent>:latest`, and removes that agent's memory volumes.
+If the image is already gone, shutdown stays quiet about it. If Docker
+cannot delete the image, shutdown prints a note and still removes the
+local records.
+
 A SHA shuts down only that deployment. Another provider for the same
 agent stays in the registry and keeps its auth token. An agent name is
 accepted when every live row is the same target, and then every row of
@@ -69,6 +75,12 @@ agent. Shutting down any SHA of that provider removes the other rows for
 that same provider, because the remote is shared. A MicroVM is one
 remote per row, so shutting down its SHA leaves every other MicroVM
 running.
+
+When shutdown deletes an auth token, the log names the place it was
+removed from. A token taken from the system keychain is reported as
+`keychain`. A token taken from `~/.cast/tokens/` is reported as
+`token file`. A token another live deployment still needs is left in
+place.
 
 In the TUI, `{% ref "slash:shutdown" %}` lists every active deployment
 (including DigitalOcean MicroVM and local) and shuts one down after a

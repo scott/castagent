@@ -82,8 +82,28 @@ describe('token file fallback', () => {
 
     const removed = await keychain.deleteDeploymentToken('f6559e')
 
-    expect(removed).to.equal(true)
+    expect(removed).to.deep.equal({removed: true, stores: ['file']})
     expect(fs.existsSync(path.join(tokens, 'deployments', 'f6559e.token'))).to.equal(false)
+  })
+
+  it('reports the keychain when that is where the agent token was removed', async () => {
+    sandbox.stub(require('keytar'), 'deletePassword').resolves(true)
+
+    const removed = await keychain.deleteToken('bb2-chat')
+
+    expect(removed).to.deep.equal({removed: true, stores: ['keychain']})
+  })
+
+  it('reports the token file and the keychain when both held the token', async () => {
+    const filePath = path.join(tokens, 'bb2-chat.token')
+    fs.mkdirSync(tokens, {recursive: true})
+    fs.writeFileSync(filePath, 'stale')
+    sandbox.stub(require('keytar'), 'deletePassword').resolves(true)
+
+    const removed = await keychain.deleteToken('bb2-chat')
+
+    expect(removed).to.deep.equal({removed: true, stores: ['file', 'keychain']})
+    expect(fs.existsSync(filePath)).to.equal(false)
   })
 
   it('renames the agent token file when the keychain cannot', async () => {

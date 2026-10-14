@@ -77,7 +77,7 @@ the recorded PID and removes the local-agent row from the database. Use
 For a Docker deployment, it runs `docker stop` on the container
 `cast-<name>` when that container is running. The deployment stays in
 the registry, and the memory volume stays in place. `{% ref "cli:shutdown" %}`
-removes the container and the volume. `--force` stops that container
+removes the container, the `cast-<name>:latest` image, and the volume. `--force` stops that container
 with no grace period (`docker stop --time 0`). `docker stop` marks the
 container as stopped, so a restart policy of `unless-stopped` does not
 start it again.

@@ -258,7 +258,10 @@ describe('shutdown command', () => {
 
       // Track keychain call
       const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
-      const deleteTokenStub = sandbox.stub(keychainModule.keychain, 'deleteToken').resolves()
+      const deleteTokenStub = sandbox.stub(keychainModule.keychain, 'deleteToken').resolves({
+        removed: true,
+        stores: ['keychain'],
+      })
 
       // Mock db operations
       sandbox.stub(sqliteModule.db, 'removeAllDeployments').callsFake(() => {})
@@ -266,8 +269,98 @@ describe('shutdown command', () => {
       try {
         await instance.run()
         expect(deleteTokenStub.calledOnce).to.be.true
-        expect(keychainMessage).to.include('auth token')
+        expect(keychainMessage).to.equal('Removed auth token from keychain.')
       } finally {
+        sandbox.restore()
+      }
+    })
+
+    it('names the token file when the removed auth token was a file', async () => {
+      const testAgentName = 'test-shutdown-agent-token-file-' + Date.now()
+      const instance = createCommandInstance(Shutdown, [testAgentName], {force: true})
+      const logs: string[] = []
+      instance.log = (msg: string) => {
+        logs.push(msg)
+      }
+      instance.warn = () => {}
+
+      const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
+      sandbox.stub(sqliteModule.db, 'listDeployments').returns([{
+        id: 'sha123',
+        agent_name: testAgentName,
+        deployment_url: 'http://localhost:8080',
+        provider: 'docker',
+      }])
+      sandbox.stub(sqliteModule.db, 'getDeploymentBySha').returns(null)
+      sandbox.stub(sqliteModule.db, 'removeAllDeployments').callsFake(() => {})
+
+      const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
+      sandbox.stub(keychainModule.keychain, 'deleteToken').resolves({removed: true, stores: ['file']})
+
+      const shutdownModule = require('../../../typescript/cast-cli/src/commands/shutdown')
+      const originalDestroyer = shutdownModule.PROVIDER_DESTROYERS.docker
+      shutdownModule.PROVIDER_DESTROYERS.docker = async () => {}
+
+      try {
+        await instance.run()
+        expect(logs).to.include('Removed auth token from token file.')
+        expect(logs.some((line: string) => line.includes('from keychain'))).to.equal(false)
+      } finally {
+        shutdownModule.PROVIDER_DESTROYERS.docker = originalDestroyer
+        sandbox.restore()
+      }
+    })
+
+    it('names the token file for a deployment token removed from a file', async () => {
+      const testAgentName = 'test-shutdown-deployment-token-file-' + Date.now()
+      const instance = createCommandInstance(Shutdown, ['bb7590'], {force: true})
+      const logs: string[] = []
+      instance.log = (msg: string) => {
+        logs.push(msg)
+      }
+      instance.warn = () => {}
+
+      const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
+      const spriteHash = keychainModule.keychain.hashToken('sprite-token')
+      const dockerHash = keychainModule.keychain.hashToken('docker-token')
+      const dockerRow = {
+        id: 'bb7590',
+        agent_name: testAgentName,
+        provider: 'docker',
+        deployment_url: 'http://localhost:8080',
+        auth_token_hash: dockerHash,
+      }
+      const sprites = {
+        id: 'd6b12f',
+        agent_name: testAgentName,
+        provider: 'sprites',
+        deployment_url: 'https://sprite.example',
+        auth_token_hash: spriteHash,
+      }
+
+      const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
+      sandbox.stub(sqliteModule.db, 'getDeploymentBySha').callsFake((sha: unknown) => sha === 'bb7590' ? dockerRow : null)
+      sandbox.stub(sqliteModule.db, 'listDeployments').returns([dockerRow, sprites])
+      sandbox.stub(sqliteModule.db, 'removeAllDeployments').callsFake(() => {})
+      sandbox.stub(sqliteModule.db, 'removeDeploymentBySha').callsFake(() => {})
+      sandbox.stub(keychainModule.keychain, 'getToken').resolves('sprite-token')
+      const deleteToken = sandbox.stub(keychainModule.keychain, 'deleteToken').resolves({
+        removed: true,
+        stores: ['keychain'],
+      })
+      keychainModule.keychain.deleteDeploymentToken.resolves({removed: true, stores: ['file']})
+
+      const shutdownModule = require('../../../typescript/cast-cli/src/commands/shutdown')
+      const originalDestroyer = shutdownModule.PROVIDER_DESTROYERS.docker
+      shutdownModule.PROVIDER_DESTROYERS.docker = async () => {}
+
+      try {
+        await instance.run()
+        expect(deleteToken.called).to.equal(false)
+        expect(logs).to.include('Removed auth token for deployment bb7590 from token file.')
+        expect(logs.some((line: string) => line.includes('from keychain'))).to.equal(false)
+      } finally {
+        shutdownModule.PROVIDER_DESTROYERS.docker = originalDestroyer
         sandbox.restore()
       }
     })
@@ -797,5 +890,27 @@ describe('shutdown command - provider destroyers', () => {
     const destroyers = require('../../../typescript/cast-cli/src/commands/shutdown').PROVIDER_DESTROYERS
     expect(destroyers).to.have.property('sprites')
     expect(typeof destroyers.sprites).to.equal('function')
+  })
+})
+
+describe('shutdown token removal message', () => {
+  const {shutdownTokenRemovalMessage} = require('../../../typescript/cast-cli/src/commands/shutdown')
+
+  it('names the keychain, the token file, or both', () => {
+    expect(shutdownTokenRemovalMessage('agent', ['keychain'], 'bb7590')).to.equal(
+      'Removed auth token from keychain.',
+    )
+    expect(shutdownTokenRemovalMessage('agent', ['file'], 'bb7590')).to.equal(
+      'Removed auth token from token file.',
+    )
+    expect(shutdownTokenRemovalMessage('agent', ['file', 'keychain'], 'bb7590')).to.equal(
+      'Removed auth token from keychain and token file.',
+    )
+    expect(shutdownTokenRemovalMessage('deployment', ['file'], 'bb7590')).to.equal(
+      'Removed auth token for deployment bb7590 from token file.',
+    )
+    expect(shutdownTokenRemovalMessage('deployment', [], 'bb7590')).to.equal(
+      'Removed auth token for deployment bb7590 from keychain.',
+    )
   })
 })

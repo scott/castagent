@@ -204,7 +204,7 @@ Cast Agent supports deploying agents to multiple platforms:
 |----------|-------------|---------|
 | **DigitalOcean** | Deploy to DigitalOcean Droplets (cloud VMs) | `cast deploy demo-agent --provider digitalocean` |
 | **DigitalOcean MicroVM** | Firecracker microVM in MKC1. Pauses when idle and resumes on the next request. Public preview. | `cast deploy demo-agent --provider microvm` |
-| **Docker** | Containerized deployment to any Docker host. The image installs `python/pyproject.toml` dependencies and `runtime.requirements`, then deploy waits until the container is running. A container that exits is a failed deploy. Memory is the `cast-<agent>` volume, reused on the next deploy. `cast stop` stops the running container and leaves the deployment and volume in place. `cast shutdown` deletes that volume and any older `cast-<agent>-<id>-memory` volumes. | `cast deploy demo-agent --provider docker` |
+| **Docker** | Containerized deployment to any Docker host. The image installs `python/pyproject.toml` dependencies and `runtime.requirements`, then deploy waits until the container is running. A container that exits is a failed deploy. Memory is the `cast-<agent>` volume, reused on the next deploy. `cast stop` stops the running container and leaves the deployment and volume in place. `cast shutdown` removes the container, the `cast-<agent>:latest` image, that volume, and any older `cast-<agent>-<id>-memory` volumes. | `cast deploy demo-agent --provider docker` |
 | **Railway** | Deploy to Railway's cloud platform | `cast deploy demo-agent --provider railway` |
 | **Fly.io** | Deploy to Fly.io's global edge network | `cast deploy demo-agent --provider fly` |
 | **Sprites** | Firecracker VMs on Fly.io. The agent runs as a sprite service and comes back after the VM wakes. | `cast deploy demo-agent --provider sprites` |
@@ -222,6 +222,8 @@ To shut down and clean up resources:
 cast shutdown demo-agent
 cast shutdown abc123   # only that deployment; other providers stay registered
 ```
+
+Docker shutdown removes the local image `cast-<agent>:latest` along with the container and memory volumes. The auth token line names the keychain or the token file under `~/.cast/tokens/`, matching the place the token was removed from.
 
 DigitalOcean MicroVMs (`--provider microvm`) are separate from Droplets. They are in public preview in region MKC1, run linux/amd64 images from DigitalOcean Container Registry, and pause when idle. The next request resumes a paused MicroVM. Cast Agent retries HTTP 503 while it wakes. The edge closes each chat response about 15 seconds after the request starts, even while bytes are still arriving. Cast keeps that reply running and the client continues it on the next request. A keepalive still covers proxies that drop a quiet stream. Deploy or upgrade the agent so the image includes that runtime, and reconnect with a current build. `--with-tui` is rejected. The endpoint expects your DigitalOcean token on `Authorization` and the agent token on `X-Cast-Authorization`. If the edge does not forward that second header, rerun with `--edge-auth-only`. Logs are `doctl compute microvm exec <id> -- <log command>`. `doctl` 1.173.0 or newer is required.
 

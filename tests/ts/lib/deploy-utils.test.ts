@@ -475,9 +475,35 @@ describe('per-deployment auth tokens', () => {
       [{id: 'd6b12f', provider: 'microvm', auth_token_hash: hash}],
     )
 
-    expect(forgotten).to.equal('deployment')
+    expect(forgotten).to.deep.equal({scope: 'deployment', stores: ['keychain']})
     expect(deleteDeploymentToken.calledOnceWith('bb7590')).to.equal(true)
     expect(deleteToken.called).to.equal(false)
+  })
+
+  it('reports a token file when shutdown deleted the file copy', async () => {
+    sandbox.stub(keychain, 'deleteToken').resolves({removed: true, stores: ['file']})
+    sandbox.stub(keychain, 'deleteDeploymentToken').resolves({removed: true, stores: ['file']})
+
+    const forgotten = await forgetDeploymentTokens(
+      'bb2-chat',
+      [{id: 'f6559e', provider: 'docker'}],
+      [],
+    )
+
+    expect(forgotten).to.deep.equal({scope: 'agent', stores: ['file']})
+  })
+
+  it('names both stores when the deployment file and the agent keychain entry are removed', async () => {
+    sandbox.stub(keychain, 'deleteToken').resolves({removed: true, stores: ['keychain']})
+    sandbox.stub(keychain, 'deleteDeploymentToken').resolves({removed: true, stores: ['file']})
+
+    const forgotten = await forgetDeploymentTokens(
+      'bb2-chat',
+      [{id: 'f6559e', provider: 'docker'}],
+      [],
+    )
+
+    expect(forgotten).to.deep.equal({scope: 'agent', stores: ['keychain', 'file']})
   })
 
   it('stores and resolves the deployment token from a file when Secret Service is missing', async () => {
