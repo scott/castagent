@@ -8,7 +8,7 @@ import GitLog from '../../../../typescript/cast-cli/src/commands/git/log'
 async function runCommand(rawArgs: string[], args: any, flags: any): Promise<{logs: string[]; errors: string[]}> {
   const logs: string[] = []
   const errors: string[] = []
-  const instance = new GitLog(rawArgs, {} as any)
+  const instance = new GitLog(rawArgs, {} as any) as any
   instance.config = {runHook: async () => ({successes: [], failures: []})}
   instance.parse = async () => ({
     args,
@@ -127,7 +127,7 @@ describe('Git Log Command', () => {
 
     before(() => {
       fs.mkdirSync(agentPath, {recursive: true})
-      execFileSync('git', ['init'], {cwd: agentPath})
+      execFileSync('git', ['init', '-q', '-b', 'main'], {cwd: agentPath})
       commitFile(agentPath, 'one.txt', 'first commit')
       commitFile(agentPath, 'two.txt', 'second commit')
     })
