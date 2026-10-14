@@ -71,7 +71,8 @@ changes show up as files on disk.
   `cast release`'s auto-changelog generator.   See
   [Undo and redo](building-agents/versioning/undo).
 - **`.cast/releases/`** — the intentional release log. Same idea but for
-  semantic versions; `cast release` writes here. See
+  semantic versions; `cast release` writes here. `releases.json` stores
+  `tarball_path` relative to the agent directory. See
   [Releases](building-agents/deployment/releases).
 - **`Dockerfile`**, **`requirements.txt`**, **`docker-compose.yml`** — generated
   on each `cast deploy` (or `cast upgrade`) and overwritten on the next

@@ -173,7 +173,9 @@ memory/memory.db-shm
 
 Releases (`.cast/releases/`) and the undo log manifest (`.cast/changes/`)
 **are** included. A fresh clone of a `cast git`-backed agent comes
-with its releases but not with the undo log.
+with its releases but not with the undo log. `releases.json` stores each
+`tarball_path` relative to the agent directory, so the published manifest
+does not contain the author's home directory.
 
 ## TUI
 

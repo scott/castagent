@@ -303,6 +303,49 @@ class TestCreateRelease:
         # Tarball should be inside releases/ directory
         assert "releases" in tarball_path.parts
 
+    def test_stores_tarball_path_relative_to_agent_directory(self, test_agent, temp_agents_dir):
+        """releases.json must not publish an absolute home path."""
+        info = releases.create_release(test_agent, "1.0", "Initial")
+        manifest_path = temp_agents_dir / test_agent / ".cast" / "releases" / "releases.json"
+        stored = json.loads(manifest_path.read_text())["releases"][0]["tarball_path"]
+        assert stored == ".cast/releases/1.0.tar.gz"
+        assert not Path(stored).is_absolute()
+        assert str(temp_agents_dir) not in stored
+
+        resolved = (temp_agents_dir / test_agent / stored).resolve()
+        assert Path(info.tarball_path) == resolved
+        assert Path(info.tarball_path).is_absolute()
+        assert Path(info.tarball_path).exists()
+
+        rows = _sqlite_rows(test_agent)
+        assert rows[0][4] == str(resolved)
+
+    def test_relative_tarball_path_works_after_directory_move(
+        self, test_agent, temp_agents_dir, monkeypatch
+    ):
+        """A clone or rename of the agent directory still opens the tarball."""
+        releases.create_release(test_agent, "1.0", "Initial")
+        source = temp_agents_dir / test_agent
+
+        with tempfile.TemporaryDirectory() as moved_root:
+            moved_agents = Path(moved_root) / ".cast" / "agents"
+            moved_agents.mkdir(parents=True)
+            dest = moved_agents / "renamed-agent"
+            shutil.copytree(source, dest)
+            monkeypatch.setattr(releases, "AGENTS_DIR", moved_agents)
+
+            listed = releases.list_releases("renamed-agent")
+            expected = (dest / ".cast" / "releases" / "1.0.tar.gz").resolve()
+            assert Path(listed[0].tarball_path) == expected
+            assert expected.exists()
+
+            with tempfile.TemporaryDirectory() as tmpdir:
+                target = Path(tmpdir) / "extracted"
+                target.mkdir()
+                releases.extract_release("renamed-agent", "1.0", target)
+                assert (target / "agent.yaml").exists()
+                assert (target / "instructions.md").exists()
+
     def test_creates_releases_json(self, test_agent, temp_agents_dir):
         releases.create_release(test_agent, "1.0", "Initial")
         path = temp_agents_dir / test_agent / ".cast" / "releases" / "releases.json"
@@ -425,6 +468,46 @@ class TestExtractRelease:
             target.mkdir()
             with pytest.raises(ValueError, match="Release .* not found"):
                 releases.extract_release(test_agent, "9.9", target)
+
+    def test_legacy_absolute_tarball_path_still_opens(self, test_agent, temp_agents_dir):
+        """Manifests written before relative paths keep working in place."""
+        info = releases.create_release(test_agent, "1.0", "Initial")
+        absolute = info.tarball_path
+        manifest_path = temp_agents_dir / test_agent / ".cast" / "releases" / "releases.json"
+        data = json.loads(manifest_path.read_text())
+        data["releases"][0]["tarball_path"] = absolute
+        manifest_path.write_text(json.dumps(data))
+
+        got = releases.get_release(test_agent, "1.0")
+        assert got is not None
+        assert got.tarball_path == absolute
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "extracted"
+            target.mkdir()
+            releases.extract_release(test_agent, "1.0", target)
+            assert (target / "agent.yaml").exists()
+
+    def test_missing_absolute_path_falls_back_to_local_tarball(
+        self, test_agent, temp_agents_dir
+    ):
+        """A cloned manifest with the author's absolute path uses the local file."""
+        releases.create_release(test_agent, "1.0", "Initial")
+        manifest_path = temp_agents_dir / test_agent / ".cast" / "releases" / "releases.json"
+        data = json.loads(manifest_path.read_text())
+        data["releases"][0]["tarball_path"] = "/home/box/.cast/agents/bb-git/.cast/releases/1.0.tar.gz"
+        manifest_path.write_text(json.dumps(data))
+
+        local = (temp_agents_dir / test_agent / ".cast" / "releases" / "1.0.tar.gz").resolve()
+        got = releases.get_release(test_agent, "1.0")
+        assert got is not None
+        assert Path(got.tarball_path) == local
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target = Path(tmpdir) / "extracted"
+            target.mkdir()
+            releases.extract_release(test_agent, "1.0", target)
+            assert (target / "instructions.md").exists()
 
     def test_missing_tarball_raises(self, test_agent, temp_agents_dir):
         info = releases.create_release(test_agent, "1.0", "Initial")
@@ -640,6 +723,7 @@ class TestReleaseSqliteSync:
         assert current[0] == releases.get_current_release("demo-agent") == "1.5.0"
         manifest = json.loads((agent / ".cast" / "releases" / "releases.json").read_text())
         assert manifest["current"]["version"] == "1.5.0"
+        assert manifest["releases"][0]["tarball_path"] == ".cast/releases/1.5.0.tar.gz"
 
     def test_second_create_does_not_overwrite_sqlite(self, test_agent, temp_agents_dir):
         releases.create_release(test_agent, "1.0", "First")
