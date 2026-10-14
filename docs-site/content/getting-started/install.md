@@ -95,6 +95,9 @@ cast list       # No agents yet — that's expected
 If you see the version banner and an empty list, you're ready for the
 [quick start](getting-started/quickstart).
 
+The installer prints `cast new` to create an agent and `cast dev <agent>` to
+run it. Further reading is at [castagent.dev](https://castagent.dev).
+
 ## Updating
 
 From the checkout:

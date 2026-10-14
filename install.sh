@@ -902,8 +902,8 @@ echo ""
 
 log_info "Quick start:"
 echo "  cast list                    # List all agents"
-echo "  cast <agent-name>            # Create or run an agent"
-echo "  cast <agent-name> dev        # Start agent in development mode"
+echo "  cast new                     # Create an agent"
+echo "  cast dev <agent>             # Start an agent in development mode"
 echo "  cast --help                  # Show help"
 echo ""
 
@@ -915,10 +915,10 @@ echo ""
 
 log_info "Next steps:"
 echo "  1. Set up your API keys in ~/.cast/config.yaml or as env vars"
-echo "  2. Create your first agent: cast my-first-agent"
-echo "  3. Start developing: cast my-first-agent dev"
+echo "  2. Create your first agent: cast new"
+echo "  3. Start developing: cast dev <agent>"
 echo ""
 
-log_info "For more information, see: $SCRIPT_DIR/docs/SPEC.md"
+log_info "For more information, see: https://castagent.dev"
 echo ""
 }

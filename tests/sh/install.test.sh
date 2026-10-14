@@ -44,6 +44,18 @@ assert_not_contains() {
     fi
 }
 
+assert_install_hints() {
+    local file="$1"
+    assert_contains "$file" "cast new" "quick start creates an agent with cast new"
+    assert_contains "$file" "cast dev <agent>" "quick start runs an agent with cast dev"
+    assert_contains "$file" "Create your first agent: cast new" "next steps use cast new"
+    assert_contains "$file" "Start developing: cast dev <agent>" "next steps use cast dev"
+    assert_contains "$file" "https://castagent.dev" "install points at the docs site"
+    assert_not_contains "$file" "cast <agent-name>" "quick start does not treat an agent name as a command"
+    assert_not_contains "$file" "my-first-agent" "next steps do not run an agent name as a command"
+    assert_not_contains "$file" "docs/SPEC.md" "install does not point at the spec file"
+}
+
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/cast-install-test.XXXXXX")"
 TMP="$(cd "$TMP" && pwd)"
 trap 'rm -rf "$TMP"' EXIT
@@ -413,6 +425,7 @@ assert_eq "$(readlink "$LINUX_HOME/.local/bin/python3")" "$LINUX_HOME/.local/py/
 [[ -x "$LINUX_HOME/.bun/bin/bun" ]] || fail "bun binary should exist"
 assert_contains "$LINUX_HOME/.bashrc" "castagent-path" "bash profile gains a PATH line"
 assert_not_contains "$CAST_INSTALL_LOG" "npm $SOURCE_ROOT" "install does not build this workspace"
+assert_install_hints "$TMP/linux.out"
 
 reset_log
 run_piped "$LINUX_HOME" "$TMP/linux-again.out"
@@ -521,6 +534,7 @@ assert_not_contains "$CAST_INSTALL_LOG" "astral.sh" "an existing Python is reuse
 assert_contains "$CAST_INSTALL_LOG" "npm $FILE_REPO install" "checkout install builds that repo"
 assert_eq "$(readlink "$FILE_HOME/.local/bin/cast")" "$FILE_REPO/cast" "checkout install links its own cast"
 [[ ! -e "$FILE_HOME/.cast/castagent" ]] || fail "checkout install should not create the default clone"
+assert_install_hints "$TMP/file.out"
 
 if [[ -L /usr/local/bin/cast || -e /usr/local/bin/cast ]]; then
     system_cast_after="$(readlink /usr/local/bin/cast || printf 'file')"
