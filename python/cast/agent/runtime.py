@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 from typing import Any, AsyncGenerator, Dict, List, Optional
 
 from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
@@ -7,6 +8,7 @@ from langgraph.prebuilt import create_react_agent
 
 from .base import AgentConfig
 from ..harness.permissions import ApprovalBroker, PermissionGate, PermissionPrompt, guard_tool
+from ..mcp.loader import load_mcp_tools
 from ..memory import MemoryMiddleware
 from ..memory.prompt import append_persistent_memory_instructions
 from ..providers.registry import get_provider
@@ -60,8 +62,13 @@ class RuntimeAgent:
         self.session_histories: Dict[str, list] = {}
         self.graph = None
         self.llm = None
+        self.tools: list = []
+        self.mcp_sessions: list = []
+        self.mcp_tools: list = []
         self._provider = get_provider(self.config.model)
         self._warn_if_tools_unreadable()
+        # MCP servers start with the agent and stay up until close().
+        self._load_configured_tools()
 
         # Pass the raw model so reflection uses the same provider.
         # Memory is ready before the graph so the prompt can describe it.
@@ -73,6 +80,38 @@ class RuntimeAgent:
         # A missing key stays in echo mode and does not fall back.
         if self._provider.is_available():
             self._setup_llm()
+
+    def close(self) -> None:
+        """Stop MCP server processes started for this agent."""
+        sessions = list(self.mcp_sessions)
+        self.mcp_sessions = []
+        for session in sessions:
+            session.close()
+
+    def _load_configured_tools(self) -> None:
+        """Built-in tools plus one tool per tool advertised by an MCP server."""
+        builtin_tool_names = self.config.tools.get("builtin", [])
+        if not isinstance(builtin_tool_names, list):
+            builtin_tool_names = []
+        builtin = [
+            BUILTIN_TOOLS[name]
+            for name in builtin_tool_names
+            if isinstance(name, str) and name in BUILTIN_TOOLS
+        ]
+        used_names = {tool.name for tool in builtin}
+        try:
+            sessions, mcp_tools = load_mcp_tools(
+                self.agent_path,
+                self.config.tools.get("mcp", []),
+                used_names=used_names,
+            )
+        except Exception as exc:  # noqa: BLE001
+            print(f"Warning: Failed to load MCP tools: {exc}", file=sys.stderr, flush=True)
+            sessions = []
+            mcp_tools = []
+        self.mcp_sessions = sessions
+        self.mcp_tools = mcp_tools
+        self.tools = [*builtin, *mcp_tools]
 
     def _warn_if_tools_unreadable(self) -> None:
         """A tools list is not tools.builtin. Say that, and do not blame the provider."""
@@ -111,20 +150,23 @@ class RuntimeAgent:
             model = self.config.model
             self.llm = provider.create_llm(model=model)
             
-            # Load built-in tools from config. The graph receives guarded
-            # copies so harness.permissions is checked before each call.
-            # self.tools stays the raw implementations.
+            # The graph receives guarded copies so harness.permissions is
+            # checked before each call. self.tools stays the raw implementations.
+            # Built-in permissions use the agent.yaml name (`bash`), not the
+            # model-facing name (`bash_tool`). MCP tools use the name the
+            # server advertised.
             builtin_tool_names = self.config.tools.get("builtin", [])
-            self.tools = [
-                BUILTIN_TOOLS[name]
-                for name in builtin_tool_names
-                if name in BUILTIN_TOOLS
-            ]
+            if not isinstance(builtin_tool_names, list):
+                builtin_tool_names = []
             guarded = [
                 guard_tool(BUILTIN_TOOLS[name], name, self.permission_gate)
                 for name in builtin_tool_names
-                if name in BUILTIN_TOOLS
+                if isinstance(name, str) and name in BUILTIN_TOOLS
             ]
+            guarded.extend(
+                guard_tool(tool, tool.name, self.permission_gate)
+                for tool in self.mcp_tools
+            )
             
             # Instructions, plus how persistent memory is stored when enabled.
             prompt = self.config.rendered_prompt()
@@ -358,7 +400,11 @@ class RuntimeAgent:
         
         if 'tool' in message.lower():
             builtin_tools = self.config.tools.get("builtin", [])
-            return f"I have these tools available: {', '.join(builtin_tools)}"
+            if not isinstance(builtin_tools, list):
+                builtin_tools = []
+            names = [str(name) for name in builtin_tools]
+            names.extend(tool.name for tool in self.mcp_tools)
+            return f"I have these tools available: {', '.join(names)}"
         
         if 'help' in message.lower():
             return (

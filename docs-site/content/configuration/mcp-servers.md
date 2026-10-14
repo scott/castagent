@@ -59,6 +59,13 @@ Or, equivalently, use the Builder during `cast edit`:
 The Builder writes the YAML and walks you through the OAuth flow if the
 server needs it.
 
+## Permissions
+
+A call checks `harness.permissions` under the registered tool name.
+That matches the name the server advertised when no other tool already
+uses it. A missing entry is `always-allow`. `ask` and `deny` behave
+the same way they do for built-in tools.
+
 ## OAuth credentials
 
 Some MCP servers need an OAuth login. Cast stores the resulting tokens
@@ -70,12 +77,16 @@ For Gmail, the Builder uses Google's OAuth flow with a callback on
 `http://localhost:3000/oauth/callback`. The CLI prints the URL when it's
 time to authorize.
 
-## Hot-reload during development
+## Loading during development
 
-`cast dev` watches the `mcp/` directory. Drop a new YAML in, and the
-runtime restarts the MCP server and registers the new tools. Bad YAML
-makes the runtime log the parse error and continue with the previously
-working server list.
+The runtime starts each configured MCP server when the agent process
+starts and keeps that process alive until the agent exits. Tool calls
+are proxied to the server over stdio.
+
+Restart `cast dev` after you add or change a server file. A YAML file
+that does not parse is logged and skipped. Other configured servers
+still start. A server that fails to start is logged and skipped the
+same way.
 
 ## Deploying with MCP
 
@@ -96,6 +107,7 @@ catalogue:
 1. Create `~/.cast/agents/<name>/mcp/<server-name>.yaml` with the
    `server:`, `command:`, and any `env:` keys.
 2. Add the entry to `agent.yaml` under `tools.mcp`.
-3. `cast dev` to load it; check the TUI header for any startup errors.
+3. `cast dev` to load it. Startup problems are written to the runtime
+   log. The agent still starts, without the server that failed.
 4. When the agent calls one of the new tools, the runtime proxies the
    call to your MCP server and returns the result.

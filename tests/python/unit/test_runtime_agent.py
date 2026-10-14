@@ -595,13 +595,13 @@ class TestRuntimeAgentTools:
                 assert hasattr(agent, "tools")
                 assert isinstance(agent.tools, list)
 
-    def test_agent_without_llm_has_no_tools_attr(self, agent_config):
-        """Agent in echo mode may not have tools attribute."""
+    def test_echo_mode_still_loads_configured_tools(self, agent_config):
+        """Echo mode has no graph, but configured tools are still loaded."""
         with patch.dict(os.environ, {}, clear=True):
             agent = RuntimeAgent(agent_config)
 
-            # In echo mode, tools may not be set
-            assert not hasattr(agent, "tools") or agent.tools is None
+            assert agent.graph is None
+            assert [tool.name for tool in agent.tools] == ["bash_tool", "read_tool", "glob_tool"]
 
     def test_tools_list_does_not_drop_into_echo_mode(self, tmp_path, capsys):
         """A flat tools list must not be reported as an OpenRouter failure."""

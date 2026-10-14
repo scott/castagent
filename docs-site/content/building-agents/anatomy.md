@@ -118,7 +118,7 @@ tools:
 ```
 
 `cast describe` prints `Custom: email_tools, tools/summarize_thread.py`.
-The runtime keeps these entries on the config and loads only `tools.builtin`.
+The runtime keeps `tools.custom` on the config. It loads `tools.builtin` and starts the MCP servers listed in `tools.mcp`.
 
 Use `cast describe <name>` to see the full rendered file with defaults
 filled in. Use `cast update <name> --<flag> ...` to mutate it from the CLI
