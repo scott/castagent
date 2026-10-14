@@ -1,9 +1,11 @@
 import {Command, Flags} from '@oclif/core'
 import {StdioJsonRpcBridge} from '../../lib/builder/stdio'
-import {AssertionEngine, AssertionResult} from '../../lib/meta/assertions'
+import {AssertionEngine, AssertionResult, collectPreexistingPaths} from '../../lib/meta/assertions'
 import {
+  createMetaTestWorkspace,
   metaTestChildEnv,
   metaTestInitializeParams,
+  removeMetaTestWorkspace,
   resolveMetaTestPython,
   usingSystemPython,
 } from '../../lib/meta/harness'
@@ -70,85 +72,93 @@ export default class MetaTest extends Command {
       this.warn('Falling back to system python3. Some features may not work correctly.')
     }
 
-    const bridge = new StdioJsonRpcBridge(python.command, ['-m', 'cast', 'builder'], {
-      env: metaTestChildEnv(process.env, python),
-    })
-
+    const workspace = createMetaTestWorkspace()
+    let bridge: StdioJsonRpcBridge | undefined
     try {
-      await bridge.start()
-    } catch (error: any) {
-      this.error(
-        `Failed to start Builder Agent for testing.\n` +
-        `Error: ${error.message}\n\n` +
-        `Make sure Python is installed and the virtual environment is set up.`
-      )
-    }
+      bridge = new StdioJsonRpcBridge(python.command, ['-m', 'cast', 'builder'], {
+        env: metaTestChildEnv(process.env, python, workspace),
+      })
 
-    try {
-      // Initialize the builder agent
-      await bridge.send('initialize', metaTestInitializeParams())
-
-      const results: ScenarioRunResult[] = []
-
-      for (const scenarioName of scenarios) {
-        const result = await this.runScenario(bridge, loader, scenarioName, flags.verbose)
-        results.push(result)
+      try {
+        await bridge.start()
+      } catch (error: any) {
+        this.error(
+          `Failed to start Builder Agent for testing.\n` +
+          `Error: ${error.message}\n\n` +
+          `Make sure Python is installed and the virtual environment is set up.`
+        )
       }
 
-      // Print results
-      this.log('')
-      this.log('='.repeat(60))
-      this.log('META-BUILDER TEST RESULTS')
-      this.log('='.repeat(60))
+      try {
+        // Initialize the builder agent
+        await bridge.send('initialize', metaTestInitializeParams())
 
-      let totalPassed = 0
-      let totalFailed = 0
+        const results: ScenarioRunResult[] = []
 
-      for (const result of results) {
-        const status = result.passed ? 'PASS' : 'FAIL'
-        const statusColor = result.passed ? '\x1b[32m' : '\x1b[31m'
-        const resetColor = '\x1b[0m'
-
-        if (result.passed) {
-          totalPassed++
-        } else {
-          totalFailed++
+        for (const scenarioName of scenarios) {
+          const result = await this.runScenario(bridge, loader, scenarioName, workspace.agentsDir, flags.verbose)
+          results.push(result)
         }
 
-        this.log(`${statusColor}[${status}]${resetColor} ${result.name}`)
+        // Print results
+        this.log('')
+        this.log('='.repeat(60))
+        this.log('META-BUILDER TEST RESULTS')
+        this.log('='.repeat(60))
 
-        if (result.error) {
-          this.log(`  Error: ${result.error}`)
+        let totalPassed = 0
+        let totalFailed = 0
+
+        for (const result of results) {
+          const status = result.passed ? 'PASS' : 'FAIL'
+          const statusColor = result.passed ? '\x1b[32m' : '\x1b[31m'
+          const resetColor = '\x1b[0m'
+
+          if (result.passed) {
+            totalPassed++
+          } else {
+            totalFailed++
+          }
+
+          this.log(`${statusColor}[${status}]${resetColor} ${result.name}`)
+
+          if (result.error) {
+            this.log(`  Error: ${result.error}`)
+          }
+
+          for (const assertionResult of result.assertions) {
+            const aStatus = assertionResult.passed ? 'PASS' : 'FAIL'
+            const aColor = assertionResult.passed ? '\x1b[32m' : '\x1b[31m'
+            this.log(`  ${aColor}[${aStatus}]${resetColor} ${assertionResult.message}`)
+          }
+
+          if (flags.verbose && result.response) {
+            this.log(`  Response: ${result.response}`)
+          }
         }
 
-        for (const assertionResult of result.assertions) {
-          const aStatus = assertionResult.passed ? 'PASS' : 'FAIL'
-          const aColor = assertionResult.passed ? '\x1b[32m' : '\x1b[31m'
-          this.log(`  ${aColor}[${aStatus}]${resetColor} ${assertionResult.message}`)
-        }
+        this.log('')
+        this.log(`Total: ${results.length} scenarios, ${totalPassed} passed, ${totalFailed} failed`)
 
-        if (flags.verbose && result.response) {
-          this.log(`  Response: ${result.response}`)
+        if (totalFailed > 0) {
+          this.exit(1)
         }
+      } catch (error: any) {
+        // this.exit() throws EEXIT. Leave that exit code alone so a failed
+        // scenario is not reported as a harness crash.
+        if (error?.code === 'EEXIT') throw error
+        this.error(
+          `Failed to run meta-builder tests.\n\n` +
+          `Error: ${error.message || error}\n\n` +
+          `Troubleshooting:\n` +
+          `  - Ensure the Builder Agent started correctly\n` +
+          `  - Check that PYTHONPATH includes the cast Python package\n` +
+          `  - Verify Python dependencies are installed`
+        )
       }
-
-      this.log('')
-      this.log(`Total: ${results.length} scenarios, ${totalPassed} passed, ${totalFailed} failed`)
-
-      if (totalFailed > 0) {
-        this.exit(1)
-      }
-    } catch (error: any) {
-      this.error(
-        `Failed to run meta-builder tests.\n\n` +
-        `Error: ${error.message || error}\n\n` +
-        `Troubleshooting:\n` +
-        `  - Ensure the Builder Agent started correctly\n` +
-        `  - Check that PYTHONPATH includes the cast Python package\n` +
-        `  - Verify Python dependencies are installed`
-      )
     } finally {
-      bridge.stop()
+      bridge?.stop()
+      removeMetaTestWorkspace(workspace.root)
     }
   }
 
@@ -156,6 +166,7 @@ export default class MetaTest extends Command {
     bridge: StdioJsonRpcBridge,
     loader: ScenarioLoader,
     scenarioName: string,
+    agentsDir: string,
     verbose?: boolean,
   ): Promise<ScenarioRunResult> {
     try {
@@ -165,6 +176,9 @@ export default class MetaTest extends Command {
         this.log(`\nRunning scenario: ${scenario.name}`)
         this.log(`Input: ${scenario.input}`)
       }
+
+      // Record files that already exist so a leftover agent cannot pass.
+      const preexisting = collectPreexistingPaths(scenario.assertions, agentsDir)
 
       // Send input to builder agent
       const response = await bridge.send('output', {
@@ -184,7 +198,11 @@ export default class MetaTest extends Command {
 
       // Run assertions
       const engine = new AssertionEngine()
-      const assertionResults = await engine.run(scenario.assertions, {response: builderResponse})
+      const assertionResults = await engine.run(scenario.assertions, {
+        response: builderResponse,
+        agentsDir,
+        preexisting,
+      })
       const allPassed = assertionResults.every(r => r.passed)
 
       return {

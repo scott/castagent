@@ -3,9 +3,13 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import {
+  META_TEST_AGENTS_ENV,
+  META_TEST_BUILDER_ENV,
   META_TEST_ECHO_ENV,
+  createMetaTestWorkspace,
   metaTestChildEnv,
   metaTestInitializeParams,
+  removeMetaTestWorkspace,
   resolveMetaTestPython,
 } from '../../../../typescript/cast-cli/src/lib/meta/harness'
 
@@ -20,6 +24,9 @@ describe('meta test harness', () => {
     expect(commandSource).to.include('resolveMetaTestPython')
     expect(commandSource).to.include('metaTestChildEnv')
     expect(commandSource).to.include('metaTestInitializeParams')
+    expect(commandSource).to.include('createMetaTestWorkspace')
+    expect(commandSource).to.include('removeMetaTestWorkspace')
+    expect(commandSource).to.include('collectPreexistingPaths')
   })
 
   it('prefers the checkout virtualenv over system python3', () => {
@@ -42,11 +49,34 @@ describe('meta test harness', () => {
     expect(runtime.pythonPath).to.equal(pythonDir)
     expect(runtime.command).to.equal(venvPython)
 
-    const env = metaTestChildEnv({OPENROUTER_API_KEY: 'sk-test', PYTHONPATH: '/tmp/other'}, runtime)
+    const env = metaTestChildEnv(
+      {
+        OPENROUTER_API_KEY: 'sk-test',
+        PYTHONPATH: '/tmp/other',
+        CAST_AGENTS_DIR: '/home/someone/.cast/agents',
+        CAST_BUILDER_DIR: '/home/someone/.cast/builder',
+      },
+      runtime,
+      {agentsDir: '/tmp/cast-meta/agents', builderDir: '/tmp/cast-meta/builder'},
+    )
     expect(env[META_TEST_ECHO_ENV]).to.equal('1')
+    expect(env[META_TEST_AGENTS_ENV]).to.equal('/tmp/cast-meta/agents')
+    expect(env[META_TEST_BUILDER_ENV]).to.equal('/tmp/cast-meta/builder')
     expect(env.PYTHONPATH!.startsWith(pythonDir)).to.equal(true)
     expect(env.PYTHONPATH).to.include('/tmp/other')
     expect(env.OPENROUTER_API_KEY).to.equal('sk-test')
+  })
+
+  it('creates a workspace outside the home agents directory and deletes it', () => {
+    const workspace = createMetaTestWorkspace()
+    const homeAgents = path.join(os.homedir(), '.cast', 'agents')
+    expect(path.basename(workspace.agentsDir)).to.equal('agents')
+    expect(workspace.agentsDir.startsWith(homeAgents)).to.equal(false)
+    expect(fs.existsSync(workspace.agentsDir)).to.equal(true)
+    expect(fs.existsSync(workspace.builderDir)).to.equal(true)
+    fs.writeFileSync(path.join(workspace.agentsDir, 'email-agent'), 'leftover')
+    removeMetaTestWorkspace(workspace.root)
+    expect(fs.existsSync(workspace.root)).to.equal(false)
   })
 
   it('falls back to python3 when the virtualenv is missing', () => {

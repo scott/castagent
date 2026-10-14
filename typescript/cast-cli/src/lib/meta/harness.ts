@@ -1,3 +1,5 @@
+import * as fs from 'fs'
+import * as os from 'os'
 import * as path from 'path'
 import {resolveCastPythonRuntime, type CastPythonRuntime} from '../cast-python'
 
@@ -9,6 +11,32 @@ import {resolveCastPythonRuntime, type CastPythonRuntime} from '../cast-python'
  * when an API key is set.
  */
 export const META_TEST_ECHO_ENV = 'CAST_BUILDER_ECHO'
+export const META_TEST_AGENTS_ENV = 'CAST_AGENTS_DIR'
+export const META_TEST_BUILDER_ENV = 'CAST_BUILDER_DIR'
+
+export interface MetaTestWorkspace {
+  root: string
+  agentsDir: string
+  builderDir: string
+}
+
+/**
+ * Temporary agents directory for one `cast meta test` invocation.
+ * The directory is named `agents` so the builder's cast.db lands in
+ * `root` and is removed with the workspace.
+ */
+export function createMetaTestWorkspace(tmpdir: string = os.tmpdir()): MetaTestWorkspace {
+  const root = fs.mkdtempSync(path.join(tmpdir, 'cast-meta-'))
+  const agentsDir = path.join(root, 'agents')
+  const builderDir = path.join(root, 'builder')
+  fs.mkdirSync(agentsDir, {recursive: true})
+  fs.mkdirSync(builderDir, {recursive: true})
+  return {root, agentsDir, builderDir}
+}
+
+export function removeMetaTestWorkspace(root: string): void {
+  fs.rmSync(root, {recursive: true, force: true})
+}
 
 export function resolveMetaTestPython(commandDir: string, homeDir?: string): CastPythonRuntime {
   // commandDir is commands/meta (src or dist). resolveCastPythonRuntime
@@ -19,6 +47,7 @@ export function resolveMetaTestPython(commandDir: string, homeDir?: string): Cas
 export function metaTestChildEnv(
   base: NodeJS.ProcessEnv,
   runtime: CastPythonRuntime,
+  workspace: Pick<MetaTestWorkspace, 'agentsDir' | 'builderDir'>,
 ): NodeJS.ProcessEnv {
   const pythonPath = runtime.pythonPath
   const existing = base.PYTHONPATH
@@ -26,6 +55,8 @@ export function metaTestChildEnv(
     ...base,
     PYTHONPATH: existing ? `${pythonPath}${path.delimiter}${existing}` : pythonPath,
     [META_TEST_ECHO_ENV]: '1',
+    [META_TEST_AGENTS_ENV]: workspace.agentsDir,
+    [META_TEST_BUILDER_ENV]: workspace.builderDir,
   }
 }
 

@@ -123,11 +123,79 @@ class TestStdioJsonRpcServer:
         assert config["name"] == "email-agent"
         assert not (agents / "meta-test").exists()
 
+    def test_builder_main_applies_directory_overrides(self):
+        import inspect
+        from cast.builder import main
+
+        assert "apply_process_dirs" in inspect.getsource(main)
+
     def test_create_llm_echo_env_ignores_api_key(self, monkeypatch):
         """CAST_BUILDER_ECHO wins over a configured API key."""
         monkeypatch.setenv("CAST_BUILDER_ECHO", "1")
         monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
         assert isinstance(create_llm(), EchoChatModel)
+
+    @pytest.mark.asyncio
+    async def test_harness_create_simple_stays_in_cast_agents_dir(self, tmp_path, monkeypatch):
+        """Meta-test env overrides keep email-agent out of the home agents dir."""
+        from cast import versioning
+        from cast.builder_tools import tools
+
+        agents = tmp_path / "agents"
+        builder = tmp_path / "builder"
+        agents.mkdir()
+        builder.mkdir()
+        previous_agents = tools.AGENTS_DIR
+        previous_builder = tools.BUILDER_DIR
+        previous_versioning = versioning.AGENTS_DIR
+        home_yaml = Path.home() / ".cast" / "agents" / "email-agent" / "agent.yaml"
+        home_marker = Path.home() / ".cast" / "builder" / "created-agent"
+        home_yaml_before = home_yaml.read_text(encoding="utf-8") if home_yaml.exists() else None
+        home_marker_before = home_marker.read_text(encoding="utf-8") if home_marker.exists() else None
+        monkeypatch.setenv("CAST_AGENTS_DIR", str(agents))
+        monkeypatch.setenv("CAST_BUILDER_DIR", str(builder))
+        monkeypatch.setenv("CAST_BUILDER_ECHO", "1")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "sk-test")
+
+        try:
+            tools.apply_process_dirs()
+            server = StdioJsonRpcServer()
+            assert isinstance(server.agent.llm, EchoChatModel)
+            init = await server.handle_initialize({"agent_name": "meta-test", "harness": True})
+            assert init["new_mode"] is False
+
+            created = await server.handle_output({
+                "message": "Create an email agent",
+                "content": "Create an email agent",
+                "text": "Create an email agent",
+            })
+            assert "email-agent" in created["response"]
+            assert "already exists" not in created["response"].lower()
+            agent_yaml = agents / "email-agent" / "agent.yaml"
+            assert agent_yaml.is_file()
+            assert yaml.safe_load(agent_yaml.read_text(encoding="utf-8"))["name"] == "email-agent"
+            assert (builder / "created-agent").read_text(encoding="utf-8").strip() == "email-agent"
+
+            planted = "name: email-agent\ndescription: planted\n"
+            agent_yaml.write_text(planted, encoding="utf-8")
+            again = StdioJsonRpcServer()
+            await again.handle_initialize({"agent_name": "meta-test", "harness": True})
+            existing = await again.handle_output({
+                "message": "Create an email agent",
+                "content": "Create an email agent",
+                "text": "Create an email agent",
+            })
+            assert "already exists" in existing["response"].lower()
+            assert "email-agent" in existing["response"]
+            assert agent_yaml.read_text(encoding="utf-8") == planted
+        finally:
+            tools.AGENTS_DIR = previous_agents
+            tools.BUILDER_DIR = previous_builder
+            versioning.AGENTS_DIR = previous_versioning
+            home_yaml_after = home_yaml.read_text(encoding="utf-8") if home_yaml.exists() else None
+            home_marker_after = home_marker.read_text(encoding="utf-8") if home_marker.exists() else None
+            assert home_yaml_after == home_yaml_before
+            assert home_marker_after == home_marker_before
 
     @pytest.mark.asyncio
     async def test_handle_initialize_new_mode(self):

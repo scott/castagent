@@ -151,6 +151,14 @@ message. It is not treated as a description of a new agent named
 exit, including `No module named cast`, instead of waiting and then
 printing `Request timeout`.
 
+Each run creates a temporary agents directory and deletes it when the
+command finishes, including when a scenario fails. Agents are not written
+to `~/.cast/agents/`. Scenario files still refer to paths such as
+`~/.cast/agents/email-agent/agent.yaml`. The harness checks those paths
+inside the temporary directory. If that file was already present before
+the scenario ran, the scenario fails. A leftover agent does not count as
+a successful create.
+
 ## Editing an existing agent
 
 Both `cast new` and `cast edit <name>` are powered by the same Builder. The

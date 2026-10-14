@@ -15,6 +15,25 @@ AGENTS_DIR = Path.home() / ".cast" / "agents"
 BUILDER_DIR = Path.home() / ".cast" / "builder"
 CREATED_AGENT_MARKER = "created-agent"
 
+
+def apply_process_dirs() -> None:
+    """Honor ``CAST_AGENTS_DIR`` and ``CAST_BUILDER_DIR`` for this process.
+
+    ``cast meta test`` sets both before it starts the builder. Scenarios
+    then write into a temporary directory instead of ``~/.cast/agents``.
+    """
+    global AGENTS_DIR, BUILDER_DIR
+    import cast.versioning as versioning
+
+    agents = os.environ.get("CAST_AGENTS_DIR", "").strip()
+    if agents:
+        AGENTS_DIR = Path(agents).expanduser()
+        versioning.AGENTS_DIR = AGENTS_DIR
+    builder = os.environ.get("CAST_BUILDER_DIR", "").strip()
+    if builder:
+        BUILDER_DIR = Path(builder).expanduser()
+
+
 # Same lists cast update stores. The runtime loads tools.builtin and
 # harness.permissions, and it ignores a top-level model or permissions key.
 VALID_BUILTIN_TOOLS = ("bash", "read", "glob")

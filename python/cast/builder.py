@@ -1496,6 +1496,11 @@ class StdioJsonRpcServer:
 
 
 async def main():
+    # Apply directory overrides before any scenario creates an agent.
+    # Importing the tools module leaves AGENTS_DIR on ~/.cast/agents.
+    from .builder_tools.tools import apply_process_dirs
+
+    apply_process_dirs()
     server = StdioJsonRpcServer()
     await server.run()
 
