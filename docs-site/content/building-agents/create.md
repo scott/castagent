@@ -85,6 +85,12 @@ The clone validates that the repo contains an `agent.yaml` and refuses
 non-Cast repositories. After clone, `repository` is added to the local
 `agent.yaml` so `cast git push` knows where to send future commits.
 
+A name argument sets the directory under `~/.cast/agents/` and the `name`
+field in `agent.yaml`. The runtime and the A2A agent card read that field,
+so `cast clone <source> my-local-copy` publishes `my-local-copy` instead of
+the source agent's name. Leave the name off and `agent.yaml` keeps the name
+from the source.
+
 ## From a local directory
 
 A filesystem path is copied into `~/.cast/agents/<name>/`. The name
@@ -94,6 +100,8 @@ defaults to the directory's basename.
 cast clone ./path/to/local-agent
 cast clone /absolute/path/to/local-agent my-local-name
 ```
+
+Passing `my-local-name` also sets `name` in the copied `agent.yaml`.
 
 The directory must contain `agent.yaml`. If it does not, clone stops with
 `Directory does not contain a Cast agent (missing agent.yaml).` A missing
@@ -108,7 +116,8 @@ Inside a dev or production TUI session, `{% ref "slash:import" %}` opens
 a modal titled "Import Cast Agent". Source takes a GitHub URL, `user/repo`,
 or a local path (`./relative` or `/absolute`). Name is optional. Enter
 submits and ESC closes, returning focus to the chat input. `/import <source>`
-skips the modal, and a second argument sets the local name.
+skips the modal, and a second argument sets the local name in the directory
+and in `agent.yaml`.
 
 On success the TUI reports the agent name and suggests `cast dev`,
 `cast edit`, and `cast deploy <name> --provider docker`.
