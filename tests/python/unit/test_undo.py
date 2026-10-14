@@ -161,6 +161,138 @@ class TestUndoHistory:
         assert [c.id for c in history] == [3, 2, 1]
 
 
+def _write_config(agent_path: Path, config: dict) -> None:
+    with open(agent_path / "agent.yaml", "w") as f:
+        yaml.dump(config, f, default_flow_style=False, sort_keys=False)
+
+
+def _read_config(agent_path: Path) -> dict:
+    with open(agent_path / "agent.yaml") as f:
+        return yaml.safe_load(f)
+
+
+class TestUndoLeavesUntrackedFiles:
+    def test_undo_and_redo_keep_files_and_sections_outside_the_snapshot(
+        self, test_agent, temp_agents_dir
+    ):
+        agent_path = temp_agents_dir / test_agent
+        versioning.create_version(test_agent, source="create", message="v1")
+
+        config = _read_config(agent_path)
+        config["description"] = "updated description"
+        _write_config(agent_path, config)
+        _set_instructions(agent_path, "# v2 content\n")
+        versioning.create_version(test_agent, source="builder", message="v2")
+
+        # Added after the snapshot. These paths are not in either tarball.
+        (agent_path / "tools" / "keep.py").write_text("KEEPME\n")
+        (agent_path / "skills" / "triage").mkdir(parents=True)
+        (agent_path / "skills" / "triage" / "SKILL.md").write_text("# triage\n")
+        (agent_path / "mcp" / "extra.yaml").write_text("server: extra\n")
+        (agent_path / "memory").mkdir()
+        (agent_path / "memory" / "config.yaml").write_text("memory: {}\n")
+        (agent_path / "tests" / "cli").mkdir(parents=True)
+        (agent_path / "tests" / "cli" / "test_agent.py").write_text("def test_ok():\n    pass\n")
+        (agent_path / ".gitignore").write_text("node_modules\n")
+        (agent_path / "README.md").write_text("# readme\n")
+        (agent_path / "PROMPT.md").write_text("custom prompt\n")
+        config = _read_config(agent_path)
+        config["repository"] = {
+            "remote": "origin",
+            "url": "https://github.com/acme/bb2",
+        }
+        config["skills"] = [{"name": "triage", "description": "Sort mail"}]
+        _write_config(agent_path, config)
+
+        undo.undo(test_agent)
+
+        assert (agent_path / "tools" / "keep.py").read_text() == "KEEPME\n"
+        assert (agent_path / "skills" / "triage" / "SKILL.md").read_text() == "# triage\n"
+        assert (agent_path / "mcp" / "extra.yaml").read_text() == "server: extra\n"
+        assert (agent_path / "memory" / "config.yaml").read_text() == "memory: {}\n"
+        assert (agent_path / "tests" / "cli" / "test_agent.py").is_file()
+        assert (agent_path / ".gitignore").read_text() == "node_modules\n"
+        assert (agent_path / "README.md").read_text() == "# readme\n"
+        assert (agent_path / "PROMPT.md").read_text() == "custom prompt\n"
+        restored = _read_config(agent_path)
+        assert restored["description"] == "Agent for undo/redo tests"
+        assert restored["repository"]["url"] == "https://github.com/acme/bb2"
+        assert restored["skills"][0]["name"] == "triage"
+        assert _read_instructions(agent_path) == "# Initial\n\nYou are a helpful assistant.\n"
+
+        undo.redo(test_agent)
+
+        assert (agent_path / "tools" / "keep.py").read_text() == "KEEPME\n"
+        assert (agent_path / "skills" / "triage" / "SKILL.md").is_file()
+        assert (agent_path / "mcp" / "extra.yaml").is_file()
+        assert (agent_path / "memory" / "config.yaml").is_file()
+        assert (agent_path / "tests" / "cli" / "test_agent.py").is_file()
+        assert (agent_path / ".gitignore").is_file()
+        assert (agent_path / "README.md").is_file()
+        assert (agent_path / "PROMPT.md").read_text() == "custom prompt\n"
+        redone = _read_config(agent_path)
+        assert redone["description"] == "updated description"
+        assert redone["repository"]["url"] == "https://github.com/acme/bb2"
+        assert redone["skills"][0]["name"] == "triage"
+        assert _read_instructions(agent_path) == "# v2 content\n"
+
+    def test_undo_restores_tracked_tool_and_keeps_a_later_sibling(
+        self, test_agent, temp_agents_dir
+    ):
+        agent_path = temp_agents_dir / test_agent
+        (agent_path / "tools" / "tracked.py").write_text("v1\n")
+        (agent_path / "mcp" / "gmail.yaml").write_text("v1\n")
+        versioning.create_version(test_agent, source="create", message="v1")
+
+        (agent_path / "tools" / "tracked.py").write_text("v2\n")
+        (agent_path / "mcp" / "gmail.yaml").write_text("v2\n")
+        versioning.create_version(test_agent, source="builder", message="v2")
+
+        (agent_path / "tools" / "keep.py").write_text("KEEPME\n")
+        (agent_path / "mcp" / "extra.yaml").write_text("extra\n")
+
+        undo.undo(test_agent)
+        assert (agent_path / "tools" / "tracked.py").read_text() == "v1\n"
+        assert (agent_path / "tools" / "keep.py").read_text() == "KEEPME\n"
+        assert (agent_path / "mcp" / "gmail.yaml").read_text() == "v1\n"
+        assert (agent_path / "mcp" / "extra.yaml").read_text() == "extra\n"
+
+        undo.redo(test_agent)
+        assert (agent_path / "tools" / "tracked.py").read_text() == "v2\n"
+        assert (agent_path / "tools" / "keep.py").read_text() == "KEEPME\n"
+        assert (agent_path / "mcp" / "gmail.yaml").read_text() == "v2\n"
+        assert (agent_path / "mcp" / "extra.yaml").read_text() == "extra\n"
+
+    def test_snapshot_repository_and_skills_are_restored(
+        self, test_agent, temp_agents_dir
+    ):
+        agent_path = temp_agents_dir / test_agent
+        config = _read_config(agent_path)
+        config["repository"] = {"url": "https://github.com/acme/v1"}
+        config["skills"] = [{"name": "v1"}]
+        _write_config(agent_path, config)
+        versioning.create_version(test_agent, source="create", message="v1")
+
+        config = _read_config(agent_path)
+        config["description"] = "updated description"
+        config["repository"] = {"url": "https://github.com/acme/v2"}
+        config["skills"] = [{"name": "v2"}]
+        _write_config(agent_path, config)
+        versioning.create_version(test_agent, source="builder", message="v2")
+
+        undo.undo(test_agent)
+        restored = _read_config(agent_path)
+        assert restored["description"] == "Agent for undo/redo tests"
+        assert restored["repository"]["url"] == "https://github.com/acme/v1"
+        assert restored["skills"] == [{"name": "v1"}]
+
+        undo.redo(test_agent)
+        redone = _read_config(agent_path)
+        assert redone["description"] == "updated description"
+        assert redone["repository"]["url"] == "https://github.com/acme/v2"
+        assert redone["skills"] == [{"name": "v2"}]
+
+
 class TestClearRedoStack:
     def test_clear_drops_entries(self, test_agent, temp_agents_dir):
         versioning.create_version(test_agent, source="create", message="v1")

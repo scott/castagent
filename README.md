@@ -393,6 +393,16 @@ cast session export <id> --out backup.json
 
 `cast release` rejects a version lower than the `version` in `agent.yaml` and leaves that file unchanged. A release that succeeds updates only the `version` field, keeps the rest of the file's formatting, and then packs the working tree (project files except `.castignore` paths, `.cast/`, and `.git/`) so the tarball's `agent.yaml` matches.
 
+`cast undo` and `cast redo` copy the files stored in the undo snapshot
+onto the agent and leave every other project file in place. The
+snapshot records `agent.yaml`, `instructions.md`, and `mcp/` or
+`tools/` when those directories have files. `skills/`, `memory/`,
+`tests/`, `.gitignore`, `README.md`, a custom prompt file, and files
+added under `tools/` or `mcp/` after the snapshot stay on disk.
+`repository:` and `skills:` in `agent.yaml` stay when the snapshot
+does not include them. A section the snapshot does include is restored
+from the snapshot.
+
 `cast undo` and `cast redo` run in the Python environment installed with
 Cast. If that runtime fails, the command prints the Python error.
 `Nothing to undo` means the undo log is empty, and `Nothing to redo`

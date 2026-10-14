@@ -33,8 +33,17 @@ Use `cast redo` to bring the changes back.
 ```
 
 The agent's working tree is restored to its state at v10, and v11 is
-pushed onto the redo stack. `agent.yaml`, `instructions.md`, and
-the `mcp/` and `tools/` directories are all rewound.
+pushed onto the redo stack. Undo and redo copy the files stored in
+that snapshot onto the agent. They do not delete a file the snapshot
+does not contain.
+
+The snapshot records `agent.yaml`, `instructions.md`, and `mcp/` or
+`tools/` when those directories have files. `skills/`, `memory/`,
+`tests/`, `.gitignore`, `README.md`, a custom prompt file, and files
+added under `tools/` or `mcp/` after the snapshot stay on disk.
+`repository:` and `skills:` in `agent.yaml` also stay when the
+snapshot does not include those sections. A section the snapshot does
+include is restored from the snapshot.
 
 ## Undo multiple changes
 

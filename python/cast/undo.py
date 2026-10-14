@@ -14,12 +14,14 @@ redo stack (standard editor behavior).
 """
 
 import json
-import tarfile
 import shutil
+import tarfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
+
+import yaml
 
 from cast.versioning import (
     AGENTS_DIR,
@@ -46,6 +48,12 @@ class UndoError(Exception):
     """Raised when undo/redo cannot proceed."""
 
 
+# Git and skills commands write these agent.yaml keys without recording
+# an undo snapshot. A snapshot that omits them must not drop the live
+# sections. Keys the snapshot does contain are restored from the snapshot.
+_UNTRACKED_AGENT_YAML_KEYS = ("repository", "skills")
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
@@ -70,8 +78,66 @@ def _save_changes_file(agent_name: str, data: dict) -> None:
         json.dump(data, f, indent=2)
 
 
+def _merged_agent_yaml(snapshot_text: str, current_text: str) -> Optional[str]:
+    """Keep live agent.yaml sections the snapshot does not contain.
+
+    Returns None when the snapshot file can be copied unchanged. A parse
+    failure also returns None so the caller copies the snapshot bytes.
+    """
+    try:
+        snapshot_data = yaml.safe_load(snapshot_text)
+        current_data = yaml.safe_load(current_text)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(snapshot_data, dict) or not isinstance(current_data, dict):
+        return None
+
+    changed = False
+    for key in _UNTRACKED_AGENT_YAML_KEYS:
+        if key not in snapshot_data and key in current_data:
+            snapshot_data[key] = current_data[key]
+            changed = True
+    if not changed:
+        return None
+    try:
+        return yaml.safe_dump(snapshot_data, default_flow_style=False, sort_keys=False)
+    except yaml.YAMLError:
+        return None
+
+
+def _replace_path(src: Path, dest: Path) -> None:
+    """Replace dest with a copy of src. dest's parent is created."""
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    if dest.is_symlink() or (dest.exists() and not dest.is_dir()):
+        dest.unlink()
+    elif dest.is_dir():
+        shutil.rmtree(dest)
+    if src.is_symlink():
+        dest.symlink_to(src.readlink())
+        return
+    shutil.copy2(src, dest)
+
+
+def _overlay_path(src: Path, dest: Path) -> None:
+    """Copy src onto dest. Files dest already has that src does not contain stay."""
+    if src.is_dir() and not src.is_symlink():
+        if dest.is_symlink() or (dest.exists() and not dest.is_dir()):
+            dest.unlink()
+        dest.mkdir(parents=True, exist_ok=True)
+        for child in src.iterdir():
+            _overlay_path(child, dest / child.name)
+        return
+    _replace_path(src, dest)
+
+
 def _extract_change(agent_name: str, change_id: int, target_dir: Path) -> None:
-    """Extract a single change tarball over `target_dir`."""
+    """Copy one change tarball onto `target_dir`.
+
+    The archive records agent.yaml, instructions.md, and mcp/ or tools/
+    only when those directories have files. Copy those paths back and
+    leave every other project file in place. Do not remove a file just
+    because this snapshot omitted it.
+    """
     changes_dir = _get_changes_dir(agent_name)
     tarball = changes_dir / _get_version_filename(change_id)
     if not tarball.exists():
@@ -87,25 +153,14 @@ def _extract_change(agent_name: str, change_id: int, target_dir: Path) -> None:
         with tarfile.open(tarball, "r:gz") as tar:
             tar.extractall(temp_extract)
 
-        # Apply the extracted contents to the agent directory. Wipe
-        # everything except .cast and .git first so the result matches
-        # what `cast restore --release` would do.
-        for item in target_dir.iterdir():
-            if item.name in (".cast", ".git"):
-                continue
-            if item.is_dir():
-                shutil.rmtree(item)
-            else:
-                item.unlink()
-
         for item in temp_extract.iterdir():
             dest = target_dir / item.name
-            if item.is_dir():
-                if dest.exists():
-                    shutil.rmtree(dest)
-                shutil.copytree(item, dest)
-            else:
-                shutil.copy2(item, dest)
+            if item.name == "agent.yaml" and item.is_file() and dest.is_file():
+                merged = _merged_agent_yaml(item.read_text(), dest.read_text())
+                if merged is not None:
+                    dest.write_text(merged)
+                    continue
+            _overlay_path(item, dest)
     finally:
         if temp_extract.exists():
             shutil.rmtree(temp_extract)
