@@ -131,7 +131,8 @@ export default class Skills extends Command {
       this.log(addedMessage(agentName, entry))
       return
     }
-    if (!flags.description || flags.body === undefined) {
+    // Empty string is a provided value. Only a missing flag is a usage error.
+    if (flags.description === undefined || flags.body === undefined) {
       this.error('Usage: cast skills add <agent> --name <name> --description <text> --body <markdown>')
     }
     const body = readSkillBody(flags.body, () => fs.readFileSync(0, 'utf8'))
