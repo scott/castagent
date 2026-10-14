@@ -178,6 +178,7 @@ cast update demo-agent --model openrouter/anthropic/claude-3.7-sonnet
 # A running builder does not hot-swap; start it again to apply.
 cast model
 cast model anthropic/claude-3.5-sonnet
+cast model openrouter/minimax/minimax-m2.5
 
 # Delete agent
 cast delete demo-agent --force
@@ -561,7 +562,7 @@ The `digitalocean/` prefix is stripped and the catalog id is sent unchanged. It 
 cast update demo-agent --model digitalocean/llama3.3-70b-instruct
 ```
 
-`cast model <id>` writes `defaults.builder_model` from the curated list (`cast model --list`). The builder reads that raw value when it starts. A running builder does not hot-swap; run `cast dev <agent>` again. `digitalocean/<model-id>` still selects DigitalOcean. The default remains `openrouter/minimax/minimax-m2.5`. The runtime, the builder, and memory reflection call `get_provider(model)` instead of naming a provider class.
+`cast model <id>` writes `defaults.builder_model` from the curated list (`cast model --list`). A leading `openrouter/` on a curated id is accepted and stored as given, so the id printed by `cast model --current` can be passed back to `cast model`. The builder reads that raw value when it starts. A running builder does not hot-swap; run `cast dev <agent>` again. `digitalocean/<model-id>` still selects DigitalOcean. The default remains `openrouter/minimax/minimax-m2.5`. The runtime, the builder, and memory reflection call `get_provider(model)` instead of naming a provider class.
 
 Another inference provider can register without editing those callers. Put a folder at `~/.cast/inference-providers/<key>/` (`provider.json` and `provider.py`), list a module path under `inferenceProviders` in `~/.cast/config.yaml`, or publish a `cast.inference` entry point. Deployed agents receive whatever API keys the registry declares (`inferenceEnv()`), including external providers. `providers.digitalocean.token` is still only the deploy token.
 

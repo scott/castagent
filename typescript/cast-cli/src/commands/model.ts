@@ -12,6 +12,7 @@ export default class Model extends Command {
   static examples = [
     '<%= config.bin %> <%= command.id %>',
     '<%= config.bin %> <%= command.id %> anthropic/claude-3.5-sonnet',
+    '<%= config.bin %> <%= command.id %> openrouter/minimax/minimax-m2.5',
     '<%= config.bin %> <%= command.id %> --list',
     '<%= config.bin %> <%= command.id %> --list --json',
     '<%= config.bin %> <%= command.id %> --current --json',
@@ -19,7 +20,8 @@ export default class Model extends Command {
 
   static args = {
     model: Args.string({
-      description: 'Builder model id to store in defaults.builder_model',
+      description:
+        'Builder model id to store in defaults.builder_model. A curated id, or the same id with a leading openrouter/ prefix.',
       required: false,
     }),
   }
@@ -59,8 +61,8 @@ export default class Model extends Command {
 
       const modelId = args.model?.trim()
       if (modelId) {
-        setBuilderModel(modelId)
-        this.log(`✓ Builder model set to: ${modelId}`)
+        const stored = setBuilderModel(modelId)
+        this.log(`✓ Builder model set to: ${stored}`)
         this.log('  Restart the builder to take effect (run `cast dev <agent>` again).')
         return
       }
