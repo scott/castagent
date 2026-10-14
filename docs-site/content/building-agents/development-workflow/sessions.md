@@ -89,8 +89,14 @@ cast session resume                     # opens a picker
 
 The TUI opens with the session's full transcript preloaded. That
 transcript is the model's context, and future chat turns are appended
-to the resumed session. Connecting again does not reopen it — resume
+to the resumed session. Connecting again does not reopen it. Resume
 is how you continue the old conversation.
+
+A dev session, including one created by `cast session new`, opens the
+local agent. Resume attaches when that agent is already running, and
+starts it when it is not. A production session connects to the agent's
+deployment and opens the TUI there. In both cases the saved transcript
+is loaded and later turns append to that session.
 
 ## Forking a session
 

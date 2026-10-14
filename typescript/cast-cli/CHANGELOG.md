@@ -4,6 +4,10 @@
 
 ### Patch Changes
 
+- `cast session resume` opens the TUI on the saved session. It launches cast-tui with `--agent`, `--url`, `--mode`, and `--session`.
+
+  - PR #179
+
 - Inside `cast new`, `/git`, `/undo`, `/redo`, `/describe`, and `/releases` act on the agent the wizard just created. Before an agent exists they say no agent is loaded. `/undo` and `/redo` show the CLI reason in the chat, and child stderr is not painted over the input.
 
   - PR #169
