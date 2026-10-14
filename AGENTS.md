@@ -57,21 +57,21 @@ When reviewing a PR that requires a version bump:
 
 ### Branch Protection
 
-All changes to `master` must go through pull requests:
-- Create feature branches from `master`
-- Open PR against `master`
+All changes to `main` must go through pull requests:
+- Create feature branches from `main`
+- Open PR against `main`
 - Require at least one review before merge
-- No direct pushes to `master`
+- No direct pushes to `main`
 - Squash and merge to keep history clean
 
 ### Branch Workflow
 
-All new work must be conducted in a new branch. Never commit directly to `master` or `main`. Before starting any task:
+All new work must be conducted in a new branch. Never commit directly to `main`. Before starting any task:
 
 1. Create a new branch: `git checkout -b feature/my-feature`
 2. Make your changes and commit them
 3. Push the branch: `git push -u origin feature/my-feature`
-4. Open a pull request against `master`
+4. Open a pull request against `main`
 
 ### Documentation Updates
 
@@ -98,8 +98,8 @@ A PR that changes user-facing behavior without corresponding docs-site changes i
 1. Developer creates PR with changes
 2. Coding agent reviews PR and determines version bump
 3. Agent updates all package versions and CHANGELOG.md
-4. PR merged to `master`
-5. GitHub Actions workflow triggers on push to `master`
+4. PR merged to `main`
+5. GitHub Actions workflow triggers on push to `main`
 6. Workflow creates git tag `v<version>` and GitHub Release
 
 ---

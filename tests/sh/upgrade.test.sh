@@ -245,6 +245,7 @@ run_upgrade() {
 help_out="$TMP/help.out"
 bash "$SCRIPT_SRC" --help >"$help_out"
 assert_contains "$help_out" "Usage: ./upgrade.sh" "help prints usage"
+assert_contains "$help_out" "origin/main" "help follows main"
 assert_contains "$help_out" "cast upgrade <agent>" "help distinguishes deployed-agent upgrade"
 set +e
 bash "$SCRIPT_SRC" --nope >"$TMP/bad.out" 2>&1
@@ -358,6 +359,22 @@ run_upgrade "$PAIR_REPO/upgrade.sh" "$TMP/mainonly/home" "$TMP/mainonly/out"
 [[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/mainonly/out" >&2; fail "main-only upgrade failed"; }
 assert_eq "$(git -C "$PAIR_REPO" rev-parse --abbrev-ref HEAD)" "main" "main-only checkout stays on main"
 assert_contains "$TMP/mainonly/out" "Already on the newest main commit" "main is the upstream when master is absent"
+
+make_pair "prefermain"
+prefer_old="$(git -C "$PAIR_REPO" rev-parse HEAD)"
+git -C "$PAIR_REPO" push origin master:main >/dev/null
+git --git-dir "$PAIR_ORIGIN" symbolic-ref HEAD refs/heads/main
+advance_origin "$PAIR_ORIGIN" "2.0.0"
+prepare_home "$TMP/prefermain/home" "$PAIR_REPO"
+prepare_venv "$PAIR_REPO"
+reset_log
+run_upgrade "$PAIR_REPO/upgrade.sh" "$TMP/prefermain/home" "$TMP/prefermain/out"
+[[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/prefermain/out" >&2; fail "main wins over a stale master ref"; }
+assert_eq "$(git -C "$PAIR_REPO" rev-parse --abbrev-ref HEAD)" "main" "upgrade leaves master when main exists"
+assert_eq "$(git -C "$PAIR_REPO" rev-parse HEAD)" "$(git -C "$PAIR_REPO" rev-parse origin/main)" "upgrade fast-forwards to origin/main"
+assert_eq "$(git -C "$PAIR_REPO" rev-parse master)" "$prefer_old" "stale master ref is not the upstream"
+assert_contains "$PAIR_REPO/typescript/cast-cli/package.json" '"version": "2.0.0"' "main commit is the one that is built"
+assert_contains "$TMP/prefermain/out" "Switching from master to main" "upgrade says it left master for main"
 
 cat > "$TMP/stubs/uv" << 'EOF'
 #!/bin/bash

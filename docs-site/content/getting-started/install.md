@@ -94,7 +94,7 @@ From the checkout:
 ./upgrade.sh
 ```
 
-`upgrade.sh` fetches the newest `master` commit (`main` when that is the only
+`upgrade.sh` fetches the newest `main` commit (`master` when that is the only
 upstream branch), fast-forwards this checkout, and rebuilds the CLI, TUI, and
 Python runtime in place. Agents, config, and tokens in `~/.cast` stay where
 they are. A stale pre-TypeScript binary at `~/.cast/bin/cast` is removed so it
