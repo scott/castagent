@@ -66,6 +66,13 @@ cast git remote my-agent set-url origin https://github.com/you/new.git
 cast git remote my-agent remove origin     # drop a remote
 ```
 
+`remove` deletes that remote from the agent repo. When `repository.url`
+matches the remote being removed, and no other remote still uses that
+same URL, `remove` also deletes `repository.url`. A trailing slash, a
+`.git` suffix, or credentials in the remote URL do not keep the stale
+URL in place. `repository.remote` and `repository.branch` stay in
+`agent.yaml`.
+
 ## Day-to-day
 
 ```bash
