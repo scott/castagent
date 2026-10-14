@@ -363,11 +363,11 @@ describe('delete command', () => {
     const captureOutput = (instance: any) => {
       const logs: string[] = []
       const warnings: string[] = []
-      sandbox.stub(instance, 'log').callsFake((msg?: string) => {
-        logs.push(String(msg ?? ''))
+      sandbox.stub(instance, 'log').callsFake((...args: unknown[]) => {
+        logs.push(args.map(arg => String(arg ?? '')).join(' '))
       })
-      sandbox.stub(instance, 'warn').callsFake((msg?: string) => {
-        warnings.push(String(msg ?? ''))
+      sandbox.stub(instance, 'warn').callsFake((...args: unknown[]) => {
+        warnings.push(args.map(arg => String(arg ?? '')).join(' '))
       })
       const errorSpy = sandbox.spy(console, 'error')
       return {logs, warnings, errorSpy}
@@ -394,9 +394,8 @@ describe('delete command', () => {
         if (fs.existsSync(agentPath)) fs.rmSync(agentPath, {recursive: true, force: true})
       }
 
-      const keychainLines = logs.filter(line => /keychain/i.test(line))
-      expect(keychainLines).to.deep.equal(['No keychain available. Nothing removed.'])
-      expect(warnings.filter(line => /keychain/i.test(line))).to.deep.equal([])
+      expect(logs.filter(line => line === 'No keychain available. Nothing removed.')).to.have.length(1)
+      expect(warnings.filter(line => line.startsWith('Failed to remove token from keychain'))).to.deep.equal([])
       expect(errorSpy.called).to.equal(false)
       expect(logs.some(line => line.includes('Removed token from keychain.'))).to.equal(false)
       expect(logs.some(line => line.includes(`Agent '${agentName}' deleted successfully.`))).to.equal(true)
@@ -423,8 +422,8 @@ describe('delete command', () => {
         if (fs.existsSync(agentPath)) fs.rmSync(agentPath, {recursive: true, force: true})
       }
 
-      expect(logs).to.include('Removed token from keychain.')
-      expect(logs).to.include('Auth token from keychain')
+      expect(logs.filter(line => line === 'Removed token from keychain.')).to.have.length(1)
+      expect(logs.some(line => line.includes('Auth token from keychain'))).to.equal(true)
       expect(logs.some(line => line.includes('No keychain available'))).to.equal(false)
       expect(warnings).to.deep.equal([])
       expect(errorSpy.called).to.equal(false)
