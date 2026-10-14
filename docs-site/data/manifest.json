@@ -341,7 +341,7 @@
     {
       "name": "save",
       "category": "session",
-      "description": "Save conversation transcript to file"
+      "description": "Save the conversation as a plain text file"
     },
     {
       "name": "session",

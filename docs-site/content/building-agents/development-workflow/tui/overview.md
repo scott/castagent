@@ -86,7 +86,7 @@ on day one:
 - `{% ref "slash:help" %}` — list all commands available in the current mode.
 - `{% ref "slash:import" %}` — import an agent from GitHub or a local path.
 - `{% ref "slash:mode" %}` — toggle PLAN/BUILD.
-- `{% ref "slash:save" %}` — save the transcript to a Markdown file.
+- `{% ref "slash:save" %}` saves the conversation as plain text. The default file is `<agent>-<timestamp>.txt` in `~/.cast/transcripts`. A relative name stays in that directory. An absolute path, or a path that starts with `~`, is written at that location, and missing parent directories are created.
 - `{% ref "slash:copy" %}` — copy the last agent reply to the clipboard.
 - `{% ref "slash:clear" %}` — clear the chat (keeps the agent connection).
 - `{% ref "slash:shutdown" %}` — shut down a deployed agent (dev and production).

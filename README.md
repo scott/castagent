@@ -405,6 +405,7 @@ Highlighting text with the mouse copies that selection to the clipboard.
 | `/sessions` | session | Modal picker over saved sessions. `Enter` or `R` resumes, `F` forks, `N` renames, `D` deletes. |
 | `/session new [name]` | session | Start a fresh session and model context, and switch the chat to it. |
 | `/session resume [id\|name]` | session | Replay a session's transcript into the chat and the model context. Opens the picker if no argument. |
+| `/save [filename]` | session | Save the conversation as plain text. With no name, writes `~/.cast/transcripts/<agent>-<timestamp>.txt`. A relative name stays in that directory. An absolute path or a path starting with `~` is written there, and missing parent directories are created. |
 | `/releases` | session | Shows semantic releases with `C` (Create Release) and `U` (Upgrade, if deployed) shortcuts. |
 | `/release` | agent | Opens a modal to create a new semantic release. Suggests patch/minor/major versions based on the current release. |
 | `/deploy` | agent | Release picker → provider picker → live deploy with SHA shown on success. |

@@ -2,12 +2,20 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 
-const TRANSCRIPTS_DIR = path.join(os.homedir(), '.cast', 'transcripts')
+function transcriptsDir(): string {
+  return path.join(os.homedir(), '.cast', 'transcripts')
+}
 
-function ensureTranscriptsDir(): void {
-  if (!fs.existsSync(TRANSCRIPTS_DIR)) {
-    fs.mkdirSync(TRANSCRIPTS_DIR, {recursive: true})
+/**
+ * Expand a leading ~ to the current user's home directory.
+ * `~name` is left alone so it stays a relative filename.
+ */
+function expandHome(input: string): string {
+  if (input === '~') return os.homedir()
+  if (input.startsWith('~/') || input.startsWith('~\\')) {
+    return path.join(os.homedir(), input.slice(2))
   }
+  return input
 }
 
 function generateFilename(agentName: string): string {
@@ -18,10 +26,28 @@ function generateFilename(agentName: string): string {
 }
 
 /**
- * Save a conversation transcript to ~/.cast/transcripts/
+ * Choose where /save writes a transcript.
+ * A relative name is placed under ~/.cast/transcripts.
+ * An absolute path, or a path that starts with ~, is used as given.
+ *
+ * path.join would fold an absolute later segment back into the transcripts
+ * directory (`join(dir, '/tmp/a.md')` becomes `dir/tmp/a.md`), so those
+ * paths are resolved on their own.
+ */
+export function resolveTranscriptPath(agentName: string, filename?: string): string {
+  const requested = filename ? expandHome(filename) : generateFilename(agentName)
+  if (path.isAbsolute(requested)) {
+    return path.normalize(requested)
+  }
+  return path.normalize(path.join(transcriptsDir(), requested))
+}
+
+/**
+ * Save a conversation transcript as plain text.
+ * The default file is `<agent>-<timestamp>.txt` in ~/.cast/transcripts.
  * @param agentName - Name of the agent
  * @param messages - Array of messages with role and text
- * @param filename - Optional custom filename (defaults to auto-generated)
+ * @param filename - Optional path or filename. Relative names stay in ~/.cast/transcripts.
  * @returns Full path to the saved transcript file
  */
 export function saveTranscript(
@@ -29,10 +55,8 @@ export function saveTranscript(
   messages: Array<{role: 'user' | 'agent'; text: string}>,
   filename?: string,
 ): string {
-  ensureTranscriptsDir()
-
-  const finalFilename = filename || generateFilename(agentName)
-  const filePath = path.join(TRANSCRIPTS_DIR, finalFilename)
+  const filePath = resolveTranscriptPath(agentName, filename)
+  fs.mkdirSync(path.dirname(filePath), {recursive: true})
 
   const timestamp = new Date().toISOString()
   const lines: string[] = [

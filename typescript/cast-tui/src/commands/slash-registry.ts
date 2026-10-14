@@ -1827,7 +1827,7 @@ const commands: SlashCommand[] = [
 
   {
     name: 'save',
-    description: 'Save conversation transcript to file',
+    description: 'Save the conversation as a plain text file',
     category: 'session',
     modes: ['dev', 'production'],
     args: '[filename]',
