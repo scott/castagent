@@ -37,18 +37,28 @@ file I/O. There's no special API.
 | Sprites | persistent directory inside the sprite | managed by Sprites |
 
 The volume is **keyed by the agent name**, not the deployment SHA. So
-when you `cast upgrade <sha> --version 1.7`, the new container
+when you `cast upgrade <sha> 1.7`, the new container
 reattaches the same volume and the agent's memories are intact.
 
 ## The volume_config field
 
 Cast records the volume configuration in the `deployments` table
 (`volume_id`, `volume_config` columns) so it can be re-attached on
-upgrade. On `cast shutdown` the volume is *not* deleted by default —
-shutting down a deployment doesn't forget the agent's memory.
+upgrade.
 
-To destroy the volume along with the deployment, pass `--destroy-volume`
-to `cast shutdown` (or use `--force` and answer the confirmation).
+`cast shutdown` does not take a volume flag. The only flag is `--force`,
+which skips the confirmation prompt. Shutdown runs that provider's
+destroy handler:
+
+- Docker removes the container, then removes the memory volume recorded
+  for that deployment.
+- Railway runs `railway down` and leaves the Railway volume in place.
+- Fly destroys the app and then attempts to delete its memory volume.
+- DigitalOcean Droplet shutdown deletes the droplet and then attempts
+  to delete the memory volume.
+- DigitalOcean MicroVM shutdown deletes that MicroVM, including its disk.
+- Sprites shutdown destroys the sprite, which holds its persistent
+  directory.
 
 ## How the runtime exposes the volume
 
@@ -98,8 +108,11 @@ Treat the volume like a database:
 ## Resetting memory
 
 ```bash
-cast shutdown <name> --destroy-volume
+cast shutdown <name>
 cast deploy <name> --provider <provider>
 ```
 
-The agent starts fresh on the next deploy with no prior memories.
+Docker shutdown removes the memory volume, so the next deploy starts
+without those files. On Railway the volume remains after `railway down`.
+Delete it with Railway's own tools before the next deploy if you want
+an empty volume.

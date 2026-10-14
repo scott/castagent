@@ -76,9 +76,9 @@ running.
 ## upgrade
 
 ```bash
-cast upgrade email-assistant --version 1.7
-cast upgrade abc123 --version 1.7
-cast upgrade email-assistant              # defaults to latest release
+cast upgrade email-assistant 1.7
+cast upgrade abc123 1.7
+cast upgrade email-assistant              # defaults to latest
 cast upgrade email-assistant --list-versions
 ```
 
@@ -93,10 +93,12 @@ deployment).
 
 ### Version
 
-- `--version <semver>` — must be an existing release
+The version is a positional argument, not a flag.
+
+- `cast upgrade <name> <semver>` must name an existing release
   (`cast releases <name>` to list).
-- `--version latest` — uses the current working state, not a release.
-- No `--version` — defaults to `latest`.
+- `cast upgrade <name> latest` uses the current working state, not a release.
+- Omitting the version defaults to `latest`.
 
 ### Provider differences
 
@@ -111,6 +113,6 @@ deployment).
 - **DigitalOcean MicroVM** — exports memory (8 MiB cap), builds a new linux/amd64 image, creates a replacement MicroVM, restores memory, then deletes the previous one. Image, size, and env cannot be changed in place.
 
 `cast upgrade` is the right command for routine version bumps. For
-destructive rollbacks (you shipped a broken release and want to revert),
-the same command works — just point `--version` at the previous
-release.
+rollbacks (you shipped a broken release and want to revert),
+the same command works. Pass the previous release as the version
+argument.

@@ -143,7 +143,7 @@ export default class Upgrade extends Command {
 
     if (currentVersion === version || (version === 'latest' && currentVersion === 'latest')) {
       this.log(`Agent '${agentName}' is already at version ${version || currentVersion}.`)
-      this.log(`Use 'cast upgrade ${agentName} --version <version>' to upgrade to a different version.`)
+      this.log(`Use 'cast upgrade ${agentName} <version>' to upgrade to a different version.`)
       return
     }
 

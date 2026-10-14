@@ -34,6 +34,11 @@ describe('Upgrade Command', () => {
       expect(UpgradeCommand.flags['list-versions'].type).to.equal('boolean')
     })
 
+    it('should take the release as a positional argument, not a --version flag', () => {
+      expect(UpgradeCommand.flags).to.not.have.property('version')
+      expect(UpgradeCommand.args.version).to.exist
+    })
+
     it('should define list-versions flag with description', () => {
       expect(UpgradeCommand.flags['list-versions'].description).to.be.a('string')
       expect(UpgradeCommand.flags['list-versions'].description?.length).to.be.greaterThan(0)
@@ -188,6 +193,66 @@ describe('Upgrade Command', () => {
     it('should support fly provider', () => {
       const validProviders = ['railway', 'fly', 'digitalocean', 'sprites', 'docker', 'local']
       expect(validProviders).to.include('fly')
+    })
+  })
+
+  describe('already-current hint', () => {
+    const agentName = `upgrade-hint-${Date.now()}`
+    const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
+    let sandbox: sinon.SinonSandbox
+
+    beforeEach(() => {
+      sandbox = sinon.createSandbox()
+      fs.mkdirSync(agentDir, {recursive: true})
+    })
+
+    afterEach(() => {
+      sandbox.restore()
+      fs.rmSync(agentDir, {recursive: true, force: true})
+    })
+
+    it('tells the user to pass the next version as a positional argument', async () => {
+      const deployUtils = await import('../../../typescript/cast-cli/src/lib/deploy/deploy-utils')
+      sandbox.stub(deployUtils, 'resolveDeploymentTarget').returns({
+        type: 'single',
+        deployment: {
+          id: 'abc123',
+          agent_name: agentName,
+          provider: 'docker',
+          deployment_url: 'http://127.0.0.1:8080',
+          deployed_version: '1.6',
+        },
+      })
+
+      const instance = new UpgradeCommand(['upgrade', agentName, '1.6'], {} as any) as any
+      instance.parse = async () => ({
+        args: {agent: agentName, version: '1.6'},
+        flags: {'list-versions': false},
+      })
+      const logs: string[] = []
+      instance.log = (msg?: string) => {
+        logs.push(msg ?? '')
+      }
+      instance.error = (msg: string) => {
+        throw new Error(typeof msg === 'string' ? msg : String(msg))
+      }
+
+      const releases = await import('../../../typescript/cast-cli/src/lib/releases')
+      sandbox.stub(releases, 'getRelease').resolves({
+        version: '1.6',
+        change_number: 1,
+        message: 'ship',
+        changelog: '',
+        created_at: '2026-05-12T17:08:33.000Z',
+        tarball_path: path.join(agentDir, '1.6.tar.gz'),
+      })
+      sandbox.stub(releases, 'validateSemver').resolves(true)
+
+      await instance.run()
+
+      const output = logs.join('\n')
+      expect(output).to.include(`Use 'cast upgrade ${agentName} <version>' to upgrade to a different version.`)
+      expect(output).to.not.match(/upgrade[^\n]*--version/)
     })
   })
 })

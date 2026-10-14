@@ -25,7 +25,7 @@ later.
   |  <sha>    |                     |  <sha>    |
   +-----------+                     +-----------+
         |                                  |
-        |  cast upgrade --version X        |  cast logs / cast shutdown
+        |  cast upgrade <version>          |  cast logs / cast shutdown
         v                                  v
   (redeploy in place)                (target the SHA)
 ```
@@ -102,7 +102,7 @@ volume and the agent's memories survive the upgrade.
 There is no first-class `cast rollback` (yet). The recipe:
 
 1. `cast releases email-assistant` to find the previous version.
-2. `cast upgrade <current-sha> --version <previous-version>`.
+2. `cast upgrade <current-sha> <previous-version>`.
 
 The previous tarball is extracted over the working tree, the image is
 rebuilt, and the new container starts with the same volume. The

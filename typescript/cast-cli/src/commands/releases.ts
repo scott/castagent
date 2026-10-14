@@ -89,6 +89,6 @@ export default class Releases extends Command {
     this.log('Commands:')
     this.log(`  cast release ${agentName} <version>  - Create a new release`)
     this.log(`  cast deploy ${agentName} --version <ver>  - Deploy a specific release`)
-    this.log(`  cast upgrade ${agentName} --version <ver>  - Upgrade to a release`)
+    this.log(`  cast upgrade ${agentName} <ver>  - Upgrade to a release`)
   }
 }
