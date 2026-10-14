@@ -1,4 +1,5 @@
 import {expect} from 'chai'
+import {spawnSync} from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -206,12 +207,49 @@ describe('cast skills command', () => {
       {name: 'triage', description: 'Sort incoming mail into buckets', body: '# Triage\n\nSort it.', json: false},
     )
     expect(added.errors).to.deep.equal([])
-    expect(added.logs.join('\n')).to.include('entered in the modal')
+    expect(added.logs.join('\n')).to.equal(
+      `Added skill 'triage' to '${agent.name}' (entered directly).`,
+    )
     const markdown = fs.readFileSync(path.join(agent.dir, 'skills', 'triage', 'SKILL.md'), 'utf8')
     expect(markdown).to.include('name: triage')
     expect(markdown).to.include('description: Sort incoming mail into buckets')
     expect(markdown).to.include('# Triage')
     expect(readConfig(agent.dir).skills[0].source).to.deep.equal({type: 'modal'})
+  })
+
+  it('reads a multiline body from stdin when --body is -', () => {
+    const agent = makeAgent()
+    const body = '# From stdin\n\nSecond line.\n'
+    const result = spawnSync(process.execPath, [
+      '-r', 'ts-node/register',
+      path.join(__dirname, 'skill-stdin-worker.ts'),
+      'skills',
+      'add',
+      agent.name,
+      '--name',
+      'bb-stdin',
+      '--description',
+      's',
+      '--body',
+      '-',
+    ], {
+      cwd: path.resolve(__dirname, '../../..'),
+      env: {
+        ...process.env,
+        CAST_AGENTS_DIR: agentsDir,
+        TS_NODE_TRANSPILE_ONLY: '1',
+      },
+      encoding: 'utf8',
+      input: body,
+    })
+    expect(result.stderr, result.stderr).to.equal('')
+    expect(result.status, result.stderr || result.stdout).to.equal(0)
+    expect(result.stdout.trim()).to.equal(
+      `Added skill 'bb-stdin' to '${agent.name}' (entered directly).`,
+    )
+    const markdown = fs.readFileSync(path.join(agent.dir, 'skills', 'bb-stdin', 'SKILL.md'), 'utf8')
+    expect(markdown).to.include('# From stdin')
+    expect(markdown).to.include('Second line.')
   })
 
   it('rejects a folder with no SKILL.md and writes nothing', async () => {

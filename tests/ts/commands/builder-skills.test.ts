@@ -1,4 +1,5 @@
 import {expect} from 'chai'
+import {spawnSync} from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -487,6 +488,35 @@ describe('builder skills CLI', () => {
       expect(modal.errors).to.deep.equal([])
       expect(modal.logs[0]).to.include("Added builder skill 'from-modal'.")
       expect(fs.existsSync(path.join(skillsRoot, 'from-modal', 'SKILL.md'))).to.equal(true)
+
+      const stdinBody = '# From stdin\n\nSecond line.\n'
+      const stdin = spawnSync(process.execPath, [
+        '-r', 'ts-node/register',
+        path.join(__dirname, 'skill-stdin-worker.ts'),
+        'builder-skills',
+        'add',
+        '--name',
+        'bb-bstdin',
+        '--description',
+        's',
+        '--body',
+        '-',
+      ], {
+        cwd: path.resolve(__dirname, '../../..'),
+        env: {
+          ...process.env,
+          HOME: home,
+          TS_NODE_TRANSPILE_ONLY: '1',
+        },
+        encoding: 'utf8',
+        input: stdinBody,
+      })
+      expect(stdin.stderr, stdin.stderr).to.equal('')
+      expect(stdin.status, stdin.stderr || stdin.stdout).to.equal(0)
+      expect(stdin.stdout).to.include("Added builder skill 'bb-bstdin'.")
+      const written = fs.readFileSync(path.join(skillsRoot, 'bb-bstdin', 'SKILL.md'), 'utf8')
+      expect(written).to.include('# From stdin')
+      expect(written).to.include('Second line.')
 
       const removed = await runCommand(Cmd, {action: 'remove', skillName: 'from-folder'}, {json: false})
       expect(removed.errors).to.deep.equal([])

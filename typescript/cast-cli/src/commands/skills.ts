@@ -25,19 +25,25 @@ export default class Skills extends Command {
     '<%= config.bin %> <%= command.id %> add email-agent --github owner/repo --ref main --subpath skills/triage',
     '<%= config.bin %> <%= command.id %> add email-agent --folder ~/skills/triage',
     '<%= config.bin %> <%= command.id %> add email-agent --name triage --description "Sort mail" --body "# Triage"',
+    '<%= config.bin %> <%= command.id %> add email-agent --name triage --description "Sort mail" --body -',
     '<%= config.bin %> <%= command.id %> remove email-agent triage',
   ]
 
+  // oclif feeds stdin to the first missing arg. That would consume the pipe
+  // before `--body -` can read the markdown, so every arg opts out.
   static args = {
     target: Args.string({
       description: 'Agent name, or add, or remove',
       required: true,
+      ignoreStdin: true,
     }),
     agent: Args.string({
       description: 'Agent name when adding or removing',
+      ignoreStdin: true,
     }),
     skill: Args.string({
       description: 'Skill name when removing',
+      ignoreStdin: true,
     }),
   }
 

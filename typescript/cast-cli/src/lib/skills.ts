@@ -120,7 +120,7 @@ export function formatSkillsText(agentName: string, skills: SkillEntry[]): strin
 function sourcePhrase(entry: SkillEntry): string {
   if (entry.source.type === 'github') return `github: ${entry.source.repo ?? ''}`
   if (entry.source.type === 'folder') return `folder: ${entry.source.from ?? ''}`
-  return 'entered in the modal'
+  return 'entered directly'
 }
 
 export function readSkillBody(body: string, readStdin: () => string): string {
