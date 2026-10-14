@@ -72,14 +72,14 @@ def get_message(message_id: str) -> dict:
 
 ## What the runtime loads
 
-The runtime agent (`python/cast/agent/runtime.py`) builds its tool list from `tools.builtin`. It keeps names that match a built-in implementation:
+The runtime agent (`python/cast/agent/runtime.py`) builds its tool list from `tools.builtin` and from MCP servers listed in `tools.mcp`. It keeps built-in names that match an implementation:
 
 - `bash`
 - `read`
 - `glob`
 - `git_status`, `git_commit`, `git_push`, `git_log`, `git_diff`, `git_add`
 
-`tools.custom` is not part of that list. A `tools/*.py` file is not imported when the agent starts, and saving one does not register a tool.
+`tools.custom` is not part of that list. A `tools/*.py` file is not imported when the agent starts, and saving one does not register a tool. MCP servers are a separate list: see [MCP servers](configuration/mcp-servers).
 
 ## Permissions
 
