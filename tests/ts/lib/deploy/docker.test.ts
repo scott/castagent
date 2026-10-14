@@ -6,6 +6,8 @@ import * as path from 'path'
 import sinon from 'sinon'
 import DockerDeploy, {recordDockerDeployment, renderDockerCompose, writeDockerCompose} from '../../../../typescript/cast-cli/src/lib/deploy/docker'
 import * as deployUtils from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
+import {keychain} from '../../../../typescript/cast-cli/src/lib/keychain'
+import {db} from '../../../../typescript/cast-cli/src/lib/sqlite'
 
 describe('Docker Deploy Provider', () => {
   describe('static properties', () => {
@@ -248,5 +250,129 @@ describe('Docker Deploy Provider', () => {
       expect(fs.existsSync(path.join(agent, '.gitignore'))).to.equal(false)
       expect(fs.existsSync(path.join(agent, '.castignore'))).to.equal(false)
     })
+  })
+})
+
+describe('Docker deployment SHA', () => {
+  const createdAgents: string[] = []
+  let previousSha: string | undefined
+
+  beforeEach(() => {
+    previousSha = process.env.CAST_DEPLOYMENT_SHA
+  })
+
+  afterEach(() => {
+    if (previousSha === undefined) delete process.env.CAST_DEPLOYMENT_SHA
+    else process.env.CAST_DEPLOYMENT_SHA = previousSha
+    for (const name of createdAgents) {
+      try { db.deleteAgent(name) } catch { /* already gone */ }
+    }
+    createdAgents.length = 0
+  })
+
+  function agentName(label: string): string {
+    const name = `deploy-test-docker-sha-${label}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+    db.createAgent(name, '/tmp/agent.yaml')
+    createdAgents.push(name)
+    return name
+  }
+
+  function uniqueSha(used: Set<string> = new Set()): string {
+    const alphabet = 'abcdef0123456789'
+    let sha = ''
+    do {
+      sha = ''
+      for (let i = 0; i < 6; i++) sha += alphabet[Math.floor(Math.random() * alphabet.length)]
+    } while (used.has(sha))
+    used.add(sha)
+    return sha
+  }
+
+  function record(name: string, url: string, tokenHash: string, volumeId: string, volumeConfig: string) {
+    return recordDockerDeployment({
+      agentName: name,
+      deploymentUrl: url,
+      tokenHash,
+      volumeId,
+      volumeConfig,
+      containerName: `cast-${name}`,
+    })
+  }
+
+  it('stores the SHA cast deploy prints so cast connect finds it', async () => {
+    const name = agentName('one')
+    const printedSha = uniqueSha()
+    process.env.CAST_DEPLOYMENT_SHA = printedSha
+
+    const id = await record(
+      name,
+      'http://localhost:8080',
+      'hash',
+      'cast-vol',
+      JSON.stringify({mountPath: '/app/agent/memory'}),
+    )
+
+    expect(id).to.equal(printedSha)
+    const row = db.getDeploymentBySha(printedSha)
+    expect(row).to.exist
+    expect(row.agent_name).to.equal(name)
+    expect(row.provider).to.equal('docker')
+    expect(row.deployment_url).to.equal('http://localhost:8080')
+
+    const resolution = deployUtils.resolveDeploymentTarget(printedSha)
+    expect(resolution.type).to.equal('sha')
+    expect(resolution.deployment.id).to.equal(printedSha)
+    expect(resolution.deployment.agent_name).to.equal(name)
+  })
+
+  it('keeps both SHAs when docker deploy runs twice', async () => {
+    const name = agentName('two')
+    const used = new Set<string>()
+    const firstSha = uniqueSha(used)
+    const secondSha = uniqueSha(used)
+    let absentSha = uniqueSha(used)
+    while (db.getDeploymentBySha(absentSha)) absentSha = uniqueSha(used)
+
+    process.env.CAST_DEPLOYMENT_SHA = firstSha
+    await record(name, 'http://localhost:8080', 'h1', 'vol-1', '{}')
+    process.env.CAST_DEPLOYMENT_SHA = secondSha
+    await record(name, 'http://localhost:8081', 'h2', 'vol-2', '{}')
+
+    const ids = db.listDeployments(name).map((row: {id: string}) => row.id)
+    expect(ids).to.have.members([firstSha, secondSha])
+    expect(deployUtils.resolveDeploymentTarget(firstSha).type).to.equal('sha')
+    expect(deployUtils.resolveDeploymentTarget(secondSha).type).to.equal('sha')
+    expect(deployUtils.resolveDeploymentTarget(absentSha).type).to.equal('not_found')
+  })
+
+  it('still records a row when no deployment SHA was set', async () => {
+    const name = agentName('generated')
+    delete process.env.CAST_DEPLOYMENT_SHA
+
+    const id = await record(name, 'http://localhost:8080', 'hash', 'vol', '{}')
+
+    expect(id).to.match(/^[a-z0-9]{6}$/)
+    expect(db.getDeploymentBySha(id).agent_name).to.equal(name)
+    expect(deployUtils.resolveDeploymentTarget(id).type).to.equal('sha')
+  })
+
+  it('stores the auth token under the same SHA as the registry row', async () => {
+    const name = agentName('token')
+    const printedSha = uniqueSha()
+    process.env.CAST_DEPLOYMENT_SHA = printedSha
+    const sandbox = sinon.createSandbox()
+    const setDeploymentToken = sandbox.stub(keychain, 'setDeploymentToken').resolves()
+    sandbox.stub(keychain, 'setToken').resolves()
+
+    try {
+      await deployUtils.storeAuthToken(name, 'secret-token')
+      const id = await record(name, 'http://localhost:8080', 'hash', 'vol', '{}')
+
+      expect(id).to.equal(printedSha)
+      expect(setDeploymentToken.calledOnceWith(printedSha, 'secret-token')).to.equal(true)
+      expect(deployUtils.resolveDeploymentTarget(printedSha).type).to.equal('sha')
+    } finally {
+      sandbox.restore()
+    }
   })
 })
