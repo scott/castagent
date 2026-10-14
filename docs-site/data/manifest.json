@@ -204,7 +204,7 @@
     {
       "id": "stop",
       "full": "cast stop",
-      "description": "Stop a running agent"
+      "description": "Stop a running local agent or Docker deployment"
     },
     {
       "id": "undo",
