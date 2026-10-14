@@ -72,12 +72,16 @@ cast git remote my-agent remove origin     # drop a remote
 cast git status my-agent                    # modified, staged, untracked
 cast git commit my-agent -m "Switched to Claude 3.7"  # stages all + commits
 cast git log my-agent                       # last 10 commits
-cast git log my-agent -n 20                # last 20 commits
+cast git log my-agent -n 20                # last 20 commits; -n must be at least 1
 cast git diff my-agent                      # unstaged changes
 cast git diff my-agent HEAD~1               # changes since a commit
 cast git diff my-agent --staged             # staged changes
 cast git diff my-agent --file instructions.md  # one file only
 ```
+
+`cast git log` shows the newest commits, 10 by default. `-n` changes
+how many and must be at least 1. Zero and negative values are
+rejected.
 
 `--file` limits the diff to that path. This includes `--staged` and a
 commit reference. A path that is not in the agent repository is an
