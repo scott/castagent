@@ -33,9 +33,11 @@ other — is the most common source of confusion.
 - **Git history** is "what I want to keep and share". You choose to
   initialise a repo with `cast git init` and commit checkpoints with
   `cast git commit`. The repo lives at `~/.cast/agents/<name>/.git/`
-and can be pushed to any Git host. The undo log is intentionally
-excluded from the repo. `cast git init` records those paths in
-`.castignore` and `.gitignore`.
+  and can be pushed to any Git host. `cast git init` writes
+  `.castignore` and copies those patterns into `.gitignore`. The
+  default rules exclude the legacy `.cast/versions/` directory. They
+  do not exclude the current undo log at `.cast/changes/`. See
+  [Versioning with Git](building-agents/versioning/git).
 
 ## When to use which
 

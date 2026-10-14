@@ -1,0 +1,70 @@
+import {expect} from 'chai'
+import * as fs from 'fs'
+import * as path from 'path'
+import {defaultCastIgnoreContents} from '../../../typescript/cast-cli/src/lib/cast-ignore'
+
+const repoRoot = path.resolve(__dirname, '../../..')
+
+function read(relative: string): string {
+  return fs.readFileSync(path.join(repoRoot, relative), 'utf8')
+}
+
+function fenceAfter(markdown: string, marker: string): string {
+  const at = markdown.indexOf(marker)
+  expect(at, marker).to.be.greaterThan(-1)
+  const match = markdown.slice(at + marker.length).match(/```[^\n]*\n([\s\S]*?)```/)
+  expect(match, `fenced block after ${marker}`).to.not.equal(null)
+  return match![1]
+}
+
+/**
+ * Issue #160: the Git page must describe the default ignore file and
+ * the branch `cast git init` actually creates, without contradicting
+ * itself.
+ */
+describe('Git versioning docs', () => {
+  const gitPage = read('docs-site/content/building-agents/versioning/git.md')
+  const overview = read('docs-site/content/building-agents/versioning/overview.md')
+  const initSource = read('typescript/cast-cli/src/commands/git/init.ts')
+
+  it('documents the default ignore file exactly', () => {
+    const documented = fenceAfter(gitPage, 'The default contents are:')
+    expect(documented).to.equal(defaultCastIgnoreContents())
+    expect(documented).to.contain('.cast/versions/\n')
+    expect(documented).to.not.contain('.cast/changes/')
+  })
+
+  it('says the current undo log is committed and the legacy path is ignored', () => {
+    const flat = gitPage.replace(/\s+/g, ' ')
+    expect(flat).to.include('Excluded from `cast git`? | no (not in `.castignore`)')
+    expect(flat).to.include('includes both its releases and its undo log')
+    expect(flat).to.include('excludes the legacy `.cast/versions/` directory, not `.cast/changes/`')
+    expect(flat).to.not.include('not with the undo log')
+    expect(flat).to.not.include('yes (`.castignore`)')
+  })
+
+  it('does not claim cast git init checks out main', () => {
+    const flat = gitPage.replace(/\s+/g, ' ')
+    expect(flat).to.not.include('Git repo on `main`')
+    expect(flat).to.include('`master` when `init.defaultBranch` is unset')
+    expect(flat).to.include('`cast git init` does not pass `-b main`')
+    expect(flat).to.include('`repository.branch` is recorded as `main` either way')
+    expect(initSource).to.include('await git.init()')
+    expect(initSource).to.include("branch: 'main'")
+    expect(initSource).to.not.match(/git\.init\([^)]*-b/)
+  })
+
+  it('keeps the release path, remote removal, and TUI commit docs', () => {
+    const flat = gitPage.replace(/\s+/g, ' ')
+    expect(flat).to.include('`releases.json` stores each `tarball_path` relative to the agent directory')
+    expect(flat).to.include('`remove` also deletes `repository.url`')
+    expect(flat).to.include('`/git commit -m tui-commit` stores `tui-commit`')
+  })
+
+  it('matches the versioning overview', () => {
+    const flat = overview.replace(/\s+/g, ' ')
+    expect(flat).to.include('do not exclude the current undo log at `.cast/changes/`')
+    expect(flat).to.include('exclude the legacy `.cast/versions/` directory')
+    expect(flat).to.not.include('undo log is intentionally excluded')
+  })
+})
