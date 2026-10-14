@@ -688,6 +688,21 @@ describe('dev command - /stop keeps the TUI open', () => {
     expect(logs.some((line) => line.includes('code null'))).to.equal(false)
   })
 
+  it('starts the runtime with CAST_AGENT_PATH and piped stderr', () => {
+    const ctx = harness({'no-tui': true})
+    let options: {stdio?: unknown; env?: NodeJS.ProcessEnv} | undefined
+    ctx.instance.launch = (_command: string, _args: readonly string[], opts: {stdio?: unknown; env?: NodeJS.ProcessEnv}) => {
+      options = opts
+      return ctx.runtime
+    }
+    void ctx.instance.runRuntimeAgent(agentName, '/tmp/bb-devnew', {port: 0, 'no-tui': true})
+    ctx.runtime.stdout.emit('data', Buffer.from('Agent ready on port 4321\n'))
+
+    expect(options?.stdio).to.deep.equal(['pipe', 'pipe', 'pipe'])
+    expect(options?.env?.CAST_AGENT_NAME).to.equal(agentName)
+    expect(options?.env?.CAST_AGENT_PATH).to.equal('/tmp/bb-devnew')
+  })
+
   it('records runtime stdout and stderr for cast logs', () => {
     const stderr = sandbox.stub(process.stderr, 'write').returns(true)
     const {runtime} = boot({'no-tui': true})
