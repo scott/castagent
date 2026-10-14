@@ -4,10 +4,22 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import sinon from 'sinon'
-import DockerDeploy, {recordDockerDeployment, renderDockerCompose, writeDockerCompose} from '../../../../typescript/cast-cli/src/lib/deploy/docker'
+import DockerDeploy, {
+  dockerMemoryVolumeName,
+  dockerMemoryVolumesToRemove,
+  dockerVolumeRemovalMessage,
+  isLegacyDockerMemoryVolume,
+  planDockerMemoryVolume,
+  prepareDockerMemoryVolume,
+  recordDockerDeployment,
+  removeDockerMemoryVolumes,
+  renderDockerCompose,
+  writeDockerCompose,
+  type DockerRunner,
+} from '../../../../typescript/cast-cli/src/lib/deploy/docker'
+import {db} from '../../../../typescript/cast-cli/src/lib/sqlite'
 import * as deployUtils from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 import {keychain} from '../../../../typescript/cast-cli/src/lib/keychain'
-import {db} from '../../../../typescript/cast-cli/src/lib/sqlite'
 
 describe('Docker Deploy Provider', () => {
   describe('static properties', () => {
@@ -99,6 +111,23 @@ describe('Docker Deploy Provider', () => {
         ['docker', ['stop', 'cast-bb-answers']],
         ['docker', ['rm', 'cast-bb-answers']],
         ['docker', ['volume', 'rm', 'cast-bb-answers-vol']],
+      ])
+    })
+
+    it('leaves a reused memory volume in place when the registry write fails', async () => {
+      sandbox.stub(deployUtils, 'saveDeployment').throws(new Error('FOREIGN KEY constraint failed'))
+      const exec = sandbox.stub(deployUtils, 'execCommand').resolves({stdout: '', stderr: '', exitCode: 0})
+
+      try {
+        await recordDockerDeployment({...input, removeVolumeOnFailure: false})
+        expect.fail('registry failure should reject')
+      } catch (error) {
+        expect((error as Error).message).to.equal('FOREIGN KEY constraint failed')
+      }
+
+      expect(exec.getCalls().map(call => call.args)).to.deep.equal([
+        ['docker', ['stop', 'cast-bb-answers']],
+        ['docker', ['rm', 'cast-bb-answers']],
       ])
     })
 
@@ -249,6 +278,254 @@ describe('Docker Deploy Provider', () => {
       expect(fs.readFileSync(path.join(agent, 'docker-compose.yml'), 'utf8')).to.not.include('AUTH_TOKEN')
       expect(fs.existsSync(path.join(agent, '.gitignore'))).to.equal(false)
       expect(fs.existsSync(path.join(agent, '.castignore'))).to.equal(false)
+    })
+  })
+
+  describe('memory volume identity', () => {
+    const legacy = 'cast-bb2-chat-11111111-1111-1111-1111-111111111111-memory'
+    const older = 'cast-bb2-chat-22222222-2222-2222-2222-222222222222-memory'
+
+    it('names the volume cast-<agent>', () => {
+      expect(dockerMemoryVolumeName('bb2-chat')).to.equal('cast-bb2-chat')
+    })
+
+    it('recognizes only pre-fix uuid volumes for that agent', () => {
+      expect(isLegacyDockerMemoryVolume(legacy, 'bb2-chat')).to.equal(true)
+      expect(isLegacyDockerMemoryVolume('cast-bb2-chat', 'bb2-chat')).to.equal(false)
+      expect(isLegacyDockerMemoryVolume('cast-bb2-chat-memory', 'bb2-chat')).to.equal(false)
+      expect(isLegacyDockerMemoryVolume('cast-bb2-chat-deploy-123-memory', 'bb2-chat')).to.equal(false)
+      expect(isLegacyDockerMemoryVolume(legacy, 'bb2')).to.equal(false)
+      expect(isLegacyDockerMemoryVolume('cast-bb2-chatbot', 'bb2-chat')).to.equal(false)
+    })
+
+    it('reuses cast-<agent> on a second deploy', () => {
+      const first = planDockerMemoryVolume('bb2-chat', null, [])
+      expect(first).to.deep.equal({volumeId: 'cast-bb2-chat', action: 'create'})
+
+      const second = planDockerMemoryVolume('bb2-chat', 'cast-bb2-chat', ['cast-bb2-chat', older])
+      expect(second).to.deep.equal({volumeId: 'cast-bb2-chat', action: 'reuse'})
+    })
+
+    it('copies the recorded pre-fix volume onto cast-<agent>', () => {
+      const plan = planDockerMemoryVolume('bb2-chat', legacy, [legacy, older, 'cast-other'])
+      expect(plan).to.deep.equal({volumeId: 'cast-bb2-chat', action: 'create', copyFrom: legacy})
+    })
+
+    it('reuses the recorded volume when Docker cannot be listed', () => {
+      const plan = planDockerMemoryVolume('bb2-chat', legacy, null)
+      expect(plan).to.deep.equal({volumeId: legacy, action: 'reuse'})
+    })
+
+    it('selects the named volume, recorded volumes, and leftover pre-fix volumes', () => {
+      const names = dockerMemoryVolumesToRemove(
+        'bb2-chat',
+        [legacy, null, ''],
+        ['cast-bb2-chat', legacy, older, 'cast-bb2-chatbot', 'cast-other'],
+      )
+      expect(names).to.deep.equal(['cast-bb2-chat', legacy, older].sort())
+    })
+
+    it('reports removal only when docker volume rm succeeds', () => {
+      expect(dockerVolumeRemovalMessage('cast-bb2-chat', {exitCode: 0, stdout: 'cast-bb2-chat', stderr: ''}))
+        .to.equal("Memory volume 'cast-bb2-chat' has been removed.")
+      expect(dockerVolumeRemovalMessage('cast-bb2-chat', {exitCode: 1, stdout: '', stderr: 'Error: No such volume: cast-bb2-chat'}))
+        .to.equal(null)
+      expect(dockerVolumeRemovalMessage('cast-bb2-chat', {exitCode: 1, stdout: '', stderr: 'volume is in use'}))
+        .to.equal("Note: Memory volume 'cast-bb2-chat' could not be removed (may be in use or already deleted).")
+    })
+  })
+
+  describe('prepareDockerMemoryVolume', () => {
+    const legacy = 'cast-bb2-chat-11111111-1111-1111-1111-111111111111-memory'
+
+    function runner(volumes: string[], opts?: {createFails?: boolean; copyFails?: boolean; rmFails?: boolean}): {run: DockerRunner; calls: string[][]} {
+      const calls: string[][] = []
+      const present = new Set(volumes)
+      const run: DockerRunner = async (args) => {
+        calls.push(args)
+        if (args[0] === 'volume' && args[1] === 'ls') {
+          return {exitCode: 0, stdout: [...present].join('\n'), stderr: ''}
+        }
+        if (args[0] === 'volume' && args[1] === 'create') {
+          if (opts?.createFails) return {exitCode: 1, stdout: '', stderr: 'denied'}
+          present.add(args[2])
+          return {exitCode: 0, stdout: args[2], stderr: ''}
+        }
+        if (args[0] === 'run') {
+          if (opts?.copyFails) return {exitCode: 1, stdout: '', stderr: 'cp failed'}
+          return {exitCode: 0, stdout: '', stderr: ''}
+        }
+        if (args[0] === 'volume' && args[1] === 'rm') {
+          if (opts?.rmFails) return {exitCode: 1, stdout: '', stderr: 'volume is in use'}
+          present.delete(args[2])
+          return {exitCode: 0, stdout: args[2], stderr: ''}
+        }
+        return {exitCode: 1, stdout: '', stderr: 'unexpected'}
+      }
+      return {run, calls}
+    }
+
+    it('creates cast-<agent> when the agent has no memory volume', async () => {
+      const {run, calls} = runner([])
+      const prepared = await prepareDockerMemoryVolume('bb2-chat', null, 'cast-bb2-chat:latest', run)
+      expect(prepared.volumeId).to.equal('cast-bb2-chat')
+      expect(prepared.message).to.equal('Creating memory volume: cast-bb2-chat')
+      expect(prepared.created).to.equal(true)
+      expect(calls.some(args => args[0] === 'volume' && args[1] === 'create' && args[2] === 'cast-bb2-chat')).to.equal(true)
+      expect(calls.some(args => args[0] === 'run')).to.equal(false)
+    })
+
+    it('does not create a volume when cast-<agent> already exists', async () => {
+      const {run, calls} = runner(['cast-bb2-chat', legacy])
+      const prepared = await prepareDockerMemoryVolume('bb2-chat', 'cast-bb2-chat', 'cast-bb2-chat:latest', run)
+      expect(prepared).to.deep.equal({
+        volumeId: 'cast-bb2-chat',
+        message: 'Reusing memory volume: cast-bb2-chat',
+        created: false,
+      })
+      expect(calls.map(args => args.slice(0, 2))).to.deep.equal([['volume', 'ls']])
+    })
+
+    it('copies a pre-fix volume into cast-<agent> with one shell argument', async () => {
+      const {run, calls} = runner([legacy])
+      const prepared = await prepareDockerMemoryVolume('bb2-chat', legacy, 'cast-bb2-chat:latest', run)
+      expect(prepared.volumeId).to.equal('cast-bb2-chat')
+      expect(prepared.message).to.equal('Creating memory volume: cast-bb2-chat')
+      expect(prepared.note).to.equal(`Copied memory from ${legacy}.`)
+      expect(prepared.created).to.equal(true)
+      expect(calls.find(args => args[0] === 'run')).to.deep.equal([
+        'run', '--rm', '--entrypoint', 'sh',
+        '-v', `${legacy}:/from:ro`,
+        '-v', 'cast-bb2-chat:/to',
+        'cast-bb2-chat:latest',
+        '-c', 'cp -a /from/. /to/',
+      ])
+    })
+
+    it('says when the empty volume is left behind after a failed copy', async () => {
+      const {run} = runner([legacy], {copyFails: true, rmFails: true})
+      const prepared = await prepareDockerMemoryVolume('bb2-chat', legacy, 'cast-bb2-chat:latest', run)
+      expect(prepared.volumeId).to.equal(legacy)
+      expect(prepared.created).to.equal(false)
+      expect(prepared.note).to.equal(
+        "Could not copy memory into 'cast-bb2-chat', so the existing volume stays attached. The empty volume 'cast-bb2-chat' could not be removed.",
+      )
+    })
+
+    it('keeps the recorded volume when the copy fails and drops the empty volume', async () => {
+      const {run, calls} = runner([legacy], {copyFails: true})
+      const prepared = await prepareDockerMemoryVolume('bb2-chat', legacy, 'cast-bb2-chat:latest', run)
+      expect(prepared.volumeId).to.equal(legacy)
+      expect(prepared.message).to.equal(`Reusing memory volume: ${legacy}`)
+      expect(prepared.created).to.equal(false)
+      expect(prepared.note).to.equal("Could not copy memory into 'cast-bb2-chat', so the existing volume stays attached.")
+      expect(calls.some(args => args[0] === 'volume' && args[1] === 'rm' && args[2] === 'cast-bb2-chat')).to.equal(true)
+    })
+
+    it('reuses the recorded volume when listing volumes fails', async () => {
+      const calls: string[][] = []
+      const run: DockerRunner = async (args) => {
+        calls.push(args)
+        throw new Error('docker missing')
+      }
+      const prepared = await prepareDockerMemoryVolume('bb2-chat', legacy, 'cast-bb2-chat:latest', run)
+      expect(prepared.volumeId).to.equal(legacy)
+      expect(prepared.message).to.equal(`Reusing memory volume: ${legacy}`)
+      expect(prepared.created).to.equal(false)
+      expect(calls).to.deep.equal([['volume', 'ls', '--format', '{{.Name}}']])
+    })
+
+    it('throws when the volume cannot be created', async () => {
+      const {run} = runner([], {createFails: true})
+      try {
+        await prepareDockerMemoryVolume('bb2-chat', null, 'cast-bb2-chat:latest', run)
+        expect.fail('create failure should reject')
+      } catch (error) {
+        expect((error as Error).message).to.equal("Failed to create memory volume 'cast-bb2-chat': denied")
+      }
+    })
+  })
+
+  describe('shutdown memory volumes', () => {
+    let sandbox: sinon.SinonSandbox
+
+    beforeEach(() => {
+      sandbox = sinon.createSandbox()
+    })
+
+    afterEach(() => {
+      sandbox.restore()
+    })
+
+    const legacy = 'cast-bb2-chat-11111111-1111-1111-1111-111111111111-memory'
+    const older = 'cast-bb2-chat-22222222-2222-2222-2222-222222222222-memory'
+
+    it('removes every volume for the agent and not another agent', async () => {
+      sandbox.stub(db, 'listDeployments').returns([
+        {provider: 'docker', volume_id: legacy},
+        {provider: 'fly', volume_id: 'cast-bb2-chat-fly'},
+      ])
+      const removed: string[] = []
+      const exec = sandbox.stub(deployUtils, 'execCommand').callsFake(async (_command: string, args: string[]) => {
+        if (args[0] === 'volume' && args[1] === 'ls') {
+          return {
+            exitCode: 0,
+            stdout: ['cast-bb2-chat', legacy, older, 'cast-bb2-chatbot'].join('\n'),
+            stderr: '',
+          }
+        }
+        if (args[0] === 'volume' && args[1] === 'rm') {
+          removed.push(args[2])
+          return {exitCode: 0, stdout: args[2], stderr: ''}
+        }
+        return {exitCode: 0, stdout: '', stderr: ''}
+      })
+      const logs: string[] = []
+      sandbox.stub(console, 'log').callsFake((line: unknown) => {
+        logs.push(String(line))
+      })
+
+      await DockerDeploy.destroy('bb2-chat')
+
+      expect(removed.sort()).to.deep.equal(['cast-bb2-chat', legacy, older].sort())
+      expect(removed).to.not.include('cast-bb2-chatbot')
+      expect(removed).to.not.include('cast-bb2-chat-fly')
+      const removedLogs = logs.filter(line => line.includes('has been removed'))
+      expect(removedLogs).to.have.length(3)
+      expect(exec.called).to.equal(true)
+    })
+
+    it('does not claim a volume was removed when docker volume rm fails', async () => {
+      sandbox.stub(db, 'listDeployments').returns([{provider: 'docker', volume_id: 'cast-bb2-chat'}])
+      sandbox.stub(deployUtils, 'execCommand').callsFake(async (_command: string, args: string[]) => {
+        if (args[0] === 'volume' && args[1] === 'ls') {
+          return {exitCode: 0, stdout: 'cast-bb2-chat\n', stderr: ''}
+        }
+        if (args[0] === 'volume' && args[1] === 'rm') {
+          return {exitCode: 1, stdout: '', stderr: 'volume is in use'}
+        }
+        return {exitCode: 0, stdout: '', stderr: ''}
+      })
+      const logs: string[] = []
+      sandbox.stub(console, 'log').callsFake((line: unknown) => {
+        logs.push(String(line))
+      })
+
+      await DockerDeploy.destroy('bb2-chat')
+
+      const volumeLogs = logs.filter(line => line.includes('Memory volume'))
+      expect(volumeLogs).to.deep.equal([
+        "Note: Memory volume 'cast-bb2-chat' could not be removed (may be in use or already deleted).",
+      ])
+    })
+
+    it('stays quiet when the recorded volume is already gone', async () => {
+      const logs: string[] = []
+      await removeDockerMemoryVolumes('bb2-chat', ['cast-bb2-chat'], async (args) => {
+        if (args[1] === 'ls') return {exitCode: 0, stdout: '', stderr: ''}
+        return {exitCode: 1, stdout: '', stderr: 'Error: No such volume: cast-bb2-chat'}
+      }, (line) => logs.push(line))
+      expect(logs).to.deep.equal([])
     })
   })
 })

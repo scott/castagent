@@ -8,7 +8,7 @@ import * as path from 'path'
 import {ensureDockerDeployArtifactsIgnored} from '../cast-ignore'
 import {db} from '../sqlite'
 import {containerHealthFailureMessage, probeDockerContainer, waitForContainerHealth} from './container-health'
-import {execCommand, inferenceEnv, generateDeploymentId, getVolumeName, createMemoryVolume, deleteMemoryVolume, createDockerignore, storeAuthToken, saveDeployment} from './deploy-utils'
+import {execCommand, inferenceEnv, generateDeploymentId, createDockerignore, storeAuthToken, saveDeployment} from './deploy-utils'
 import {writeRequirementsTxt} from './requirements'
 
 // Helper to run a shell command and return its exit code
@@ -38,6 +38,197 @@ function runCommand(command: string, args: string[], options?: {stdio?: any; cwd
     proc.on('error', (err) => reject(err))
     proc.on('exit', (code) => resolve(code ?? 0))
   })
+}
+
+export interface DockerCommandResult {
+  exitCode: number
+  stdout: string
+  stderr: string
+}
+
+export type DockerRunner = (args: string[]) => Promise<DockerCommandResult>
+
+const LEGACY_DOCKER_VOLUME_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Docker memory volume keyed by agent name (`cast-<name>`). */
+export function dockerMemoryVolumeName(agentName: string): string {
+  return `cast-${agentName}`
+}
+
+/** Pre-fix volumes were `cast-<agent>-<uuid>-memory`, one per deploy. */
+export function isLegacyDockerMemoryVolume(volumeName: string, agentName: string): boolean {
+  const prefix = `cast-${agentName}-`
+  const suffix = '-memory'
+  if (!volumeName.startsWith(prefix) || !volumeName.endsWith(suffix)) return false
+  const deploymentId = volumeName.slice(prefix.length, volumeName.length - suffix.length)
+  return LEGACY_DOCKER_VOLUME_ID.test(deploymentId)
+}
+
+export function isAgentDockerMemoryVolume(volumeName: string, agentName: string): boolean {
+  return volumeName === dockerMemoryVolumeName(agentName) || isLegacyDockerMemoryVolume(volumeName, agentName)
+}
+
+export interface DockerMemoryPlan {
+  volumeId: string
+  action: 'create' | 'reuse'
+  copyFrom?: string
+}
+
+/**
+ * The documented Docker volume is `cast-<agent>`. A later deploy reuses it.
+ * When the registry still points at a pre-fix volume and that volume exists,
+ * its files are copied onto the documented name. If Docker cannot be listed,
+ * the recorded volume is reused so this deploy does not allocate another one.
+ */
+export function planDockerMemoryVolume(
+  agentName: string,
+  recordedVolumeId: string | null | undefined,
+  listedVolumeNames: string[] | null,
+): DockerMemoryPlan {
+  const canonical = dockerMemoryVolumeName(agentName)
+  if (listedVolumeNames === null) {
+    if (recordedVolumeId) return {volumeId: recordedVolumeId, action: 'reuse'}
+    return {volumeId: canonical, action: 'create'}
+  }
+  if (listedVolumeNames.includes(canonical)) {
+    return {volumeId: canonical, action: 'reuse'}
+  }
+  if (
+    recordedVolumeId
+    && recordedVolumeId !== canonical
+    && listedVolumeNames.includes(recordedVolumeId)
+  ) {
+    return {volumeId: canonical, action: 'create', copyFrom: recordedVolumeId}
+  }
+  return {volumeId: canonical, action: 'create'}
+}
+
+export function dockerMemoryVolumesToRemove(
+  agentName: string,
+  recordedVolumeIds: Array<string | null | undefined>,
+  listedVolumeNames: string[] | null,
+): string[] {
+  const names = new Set<string>()
+  for (const id of recordedVolumeIds) {
+    if (id) names.add(id)
+  }
+  if (listedVolumeNames) {
+    for (const name of listedVolumeNames) {
+      if (isAgentDockerMemoryVolume(name, agentName)) names.add(name)
+    }
+  } else {
+    names.add(dockerMemoryVolumeName(agentName))
+  }
+  return [...names].sort()
+}
+
+export function dockerVolumeRemovalMessage(volumeId: string, result: DockerCommandResult): string | null {
+  if (result.exitCode === 0) return `Memory volume '${volumeId}' has been removed.`
+  const detail = `${result.stderr}\n${result.stdout}`
+  if (/no such volume/i.test(detail)) return null
+  return `Note: Memory volume '${volumeId}' could not be removed (may be in use or already deleted).`
+}
+
+async function readDockerVolumeNames(run: DockerRunner): Promise<string[] | null> {
+  try {
+    const result = await run(['volume', 'ls', '--format', '{{.Name}}'])
+    if (result.exitCode !== 0) return null
+    return result.stdout.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0)
+  } catch {
+    return null
+  }
+}
+
+export interface PreparedDockerMemoryVolume {
+  volumeId: string
+  message: string
+  note?: string
+  /** True when this deploy created volumeId. A reused volume is left in place if the registry write fails. */
+  created: boolean
+}
+
+export async function prepareDockerMemoryVolume(
+  agentName: string,
+  recordedVolumeId: string | null | undefined,
+  imageName: string,
+  run: DockerRunner,
+): Promise<PreparedDockerMemoryVolume> {
+  const listed = await readDockerVolumeNames(run)
+  const plan = planDockerMemoryVolume(agentName, recordedVolumeId, listed)
+  if (plan.action === 'reuse') {
+    return {volumeId: plan.volumeId, message: `Reusing memory volume: ${plan.volumeId}`, created: false}
+  }
+
+  const created = await run(['volume', 'create', plan.volumeId])
+  if (created.exitCode !== 0) {
+    const detail = (created.stderr || created.stdout).trim()
+    throw new Error(`Failed to create memory volume '${plan.volumeId}': ${detail}`)
+  }
+  if (!plan.copyFrom) {
+    return {volumeId: plan.volumeId, message: `Creating memory volume: ${plan.volumeId}`, created: true}
+  }
+
+  const copied = await run([
+    'run', '--rm', '--entrypoint', 'sh',
+    '-v', `${plan.copyFrom}:/from:ro`,
+    '-v', `${plan.volumeId}:/to`,
+    imageName,
+    '-c', 'cp -a /from/. /to/',
+  ])
+  if (copied.exitCode === 0) {
+    return {
+      volumeId: plan.volumeId,
+      message: `Creating memory volume: ${plan.volumeId}`,
+      note: `Copied memory from ${plan.copyFrom}.`,
+      created: true,
+    }
+  }
+
+  const removed = await run(['volume', 'rm', plan.volumeId])
+  const note = removed.exitCode === 0
+    ? `Could not copy memory into '${plan.volumeId}', so the existing volume stays attached.`
+    : `Could not copy memory into '${plan.volumeId}', so the existing volume stays attached. The empty volume '${plan.volumeId}' could not be removed.`
+  return {
+    volumeId: plan.copyFrom,
+    message: `Reusing memory volume: ${plan.copyFrom}`,
+    note,
+    created: false,
+  }
+}
+
+export async function removeDockerMemoryVolumes(
+  agentName: string,
+  recordedVolumeIds: Array<string | null | undefined>,
+  run: DockerRunner,
+  log: (message: string) => void = console.log,
+): Promise<void> {
+  const listed = await readDockerVolumeNames(run)
+  const volumes = dockerMemoryVolumesToRemove(agentName, recordedVolumeIds, listed)
+  for (const volumeId of volumes) {
+    let result: DockerCommandResult
+    try {
+      result = await run(['volume', 'rm', volumeId])
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      log(`Note: Memory volume '${volumeId}' could not be removed (${message}).`)
+      continue
+    }
+    const line = dockerVolumeRemovalMessage(volumeId, result)
+    if (line) log(line)
+  }
+}
+
+function dockerRunner(): DockerRunner {
+  return async (args) => {
+    const result = await execCommand('docker', args, {silent: true, shell: false})
+    return {exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr}
+  }
+}
+
+function latestDockerVolumeId(agentName: string): string | null {
+  const row = db.listDeployments(agentName).find((item: {provider?: string}) => item.provider === 'docker')
+  const volumeId = row?.volume_id
+  return typeof volumeId === 'string' && volumeId.length > 0 ? volumeId : null
 }
 
 export default class DockerDeploy extends Command {
@@ -91,14 +282,13 @@ export default class DockerDeploy extends Command {
     const authToken = crypto.randomBytes(32).toString('base64')
     const tokenHash = crypto.createHash('sha256').update(authToken).digest('hex')
     const deploymentId = generateDeploymentId()
-    const volumeId = getVolumeName(agentName, deploymentId)
 
     // Store token in keychain. A second provider must not replace this token.
     await storeAuthToken(agentName, authToken)
 
-    // Create memory volume
-    this.log(`Creating memory volume: ${volumeId}`)
-    await createMemoryVolume('docker', agentName, deploymentId)
+    // The memory volume is chosen after the image builds and the previous
+    // container is stopped, so a redeploy can copy files off the volume
+    // that container was using.
 
     // Copy cast runtime package into agent directory so it is inside the Docker build context
     const castRuntimeDir = path.join(agentPath, '.cast-runtime', 'cast')
@@ -118,7 +308,6 @@ export default class DockerDeploy extends Command {
 
     this.createDockerignore(agentPath)
     this.createRequirementsTxt(projectRoot, agentPath)
-    writeDockerCompose(agentPath, {agentName, port: flags.port, volumeId})
 
     const imageName = `cast-${agentName}:latest`
     const containerName = `cast-${agentName}`
@@ -145,6 +334,23 @@ export default class DockerDeploy extends Command {
     } catch {
       // container may not exist
     }
+
+    let memory: PreparedDockerMemoryVolume
+    try {
+      memory = await prepareDockerMemoryVolume(
+        agentName,
+        latestDockerVolumeId(agentName),
+        imageName,
+        dockerRunner(),
+      )
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.error(message)
+    }
+    this.log(memory.message)
+    if (memory.note) this.log(memory.note)
+    const volumeId = memory.volumeId
+    writeDockerCompose(agentPath, {agentName, port: flags.port, volumeId})
 
     // Run container
     this.log('Starting Docker container...')
@@ -186,6 +392,7 @@ export default class DockerDeploy extends Command {
       volumeId,
       volumeConfig,
       containerName,
+      removeVolumeOnFailure: memory.created,
     })
 
     this.log('')
@@ -222,16 +429,10 @@ export default class DockerDeploy extends Command {
     }
     console.log(`Docker container '${containerName}' has been destroyed.`)
 
-    // Clean up memory volume
-    const deployment = db.getDeployment(agentName)
-    if (deployment?.volume_id) {
-      try {
-        await execCommand('docker', ['volume', 'rm', deployment.volume_id])
-        console.log(`Memory volume '${deployment.volume_id}' has been removed.`)
-      } catch {
-        console.log(`Note: Memory volume '${deployment.volume_id}' could not be removed (may be in use or already deleted).`)
-      }
-    }
+    const recorded = db.listDeployments(agentName)
+      .filter((row: {provider?: string}) => row.provider === 'docker')
+      .map((row: {volume_id?: string | null}) => row.volume_id)
+    await removeDockerMemoryVolumes(agentName, recorded, dockerRunner())
   }
 
   private createDockerfile(agentPath: string): void {
@@ -329,6 +530,8 @@ export interface DockerDeploymentRecord {
   volumeId: string
   volumeConfig: string
   containerName: string
+  /** When false, a failed registry write leaves the memory volume in place. Defaults to removing it. */
+  removeVolumeOnFailure?: boolean
 }
 
 // Persist the deployment under CAST_DEPLOYMENT_SHA when cast deploy set
@@ -345,7 +548,8 @@ export async function recordDockerDeployment(input: DockerDeploymentRecord): Pro
       input.volumeConfig,
     )
   } catch (error) {
-    const cleanup = await removeStartedDockerResources(input.containerName, input.volumeId)
+    const volumeToRemove = input.removeVolumeOnFailure === false ? '' : input.volumeId
+    const cleanup = await removeStartedDockerResources(input.containerName, volumeToRemove)
     if (cleanup) {
       const message = error instanceof Error ? error.message : String(error)
       throw new Error(
