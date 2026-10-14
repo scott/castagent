@@ -112,9 +112,15 @@ export PATH="$HOME/.local/bin:$PATH"
 ./upgrade.sh
 ```
 
-`upgrade.sh` fast-forwards this checkout to the newest `origin/main` commit (`origin/master` when that is the only upstream branch) and rebuilds the CLI, TUI, and Python runtime in place. Agents, config, and tokens under `~/.cast` stay in place. A stale pre-TypeScript binary at `~/.cast/bin/cast` is removed so it cannot shadow the rebuilt CLI.
+`upgrade.sh` moves this checkout onto the newest `origin/main` commit and rebuilds the CLI, TUI, and Python runtime in place. A checkout on any branch is switched, including local `master` that tracks `origin/master`. `origin/master` is used only when the remote has no `main` branch. Agents, config, and tokens under `~/.cast` stay in place. A stale pre-TypeScript binary at `~/.cast/bin/cast` is removed so it cannot shadow the rebuilt CLI.
 
-The script stops without rebuilding when the checkout has uncommitted changes, or when the local upstream branch has commits that cannot fast-forward. It does not upgrade a deployed agent. That command is still `cast upgrade <agent>`.
+The script stops without rebuilding when the checkout has uncommitted changes, or when the local upstream branch has commits that cannot fast-forward. Commits that exist only on the branch you were on stay on that branch. It does not upgrade a deployed agent. That command is still `cast upgrade <agent>`.
+
+A checkout created before the default branch was `main` can still contain the older `upgrade.sh`, which follows `origin/master` and reports that it is already current. Run the current script instead. It finds the checkout through `~/.local/bin/cast` or the `cast` command on `PATH`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/scott/castagent/main/upgrade.sh | bash
+```
 
 Re-running `./install.sh` rebuilds the current checkout and refreshes the symlink without fetching. Use `./upgrade.sh` to move to the newest version and rebuild. If the wrong `cast` still runs afterwards, `./upgrade.sh` clears a stale `~/.cast/bin/cast` binary.
 

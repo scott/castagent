@@ -103,16 +103,27 @@ From the checkout:
 ./upgrade.sh
 ```
 
-`upgrade.sh` fetches the newest `main` commit (`master` when that is the only
-upstream branch), fast-forwards this checkout, and rebuilds the CLI, TUI, and
-Python runtime in place. Agents, config, and tokens in `~/.cast` stay where
-they are. A stale pre-TypeScript binary at `~/.cast/bin/cast` is removed so it
-cannot shadow the new CLI.
+`upgrade.sh` moves this checkout onto the newest `main` commit and rebuilds
+the CLI, TUI, and Python runtime in place. A checkout on any branch is
+switched, including local `master` that tracks `origin/master`. `master` is
+used only when the remote has no `main` branch. Agents, config, and tokens
+in `~/.cast` stay where they are. A stale pre-TypeScript binary at
+`~/.cast/bin/cast` is removed so it cannot shadow the new CLI.
 
 The script stops without rebuilding when you have uncommitted changes, or when
-local commits on that upstream branch cannot fast-forward. It updates the
-local Cast installation only. A deployed agent is still updated with
+local commits on that upstream branch cannot fast-forward. Commits that exist
+only on the branch you were on stay on that branch. It updates the local Cast
+installation only. A deployed agent is still updated with
 `cast upgrade <agent>`.
+
+A checkout created before the default branch was `main` can still contain the
+older `upgrade.sh`, which follows `origin/master` and reports that it is
+already current. Run the current script instead. It finds the checkout through
+`~/.local/bin/cast` or the `cast` command on `PATH`:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/scott/castagent/main/upgrade.sh | bash
+```
 
 `./install.sh` still rebuilds the checkout you already have, without fetching.
 Use `./upgrade.sh` to move to the newest version and rebuild.
