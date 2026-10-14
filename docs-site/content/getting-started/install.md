@@ -13,10 +13,13 @@ terminal UI. The CLI and the TUI always share the same version.
 
 ## Prerequisites
 
-- **Node.js 18 or newer** (Node 20+ recommended).
-- **Python 3.11 or newer** (3.12 recommended).
-- **Bun** — only required to render the TUI; install with `curl -fsSL https://bun.sh/install | bash`.
-- **git**, **tar**, and the usual Unix tools.
+The one-liner installs these on macOS and Linux when they are missing. Install
+them yourself when you clone the repo and run `./install.sh` from that checkout.
+
+- **Node.js 18 or newer** (the one-liner installs Node.js 20).
+- **Python 3.11 or newer** (the one-liner installs Python 3.12).
+- **Bun** — required to render the TUI.
+- **git**, **tar**, and a C compiler. Linux also needs libsecret.
 
 You will also need an LLM API key to actually run an agent. Either is enough:
 
@@ -36,8 +39,11 @@ When the repository is public, the fastest path is:
 curl -sL https://raw.githubusercontent.com/scott/castagent/main/install.sh | bash
 ```
 
-This clones the repo, installs dependencies, builds the CLI and TUI, and
-creates a `cast` symlink in `~/.local/bin/`.
+On macOS or Linux this installs git, Node.js 20, Python 3.12, and Bun when
+they are missing, clones the repo into `~/.cast/castagent`, builds the CLI and
+TUI, and links `cast`. Linux also gets a C compiler and libsecret, which the
+native CLI dependencies need. A second run rebuilds that checkout and does not
+fetch new commits. Update an existing checkout with [`./upgrade.sh`](#updating).
 
 ## Full install from a clone
 

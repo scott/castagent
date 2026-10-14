@@ -1,6 +1,9 @@
 #!/bin/bash
 
+# One compound command so `curl | bash` reads the whole script before any
+# child process can consume unread stdin.
 set -e
+{
 
 # Colors for output
 RED='\033[0;31m'
@@ -9,9 +12,16 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
-# Script directory
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Checkout that this run builds. prepare_checkout sets it. A piped one-liner
+# has no script path, so that function clones into ~/.cast/castagent first.
+SCRIPT_DIR=""
 PROJECT_NAME="Cast"
+export GIT_TERMINAL_PROMPT=0
+
+PATH_HAD_LOCAL_BIN=0
+case ":${PATH:-}:" in
+    *":$HOME/.local/bin:"*) PATH_HAD_LOCAL_BIN=1 ;;
+esac
 
 # Helper functions
 log_info() {
@@ -55,6 +65,342 @@ compare_versions() {
     fi
 }
 
+is_cast_checkout() {
+    local dir="$1"
+    [ -n "$dir" ] || return 1
+    [ -f "$dir/typescript/cast-cli/bin/run" ] || return 1
+    [ -f "$dir/typescript/cast-tui/package.json" ] || return 1
+    [ -f "$dir/python/pyproject.toml" ] || return 1
+    git -C "$dir" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 1
+    return 0
+}
+
+find_checkout() {
+    local source dir
+
+    source="${BASH_SOURCE[0]:-}"
+    if [ -n "$source" ] && [ "$source" != bash ] && [ -f "$source" ]; then
+        dir="$(cd "$(dirname "$source")" && pwd)" || true
+        if is_cast_checkout "$dir"; then
+            printf '%s\n' "$dir"
+            return 0
+        fi
+    fi
+
+    dir="$(pwd)"
+    while [ -n "$dir" ] && [ "$dir" != "/" ]; do
+        if is_cast_checkout "$dir"; then
+            printf '%s\n' "$dir"
+            return 0
+        fi
+        dir="$(dirname "$dir")"
+    done
+    return 1
+}
+
+run_root() {
+    if [ "$(id -u)" -eq 0 ]; then
+        "$@" </dev/null
+    elif check_command sudo; then
+        sudo "$@" </dev/null
+    else
+        log_error "Root is required to install system packages."
+        exit 1
+    fi
+}
+
+linux_build_ready() {
+    check_command git || return 1
+    check_command curl || return 1
+    check_command tar || return 1
+    check_command gcc || return 1
+    check_command pkg-config || return 1
+    pkg-config --exists libsecret-1 >/dev/null 2>&1 || return 1
+    return 0
+}
+
+ensure_system_packages() {
+    if [ "${CAST_INSTALL_PACKAGES_DONE:-}" = 1 ]; then
+        return 0
+    fi
+    case "$(uname -s)" in
+        Linux)
+            if linux_build_ready; then
+                export CAST_INSTALL_PACKAGES_DONE=1
+                return 0
+            fi
+            log_info "Installing system packages..."
+            if check_command apt-get; then
+                run_root env DEBIAN_FRONTEND=noninteractive apt-get update
+                run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y \
+                    git curl ca-certificates tar build-essential pkg-config libsecret-1-dev
+            elif check_command dnf; then
+                run_root dnf install -y git curl ca-certificates tar gcc gcc-c++ make pkgconf-pkg-config libsecret-devel
+            elif check_command yum; then
+                run_root yum install -y git curl ca-certificates tar gcc gcc-c++ make pkgconfig libsecret-devel
+            elif check_command pacman; then
+                run_root pacman -Sy --noconfirm git curl ca-certificates tar base-devel pkgconf libsecret
+            elif check_command apk; then
+                run_root apk add git curl ca-certificates tar build-base pkgconfig libsecret-dev
+            else
+                log_error "No supported package manager found."
+                log_info "Install git, curl, tar, a C compiler, and libsecret, then run this script again."
+                exit 1
+            fi
+            ;;
+        Darwin)
+            ;;
+        *)
+            log_error "Unsupported operating system: $(uname -s)"
+            exit 1
+            ;;
+    esac
+    export CAST_INSTALL_PACKAGES_DONE=1
+}
+
+git_works() {
+    check_command git || return 1
+    git --version >/dev/null 2>&1 || return 1
+    return 0
+}
+
+ensure_git() {
+    if git_works; then
+        return 0
+    fi
+    if [ "$(uname -s)" = Darwin ] && check_command brew; then
+        log_info "Installing git..."
+        brew install git </dev/null
+    fi
+    if git_works; then
+        return 0
+    fi
+    log_error "git is not installed."
+    if [ "$(uname -s)" = Darwin ]; then
+        log_info "Install the Xcode command line tools or Homebrew, then run this script again."
+    else
+        log_info "Install git, then run this script again."
+    fi
+    exit 1
+}
+
+publish_bin() {
+    local name="$1"
+    local target="$2"
+
+    mkdir -p "$HOME/.local/bin"
+    ln -sfn "$target" "$HOME/.local/bin/$name"
+    if [ "${CAST_INSTALL_SKIP_SYSTEM_BIN:-}" != 1 ] && [ -w /usr/local/bin ]; then
+        ln -sfn "$target" "/usr/local/bin/$name"
+    fi
+}
+
+export_tool_path() {
+    export PATH="$HOME/.local/node/bin:$HOME/.local/bin:$HOME/.bun/bin:${PATH:-}"
+    hash -r 2>/dev/null || true
+}
+
+node_ok() {
+    check_command node || return 1
+    check_command npm || return 1
+    compare_versions "$(get_node_version)" "18.0.0"
+}
+
+install_node_tarball() {
+    local os arch version name url tmp prefix
+
+    case "$(uname -s)" in
+        Linux) os=linux ;;
+        Darwin) os=darwin ;;
+        *)
+            log_error "Unsupported operating system: $(uname -s)"
+            exit 1
+            ;;
+    esac
+    case "$(uname -m)" in
+        x86_64|amd64) arch=x64 ;;
+        aarch64|arm64) arch=arm64 ;;
+        *)
+            log_error "Unsupported architecture: $(uname -m)"
+            exit 1
+            ;;
+    esac
+
+    version="$(curl -fsSL https://nodejs.org/dist/latest-v20.x/SHASUMS256.txt | sed -n 's/.*node-v\([0-9][0-9.]*\)-.*/\1/p' | head -n 1 || true)"
+    if [ -z "$version" ]; then
+        log_error "Could not determine the Node.js 20 version."
+        exit 1
+    fi
+    name="node-v${version}-${os}-${arch}.tar.gz"
+    url="https://nodejs.org/dist/v${version}/${name}"
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/cast-node.XXXXXX")"
+    prefix="$HOME/.local/node"
+    log_info "Downloading $name"
+    curl -fsSL "$url" -o "$tmp/node.tar.gz"
+    rm -rf "$prefix"
+    mkdir -p "$prefix"
+    tar -xzf "$tmp/node.tar.gz" -C "$prefix" --strip-components=1
+    rm -rf "$tmp"
+    publish_bin node "$prefix/bin/node"
+    publish_bin npm "$prefix/bin/npm"
+    publish_bin npx "$prefix/bin/npx"
+    export_tool_path
+}
+
+ensure_node() {
+    export_tool_path
+    if node_ok; then
+        return 0
+    fi
+    install_node_tarball
+    if ! node_ok; then
+        log_error "Node.js >= 18 is still not available after installation."
+        exit 1
+    fi
+}
+
+python_ok() {
+    check_command python3 || return 1
+    compare_versions "$(get_python_version)" "3.11.0"
+}
+
+python_venv_ok() {
+    python3 -c 'import venv, ensurepip' >/dev/null 2>&1
+}
+
+install_uv_python() {
+    local tmp py
+
+    if ! check_command uv; then
+        log_info "Installing uv..."
+        tmp="$(mktemp "${TMPDIR:-/tmp}/cast-uv.XXXXXX")"
+        curl -fsSL https://astral.sh/uv/install.sh -o "$tmp"
+        UV_UNMANAGED_INSTALL="$HOME/.local/bin" UV_NO_MODIFY_PATH=1 sh "$tmp" </dev/null
+        rm -f "$tmp"
+        export_tool_path
+    fi
+    if ! check_command uv; then
+        log_error "uv is not available."
+        log_info "Install Python >= 3.11 and run this script again."
+        exit 1
+    fi
+    log_info "Installing Python 3.12..."
+    uv python install 3.12 </dev/null
+    py="$(uv python find 3.12)"
+    if [ ! -x "$py" ]; then
+        log_error "uv did not install Python 3.12."
+        exit 1
+    fi
+    publish_bin python3 "$py"
+    export_tool_path
+}
+
+ensure_python() {
+    export_tool_path
+    if python_ok && python_venv_ok; then
+        return 0
+    fi
+    if python_ok && ! python_venv_ok && check_command apt-get; then
+        log_info "Installing python3-venv..."
+        run_root env DEBIAN_FRONTEND=noninteractive apt-get update
+        run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y python3-venv
+        if python_venv_ok; then
+            return 0
+        fi
+    fi
+    install_uv_python
+    if ! python_ok; then
+        log_error "Python >= 3.11 is still not available after installation."
+        exit 1
+    fi
+}
+
+ensure_bun() {
+    local tmp
+
+    export_tool_path
+    if check_command bun || [ -x "$HOME/.bun/bin/bun" ]; then
+        export_tool_path
+        return 0
+    fi
+    log_info "Installing Bun..."
+    tmp="$(mktemp "${TMPDIR:-/tmp}/cast-bun.XXXXXX")"
+    if ! curl -fsSL https://bun.sh/install -o "$tmp"; then
+        log_warn "Could not download Bun. The TUI needs it: https://bun.sh"
+        rm -f "$tmp"
+        return 0
+    fi
+    if ! BUN_INSTALL="$HOME/.bun" bash "$tmp" </dev/null; then
+        log_warn "Bun installation failed. The TUI needs it: https://bun.sh"
+        rm -f "$tmp"
+        return 0
+    fi
+    rm -f "$tmp"
+    if [ -x "$HOME/.bun/bin/bun" ]; then
+        publish_bin bun "$HOME/.bun/bin/bun"
+    fi
+    export_tool_path
+}
+
+persist_path() {
+    local profile default
+
+    export_tool_path
+    if [ "$(uname -s)" = Darwin ]; then
+        default="$HOME/.zshrc"
+    else
+        default="$HOME/.bashrc"
+    fi
+    for profile in "$HOME/.zshrc" "$HOME/.bashrc"; do
+        if [ -f "$profile" ] && grep -q 'castagent-path' "$profile"; then
+            continue
+        fi
+        if [ -f "$profile" ] || [ "$profile" = "$default" ]; then
+            printf '\n%s\n' 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH" # castagent-path' >> "$profile"
+            log_info "Added Cast tools to PATH in ${profile/#$HOME/~}"
+        fi
+    done
+}
+
+clone_and_reexec() {
+    local dest
+
+    dest="${CAST_INSTALL_DIR:-$HOME/.cast/castagent}"
+    if [ -e "$dest" ] || [ -L "$dest" ]; then
+        if is_cast_checkout "$dest"; then
+            log_info "Using existing checkout: $dest"
+            export CAST_INSTALL_PACKAGES_DONE=1
+            exec bash "$dest/install.sh"
+        fi
+        log_error "$dest exists and is not a Cast checkout."
+        log_info "Move it aside or set CAST_INSTALL_DIR to a new path, then run this script again."
+        exit 1
+    fi
+
+    log_info "Cloning Cast into $dest"
+    mkdir -p "$(dirname "$dest")"
+    if ! git clone --branch main https://github.com/scott/castagent.git "$dest" </dev/null; then
+        log_error "Could not clone Cast into $dest"
+        exit 1
+    fi
+    export CAST_INSTALL_PACKAGES_DONE=1
+    exec bash "$dest/install.sh"
+}
+
+prepare_checkout() {
+    local found
+
+    if found="$(find_checkout)"; then
+        SCRIPT_DIR="$found"
+        return 0
+    fi
+    ensure_system_packages
+    ensure_git
+    clone_and_reexec
+}
+
+prepare_checkout
+
 # Header
 echo -e "${BLUE}╔══════════════════════════════════════════════════════════════╗${NC}"
 echo -e "${BLUE}║${NC}          ${GREEN}Cast${NC} - Agent Building & Deployment Platform       ${BLUE}║${NC}"
@@ -69,6 +415,13 @@ echo ""
 # PREREQUISITE CHECKS
 # ============================================
 log_info "Checking prerequisites..."
+
+ensure_system_packages
+ensure_git
+ensure_node
+ensure_python
+ensure_bun
+persist_path
 
 # Check Node.js
 if check_command node; then
@@ -167,17 +520,17 @@ cd "$SCRIPT_DIR"
 
 # Install root package
 log_info "Installing root dependencies..."
-npm install
+npm install </dev/null
 
 # Install CLI dependencies
 log_info "Installing cast-cli dependencies..."
 cd "$SCRIPT_DIR/typescript/cast-cli"
-npm install
+npm install </dev/null
 
 # Install TUI dependencies
 log_info "Installing cast-tui dependencies..."
 cd "$SCRIPT_DIR/typescript/cast-tui"
-npm install
+npm install </dev/null
 
 cd "$SCRIPT_DIR"
 
@@ -192,12 +545,12 @@ log_info "Building TypeScript projects..."
 # Build CLI
 log_info "Building cast-cli..."
 cd "$SCRIPT_DIR/typescript/cast-cli"
-npm run build
+npm run build </dev/null
 
 # Build TUI
 log_info "Building cast-tui..."
 cd "$SCRIPT_DIR/typescript/cast-tui"
-npm run build
+npm run build </dev/null
 
 cd "$SCRIPT_DIR"
 
@@ -258,22 +611,19 @@ log_info "Setting up global cast CLI..."
 CLI_PATH="$SCRIPT_DIR/typescript/cast-cli/bin/run"
 
 if [ -f "$CLI_PATH" ]; then
-    # Check if we can create a global symlink
-    if [ -w "/usr/local/bin" ] || [ -w "$HOME/.local/bin" ]; then
-        if [ -w "/usr/local/bin" ]; then
-            ln -sf "$CLI_PATH" /usr/local/bin/cast
-            log_success "Created symlink: /usr/local/bin/cast"
-        else
-            mkdir -p "$HOME/.local/bin"
-            ln -sf "$CLI_PATH" "$HOME/.local/bin/cast"
-            log_success "Created symlink: $HOME/.local/bin/cast"
-            
-            # Check if ~/.local/bin is in PATH
-            if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-                log_warn "$HOME/.local/bin is not in your PATH"
-                log_info "Add this to your shell profile:"
-                log_info "  export PATH=\"\$HOME/.local/bin:\$PATH\""
-            fi
+    # Check if we can create a global symlink. Tests set
+    # CAST_INSTALL_SKIP_SYSTEM_BIN so a developer machine's /usr/local/bin/cast
+    # is left alone.
+    if [ "${CAST_INSTALL_SKIP_SYSTEM_BIN:-}" != 1 ] && [ -w "/usr/local/bin" ]; then
+        ln -sf "$CLI_PATH" /usr/local/bin/cast
+        log_success "Created symlink: /usr/local/bin/cast"
+    elif [ -w "$HOME/.local/bin" ] || mkdir -p "$HOME/.local/bin"; then
+        ln -sf "$CLI_PATH" "$HOME/.local/bin/cast"
+        log_success "Created symlink: $HOME/.local/bin/cast"
+        if [ "$PATH_HAD_LOCAL_BIN" != 1 ]; then
+            log_warn "$HOME/.local/bin is not in your PATH"
+            log_info "Add this to your shell profile:"
+            log_info '  export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"'
         fi
     else
         log_warn "Cannot create global symlink (no write permission)"
@@ -422,10 +772,9 @@ ln -sf "$SCRIPT_DIR/cast" "$HOME/.local/bin/cast"
 if [ -f "$HOME/.local/bin/cast" ]; then
     log_success "cast command installed at ~/.local/bin/cast"
     
-    if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
-        log_warn "~/.local/bin is not in your PATH"
-        log_info "Add this to your shell profile:"
-        log_info '  export PATH="$HOME/.local/bin:$PATH"'
+    if [ "$PATH_HAD_LOCAL_BIN" != 1 ] && [ ! -x /usr/local/bin/cast ] && [ ! -L /usr/local/bin/cast ]; then
+        log_info "Open a new shell, or run:"
+        log_info '  export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"'
     else
         log_success "Cast CLI is ready to use"
     fi
@@ -483,3 +832,4 @@ echo ""
 
 log_info "For more information, see: $SCRIPT_DIR/docs/SPEC.md"
 echo ""
+}

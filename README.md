@@ -62,12 +62,14 @@ Describe what you want, and Cast Agent builds the complete agent scaffold with i
 
 ### Installation
 
-**One-liner** (when repository is public):
+**One-liner** (macOS and Linux):
 ```bash
 curl -sL https://raw.githubusercontent.com/scott/castagent/main/install.sh | bash
 ```
 
-**Full installation** (recommended for first-time setup):
+Installs git, Node.js 20, Python 3.12, and Bun when they are missing, clones the repo into `~/.cast/castagent`, builds Cast, and links `cast`. On Linux it also installs a C compiler and libsecret. Re-running it rebuilds that checkout without fetching. Use `./upgrade.sh` from the checkout to update.
+
+**Full installation** (clone it yourself):
 ```bash
 # Clone the repository
 git clone https://github.com/scott/castagent.git
