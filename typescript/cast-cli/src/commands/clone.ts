@@ -34,7 +34,7 @@ export default class Clone extends Command {
       required: true,
     }),
     name: Args.string({
-      description: 'Local agent name (optional, defaults to repo or directory name)',
+      description: 'Local agent name (optional, defaults to repo or directory name). When set, also written to agent.yaml.',
       required: false,
     }),
   }

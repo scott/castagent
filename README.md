@@ -160,7 +160,8 @@ cast stop demo-agent
 # Rename an agent
 cast rename old-name new-name
 
-# Clone an agent from a Git repository, GitHub user/repo, or local directory
+# Clone an agent from a Git repository, GitHub user/repo, or local directory.
+# The optional name sets the local directory and the name field in agent.yaml.
 cast clone https://github.com/user/my-agent
 cast clone https://github.com/user/my-agent my-local-name
 cast clone user/my-agent

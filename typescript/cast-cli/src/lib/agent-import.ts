@@ -221,6 +221,12 @@ export async function importAgent(source: string, options: ImportAgentOptions = 
       })
     }
 
+    // A caller-supplied name is the agent's identity, not only its directory.
+    // The runtime and A2A card read `name` from agent.yaml.
+    if (options.name?.trim()) {
+      writeImportedAgentName(dest, plan.name, plan.kind)
+    }
+
     // git clone already created .git and origin. Filesystem copies init only when absent.
     await ensureLocalRepo(dest, plan.kind === 'git' ? plan.location : undefined)
     if (plan.kind === 'git') {
@@ -365,6 +371,29 @@ async function ensureLocalRepo(agentPath: string, remoteUrl?: string): Promise<v
   if (remoteUrl) {
     await git.addRemote('origin', remoteUrl)
   }
+}
+
+function writeImportedAgentName(agentPath: string, name: string, sourceKind: 'git' | 'local'): void {
+  const configPath = path.join(agentPath, 'agent.yaml')
+  const content = fs.readFileSync(configPath, 'utf-8')
+  const doc = yaml.parseDocument(content)
+  if (doc.errors.length > 0) {
+    throw new AgentImportError(
+      `Failed to read agent.yaml: ${doc.errors[0].message}`,
+      'other',
+      {agentName: name, sourceKind},
+    )
+  }
+  if (!yaml.isMap(doc.contents)) {
+    throw new AgentImportError(
+      'agent.yaml must be a mapping so the cloned agent name can be set.',
+      'other',
+      {agentName: name, sourceKind},
+    )
+  }
+  if (doc.get('name') === name) return
+  doc.set('name', name)
+  fs.writeFileSync(configPath, doc.toString())
 }
 
 function writeRepositoryMetadata(agentPath: string, url: string): void {

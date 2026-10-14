@@ -103,6 +103,48 @@ describe('importAgent', () => {
     expect(result.name).to.equal('chosen-name')
     expect(fs.existsSync(path.join(agentsDir, 'chosen-name', 'agent.yaml'))).to.equal(true)
     expect(fs.existsSync(path.join(agentsDir, 'from-dir'))).to.equal(false)
+    expect(yaml.parse(fs.readFileSync(path.join(result.path, 'agent.yaml'), 'utf8')).name).to.equal('chosen-name')
+  })
+
+  it('writes the requested name into agent.yaml and keeps the rest of the file', async () => {
+    const src = sourceDir('bb-summarizer', {
+      'agent.yaml': '# identity\nname: bb-summarizer\ndescription: sums threads\n',
+    })
+    const result = await importAgent(src, {name: 'bb-clone-gh', agentsDir})
+    const text = fs.readFileSync(path.join(result.path, 'agent.yaml'), 'utf8')
+    const config = yaml.parse(text)
+    expect(config.name).to.equal('bb-clone-gh')
+    expect(config.description).to.equal('sums threads')
+    expect(text).to.include('# identity')
+    expect(text).to.not.match(/^name: bb-summarizer$/m)
+  })
+
+  it('leaves agent.yaml unchanged when the requested name already matches', async () => {
+    const raw = '# keep\nname: chosen-name\ndescription: copied\n'
+    const src = sourceDir('other-folder', {'agent.yaml': raw})
+    const result = await importAgent(src, {name: 'chosen-name', agentsDir})
+    expect(fs.readFileSync(path.join(result.path, 'agent.yaml'), 'utf8')).to.equal(raw)
+  })
+
+  it('leaves a different source name in agent.yaml when no name is requested', async () => {
+    const raw = 'name: yaml-name\ndescription: keep\n'
+    const src = sourceDir('folder-name', {'agent.yaml': raw})
+    const result = await importAgent(src, {agentsDir})
+    expect(result.name).to.equal('folder-name')
+    expect(fs.readFileSync(path.join(result.path, 'agent.yaml'), 'utf8')).to.equal(raw)
+  })
+
+  it('removes the copy when agent.yaml cannot accept the requested name', async () => {
+    const src = sourceDir('broken-yaml', {'agent.yaml': 'name: [unterminated\n'})
+    try {
+      await importAgent(src, {name: 'fixed-name', agentsDir})
+      expect.fail('expected invalid agent.yaml')
+    } catch (error) {
+      const err = error as AgentImportError
+      expect(err.code).to.equal('other')
+      expect(err.message).to.match(/agent\.yaml/)
+    }
+    expect(fs.existsSync(path.join(agentsDir, 'fixed-name'))).to.equal(false)
   })
 
   it('does not modify an existing agent on name collision', async () => {
@@ -144,7 +186,7 @@ describe('importAgent', () => {
 
     const result = await importAgent(src, {name: 'demo', force: true, agentsDir})
     expect(result.name).to.equal('demo')
-    expect(fs.readFileSync(path.join(existing, 'agent.yaml'), 'utf8')).to.equal('name: new\n')
+    expect(yaml.parse(fs.readFileSync(path.join(existing, 'agent.yaml'), 'utf8')).name).to.equal('demo')
     expect(fs.existsSync(path.join(existing, 'keep.txt'))).to.equal(false)
     expect(fs.existsSync(path.join(agentsDir, '.demo.importing'))).to.equal(false)
     expect(fs.existsSync(path.join(agentsDir, '.demo.replacing'))).to.equal(false)
@@ -280,9 +322,30 @@ describe('importAgent', () => {
       expect(result.name).to.equal('my-agent')
       expect(result.commitCount).to.be.greaterThan(0)
       const config = yaml.parse(fs.readFileSync(path.join(result.path, 'agent.yaml'), 'utf8'))
+      expect(config.name).to.equal('fixture')
       expect(config.repository.url).to.equal('https://github.com/user/my-agent.git')
       expect(config.repository.remote).to.equal('origin')
       expect(config.repository.branch).to.equal('main')
+    })
+
+    it('sets agent.yaml name when a git clone is given a name', async () => {
+      const result = await importAgent('https://github.com/scott/bb-summarizer.git', {
+        name: 'bb-clone-gh',
+        agentsDir,
+        cloneRepo: async (_url, dest) => {
+          fs.writeFileSync(path.join(dest, 'agent.yaml'), 'name: bb-summarizer\ndescription: sums threads\n')
+          fs.mkdirSync(path.join(dest, '.git'))
+        },
+      })
+      const config = yaml.parse(fs.readFileSync(path.join(result.path, 'agent.yaml'), 'utf8'))
+      expect(result.name).to.equal('bb-clone-gh')
+      expect(config.name).to.equal('bb-clone-gh')
+      expect(config.description).to.equal('sums threads')
+      expect(config.repository).to.deep.equal({
+        remote: 'origin',
+        url: 'https://github.com/scott/bb-summarizer.git',
+        branch: 'main',
+      })
     })
 
     it('keeps the historical git collision message and does not clone', async () => {
