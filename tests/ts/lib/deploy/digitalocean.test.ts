@@ -6,7 +6,6 @@ import * as fs from 'fs'
 import * as os from 'os'
 import axios from 'axios'
 
-import {execFileSync} from 'child_process'
 import DigitalOceanDeploy, {remoteDockerRunCommand} from '../../../../typescript/cast-cli/src/lib/deploy/digitalocean'
 import * as deployUtils from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 import * as motd from '../../../../typescript/cast-cli/src/lib/deploy/motd'
