@@ -14,6 +14,7 @@ import {
   execCommandIgnoreError,
   ensureDockerfile,
   ensureCastRuntimeDockerfile,
+  dockerfileInstallsRuntimeGit,
   prepareCastImageContext,
   prepareHostTuiBuildContext,
   installPin,
@@ -23,6 +24,11 @@ import * as path from 'path'
 import * as os from 'os'
 import * as sinon from 'sinon'
 import * as fs from 'fs'
+
+function runtimeStage(dockerfile: string): string {
+  const stages = dockerfile.split(/\n(?=FROM\s)/)
+  return (stages[stages.length - 1] || '').replace(/\\\n/g, ' ')
+}
 
 function expectPinnedBun(dockerfile: string) {
   const pin = installPin('bun', 'linux-x64')
@@ -438,6 +444,15 @@ describe('ensureDockerfile', () => {
     const reqPath = path.join(tempDir, 'requirements.txt')
     expect(fs.existsSync(reqPath)).to.be.true
   })
+
+  it('installs git in the runtime stage', () => {
+    ensureDockerfile(tempDir)
+    const dockerfile = fs.readFileSync(path.join(tempDir, 'Dockerfile'), 'utf8')
+    const runtime = runtimeStage(dockerfile)
+    expect(runtime).to.match(/apt-get install -y git\b/)
+    expect(runtime).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
+    expect(dockerfileInstallsRuntimeGit(dockerfile)).to.equal(true)
+  })
 })
 
 describe('ensureCastRuntimeDockerfile', () => {
@@ -460,6 +475,10 @@ describe('ensureCastRuntimeDockerfile', () => {
       expect(dockerfile).to.include('COPY .cast-runtime/cast /app/cast')
       expect(dockerfile).to.match(/PYTHONPATH=\/app(?:\s|$)/)
       expect(dockerfile).to.not.include('PYTHONPATH=/usr/local')
+      const runtime = runtimeStage(dockerfile)
+      expect(runtime).to.match(/apt-get install -y git\b/)
+      expect(runtime).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
+      expect(dockerfileInstallsRuntimeGit(dockerfile)).to.equal(true)
       expect(requirements).to.not.match(/^cast\b/m)
       expect(requirements).to.include('GitPython')
     } finally {
@@ -484,6 +503,49 @@ describe('ensureCastRuntimeDockerfile', () => {
     fs.writeFileSync(dockerfilePath, 'FROM custom:latest\n')
     ensureCastRuntimeDockerfile(agentDir)
     expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal('FROM custom:latest\n')
+  })
+
+  it('replaces a generated Dockerfile that installs git only next to gcc in the builder', () => {
+    const dockerfilePath = path.join(agentDir, 'Dockerfile')
+    const builderOnly = `FROM python:3.11-slim-bookworm AS builder
+
+WORKDIR /build
+RUN apt-get update && apt-get install -y gcc git && rm -rf /var/lib/apt/lists/*
+
+FROM python:3.11-slim-bookworm
+WORKDIR /app
+COPY .cast-runtime/cast /app/cast
+ENV PYTHONPATH=/app
+CMD ["python", "-m", "cast.runtime"]
+`
+    fs.writeFileSync(dockerfilePath, builderOnly)
+    expect(dockerfileInstallsRuntimeGit(builderOnly)).to.equal(false)
+
+    ensureCastRuntimeDockerfile(agentDir)
+    const dockerfile = fs.readFileSync(dockerfilePath, 'utf8')
+    expect(dockerfile).to.not.equal(builderOnly)
+    expect(runtimeStage(dockerfile)).to.match(/apt-get install -y git\b/)
+    expect(dockerfile).to.include('COPY .cast-runtime/cast /app/cast')
+  })
+
+  it('keeps a generated Dockerfile that already installs git in the runtime stage', () => {
+    const dockerfilePath = path.join(agentDir, 'Dockerfile')
+    const current = `FROM python:3.11-slim-bookworm AS builder
+
+WORKDIR /build
+RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
+
+FROM python:3.11-slim-bookworm
+WORKDIR /app
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
+COPY .cast-runtime/cast /app/cast
+ENV PYTHONPATH=/app
+# keep-tui-sentinel
+CMD ["python", "-m", "cast.runtime"]
+`
+    fs.writeFileSync(dockerfilePath, current)
+    ensureCastRuntimeDockerfile(agentDir)
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal(current)
   })
 })
 

@@ -417,12 +417,11 @@ export async function forgetDeploymentTokens(
 export function ensureDockerfile(agentPath: string): void {
   const dockerfilePath = path.join(agentPath, 'Dockerfile')
   if (!fs.existsSync(dockerfilePath)) {
-    // Multi-stage Docker build for smaller image size:
-    // - Stage 1 (builder): Compiles any Python packages with C extensions
-    // - Stage 2 (runtime): Contains only the installed packages, no build tools
-    //
-    // Size savings vs single-stage with gcc/git:
-    //   gcc: ~250 MB, git: ~60 MB
+    // Multi-stage Docker build:
+    // - Stage 1 (builder): gcc, for Python packages with C extensions.
+    //   gcc is about 250 MB and is not copied into the runtime image.
+    // - Stage 2 (runtime): installed packages and git. GitPython imports
+    //   the git binary before the server binds.
     const dockerfile = `FROM python:3.11-slim-bookworm AS builder
 
 WORKDIR /build
@@ -432,10 +431,12 @@ COPY requirements.txt .
 RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/* \\
     && pip install --no-cache-dir -r requirements.txt
 
-# Runtime stage — no build tools, just Python and installed packages
+# Runtime stage. gcc stays in the builder. git is required here.
 FROM python:3.11-slim-bookworm
 
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 # Copy installed Python packages from builder stage
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
@@ -488,10 +489,13 @@ COPY requirements.txt .
 RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/* \\
     && pip install --no-cache-dir -r requirements.txt
 
-# Runtime stage. No build tools, just Python and installed packages.
+# Runtime stage. gcc stays in the builder. git is required here because
+# the runtime imports GitPython, which exits when the git binary is missing.
 FROM python:3.11-slim-bookworm
 
 WORKDIR /app
+
+RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 # Copy installed Python packages from the builder stage
 COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
@@ -524,15 +528,29 @@ export function isGeneratedAgentDockerfile(content: string): boolean {
 }
 
 /**
+ * Git installed beside gcc in the builder stage is discarded with that
+ * stage. GitPython needs the binary in the image that runs.
+ */
+export function dockerfileInstallsRuntimeGit(content: string): boolean {
+  const stages = content.split(/\n(?=FROM\s)/)
+  const runtime = (stages[stages.length - 1] ?? content).replace(/\\\n/g, ' ')
+  return /apt-get install\b[^\n]*\bgit\b/.test(runtime)
+}
+
+/**
  * Write the Droplet and MicroVM Dockerfile, or replace a previously
- * generated file that omitted the Cast package. A custom Dockerfile
- * is left in place.
+ * generated file that omitted the Cast package or the git binary.
+ * A custom Dockerfile is left in place.
  */
 export function ensureCastRuntimeDockerfile(agentPath: string): void {
   ensureDockerfile(agentPath)
   const dockerfilePath = path.join(agentPath, 'Dockerfile')
   const current = fs.readFileSync(dockerfilePath, 'utf8')
-  if (dockerfileCopiesCastPackage(current) && /PYTHONPATH=\/app(?:\s|$)/.test(current)) return
+  if (
+    dockerfileCopiesCastPackage(current)
+    && /PYTHONPATH=\/app(?:\s|$)/.test(current)
+    && dockerfileInstallsRuntimeGit(current)
+  ) return
   if (!isGeneratedAgentDockerfile(current)) return
   fs.writeFileSync(dockerfilePath, castRuntimeDockerfile())
 }

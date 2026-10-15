@@ -99,6 +99,8 @@ The deployment is a single Docker image that contains:
   not in that tarball.
 - A Python venv with `cast` runtime + the agent's `runtime.requirements`
   packages.
+- The git binary. The runtime imports GitPython before the server binds,
+  and that import fails when git is missing.
 - For DigitalOcean with `--with-tui`: the `cast-tui` binary + Bun, so you
   can SSH into the droplet and run `cast-tui` inside the container.
 
@@ -120,8 +122,10 @@ tree in directly.
 
 Droplet and MicroVM images copy that same package to `/app/cast` and set
 `PYTHONPATH=/app`. Their `requirements.txt` is written the same way and
-also omits `cast`. A generated Dockerfile that still points
-`PYTHONPATH` at `/usr/local` is replaced on the next deploy.
+also omits `cast`. The runtime stage installs git. gcc stays in the
+builder stage and is not part of the image that runs. A generated
+Dockerfile that still points `PYTHONPATH` at `/usr/local`, or that does
+not install git in the runtime stage, is replaced on the next deploy.
 
 `cast deploy --provider docker` and `cast deploy --provider digitalocean`
 wait until the container is still running and the runtime has printed
