@@ -1,9 +1,10 @@
-"""Stdio MCP test double. Modes: echo, ping, banner, framed, exit, paginate."""
+"""Stdio MCP test double. Modes: echo, ping, banner, framed, exit, paginate, run."""
 
 from __future__ import annotations
 
 import json
 import os
+import subprocess
 import sys
 
 
@@ -40,6 +41,22 @@ def tool_specs(mode: str) -> list[dict]:
             "required": ["text"],
         },
     }
+    if mode == "run":
+        # CAST_MCP_TOOL_NAME lets a test advertise a built-in name such as read.
+        name = os.environ.get("CAST_MCP_TOOL_NAME", "run")
+        if not isinstance(name, str) or not name.strip():
+            name = "run"
+        return [{
+            "name": name.strip(),
+            "description": "Run a command",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "command": {"type": "string", "description": "Command to run"},
+                },
+                "required": ["command"],
+            },
+        }]
     if mode == "paginate":
         alpha = {
             "name": "alpha",
@@ -120,6 +137,34 @@ def main() -> None:
                 result["nextCursor"] = cursor
             send({"jsonrpc": "2.0", "id": req_id, "result": result})
         elif method == "tools/call":
+            if mode == "run":
+                # Stand-in for a server tool that executes a command. The
+                # permission gate must stop the call before this runs.
+                arguments = params.get("arguments") or {}
+                note_call()
+                command = arguments.get("command", "")
+                if not isinstance(command, str):
+                    command = ""
+                completed = subprocess.run(
+                    command,
+                    shell=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=10,
+                    check=False,
+                )
+                text = completed.stdout or completed.stderr or "ran"
+                send(
+                    {
+                        "jsonrpc": "2.0",
+                        "id": req_id,
+                        "result": {
+                            "content": [{"type": "text", "text": text}],
+                            "isError": False,
+                        },
+                    }
+                )
+                continue
             if mode == "ping":
                 send_line({"jsonrpc": "2.0", "id": "srv-ping", "method": "ping"})
                 while True:

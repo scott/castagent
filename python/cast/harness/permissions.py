@@ -1,8 +1,10 @@
-"""Enforce harness.permissions before a built-in tool runs.
+"""Enforce harness.permissions before a tool runs.
 
 Levels written by `cast update --permission` are `always-allow`, `ask`, and
-`deny`. A missing entry stays allowed so existing agents keep working. An
-unknown level fails closed.
+`deny`. A missing entry for a built-in tool stays allowed so existing agents
+keep working. An MCP tool, and any other name that is not a built-in, is
+`deny` until it is listed. `mcp` and `*` cover names an MCP server advertises
+at startup. An unknown level fails closed.
 """
 
 from __future__ import annotations
@@ -18,6 +20,28 @@ from typing import Any
 ALWAYS_ALLOW = "always-allow"
 ASK = "ask"
 DENY = "deny"
+
+# `harness.permissions` keys that cover every MCP tool with no entry of its own.
+# `mcp` is more specific than `*`. Neither key changes a built-in default.
+MCP_SCOPE = "mcp"
+WILDCARD_SCOPE = "*"
+MCP_ORIGIN = "mcp"
+_SCOPE_KEYS = frozenset({MCP_SCOPE, WILDCARD_SCOPE})
+
+# Built-in `harness.permissions` keys. A missing entry stays always-allow.
+# MCP calls pass origin MCP_ORIGIN so a server cannot reuse one of these names
+# to inherit that default.
+BUILTIN_TOOL_NAMES = frozenset({
+    "bash",
+    "read",
+    "glob",
+    "git_status",
+    "git_commit",
+    "git_push",
+    "git_log",
+    "git_diff",
+    "git_add",
+})
 
 # Older spec names still appear in hand-written agent.yaml files.
 _LEVELS = {
@@ -148,17 +172,84 @@ class PermissionGate:
             self.permissions = {}
         self.broker = broker if broker is not None else ApprovalBroker()
 
-    def action_for(self, tool_name: str) -> str | None:
+    def _uses_mcp_policy(self, tool_name: str, origin: str | None) -> bool:
+        """MCP calls and unknown names fail closed. Built-ins do not."""
+        if origin == MCP_ORIGIN:
+            return True
+        return tool_name not in BUILTIN_TOOL_NAMES
+
+    def policy_key(self, tool_name: str, *, origin: str | None = None) -> str | None:
+        """Permissions key that governs `tool_name`, or None for a default.
+
+        An exact tool name wins. Otherwise an MCP call uses `mcp`, then `*`.
+        A built-in with no exact entry keeps its own default and ignores both
+        of those keys.
+        """
+        if not isinstance(tool_name, str) or not tool_name:
+            return None
+        mcp_policy = self._uses_mcp_policy(tool_name, origin)
+        if tool_name in self.permissions and tool_name not in _SCOPE_KEYS:
+            return tool_name
+        if mcp_policy and tool_name in _SCOPE_KEYS and tool_name in self.permissions:
+            return tool_name
+        if mcp_policy and MCP_SCOPE in self.permissions and tool_name != MCP_SCOPE:
+            return MCP_SCOPE
+        if mcp_policy and WILDCARD_SCOPE in self.permissions and tool_name != WILDCARD_SCOPE:
+            return WILDCARD_SCOPE
+        return None
+
+    def action_for(self, tool_name: str, *, origin: str | None = None) -> str | None:
         """Canonical level, or None when the configured value is unknown.
 
-        A tool with no entry is `always-allow`.
+        A built-in with no entry is `always-allow`. An MCP tool with no entry
+        is `deny`, including when its advertised name matches a built-in.
         """
-        if tool_name not in self.permissions:
+        if not isinstance(tool_name, str) or not tool_name:
+            return DENY
+        key = self.policy_key(tool_name, origin=origin)
+        if key is not None:
+            return normalize_level(self.permissions.get(key))
+        if not self._uses_mcp_policy(tool_name, origin):
             return ALWAYS_ALLOW
-        return normalize_level(self.permissions.get(tool_name))
+        return DENY
 
-    async def authorize(self, tool_name: str, arguments: Mapping[str, Any]) -> PermissionDecision:
-        level = self.action_for(tool_name)
+    def mcp_startup_messages(self, names: list[str] | tuple[str, ...]) -> list[str]:
+        """Lines printed when an MCP server advertises tools.
+
+        Names with no exact entry and no `mcp` or `*` policy are denied
+        until the operator lists them.
+        """
+        advertised: list[str] = []
+        for name in names:
+            if isinstance(name, str) and name and name not in advertised:
+                advertised.append(name)
+        if not advertised:
+            return []
+        lines = ["MCP tools advertised at startup: " + ", ".join(advertised)]
+        pending = [
+            name
+            for name in advertised
+            if self.policy_key(name, origin=MCP_ORIGIN) is None
+        ]
+        if pending:
+            lines.append(
+                "Denied until listed in harness.permissions: " + ", ".join(pending) + "."
+            )
+        shared = [name for name in advertised if name in BUILTIN_TOOL_NAMES]
+        if shared:
+            lines.append(
+                "MCP tools sharing a built-in permissions key: " + ", ".join(shared) + "."
+            )
+        return lines
+
+    async def authorize(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+        *,
+        origin: str | None = None,
+    ) -> PermissionDecision:
+        level = self.action_for(tool_name, origin=origin)
         if level == ALWAYS_ALLOW:
             return PermissionDecision(True, "")
         if level is None:
@@ -170,9 +261,15 @@ class PermissionGate:
             return PermissionDecision(False, permission_denied_message(tool_name, ASK))
         return PermissionDecision(True, "")
 
-    def authorize_now(self, tool_name: str, arguments: Mapping[str, Any]) -> PermissionDecision:
+    def authorize_now(
+        self,
+        tool_name: str,
+        arguments: Mapping[str, Any],
+        *,
+        origin: str | None = None,
+    ) -> PermissionDecision:
         """Sync path. `ask` cannot wait for the TUI here, so it does not run."""
-        level = self.action_for(tool_name)
+        level = self.action_for(tool_name, origin=origin)
         if level == ALWAYS_ALLOW:
             return PermissionDecision(True, "")
         if level is None:
@@ -182,11 +279,18 @@ class PermissionGate:
         return PermissionDecision(False, permission_denied_message(tool_name, DENY))
 
 
-def guard_tool(tool: Any, config_name: str, gate: PermissionGate) -> Any:
+def guard_tool(
+    tool: Any,
+    config_name: str,
+    gate: PermissionGate,
+    *,
+    origin: str | None = None,
+) -> Any:
     """Return a copy of `tool` that checks `config_name` before it runs.
 
     The copy keeps the model's tool name and argument schema. `config_name`
     is the `harness.permissions` key, such as `bash` for `bash_tool`.
+    MCP tools pass `origin="mcp"` so the check fails closed.
     """
     from langchain_core.tools import StructuredTool
 
@@ -199,14 +303,14 @@ def guard_tool(tool: Any, config_name: str, gate: PermissionGate) -> Any:
 
     def func(*args: Any, **kwargs: Any) -> Any:
         bound = inspect.signature(original).bind_partial(*args, **kwargs)
-        decision = gate.authorize_now(config_name, bound.arguments)
+        decision = gate.authorize_now(config_name, bound.arguments, origin=origin)
         if not decision.allowed:
             return _blocked(decision)
         return original(*args, **kwargs)
 
     async def coroutine(*args: Any, **kwargs: Any) -> Any:
         bound = inspect.signature(original).bind_partial(*args, **kwargs)
-        decision = await gate.authorize(config_name, bound.arguments)
+        decision = await gate.authorize(config_name, bound.arguments, origin=origin)
         if not decision.allowed:
             return _blocked(decision)
         result = original(*args, **kwargs)
