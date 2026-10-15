@@ -30,6 +30,10 @@ import DigitalOceanDeploy, {
   remoteDockerRunCommand,
   removeDigitalOceanMemoryVolumes,
   SSH_KEY_NAME,
+  digitalOceanCommandError,
+  extractDigitalOceanErrorDetail,
+  loginKeySyncPlan,
+  sshPublicKeyMd5Fingerprint,
 } from '../../../../typescript/cast-cli/src/lib/deploy/digitalocean'
 import {digitaloceanProvider} from '../../../../typescript/cast-cli/src/lib/deploy/providers/digitalocean'
 import * as deployUtils from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
@@ -1809,6 +1813,7 @@ describe('DigitalOcean Deploy Provider', () => {
         expect.fail('create should have failed')
       } catch (error: any) {
         expect(error.message).to.include('Failed to create droplet')
+        expect(error.message).to.include('create failed')
       } finally {
         fs.rmSync(tempDir, {recursive: true, force: true})
       }
@@ -1818,6 +1823,36 @@ describe('DigitalOcean Deploy Provider', () => {
       expect(saved.called).to.equal(false)
       expect(fs.readFileSync(castKnownHostsPath(), 'utf8')).to.not.include('203.0.113.45')
       expect(fs.existsSync(path.join(tempDir, '.cloud-init.yml'))).to.equal(false)
+    })
+
+    it('reports a doctl API error that arrived on stdout', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-test-do-stdout-'))
+      const exec = stubFn(sandbox.stub(deployUtils, 'execCommand') as any)
+      const detail = '19:43:ae:98:f1:4f:05:b8:2c:ea:f4:93:4a:e8:93:80 are invalid key identifiers for Droplet creation.'
+      exec.onFirstCall().resolves({stdout: '', stderr: '', exitCode: 0})
+        .onSecondCall().resolves({
+          stdout: '3072 MD5:ab:cd:ef:12:34:56:78:90:ab:cd:ef:12:34:56:78:90 key (ED25519)\n',
+          stderr: '',
+          exitCode: 0,
+        })
+        .onThirdCall().resolves({
+          stdout: JSON.stringify({errors: [{detail}]}),
+          stderr: '',
+          exitCode: 1,
+        })
+        .onCall(3).resolves({stdout: '', stderr: '', exitCode: 0})
+      sandbox.stub(instance, 'warn').returns(undefined)
+      sandbox.stub(instance, 'log').returns(undefined)
+      try {
+        await instance.getOrCreateDroplet('stdout-agent', tempDir)
+        expect.fail('create should have failed')
+      } catch (error: any) {
+        expect(error.message).to.include('Failed to create droplet')
+        expect(error.message).to.include('invalid key identifiers')
+        expect(error.message).to.not.match(/Failed to create droplet:\s*$/)
+      } finally {
+        fs.rmSync(tempDir, {recursive: true, force: true})
+      }
     })
   })
 
@@ -2038,7 +2073,7 @@ describe('DigitalOcean Deploy Provider', () => {
       }
     })
 
-    it('does not upload when the account key is already present', async () => {
+    it('does not upload when the account key matches this machine', async () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-do-key-'))
       const previousHome = process.env.HOME
       process.env.HOME = home
@@ -2046,14 +2081,85 @@ describe('DigitalOcean Deploy Provider', () => {
       try {
         fs.mkdirSync(path.dirname(keyPath), {recursive: true, mode: 0o700})
         execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', keyPath, '-C', 'test'])
+        const fingerprint = sshPublicKeyMd5Fingerprint(fs.readFileSync(`${keyPath}.pub`, 'utf8'))
         sandbox.stub(deployUtils, 'getProviderToken').returns('test-token')
-        sandbox.stub(axios, 'get').resolves({data: {ssh_keys: [{id: 7, name: SSH_KEY_NAME}]}})
+        sandbox.stub(axios, 'get').resolves({data: {ssh_keys: [{id: 7, name: SSH_KEY_NAME, fingerprint}]}})
         const post = sandbox.stub(axios, 'post').resolves({data: {}})
+        const remove = sandbox.stub(axios, 'delete').resolves({data: {}})
         await instance.ensureSshKey()
         expect(post.called).to.equal(false)
+        expect(remove.called).to.equal(false)
       } finally {
         restoreEnv(home, previousHome)
       }
+    })
+
+    it('replaces an account key whose fingerprint does not match this machine', async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-do-key-'))
+      const previousHome = process.env.HOME
+      process.env.HOME = home
+      const keyPath = path.join(home, '.ssh', 'cast_do_key')
+      try {
+        fs.mkdirSync(path.dirname(keyPath), {recursive: true, mode: 0o700})
+        execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', keyPath, '-C', 'test'])
+        const pub = fs.readFileSync(`${keyPath}.pub`, 'utf8').trim()
+        sandbox.stub(deployUtils, 'getProviderToken').returns('test-token')
+        sandbox.stub(axios, 'get').resolves({data: {ssh_keys: [{
+          id: 60105641,
+          name: SSH_KEY_NAME,
+          fingerprint: 'ae:08:1d:1d:46:a3:4f:8e:c8:b7:f3:37:01:fa:d3:a6',
+        }]}})
+        const remove = sandbox.stub(axios, 'delete').resolves({data: {}})
+        const post = sandbox.stub(axios, 'post').resolves({data: {}})
+        const log = sandbox.stub(instance, 'log').returns(undefined)
+        await instance.ensureSshKey()
+        expect(remove.calledOnce).to.equal(true)
+        expect(remove.firstCall.args[0]).to.equal('https://api.digitalocean.com/v2/account/keys/60105641')
+        expect(remove.calledBefore(post)).to.equal(true)
+        expect(post.calledOnce).to.equal(true)
+        expect(post.firstCall.args[1]).to.deep.equal({name: SSH_KEY_NAME, public_key: pub})
+        expect(log.calledWithMatch(/Replacing DigitalOcean SSH key/)).to.equal(true)
+      } finally {
+        restoreEnv(home, previousHome)
+      }
+    })
+
+    it('plans a login-key sync from fingerprints, not the key name', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-fp-'))
+      try {
+        execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', path.join(dir, 'k'), '-C', 'cast@digitalocean'])
+        const pub = fs.readFileSync(path.join(dir, 'k.pub'), 'utf8')
+        const listed = execFileSync('ssh-keygen', ['-l', '-E', 'md5', '-f', path.join(dir, 'k.pub')], {encoding: 'utf8'})
+        const fingerprint = listed.trim().split(/\s+/)[1].replace(/^MD5:/, '')
+        expect(sshPublicKeyMd5Fingerprint(pub)).to.equal(fingerprint)
+        expect(loginKeySyncPlan([], fingerprint)).to.deep.equal({deleteIds: [], upload: true})
+        expect(loginKeySyncPlan(
+          [{id: 7, name: SSH_KEY_NAME, fingerprint: `MD5:${fingerprint.toUpperCase()}`}],
+          fingerprint,
+        )).to.deep.equal({deleteIds: [], upload: false})
+        expect(loginKeySyncPlan(
+          [{id: 7, name: SSH_KEY_NAME}],
+          fingerprint,
+        )).to.deep.equal({deleteIds: [7], upload: true})
+        expect(loginKeySyncPlan(
+          [
+            {id: 7, name: SSH_KEY_NAME, fingerprint},
+            {id: 8, name: SSH_KEY_NAME, fingerprint: 'aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99'},
+            {id: 9, name: 'personal', fingerprint: '11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:00'},
+          ],
+          fingerprint,
+        )).to.deep.equal({deleteIds: [8], upload: false})
+      } finally {
+        fs.rmSync(dir, {recursive: true, force: true})
+      }
+      expect(extractDigitalOceanErrorDetail(
+        '{"errors":[{"detail":"keys are invalid key identifiers for Droplet creation."}]}',
+      )).to.equal('keys are invalid key identifiers for Droplet creation.')
+      expect(digitalOceanCommandError('Failed to create droplet', {
+        stdout: '{"errors":[{"detail":"keys are invalid key identifiers for Droplet creation."}]}',
+        stderr: '',
+      })).to.equal('Failed to create droplet: keys are invalid key identifiers for Droplet creation.')
+      expect(digitalOceanCommandError('Failed to create droplet', {stdout: '', stderr: ''})).to.equal('Failed to create droplet')
     })
 
     it('chooses whether the shared account key can be removed', () => {
@@ -2493,7 +2599,11 @@ describe('DigitalOcean Deploy Provider', () => {
       })
       sandbox.stub(deployUtils, 'checkCli').resolves()
       sandbox.stub(deployUtils, 'getProviderToken').returns('test-token')
-      sandbox.stub(axios, 'get').resolves({data: {ssh_keys: [{id: 7, name: SSH_KEY_NAME}]}})
+      const keyPath = path.join(home, '.ssh', 'cast_do_key')
+      fs.mkdirSync(path.dirname(keyPath), {recursive: true, mode: 0o700})
+      execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', keyPath, '-C', 'test'])
+      const fingerprint = sshPublicKeyMd5Fingerprint(fs.readFileSync(`${keyPath}.pub`, 'utf8'))
+      sandbox.stub(axios, 'get').resolves({data: {ssh_keys: [{id: 7, name: SSH_KEY_NAME, fingerprint}]}})
       sandbox.stub(instance, 'getOrCreateDroplet').resolves({
         id: '4646',
         name: `cast-${agentName}`,

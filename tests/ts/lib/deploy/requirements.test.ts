@@ -141,4 +141,35 @@ runtime:
       fs.rmSync(agent, {recursive: true, force: true})
     }
   })
+
+  it('freezes with the venv python and does not run the pip script', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-req-root-'))
+    const agent = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-req-agent-'))
+    const marker = path.join(root, 'pip-was-called')
+    try {
+      const bin = path.join(root, 'python', '.venv', 'bin')
+      fs.mkdirSync(bin, {recursive: true})
+      fs.writeFileSync(path.join(bin, 'python'), `#!/bin/sh
+if [ "$1" = "-m" ] && [ "$2" = "pip" ] && [ "$3" = "freeze" ]; then
+  printf '%s\\n' 'requests==9.9.9'
+  exit 0
+fi
+exit 1
+`)
+      fs.chmodSync(path.join(bin, 'python'), 0o755)
+      fs.writeFileSync(path.join(bin, 'pip'), `#!/bin/sh
+touch '${marker}'
+exit 1
+`)
+      fs.chmodSync(path.join(bin, 'pip'), 0o755)
+      fs.writeFileSync(path.join(root, 'python', 'pyproject.toml'), '[project]\ndependencies = ["GitPython>=3.1.0"]\n')
+      writeRequirementsTxt(root, agent)
+      const written = fs.readFileSync(path.join(agent, 'requirements.txt'), 'utf8')
+      expect(written).to.include('requests==9.9.9')
+      expect(fs.existsSync(marker)).to.equal(false)
+    } finally {
+      fs.rmSync(root, {recursive: true, force: true})
+      fs.rmSync(agent, {recursive: true, force: true})
+    }
+  })
 })
