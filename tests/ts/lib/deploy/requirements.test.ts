@@ -19,7 +19,7 @@ describe('Docker image requirements', () => {
   it('reads GitPython from the repo pyproject.toml project dependencies', () => {
     const source = fs.readFileSync(REPO_PYPROJECT, 'utf8')
     const deps = parsePyprojectDependencies(source)
-    expect(deps).to.include('GitPython>=3.1.0')
+    expect(deps).to.include('GitPython>=3.2.1')
     expect(deps.join('\n')).to.not.match(/pytest/)
   })
 
@@ -76,7 +76,7 @@ runtime:
       pyprojectSource: fs.readFileSync(REPO_PYPROJECT, 'utf8'),
     })
     expect(rendered).to.include('requests==2.32.0')
-    expect(rendered).to.include('GitPython>=3.1.0')
+    expect(rendered).to.include('GitPython>=3.2.1')
     expect(rendered).to.not.include('langchain>=1.2.15')
   })
 

@@ -2,7 +2,7 @@ import {Args, Command, Flags} from '@oclif/core'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import simpleGit, {SimpleGit} from 'simple-git'
+import {simpleGit, type SimpleGit} from 'simple-git'
 
 export default class GitLog extends Command {
   static description = 'Show commit history for an agent'

@@ -500,7 +500,7 @@ describe('prepareHostTuiBuildContext', () => {
     // dynamically imports at runtime.
     expect(pkg.dependencies).to.have.property('axios')
     expect(pkg.dependencies).to.have.property('clipboardy')
-    expect(pkg.dependencies).to.have.property('simple-git')
+    expect(pkg.dependencies['simple-git']).to.equal('^4.0.2')
     expect(pkg.dependencies).to.have.property('yaml')
     // better-sqlite3 is excluded because it has a native binding
     // that can't be cross-compiled to the container.

@@ -45,8 +45,8 @@ uvicorn>=0.46.0
 xxhash>=3.7.0
 `
 
-/** The runtime imports GitPython before the server binds. The image must have it. */
-export const GITPYTHON_REQUIREMENT = 'GitPython>=3.1.0'
+/** The runtime imports GitPython before the server binds. 3.2.1 is outside every historical OSV range. */
+export const GITPYTHON_REQUIREMENT = 'GitPython>=3.2.1'
 
 /** PEP 503-style name so GitPython and gitpython compare as the same package. */
 export function canonicalRequirementName(spec: string): string {
