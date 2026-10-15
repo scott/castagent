@@ -152,6 +152,10 @@ export function normalizeResumeUiMode(uiMode: string | null | undefined): Resume
  * Arguments after the bun executable. The first entry is the TUI script.
  * The TUI reads flags from process.argv.slice(2), so --session is a flag
  * on cast-tui, paired with the session id.
+ *
+ * Credentials are not arguments. /proc/pid/cmdline is world-readable, so a
+ * bearer token on argv is visible to every local user. Pass them with
+ * tuiAuthEnv instead.
  */
 export function buildTuiArgs(opts: {
   tuiPath: string
@@ -159,23 +163,37 @@ export function buildTuiArgs(opts: {
   url: string
   mode: ResumeUiMode
   sessionId: string
-  token?: string | null
-  edgeToken?: string | null
 }): string[] {
-  const args = [
+  return [
     opts.tuiPath,
     '--agent', opts.agentName,
     '--url', opts.url,
     '--mode', opts.mode,
     '--session', opts.sessionId,
   ]
-  if (opts.token) {
-    args.push('--token', opts.token)
+}
+
+/**
+ * Environment for a TUI child. AUTH_TOKEN is the deployment bearer token.
+ * CAST_EDGE_TOKEN is the provider edge credential. Both stay out of argv.
+ * An omitted edge token is removed so a stale parent value is not sent.
+ * An omitted bearer token is left alone so on-host sessions can inherit
+ * the container AUTH_TOKEN.
+ */
+export function tuiAuthEnv(
+  base: NodeJS.ProcessEnv,
+  secrets: {token?: string | null; edgeToken?: string | null},
+): NodeJS.ProcessEnv {
+  const env: NodeJS.ProcessEnv = {...base}
+  if (secrets.token) {
+    env.AUTH_TOKEN = secrets.token
   }
-  if (opts.edgeToken) {
-    args.push('--edge-token', opts.edgeToken)
+  if (secrets.edgeToken) {
+    env.CAST_EDGE_TOKEN = secrets.edgeToken
+  } else {
+    delete env.CAST_EDGE_TOKEN
   }
-  return args
+  return env
 }
 
 export function devRuntimeArgs(agentPath: string, port: number): string[] {

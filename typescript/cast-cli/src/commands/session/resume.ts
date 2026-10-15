@@ -12,6 +12,7 @@ import type {DeploymentRow} from '../../lib/deploy/types'
 import {
   buildTuiArgs,
   devRuntimeArgs,
+  tuiAuthEnv,
   isTcpPortOpen,
   normalizeResumeUiMode,
   planSessionResume,
@@ -273,11 +274,10 @@ export default class SessionResume extends Command {
       url: opts.url,
       mode: opts.mode,
       sessionId: opts.sessionId,
-      token: opts.token,
-      edgeToken: opts.edgeToken,
     }), {
       stdio: 'inherit',
       detached: false,
+      env: tuiAuthEnv(process.env, {token: opts.token, edgeToken: opts.edgeToken}),
     })
 
     const stopChildren = () => {

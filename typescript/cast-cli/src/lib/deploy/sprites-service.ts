@@ -3,6 +3,8 @@
 export const SPRITE_AGENT_DIR = '/opt/cast-agent'
 export const SPRITE_SERVICE_NAME = 'cast-agent'
 export const SPRITE_ENV = '/.sprite/bin/sprite-env'
+/** Login and service account inside a sprite. Passwordless sudo. */
+export const SPRITE_SERVICE_USER = 'sprite'
 
 /** Quote a value for a remote bash assignment. The script is not parsed by the local shell. */
 export function shellSingleQuote(value: string): string {
@@ -45,10 +47,18 @@ export function spriteAgentLaunchScript(
  */
 export function spriteInstallServiceCommand(): string {
   const script = `${SPRITE_AGENT_DIR}/start.sh`
+  const memory = `${SPRITE_AGENT_DIR}/memory`
+  const owner = `${SPRITE_SERVICE_USER}:${SPRITE_SERVICE_USER}`
+  // umask 077 creates the script as mode 0600 before it is handed to the
+  // service user. The bearer token is inside the script, so it must never
+  // be world-readable. Memory is readable and writable only by that user.
+  const writeScript = shellSingleQuote(`umask 077; tee ${script} >/dev/null`)
   return [
-    `sudo tee ${script} >/dev/null`,
-    `sudo chmod 755 ${script}`,
-    `sudo chmod 777 ${SPRITE_AGENT_DIR}/memory`,
+    `sudo sh -c ${writeScript}`,
+    `sudo chown ${owner} ${script}`,
+    `sudo chmod 700 ${script}`,
+    `sudo chown ${owner} ${memory}`,
+    `sudo chmod 700 ${memory}`,
     `(${SPRITE_ENV} services delete ${SPRITE_SERVICE_NAME} >/dev/null 2>&1 || true)`,
     `${SPRITE_ENV} services create ${SPRITE_SERVICE_NAME} --cmd ${script} --http-port 8080 --dir ${SPRITE_AGENT_DIR} --no-stream`,
   ].join(' && ')

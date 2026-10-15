@@ -26,8 +26,13 @@ describe('sprite agent service', () => {
   it('keeps the install script as one remote command', () => {
     const command = spriteInstallServiceCommand()
 
-    expect(command).to.include('sudo tee /opt/cast-agent/start.sh >/dev/null')
-    expect(command).to.include('sudo chmod 777 /opt/cast-agent/memory')
+    expect(command).to.include(`sudo sh -c 'umask 077; tee /opt/cast-agent/start.sh >/dev/null'`)
+    expect(command).to.include('sudo chown sprite:sprite /opt/cast-agent/start.sh')
+    expect(command).to.include('sudo chmod 700 /opt/cast-agent/start.sh')
+    expect(command).to.include('sudo chown sprite:sprite /opt/cast-agent/memory')
+    expect(command).to.include('sudo chmod 700 /opt/cast-agent/memory')
+    expect(command).to.not.include('chmod 755')
+    expect(command).to.not.include('chmod 777')
     expect(command).to.include('(/.sprite/bin/sprite-env services delete cast-agent >/dev/null 2>&1 || true)')
     expect(command).to.include('services create cast-agent --cmd /opt/cast-agent/start.sh --http-port 8080 --dir /opt/cast-agent --no-stream')
     expect(command).to.not.include('bash -c')

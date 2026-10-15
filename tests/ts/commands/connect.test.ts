@@ -1,4 +1,6 @@
 import {expect} from 'chai'
+import * as fs from 'fs'
+import * as path from 'path'
 
 // Helper function to load command
 async function loadTestCommand(commandName: string): Promise<any> {
@@ -86,6 +88,18 @@ describe('connect command', () => {
       const spritePath = instance.resolveSprite()
       expect(spritePath).to.be.a('string')
       expect(spritePath.length).to.be.greaterThan(0)
+    })
+
+    it('passes the bearer token in the environment and not on argv', () => {
+      const source = fs.readFileSync(
+        path.join(__dirname, '../../../typescript/cast-cli/src/commands/connect.ts'),
+        'utf8',
+      )
+      expect(source).to.include('env: tuiAuthEnv(process.env, {token, edgeToken})')
+      expect(source).to.not.include('--token')
+      expect(source).to.not.include('--edge-token')
+      const launch = source.slice(source.indexOf('const opentuiArgs'))
+      expect(launch).to.not.include('push(')
     })
 
     it('findAvailablePort should return a number', async () => {
