@@ -1,4 +1,5 @@
 import {expect} from 'chai'
+import {execFileSync} from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -6,6 +7,7 @@ import sinon from 'sinon'
 
 // Import the upgrade command to test its structure
 import UpgradeCommand from '../../../typescript/cast-cli/src/commands/upgrade'
+import {castKnownHostsPath, recordPinnedHostKey} from '../../../typescript/cast-cli/src/lib/deploy/ssh-hostkey'
 
 describe('Upgrade Command', () => {
   describe('static properties', () => {
@@ -125,9 +127,29 @@ describe('Upgrade Command', () => {
 
   describe('detectOnHostTui', () => {
     let instance: any
+    let sshDir = ''
+    let pinnedPublicKey = ''
+
+    before(() => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-upgrade-pin-'))
+      try {
+        execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', path.join(dir, 'k'), '-C', 'test'])
+        pinnedPublicKey = fs.readFileSync(path.join(dir, 'k.pub'), 'utf8').trim().split(/\s+/).slice(0, 2).join(' ')
+      } finally {
+        fs.rmSync(dir, {recursive: true, force: true})
+      }
+    })
 
     beforeEach(() => {
       instance = new UpgradeCommand(['upgrade', 'test'], {} as any)
+      sshDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-upgrade-ssh-'))
+      process.env.CAST_SSH_DIR = sshDir
+      recordPinnedHostKey('203.0.113.1', pinnedPublicKey)
+    })
+
+    afterEach(() => {
+      delete process.env.CAST_SSH_DIR
+      fs.rmSync(sshDir, {recursive: true, force: true})
     })
 
     it('should return true when docker exec test -e exits 0', async () => {
@@ -144,6 +166,10 @@ describe('Upgrade Command', () => {
         // symlink, which is the last step of the TUI patch.
         const args = execStub.firstCall.args[1] as string[]
         expect(args.join(' ')).to.include('docker exec cast-agent test -e /usr/local/bin/cast-tui')
+        expect(args).to.include('StrictHostKeyChecking=yes')
+        expect(args).to.include(`UserKnownHostsFile=${castKnownHostsPath()}`)
+        expect(args.join('\n')).to.not.include('StrictHostKeyChecking=no')
+        expect(args.join('\n')).to.not.include('UserKnownHostsFile=/dev/null')
       } finally {
         execStub.restore()
       }
@@ -159,6 +185,22 @@ describe('Upgrade Command', () => {
       try {
         const result = await instance.detectOnHostTui('203.0.113.1')
         expect(result).to.be.false
+      } finally {
+        execStub.restore()
+      }
+    })
+
+    it('does not ssh when the droplet host key is not pinned', async () => {
+      const deployUtils = await import('../../../typescript/cast-cli/src/lib/deploy/deploy-utils')
+      const execStub = sinon.stub(deployUtils, 'execCommand').resolves({
+        stdout: '',
+        stderr: '',
+        exitCode: 0,
+      })
+      try {
+        const result = await instance.detectOnHostTui('198.51.100.30')
+        expect(result).to.equal(false)
+        expect(execStub.called).to.equal(false)
       } finally {
         execStub.restore()
       }

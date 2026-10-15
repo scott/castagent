@@ -52,7 +52,7 @@ and re-deploying strips the TUI from the image on the next deploy.
 
 ```bash
 # 1. Find the droplet IP from the deploy output
-ssh -i ~/.ssh/cast_do_key root@<droplet-ip>
+ssh -i ~/.ssh/cast_do_key -o UserKnownHostsFile=~/.cast/ssh/known_hosts -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 root@<droplet-ip>
 
 # 2. Enter the agent container
 docker exec -it cast-agent bash
@@ -95,3 +95,7 @@ and which path you took to get there. Read it.
 > the key at `~/.ssh/cast_do_key` secured. This matches the existing
 > privilege model — the SSH key already grants full root access to
 > the droplet.
+
+Deploy writes the droplet host key to `~/.cast/ssh/known_hosts` and
+later SSH sessions require that key. Use the `UserKnownHostsFile`
+option above so an interactive login checks the same pin.
