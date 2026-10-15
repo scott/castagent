@@ -543,7 +543,6 @@ export interface NamedDroplet {
 }
 
 export type AccountSshKeyCleanup =
-  | {action: 'remove'; id: number | string}
   | {action: 'keep'}
   | {action: 'absent'}
 
@@ -553,25 +552,24 @@ export interface CastAccountKeyConsumer {
 }
 
 /**
- * The account key is shared. Remove it only when no other Cast droplet
- * and no Cast MicroVM (or other Cast resource that still references it)
- * remains. A droplet still listed under the id just deleted does not count.
- * Volumes and the container registry do not use this login key.
+ * `cast-do-key` is the login key for every Cast droplet on the account.
+ * Shutdown and a failed deploy leave it in place. Other droplets and
+ * MicroVMs still need it, so the key is never deleted.
  */
 export function accountSshKeyCleanup(
-  droplets: NamedDroplet[],
+  _droplets: NamedDroplet[],
   keys: AccountSshKey[],
-  removedDropletId: string,
-  stillUsing: CastAccountKeyConsumer[] = [],
+  _removedDropletId: string,
+  _stillUsing: CastAccountKeyConsumer[] = [],
 ): AccountSshKeyCleanup {
   const key = keys.find(item => item.name === SSH_KEY_NAME)
-  const dropletRemains = droplets.some(droplet =>
-    droplet.id !== removedDropletId && droplet.name.startsWith('cast-'),
-  )
-  const otherRemains = stillUsing.length > 0
-  if (dropletRemains || otherRemains) return key ? {action: 'keep'} : {action: 'absent'}
   if (!key) return {action: 'absent'}
-  return {action: 'remove', id: key.id}
+  return {action: 'keep'}
+}
+
+/** True when a doctl argv would delete an account SSH key. */
+export function isDigitalOceanSshKeyDelete(args: readonly string[]): boolean {
+  return args.includes('ssh-key') && args.includes('delete')
 }
 
 function tagNames(value: unknown): string[] {
@@ -628,14 +626,6 @@ export function castMicrovmsUsingAccountKey(stdout: string): CastAccountKeyConsu
   return consumers
 }
 
-function assertAccountSshKeyId(id: number | string): string {
-  const text = String(id)
-  if (!/^[0-9]+$/.test(text)) {
-    throw new Error('Refusing to delete an SSH key with an unexpected id')
-  }
-  return text
-}
-
 /** Follow only the next page of this account's SSH keys. */
 export function digitalOceanKeysPage(value: unknown): string | null {
   if (typeof value !== 'string' || value.length === 0 || value.length > 2000) return null
@@ -675,89 +665,147 @@ async function listAccountSshKeys(apiToken: string): Promise<AccountSshKey[]> {
   return keys
 }
 
-async function listDropletRecords(): Promise<NamedDroplet[]> {
-  const result = await execCommand(
-    'doctl',
-    ['compute', 'droplet', 'list', '--format', 'ID,Name', '--no-header'],
-    {silent: true},
-  )
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || 'Failed to list DigitalOcean droplets')
-  }
-  const droplets: NamedDroplet[] = []
-  for (const line of result.stdout.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const parts = trimmed.split(/\s+/)
-    if (parts.length < 2 || !parts[0] || !parts[1]) continue
-    droplets.push({id: parts[0], name: parts[1]})
-  }
-  return droplets
+function resourceAlreadyGone(stdout: string, stderr: string): boolean {
+  return /not found|could not be found|does not exist|\b404\b/i.test(`${stdout}\n${stderr}`)
 }
 
-async function listAccountSshKeysFromDoctl(): Promise<AccountSshKey[]> {
-  const result = await execCommand(
-    'doctl',
-    ['compute', 'ssh-key', 'list', '--format', 'ID,Name', '--no-header'],
-    {silent: true},
-  )
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || 'Failed to list DigitalOcean SSH keys')
+async function runCleanupCommand(args: string[]): Promise<{exitCode: number; stdout: string; stderr: string}> {
+  if (isDigitalOceanSshKeyDelete(args)) {
+    throw new Error(`Refusing to delete the shared SSH key ${SSH_KEY_NAME}`)
   }
-  const keys: AccountSshKey[] = []
-  for (const line of result.stdout.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const parts = trimmed.split(/\s+/)
-    if (parts.length < 2 || !parts[0] || !parts[1]) continue
-    keys.push({id: parts[0], name: parts.slice(1).join(' ')})
+  try {
+    return await execCommand('doctl', args, {silent: true})
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {exitCode: 1, stdout: '', stderr: message}
   }
-  return keys
 }
 
-async function listCastMicrovmsUsingAccountKey(): Promise<CastAccountKeyConsumer[]> {
-  const result = await execCommand(
-    'doctl',
-    ['compute', 'microvm', 'list', '--output', 'json'],
-    {silent: true},
-  )
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || 'Failed to list DigitalOcean MicroVMs')
+async function findNamedDroplet(name: string): Promise<{id: string; ip: string} | null | 'unavailable'> {
+  const listed = await runCleanupCommand(['compute', 'droplet', 'list', '--format', 'ID,Name,PublicIPv4', '--no-header'])
+  if (listed.exitCode !== 0) return 'unavailable'
+  for (const line of listed.stdout.split('\n')) {
+    const parts = line.trim().split(/\s+/)
+    if (parts.length >= 2 && parts[1] === name && /^[0-9]+$/.test(parts[0])) {
+      return {id: parts[0], ip: parts[2] || ''}
+    }
   }
-  return castMicrovmsUsingAccountKey(result.stdout)
+  return null
+}
+
+export interface FailedDropletRelease {
+  agentName: string
+  dropletId?: string
+  dropletIp?: string
+  dropletName?: string
+  /** Set when this attempt created a volume. A reused volume is left alone. */
+  volumeName?: string
+  deploymentUrl?: string
+  tokenHash?: string
+  volumeConfig?: string
+  log?: (message: string) => void
+}
+
+export interface FailedDropletReleaseResult {
+  dropletDeleted: boolean
+  volumeDeleted: boolean
+  hostKeyRemoved: boolean
+  recorded: boolean
 }
 
 /**
- * Delete `cast-do-key` only when no other Cast droplet, MicroVM, or
- * other Cast resource still uses it. Failures are logged. The droplet
- * delete has already finished.
+ * After a droplet deploy fails, delete the droplet and any volume this
+ * attempt created, and drop the known_hosts pin. If the droplet or volume
+ * cannot be deleted, record the deployment so `cast shutdown` can finish
+ * the cleanup. The shared account key `cast-do-key` is never deleted.
  */
-export async function removeUnusedCastAccountSshKey(
-  _apiToken: string,
-  removedDropletId: string,
-): Promise<'removed' | 'kept' | 'absent' | 'failed'> {
-  try {
-    const droplets = await listDropletRecords()
-    const stillUsing = await listCastMicrovmsUsingAccountKey()
-    const keys = await listAccountSshKeysFromDoctl()
-    const decision = accountSshKeyCleanup(droplets, keys, removedDropletId, stillUsing)
-    if (decision.action === 'keep') {
-      console.log(`Left DigitalOcean account SSH key '${SSH_KEY_NAME}' in place. Another Cast droplet or MicroVM still uses it.`)
-      return 'kept'
+export async function releaseFailedDroplet(input: FailedDropletRelease): Promise<FailedDropletReleaseResult> {
+  const log = input.log ?? console.log
+  const dropletName = input.dropletName || `cast-${input.agentName}`
+  let dropletId = input.dropletId && /^[0-9]+$/.test(input.dropletId) ? input.dropletId : ''
+  let dropletIp = input.dropletIp || ''
+  let dropletDeleted = false
+  if (!dropletId) {
+    const found = await findNamedDroplet(dropletName)
+    if (found === 'unavailable') {
+      dropletDeleted = false
+    } else if (found) {
+      dropletId = found.id
+      if (!dropletIp) dropletIp = found.ip
+    } else {
+      dropletDeleted = true
     }
-    if (decision.action === 'absent') return 'absent'
-    const id = assertAccountSshKeyId(decision.id)
-    const deleted = await execCommand('doctl', ['compute', 'ssh-key', 'delete', id, '--force'], {silent: true})
-    if (deleted.exitCode !== 0) {
-      throw new Error(deleted.stderr || deleted.stdout || 'Failed to delete the account SSH key')
-    }
-    console.log(`Removed DigitalOcean account SSH key '${SSH_KEY_NAME}'.`)
-    return 'removed'
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.log(`Note: DigitalOcean account SSH key '${SSH_KEY_NAME}' could not be removed. ${message}`)
-    return 'failed'
   }
+  if (dropletId) {
+    const deleted = await runCleanupCommand(['compute', 'droplet', 'delete', dropletId, '--force'])
+    dropletDeleted = deleted.exitCode === 0 || resourceAlreadyGone(deleted.stdout, deleted.stderr)
+  }
+
+  let volumeDeleted = true
+  if (input.volumeName) {
+    const deleted = await runCleanupCommand(['compute', 'volume', 'delete', input.volumeName, '--force'])
+    volumeDeleted = deleted.exitCode === 0 || resourceAlreadyGone(deleted.stdout, deleted.stderr)
+  }
+
+  if (dropletDeleted && (dropletId || dropletIp)) {
+    forgetDropletHostKey(dropletId, dropletIp || undefined)
+  }
+
+  const recorded = (!dropletDeleted || !volumeDeleted)
+    ? recordFailedDroplet(input, {
+      dropletName,
+      dropletId,
+      dropletIp,
+      dropletDeleted,
+      volumeDeleted,
+      log,
+    })
+    : false
+  if (dropletDeleted && volumeDeleted && dropletId) {
+    log(`Removed droplet '${dropletName}' after the deploy failed.`)
+  }
+  return {
+    dropletDeleted,
+    volumeDeleted,
+    hostKeyRemoved: dropletDeleted && Boolean(dropletId || dropletIp),
+    recorded,
+  }
+}
+
+function recordFailedDroplet(
+  input: FailedDropletRelease,
+  state: {
+    dropletName: string
+    dropletId: string
+    dropletIp: string
+    dropletDeleted: boolean
+    volumeDeleted: boolean
+    log: (message: string) => void
+  },
+): boolean {
+  let url = input.deploymentUrl
+  if (!url && state.dropletIp) {
+    try {
+      url = dropletDeploymentUrl(state.dropletIp)
+    } catch {
+      url = undefined
+    }
+  }
+  if (!url && state.dropletId) url = `https://${state.dropletId}.droplet.invalid`
+  if (!url) url = `https://${state.dropletName}.droplet.invalid`
+  saveDeployment(
+    input.agentName,
+    'digitalocean',
+    url,
+    input.tokenHash ?? '',
+    input.volumeName,
+    input.volumeConfig,
+  )
+  const leftover = !state.dropletDeleted
+    ? `droplet '${state.dropletName}'`
+    : `memory volume '${input.volumeName}'`
+  state.log(`Could not delete ${leftover}. Recorded the deployment so cast shutdown ${input.agentName} can clean it up.`)
+  return true
 }
 
 /**
@@ -857,7 +905,7 @@ export default class DigitalOceanDeploy extends Command {
       .filter((row: {provider?: string}) => row.provider === 'digitalocean')
       .map((row: {volume_id?: string | null}) => row.volume_id)
     await removeDigitalOceanMemoryVolumes(agentName, recorded)
-    await removeUnusedCastAccountSshKey(apiToken, dropletId)
+    console.log(`Left DigitalOcean account SSH key '${SSH_KEY_NAME}' in place. It is shared by Cast droplets.`)
   }
 
   async run(): Promise<void> {
@@ -921,6 +969,8 @@ export default class DigitalOceanDeploy extends Command {
     const deploymentId = generateDeploymentId()
     let authToken = ''
     let tokenHash = ''
+    let createdDroplet: {id: string; name: string; ip: string; region: string} | undefined
+    let createdVolumeName: string | undefined
     try {
       const generated = await generateAuthToken(agentName)
       authToken = generated.authToken
@@ -944,7 +994,14 @@ export default class DigitalOceanDeploy extends Command {
       await prepareHostTuiBuildContext(agentPath, projectRoot, { enabled: withTui })
 
       // Get or create droplet
-      const droplet = await this.getOrCreateDroplet(agentName, agentPath, apiToken, dropletSize)
+      const volumeConfigForCleanup = JSON.stringify({deploymentId, mountPath: '/app/agent/memory', region: 'nyc3'})
+      const droplet = await this.getOrCreateDroplet(agentName, agentPath, apiToken, dropletSize, {
+        tokenHash,
+        volumeConfig: volumeConfigForCleanup,
+      })
+      if (droplet.created) {
+        createdDroplet = {id: droplet.id, name: droplet.name, ip: droplet.ip, region: droplet.region}
+      }
 
       this.log(`Droplet IP: ${droplet.ip}`)
       this.log('Waiting for SSH to be available...')
@@ -998,6 +1055,7 @@ export default class DigitalOceanDeploy extends Command {
 
       if (memoryPlan.action === 'create') {
         this.log(`Creating memory volume: ${volumeId}`)
+        if (droplet.created) createdVolumeName = volumeId
         const volumeResult = await this.createAndAttachVolume(apiToken, droplet.id, volumeId, droplet.region)
         if (volumeResult) {
           this.log(`Volume attached at ${volumeResult}`)
@@ -1040,6 +1098,28 @@ export default class DigitalOceanDeploy extends Command {
       this.log('To destroy:')
       this.log(`  cast shutdown ${agentName}`)
     } catch (error) {
+      if (createdDroplet) {
+        try {
+          await releaseFailedDroplet({
+            agentName,
+            dropletId: createdDroplet.id,
+            dropletIp: createdDroplet.ip,
+            dropletName: createdDroplet.name,
+            volumeName: createdVolumeName,
+            deploymentUrl: dropletDeploymentUrl(createdDroplet.ip),
+            tokenHash,
+            volumeConfig: JSON.stringify({
+              deploymentId,
+              mountPath: '/app/agent/memory',
+              region: createdDroplet.region,
+            }),
+            log: message => this.log(message),
+          })
+        } catch (cleanupError) {
+          const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+          this.warn(`Failed to clean up droplet '${createdDroplet.name}': ${message}`)
+        }
+      }
       try {
         await discardFailedDigitalOceanTokens(agentName, deploymentSha)
       } catch (cleanupError) {
@@ -1135,7 +1215,13 @@ export default class DigitalOceanDeploy extends Command {
     })
   }
 
-  private async getOrCreateDroplet(agentName: string, agentPath: string, apiToken?: string, size: string = 's-2vcpu-2gb'): Promise<{id: string; name: string; ip: string; region: string}> {
+  private async getOrCreateDroplet(
+    agentName: string,
+    agentPath: string,
+    apiToken?: string,
+    size: string = 's-2vcpu-2gb',
+    rollback?: {tokenHash: string; volumeConfig: string},
+  ): Promise<{id: string; name: string; ip: string; region: string; created: boolean}> {
     const dropletName = `cast-${agentName}`
     const region = 'nyc3'
 
@@ -1148,7 +1234,7 @@ export default class DigitalOceanDeploy extends Command {
       if (parts.length >= 3 && parts[1] === dropletName) {
         syncDropletAddress(parts[0], parts[2])
         assertPinnedHostKey(parts[2])
-        return {id: parts[0], name: dropletName, ip: parts[2], region}
+        return {id: parts[0], name: dropletName, ip: parts[2], region, created: false}
       }
     }
 
@@ -1225,6 +1311,8 @@ export default class DigitalOceanDeploy extends Command {
     })
     fs.writeFileSync(cloudInitPath, cloudInit, {mode: 0o600})
 
+    let createdId = ''
+    let createdIp = ''
     try {
       const createResult = await execCommand('doctl', [
         'compute', 'droplet', 'create',
@@ -1244,13 +1332,30 @@ export default class DigitalOceanDeploy extends Command {
       // Get IP, then pin the host key before any SSH session.
       const infoResult = await execCommand('doctl', ['compute', 'droplet', 'get', dropletName, '--format', 'ID,PublicIPv4', '--no-header'], {silent: true})
       const parts = infoResult.stdout.trim().split(/\s+/)
-      const dropletId = parts[0]
-      const ip = parts[1]
-      if (!dropletId || !ip) {
+      createdId = parts[0] || ''
+      createdIp = parts[1] || ''
+      if (!createdId || !createdIp) {
         throw new Error('Droplet was created but doctl did not return an id and public IPv4 address')
       }
-      recordPinnedHostKey(ip, hostKey.publicKey, dropletId)
-      return {id: dropletId, name: dropletName, ip, region}
+      recordPinnedHostKey(createdIp, hostKey.publicKey, createdId)
+      return {id: createdId, name: dropletName, ip: createdIp, region, created: true}
+    } catch (error) {
+      try {
+        await releaseFailedDroplet({
+          agentName,
+          dropletId: createdId || undefined,
+          dropletIp: createdIp || undefined,
+          dropletName,
+          deploymentUrl: createdIp ? dropletDeploymentUrl(createdIp) : undefined,
+          tokenHash: rollback?.tokenHash ?? '',
+          volumeConfig: rollback?.volumeConfig,
+          log: message => this.log(message),
+        })
+      } catch (cleanupError) {
+        const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+        this.warn(`Failed to clean up droplet '${dropletName}': ${message}`)
+      }
+      throw error
     } finally {
       fs.rmSync(cloudInitPath, {force: true})
     }
