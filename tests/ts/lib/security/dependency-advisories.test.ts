@@ -21,18 +21,24 @@ function compareVersions(left: string, right: string): number {
   return 0
 }
 
+function readLock(): {packages: Record<string, {version?: string; dependencies?: Record<string, string>}>} {
+  return JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8'))
+}
+
 function lockedPackageVersion(name: string): string {
-  const lock = JSON.parse(fs.readFileSync(path.join(ROOT, 'package-lock.json'), 'utf8')) as {
-    packages: Record<string, {version?: string}>
-  }
-  // Cast resolves this top-level package. Nested copies bundled inside other
-  // tools are not the module import('tar') or import('simple-git') loads.
+  const lock = readLock()
+  // Cast resolves this top-level package. import('tar') and import('simple-git')
+  // do not load copies bundled inside other tools. Those copies are checked below.
   const version = lock.packages[`node_modules/${name}`]?.version
   expect(version, `lockfile entry for ${name}`).to.be.a('string')
   return version as string
 }
 
-function readJson(relativePath: string): {dependencies?: Record<string, string>; devDependencies?: Record<string, string>} {
+function readJson(relativePath: string): {
+  dependencies?: Record<string, string>
+  devDependencies?: Record<string, string>
+  overrides?: Record<string, string>
+} {
   return JSON.parse(fs.readFileSync(path.join(ROOT, relativePath), 'utf8'))
 }
 
@@ -69,6 +75,28 @@ describe('runtime dependency advisories', () => {
   it('locks tar newer than 7.5.20', () => {
     expect(readJson('typescript/cast-cli/package.json').dependencies?.tar).to.equal('^7.5.22')
     expect(compareVersions(lockedPackageVersion('tar'), '7.5.20')).to.be.greaterThan(0)
+  })
+
+  it('overrides npm so the copy bundled for plugin-plugins does not ship tar 7.5.13', () => {
+    // @oclif/plugin-plugins depends on npm, and npm bundles tar inside its
+    // package. An override of tar does not replace that bundled copy.
+    // npm 11.13.0 bundles tar 7.5.13 (GHSA-23hp-3jrh-7fpw, critical, fixed in
+    // 7.5.19). npm 11.21.0 bundles tar 7.5.22.
+    const root = readJson('package.json')
+    expect(root.overrides?.npm).to.equal('11.21.0')
+
+    const lock = readLock()
+    expect(lock.packages['node_modules/npm']?.version).to.equal('11.21.0')
+
+    const tarCopies = Object.entries(lock.packages).filter(([name]) =>
+      name === 'node_modules/tar' || name.endsWith('/node_modules/tar'),
+    )
+    const tarPaths = tarCopies.map(([name]) => name)
+    expect(tarPaths).to.include('node_modules/npm/node_modules/tar')
+    for (const [name, pkg] of tarCopies) {
+      expect(pkg.version, name).to.be.a('string')
+      expect(compareVersions(pkg.version as string, '7.5.22'), name).to.be.at.least(0)
+    }
   })
 
   it('does not depend on the unused ws package', () => {
