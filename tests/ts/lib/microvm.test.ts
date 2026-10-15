@@ -24,6 +24,8 @@ import {
   sanitizeMicrovmName,
   sanitizeRepoName,
   copyCastRuntime,
+  resolveFailedMicrovm,
+  settleFailedMicrovm,
 } from '../../../typescript/cast-cli/src/lib/deploy/microvm'
 import {readDoctlAccessToken} from '../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 
@@ -159,6 +161,62 @@ describe('DigitalOcean MicroVM helpers', () => {
     expect(memoryChunks('abcd', 2)).to.deep.equal(['ab', 'cd'])
     expect(() => assertUpgradeable('paused')).to.not.throw()
     expect(() => assertUpgradeable('failed')).to.throw(/running or paused/)
+  })
+
+  it('deletes a MicroVM whose workload container exited', async () => {
+    const removed: string[] = []
+    const error = await settleFailedMicrovm({
+      id: 'vm-1',
+      state: 'failed',
+      failureReason: 'workload container exited (code 1)',
+      endpoint: 'https://vm-1.mkc1.microvm.ondigitalocean.com',
+      region: 'mkc1',
+    }, 'workload container exited (code 1)', async (id) => {
+      removed.push(id)
+      return {exitCode: 0, stdout: '', stderr: ''}
+    })
+    expect(removed).to.deep.equal(['vm-1'])
+    expect(error.microvmId).to.equal(undefined)
+    expect(error.message).to.include('workload container exited (code 1)')
+    expect(error.message).to.include('The MicroVM was deleted.')
+
+    const settled = await resolveFailedMicrovm({
+      error,
+      remove: async () => {
+        throw new Error('delete should not run after the VM is gone')
+      },
+    })
+    expect(settled.id).to.equal(undefined)
+    expect(settled.message).to.include('The MicroVM was deleted.')
+  })
+
+  it('keeps the id when delete fails so shutdown can find the MicroVM', async () => {
+    const error = await settleFailedMicrovm({
+      id: 'vm-9',
+      state: 'failed',
+      failureReason: 'workload container exited (code 1)',
+      region: 'mkc1',
+    }, 'workload container exited (code 1)', async () => ({exitCode: 1, stdout: '', stderr: 'denied'}))
+    expect(error.microvmId).to.equal('vm-9')
+    const settled = await resolveFailedMicrovm({
+      error,
+      remove: async () => ({exitCode: 1, stdout: '', stderr: 'denied'}),
+    })
+    expect(settled.id).to.equal('vm-9')
+    expect(settled.region).to.equal('mkc1')
+    expect(settled.message).to.include('still on the account')
+    expect(settled.message).to.include('workload container exited (code 1)')
+  })
+
+  it('treats a missing MicroVM as cleaned up after a probe failure', async () => {
+    const settled = await resolveFailedMicrovm({
+      error: new Error('MicroVM endpoint probe failed (502): workload container exited (code 1)'),
+      created: {id: 'vm-2', endpoint: 'https://vm-2.example', region: 'mkc1'},
+      remove: async () => ({exitCode: 1, stdout: '', stderr: 'not found'}),
+    })
+    expect(settled.id).to.equal(undefined)
+    expect(settled.message).to.include('The MicroVM was deleted.')
+    expect(settled.message).to.include('workload container exited (code 1)')
   })
 
   it('parses volume config and doctl tokens', () => {

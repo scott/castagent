@@ -7,7 +7,6 @@ import * as os from 'os'
 import axios from 'axios'
 import {
   generateAuthToken,
-  ensureDockerfile,
   getAgentPath,
   saveDeployment,
   inferenceEnv,
@@ -16,9 +15,10 @@ import {
   execCommandIgnoreError,
   generateDeploymentId,
   prepareHostTuiBuildContext,
-  createDockerignore,
+  prepareCastImageContext,
   installPin,
 } from './deploy-utils'
+import {containerHealthFailureMessage, waitForContainerHealth, type ContainerProbe} from './container-health'
 import {buildCloudInitBaselineMotd, buildHostMotd, writeHostMotdOverSsh} from './motd'
 import type {MotdContext} from './motd'
 import {shellSingleQuote} from './sprites-service'
@@ -210,6 +210,25 @@ export const DROPLET_CLOSE_PUBLIC_PORT =
  */
 export const DROPLET_ENV_INSTALL_COMMAND =
   'install -d -m 0700 /var/lib/cast && chmod 0700 /var/lib/cast && umask 077 && cat > /var/lib/cast/cast-agent.env && chmod 0600 /var/lib/cast/cast-agent.env'
+
+export const DROPLET_LOG_MARKER = '---CAST-LOGS---'
+
+/** Status plus the tail of the container logs. No secrets are part of this command. */
+export function dropletContainerProbeCommand(containerName = 'cast-agent'): string {
+  return `sh -c 'status=$(docker inspect --format {{.State.Status}} ${containerName} 2>/dev/null || printf missing); printf "%s\\n${DROPLET_LOG_MARKER}\\n" "$status"; docker logs --tail 200 ${containerName} 2>&1 || true'`
+}
+
+export function parseDropletContainerProbe(stdout: string, stderr = ''): ContainerProbe {
+  const combined = stderr ? `${stdout}${stdout.endsWith('\n') ? '' : '\n'}${stderr}` : stdout
+  const index = combined.indexOf(DROPLET_LOG_MARKER)
+  if (index === -1) return {status: 'missing', logs: combined.trim()}
+  const status = combined.slice(0, index).trim().split('\n').filter(line => line.length > 0).pop() || 'missing'
+  const logs = combined.slice(index + DROPLET_LOG_MARKER.length).replace(/^\n/, '')
+  return {status, logs: logs.trim()}
+}
+
+export const DROPLET_STOP_CRASH_LOOP =
+  'docker update --restart=no cast-agent >/dev/null 2>&1 || true; docker stop cast-agent >/dev/null 2>&1 || true'
 
 const SHELL_TOKEN = /^[A-Za-z0-9_.:-]+$/
 
@@ -602,24 +621,22 @@ export default class DigitalOceanDeploy extends Command {
       this.error('Docker is required for DigitalOcean deployment. Install from https://docs.docker.com/get-docker/')
     }
 
-    // Ensure Docker packaging
-    ensureDockerfile(agentPath)
-    createDockerignore(agentPath)
-
     // Resolve project root for locating cast runtime
     const projectRoot = this.findProjectRoot()
+    prepareCastImageContext(agentPath, projectRoot)
 
-    // Copy the cast runtime into the agent's .cast-runtime/ directory
-    // This is required for the Dockerfile's COPY .cast-runtime/cast step
+    // Copy the cast runtime into the agent's .cast-runtime/ directory.
+    // The image Dockerfile copies that tree to /app/cast.
     const castRuntimeDir = path.join(agentPath, '.cast-runtime', 'cast')
     fs.mkdirSync(path.dirname(castRuntimeDir), { recursive: true })
     const castRuntimeSrc = path.join(projectRoot, 'python', 'cast')
-    if (fs.existsSync(castRuntimeSrc)) {
-      if (fs.existsSync(castRuntimeDir)) {
-        fs.rmSync(castRuntimeDir, { recursive: true })
-      }
-      fs.cpSync(castRuntimeSrc, castRuntimeDir, { recursive: true })
+    if (!fs.existsSync(castRuntimeSrc)) {
+      this.error(`Cast Python package not found at ${castRuntimeSrc}. Run cast deploy from a Cast Agent checkout so the image includes the runtime.`)
     }
+    if (fs.existsSync(castRuntimeDir)) {
+      fs.rmSync(castRuntimeDir, { recursive: true })
+    }
+    fs.cpSync(castRuntimeSrc, castRuntimeDir, { recursive: true })
 
     // Generate auth token and deployment ID.
     // The volume name is the agent name. A uuid is only kept when an older volume is still present.
@@ -1129,6 +1146,16 @@ export default class DigitalOceanDeploy extends Command {
 
     if (runResult.exitCode !== 0) {
       throw new Error(`Failed to start container on droplet: ${runResult.stderr}`)
+    }
+
+    this.log('Waiting for the container to become ready...')
+    const health = await waitForContainerHealth(async () => {
+      const probed = await execSsh(ip, dropletContainerProbeCommand(), true, 20_000)
+      return parseDropletContainerProbe(probed.stdout, probed.stderr)
+    }, {intervalMs: 2_000})
+    if (!health.ok) {
+      await execSsh(ip, DROPLET_STOP_CRASH_LOOP, true).catch(() => undefined)
+      throw new Error(containerHealthFailureMessage('cast-agent', health))
     }
 
     // Write the host MOTD and login-shell snippet. This is independent
