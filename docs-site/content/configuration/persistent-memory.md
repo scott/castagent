@@ -100,6 +100,16 @@ when the agent saves a note such as "remember this permanently".
 The next session includes recent rows from that database
 in the prompt. The system prompt tells the agent this store exists.
 
+Those rows do not outrank `harness.permissions`. On startup the runtime
+removes a highlight that states a tool permission the harness no longer
+uses. A boundary saved while bash was `deny`, such as "The bash tool is
+currently set to deny", is dropped after
+`cast update --permission bash=always-allow` and a restart. A highlight
+that still matches the current level stays. Memories that are not about
+tool permissions stay. The prompt names the live levels and says they
+override a memory that calls a tool denied, disabled, or set to an
+older level.
+
 If the agent wants to use the memory from a custom tool:
 
 ```python

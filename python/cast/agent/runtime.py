@@ -82,6 +82,8 @@ class RuntimeAgent:
         env_name = self._llm_env_var()
         api_key = os.environ.get(env_name) if isinstance(env_name, str) else None
         self.memory = MemoryMiddleware(self.agent_path, model_name=model_name, api_key=api_key)
+        # Live harness.permissions win over a boundary saved under an older level.
+        self.memory.bind_permissions(self.config.permissions)
 
         # A missing key stays in echo mode and does not fall back.
         if self._provider.is_available():
@@ -182,7 +184,10 @@ class RuntimeAgent:
             # Instructions, plus how persistent memory is stored when enabled.
             prompt = self.config.rendered_prompt()
             if self.memory is not None and self.memory.enabled:
-                prompt = append_persistent_memory_instructions(prompt)
+                prompt = append_persistent_memory_instructions(
+                    prompt,
+                    permissions=self.config.permissions,
+                )
             self.graph = create_react_agent(
                 model=self.llm,
                 tools=guarded,
