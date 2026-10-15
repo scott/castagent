@@ -45,6 +45,8 @@ short version:
 | **Docker** | self-hosted Docker on this machine | yes | n/a |
 | **Local** | not implemented; use Docker on this machine | no | n/a |
 
+DigitalOcean SSH checks the droplet host key. Cast generates an ed25519 key, installs it with the droplet user-data, and saves the public key in `~/.cast/ssh/known_hosts` before the first connection. Later deploys and upgrades reuse that file. A droplet that has no pinned key is refused. Recreate it, or add a key you verified from the DigitalOcean console.
+
 `cast deploy --provider local` is not implemented. The command exits with
 `Not yet implemented. Use --provider docker for now.` and does not record
 a deployment. `cast registry` stays empty, and `cast connect` reports that

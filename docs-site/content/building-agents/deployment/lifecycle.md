@@ -125,7 +125,9 @@ The version is a positional argument, not a flag.
 - **Fly** — re-extracts, runs `flyctl deploy --detach`.
 - **DigitalOcean** — re-extracts, rebuilds, re-streams the image, and
   updates the SSH login MOTD so it shows the new version (and the
-  on-host TUI hint if `--with-tui` is in the image).
+  on-host TUI hint if `--with-tui` is in the image). The SSH session
+  reuses the host key in `~/.cast/ssh/known_hosts` and does not connect
+  when that pin is missing.
 - **Sprites** — re-extracts, runs `sprite deploy`.
 - **DigitalOcean MicroVM** — exports memory (8 MiB cap), builds a new linux/amd64 image, creates a replacement MicroVM, restores memory, then deletes the previous one. Image, size, and env cannot be changed in place.
 

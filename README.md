@@ -244,7 +244,7 @@ to open a chat session that talks directly to the A2A server on
 
 ```bash
 # SSH into the droplet (or use the DO web console)
-ssh -i ~/.ssh/cast_do_key root@<droplet-ip>
+ssh -i ~/.ssh/cast_do_key -o UserKnownHostsFile=~/.cast/ssh/known_hosts -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 root@<droplet-ip>
 
 # Enter the agent container
 docker exec -it cast-agent bash
@@ -268,6 +268,8 @@ whichever is available.
 > the key at `~/.ssh/cast_do_key` secured. This matches the existing
 > privilege model — the SSH key already grants full root access to the
 > droplet.
+
+Cast pins the droplet SSH host key before it opens a session. On create, it generates an ed25519 host key, installs that key through DigitalOcean user-data, and writes the public key to `~/.cast/ssh/known_hosts`. Deploy, image streaming, and upgrade reuse that file with host key checking enabled. A droplet created before the pin has no recorded key, and Cast refuses the SSH session. Shut it down and deploy again, or add a line you verified from the DigitalOcean console (`<ip> ssh-ed25519 <key>`).
 
 ### Creating a New Agent
 

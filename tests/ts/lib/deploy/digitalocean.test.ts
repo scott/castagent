@@ -1,4 +1,5 @@
 import {expect} from 'chai'
+import {execFileSync} from 'child_process'
 import * as sinon from 'sinon'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -8,10 +9,23 @@ import axios from 'axios'
 import DigitalOceanDeploy from '../../../../typescript/cast-cli/src/lib/deploy/digitalocean'
 import * as deployUtils from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 import * as motd from '../../../../typescript/cast-cli/src/lib/deploy/motd'
+import {castKnownHostsPath, recordPinnedHostKey} from '../../../../typescript/cast-cli/src/lib/deploy/ssh-hostkey'
 
 describe('DigitalOcean Deploy Provider', () => {
   let sandbox: sinon.SinonSandbox
   let instance: any // eslint-disable-line @typescript-eslint/no-explicit-any
+  let sshDir = ''
+  let pinnedPublicKey = ''
+
+  before(() => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-pin-'))
+    try {
+      execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', path.join(dir, 'k'), '-C', 'test'])
+      pinnedPublicKey = fs.readFileSync(path.join(dir, 'k.pub'), 'utf8').trim().split(/\s+/).slice(0, 2).join(' ')
+    } finally {
+      fs.rmSync(dir, {recursive: true, force: true})
+    }
+  })
 
   // Helper to cast stubs for type-safe access to sinon matchers.
   // NOTE: ts-node wraps 'fs' with non-configurable descriptors, so we
@@ -23,10 +37,16 @@ describe('DigitalOcean Deploy Provider', () => {
   beforeEach(() => {
     sandbox = sinon.createSandbox()
     instance = new DigitalOceanDeploy(['deploy', 'digitalocean'], {} as any)
+    sshDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-ssh-'))
+    process.env.CAST_SSH_DIR = sshDir
+    recordPinnedHostKey('203.0.113.1', pinnedPublicKey)
   })
 
   afterEach(() => {
     sandbox.restore()
+    delete process.env.CAST_SSH_DIR
+    if (sshDir) fs.rmSync(sshDir, {recursive: true, force: true})
+    sshDir = ''
   })
 
   // -----------------------------------------------------------------------
@@ -336,6 +356,41 @@ describe('DigitalOcean Deploy Provider', () => {
       expect(ctx.onHostTui).to.be.false
     })
 
+    it('sends docker run over a pinned host key', async () => {
+      const {execStub} = stubDeployHelpers()
+      await instance.deployOnDroplet(
+        defaultArgs.ip, defaultArgs.agentName, defaultArgs.authToken,
+        defaultArgs.imageTag, defaultArgs.volumeId,
+        defaultArgs.deploymentUrl, defaultArgs.deployedVersion,
+      )
+      const runCall = execStub.getCalls().find((call: sinon.SinonSpyCall) =>
+        ((call.args[1] as string[]) || []).join(' ').includes('docker run'),
+      )
+      expect(runCall, 'docker run ssh call').to.exist
+      const args = runCall!.args[1] as string[]
+      expect(args).to.include('StrictHostKeyChecking=yes')
+      expect(args).to.include(`UserKnownHostsFile=${castKnownHostsPath()}`)
+      expect(args).to.include('HostKeyAlgorithms=ssh-ed25519')
+      expect(args.join('\n')).to.not.include('StrictHostKeyChecking=no')
+      expect(args.join('\n')).to.not.include('UserKnownHostsFile=/dev/null')
+    })
+
+    it('does not open SSH when the droplet host key is not pinned', async () => {
+      const {execStub} = stubDeployHelpers()
+      try {
+        await instance.deployOnDroplet(
+          '198.51.100.20', defaultArgs.agentName, defaultArgs.authToken,
+          defaultArgs.imageTag, defaultArgs.volumeId,
+          'http://198.51.100.20:8080', defaultArgs.deployedVersion,
+        )
+        expect.fail('should have refused')
+      } catch (e: any) {
+        expect(e.message).to.include('no pinned SSH host key')
+        expect(e.message).to.include('198.51.100.20')
+      }
+      expect(execStub.called, 'ssh must not start without a pin').to.equal(false)
+    })
+
     it('should default onHostTui to false when withTui is omitted (backwards compat)', async () => {
       const {motdStub} = stubDeployHelpers()
       // No 8th arg — should default to false.
@@ -354,6 +409,32 @@ describe('DigitalOcean Deploy Provider', () => {
   // -----------------------------------------------------------------------
 
   describe('waitForSsh', () => {
+    it('refuses before any SSH attempt when the host key is not pinned', async () => {
+      const execStub = stubFn(sandbox.stub(deployUtils, 'execCommand') as any)
+      try {
+        await instance.waitForSsh('198.51.100.21')
+        expect.fail('should have refused')
+      } catch (e: any) {
+        expect(e.message).to.include('no pinned SSH host key')
+      }
+      expect(execStub.called).to.equal(false)
+    })
+
+    it('stops on the first host key mismatch instead of retrying', async () => {
+      const clock = sandbox.useFakeTimers()
+      const execStub = stubFn(sandbox.stub(deployUtils, 'execCommand') as any).resolves({
+        stdout: '',
+        stderr: 'Host key verification failed.\n',
+        exitCode: 255,
+      })
+      const guarded = instance.waitForSsh('203.0.113.1').catch((e: Error) => e)
+      await clock.tickAsync(1)
+      const err = await guarded
+      expect(err).to.be.instanceOf(Error)
+      expect((err as Error).message).to.include('host key verification failed')
+      expect(execStub.callCount).to.equal(1)
+    })
+
     it('should resolve when SSH responds', async () => {
       stubFn(sandbox.stub(deployUtils, 'execCommand') as any).resolves({
         stdout: 'ok', stderr: '', exitCode: 0,
@@ -625,15 +706,19 @@ describe('DigitalOcean Deploy Provider', () => {
       // has the key properties: tries the official Docker apt repo,
       // falls back to get.docker.com, logs everything, always exits 0.
       const execStub = stubFn(sandbox.stub(deployUtils, 'execCommand') as any)
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-test-do-script-'))
+      let cloudInit = ''
       execStub.onFirstCall().resolves({stdout: '', stderr: '', exitCode: 0})           // doctl list
         .onSecondCall().resolves({stdout: '3072 MD5:ab:cd:ef:12:34:56:78:90:ab:cd:ef:12:34:56:78:90 key (ED25519)\n', stderr: '', exitCode: 0})
-        .onThirdCall().resolves({stdout: '', stderr: '', exitCode: 0})                  // doctl create
+        .onThirdCall().callsFake(async () => {
+          cloudInit = fs.readFileSync(path.join(tempDir, '.cloud-init.yml'), 'utf-8')
+          return {stdout: '', stderr: '', exitCode: 0}
+        })
         .onCall(3).resolves({stdout: '99  10.0.0.5', stderr: '', exitCode: 0})        // doctl get
 
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-test-do-script-'))
       try {
         await instance.getOrCreateDroplet('script-test', tempDir)
-        const cloudInit = fs.readFileSync(path.join(tempDir, '.cloud-init.yml'), 'utf-8')
+        expect(cloudInit, 'user-data must be captured while doctl create runs').to.not.equal('')
 
         // Parse the YAML to extract the install script content safely
         // (rather than relying on fragile regex extraction of indented blocks).
@@ -882,8 +967,12 @@ describe('DigitalOcean Deploy Provider', () => {
       // gzip wrapper: remote command is now `gunzip | docker load`
       expect(sshArgs, 'should invoke gunzip | docker load remotely').to.include('gunzip | docker load')
 
-      // Forbid interactive prompts (consistent with the rest of the file).
-      expect(sshArgs, 'should disable StrictHostKeyChecking').to.include('StrictHostKeyChecking=no')
+      // Host key checking stays enabled against the Cast known_hosts file.
+      expect(sshArgs, 'should require the pinned host key').to.include('StrictHostKeyChecking=yes')
+      expect(sshArgs).to.include(`UserKnownHostsFile=${castKnownHostsPath()}`)
+      expect(sshArgs).to.include('HostKeyAlgorithms=ssh-ed25519')
+      expect(sshArgs.join('\n')).to.not.include('StrictHostKeyChecking=no')
+      expect(sshArgs.join('\n')).to.not.include('UserKnownHostsFile=/dev/null')
       expect(sshArgs, 'should set BatchMode=yes').to.include('BatchMode=yes')
 
       // gzip is spawned with -6 -c (compress level 6 to stdout)
@@ -892,6 +981,22 @@ describe('DigitalOcean Deploy Provider', () => {
       )
       expect(gzipCall, 'gzip child should have been spawned').to.exist
       expect(gzipCall.args[1], 'gzip should be invoked with -6 -c').to.deep.equal(['-6', '-c'])
+    })
+
+    it('does not spawn ssh when the image target has no pinned host key', async () => {
+      const saveMock = makeMockProcess()
+      const gzipMock = makeMockProcess()
+      const loadMock = makeMockProcess()
+      const spawnStub = stubSpawn(saveMock, loadMock, gzipMock)
+      sandbox.stub(instance, 'log').returns(undefined)
+
+      try {
+        await instance.streamImageToDroplet('198.51.100.23', 'cast-test:latest', 5000)
+        expect.fail('should have refused')
+      } catch (e: any) {
+        expect(e.message).to.include('no pinned SSH host key')
+      }
+      expect(spawnStub.called, 'docker and ssh must not start').to.equal(false)
     })
 
     it('should surface pipe errors from load.stdin (e.g. EPIPE-equivalent errors)', async () => {
@@ -959,6 +1064,22 @@ describe('DigitalOcean Deploy Provider', () => {
   // -----------------------------------------------------------------------
 
   describe('getOrCreateDroplet', () => {
+    it('refuses an existing droplet that has no pinned host key', async () => {
+      stubFn(sandbox.stub(deployUtils, 'execCommand') as any)
+        .onFirstCall().resolves({
+          stdout: '1234567  cast-test-agent  198.51.100.22\n',
+          stderr: '',
+          exitCode: 0,
+        })
+      try {
+        await instance.getOrCreateDroplet('test-agent', '/tmp/agent')
+        expect.fail('should have refused')
+      } catch (e: any) {
+        expect(e.message).to.include('no pinned SSH host key')
+        expect(e.message).to.include('198.51.100.22')
+      }
+    })
+
     it('should find existing droplet by name', async () => {
       stubFn(sandbox.stub(deployUtils, 'execCommand') as any)
         .onFirstCall().resolves({
@@ -976,26 +1097,31 @@ describe('DigitalOcean Deploy Provider', () => {
     it('should create new droplet when none exists', async () => {
       // Stub execCommand for: list (empty), ssh-keygen, create droplet, get droplet
       // Also need to stub fs.readFileSync for the SSH pub key (configurable in Node)
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-test-do-'))
+      let cloudInit = ''
       stubFn(sandbox.stub(deployUtils, 'execCommand') as any)
         .onFirstCall().resolves({stdout: '', stderr: '', exitCode: 0})           // doctl list (empty)
         .onSecondCall().resolves({                                                 // ssh-keygen -l
           stdout: '3072 MD5:ab:cd:ef:12:34:56:78:90:ab:cd:ef:12:34:56:78:90 test-key (ED25519)\n',
           stderr: '', exitCode: 0,
         })
-        .onThirdCall().resolves({stdout: '', stderr: '', exitCode: 0})           // doctl create
+        .onThirdCall().callsFake(async () => {
+          cloudInit = fs.readFileSync(path.join(tempDir, '.cloud-init.yml'), 'utf-8')
+          return {stdout: '', stderr: '', exitCode: 0}
+        })
         .onCall(3).resolves({stdout: '7654321  203.0.113.2', stderr: '', exitCode: 0}) // doctl get
 
       // Use a real temp dir for the cloud-init file write
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-test-do-'))
       try {
         const result = await instance.getOrCreateDroplet('test-agent-new', tempDir)
         expect(result.id).to.equal('7654321')
         expect(result.ip).to.equal('203.0.113.2')
 
-        // Verify cloud-init was written with the correct structure
+        // User-data is removed after create so the host private key
+        // does not stay in the agent directory.
         const cloudInitPath = path.join(tempDir, '.cloud-init.yml')
-        expect(fs.existsSync(cloudInitPath)).to.be.true
-        const cloudInit = fs.readFileSync(cloudInitPath, 'utf-8')
+        expect(fs.existsSync(cloudInitPath)).to.equal(false)
+        expect(cloudInit).to.not.equal('')
         expect(cloudInit).to.include('#cloud-config')
         expect(cloudInit).to.include('/etc/motd')
         // The install script should be written as a separate file
@@ -1020,6 +1146,21 @@ describe('DigitalOcean Deploy Provider', () => {
           // Each runcmd item should be a single line, no continuation
           expect(line, `runcmd item should be single-line: ${line}`).to.not.match(/\\\s*$/)
         }
+
+        const YAML = require('yaml')
+        const parsed = YAML.parse(cloudInit)
+        expect(parsed.ssh_deletekeys).to.equal(true)
+        expect(parsed.ssh_genkeytypes).to.deep.equal(['ed25519'])
+        const publicKey = String(parsed.ssh_keys.ed25519_public).trim()
+        expect(publicKey).to.match(/^ssh-ed25519 [A-Za-z0-9+/]{68}$/)
+        expect(String(parsed.ssh_keys.ed25519_private)).to.include('BEGIN OPENSSH PRIVATE KEY')
+        const knownHosts = fs.readFileSync(castKnownHostsPath(), 'utf8')
+        expect(knownHosts).to.include(`203.0.113.2 ${publicKey}`)
+        expect(knownHosts).to.not.include('PRIVATE KEY')
+        const hostKeyFile = parsed.write_files.find(
+          (f: {path?: string}) => f.path === '/etc/ssh/sshd_config.d/99-cast-host-key.conf',
+        )
+        expect(hostKeyFile.content).to.include('HostKey /etc/ssh/ssh_host_ed25519_key')
       } finally {
         fs.rmSync(tempDir, {recursive: true, force: true})
       }
@@ -1032,15 +1173,19 @@ describe('DigitalOcean Deploy Provider', () => {
       // `SCHEMA_ERROR: part-001` and the install never ran. Verify
       // that the current cloud-init is flat and schema-compliant.
       const execStub = stubFn(sandbox.stub(deployUtils, 'execCommand') as any)
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-test-do-schema-'))
+      let cloudInit = ''
       execStub.onFirstCall().resolves({stdout: '', stderr: '', exitCode: 0})           // doctl list
         .onSecondCall().resolves({stdout: '3072 MD5:ab:cd:ef:12:34:56:78:90:ab:cd:ef:12:34:56:78:90 key (ED25519)\n', stderr: '', exitCode: 0})
-        .onThirdCall().resolves({stdout: '', stderr: '', exitCode: 0})                  // doctl create
+        .onThirdCall().callsFake(async () => {
+          cloudInit = fs.readFileSync(path.join(tempDir, '.cloud-init.yml'), 'utf-8')
+          return {stdout: '', stderr: '', exitCode: 0}
+        })
         .onCall(3).resolves({stdout: '111  10.0.0.1', stderr: '', exitCode: 0})         // doctl get
 
-      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-test-do-schema-'))
       try {
         await instance.getOrCreateDroplet('schema-test', tempDir)
-        const cloudInit = fs.readFileSync(path.join(tempDir, '.cloud-init.yml'), 'utf-8')
+        expect(cloudInit).to.not.equal('')
 
         // The install script must be a separate file, NOT inline
         // in runcmd. If `apt-get install` or `curl` appears as a

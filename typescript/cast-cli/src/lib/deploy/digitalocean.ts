@@ -21,39 +21,116 @@ import {
 import {buildCloudInitBaselineMotd, buildHostMotd, writeHostMotdOverSsh} from './motd'
 import type {MotdContext} from './motd'
 import {db} from '../sqlite'
+import {
+  assertOpenSshEd25519PrivateKey,
+  assertPinnedHostKey,
+  castDoKeyPath,
+  castKnownHostsPath,
+  digitalOceanSshBaseOptions,
+  execDigitalOceanSsh,
+  forgetDropletHostKey,
+  generateEd25519HostKeyPair,
+  normalizeEd25519PublicKey,
+  recordPinnedHostKey,
+  SshHostKeyError,
+  syncDropletAddress,
+} from './ssh-hostkey'
 
 const SSH_KEY_NAME = 'cast-do-key'
-const SSH_KEY_PATH = path.join(os.homedir(), '.ssh', 'cast_do_key')
-
-// Helper to get SSH base options that prevent interactive prompts
-function getSshBaseOptions(): string[] {
-  return [
-    '-i', SSH_KEY_PATH,
-    '-o', 'StrictHostKeyChecking=no',
-    '-o', 'UserKnownHostsFile=/dev/null',
-    '-o', 'BatchMode=yes',
-    '-o', 'ConnectTimeout=10',
-    '-o', 'ServerAliveInterval=5',
-    '-o', 'ServerAliveCountMax=1',
-    '-o', 'LogLevel=ERROR',
-  ]
-}
-
-// Helper to build full SSH command args for a given IP and remote command
-function buildSshArgs(ip: string, remoteCmd: string): string[] {
-  return [...getSshBaseOptions(), `root@${ip}`, remoteCmd]
-}
+const SSH_KEY_PATH = castDoKeyPath()
 
 // Execute SSH command with shell: false to prevent shell from interfering with options.
 // A 30s default timeout is applied so a hung SSH probe can't block
 // callers (notably `waitForDocker`'s retry loop) for many minutes.
+// Host key checking stays enabled. The pin is a Cast known_hosts file.
 async function execSsh(
   ip: string,
   remoteCmd: string,
   silent = false,
   timeoutMs = 30_000,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  return execCommand('ssh', buildSshArgs(ip, remoteCmd), { silent, shell: false, timeoutMs })
+  return execDigitalOceanSsh(ip, remoteCmd, {silent, timeoutMs})
+}
+
+function sshLoginHint(ip: string, remote?: string): string {
+  const known = castKnownHostsPath()
+  const home = os.homedir()
+  const shown = known.startsWith(`${home}${path.sep}`)
+    ? `~/${path.relative(home, known)}`
+    : known
+  const base = `ssh -i ~/.ssh/cast_do_key -o UserKnownHostsFile=${shown} -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 root@${ip}`
+  return remote ? `${base} ${remote}` : base
+}
+
+function indentBlock(text: string, spaces: number): string {
+  const pad = ' '.repeat(spaces)
+  return text
+    .replace(/\s+$/, '')
+    .split('\n')
+    .map((line) => line.length > 0 ? pad + line : '')
+    .join('\n')
+}
+
+/**
+ * Cloud-config for a new droplet. The ed25519 host key is one Cast
+ * generated locally. cloud-init writes it before sshd serves the
+ * public address, and Cast pins the matching public key.
+ * runcmd stays a flat list of single-line strings so the strict
+ * cloud-init schema accepts the document.
+ */
+export function buildDropletCloudInit(input: {
+  privateKey: string
+  publicKey: string
+  baselineMotd: string
+  installScript: string
+}): string {
+  assertOpenSshEd25519PrivateKey(input.privateKey)
+  const publicKey = normalizeEd25519PublicKey(input.publicKey)
+  const privateIndented = indentBlock(input.privateKey, 4)
+  const motdIndented = indentBlock(input.baselineMotd, 10)
+  const scriptIndented = indentBlock(input.installScript, 10)
+  return [
+    '#cloud-config',
+    'ssh_deletekeys: true',
+    'ssh_genkeytypes:',
+    '  - ed25519',
+    'ssh_keys:',
+    '  ed25519_private: |',
+    privateIndented,
+    `  ed25519_public: "${publicKey}\\n"`,
+    'write_files:',
+    '  - path: /etc/ssh/sshd_config.d/99-cast-host-key.conf',
+    '    permissions: "0644"',
+    '    owner: root',
+    '    group: root',
+    '    content: |',
+    '          HostKey /etc/ssh/ssh_host_ed25519_key',
+    '  - path: /etc/motd',
+    '    permissions: "0644"',
+    '    owner: root',
+    '    group: root',
+    '    content: |',
+    motdIndented,
+    '  - path: /etc/profile.d/cast.sh',
+    '    permissions: "0755"',
+    '    owner: root',
+    '    group: root',
+    '    content: |',
+    '          #!/bin/bash',
+    '          : # cast placeholder',
+    '  - path: /usr/local/bin/cast-install-docker.sh',
+    '    permissions: "0755"',
+    '    owner: root',
+    '    group: root',
+    '    content: |',
+    scriptIndented,
+    'runcmd:',
+    '  - systemctl restart ssh || systemctl restart sshd || true',
+    '  - /usr/local/bin/cast-install-docker.sh',
+    '  - mkdir -p /var/lib/cast',
+    '  - touch /var/lib/cast/docker-ready',
+    '',
+  ].join('\n')
 }
 
 export default class DigitalOceanDeploy extends Command {
@@ -130,6 +207,7 @@ export default class DigitalOceanDeploy extends Command {
       throw new Error(`Failed to delete droplet: ${deleteResult.stderr}`)
     }
     console.log(`Droplet '${dropletName}' deleted.`)
+    forgetDropletHostKey(dropletId, dropletIp)
 
     // Clean up volume
     const volumeId = getVolumeName(agentName, 'latest')
@@ -285,7 +363,7 @@ export default class DigitalOceanDeploy extends Command {
     this.log(`Provider: digitalocean`)
     this.log('')
     this.log('To view logs:')
-    this.log(`  ssh -i ~/.ssh/cast_do_key root@${droplet.ip} "docker logs -f cast-agent"`)
+    this.log(`  ${sshLoginHint(droplet.ip, '"docker logs -f cast-agent"')}`)
     this.log('')
     this.log('To connect (from your machine):')
     this.log(`  cast connect ${agentName}`)
@@ -293,7 +371,7 @@ export default class DigitalOceanDeploy extends Command {
     if (withTui) {
       // TUI is bundled — show the on-host chat path.
       this.log('To chat on-host (SSH into droplet, then inside container):')
-      this.log(`  ssh -i ~/.ssh/cast_do_key root@${droplet.ip}`)
+      this.log(`  ${sshLoginHint(droplet.ip)}`)
       this.log(`  docker exec -it cast-agent bash`)
       this.log(`  cast-tui`)
       this.log('')
@@ -395,6 +473,8 @@ export default class DigitalOceanDeploy extends Command {
     for (const line of lines) {
       const parts = line.trim().split(/\s+/)
       if (parts.length >= 3 && parts[1] === dropletName) {
+        syncDropletAddress(parts[0], parts[2])
+        assertPinnedHostKey(parts[2])
         return {id: parts[0], name: dropletName, ip: parts[2], region}
       }
     }
@@ -413,7 +493,7 @@ export default class DigitalOceanDeploy extends Command {
     // validator. Anything that parses as YAML but doesn't match the
     // schema gets rejected with `SCHEMA_ERROR: part-001` and runcmd
     // silently never runs. We keep the cloud-config minimal:
-    //   - write_files only (no in-yaml block scalars with shell logic)
+    //   - ssh host key fields and write_files (no shell logic inside runcmd)
     //   - runcmd is a flat list of single-line strings
     //   - no comments between runcmd items (those have tripped the
     //     schema validator in past iterations)
@@ -460,76 +540,50 @@ export default class DigitalOceanDeploy extends Command {
       '',
     ].join('\n')
 
-    // Indent every line of the MOTD and install script by 10 spaces
-    // (matches the YAML block scalar indent under `content: |`).
-    const motdIndented = baselineMotd
-      .split('\n')
-      .map((line) => line.length > 0 ? '          ' + line : '')
-      .join('\n')
-    const scriptIndented = installScript
-      .split('\n')
-      .map((line) => '          ' + line)
-      .join('\n')
+    const hostKey = generateEd25519HostKeyPair()
+    const cloudInit = buildDropletCloudInit({
+      privateKey: hostKey.privateKey,
+      publicKey: hostKey.publicKey,
+      baselineMotd,
+      installScript,
+    })
+    fs.writeFileSync(cloudInitPath, cloudInit, {mode: 0o600})
 
-    // Build the cloud-init YAML. Keep the runcmd list as a flat list
-    // of single-line strings — no inline block scalars, no comments
-    // between items. cloud-init's strict schema validator has
-    // rejected previous versions that used those constructs.
-    const cloudInit = [
-      '#cloud-config',
-      'write_files:',
-      '  - path: /etc/motd',
-      '    permissions: "0644"',
-      '    owner: root',
-      '    group: root',
-      '    content: |',
-      motdIndented,
-      '  - path: /etc/profile.d/cast.sh',
-      '    permissions: "0755"',
-      '    owner: root',
-      '    group: root',
-      '    content: |',
-      '      #!/bin/bash',
-      '      : # cast placeholder',
-      '  - path: /usr/local/bin/cast-install-docker.sh',
-      '    permissions: "0755"',
-      '    owner: root',
-      '    group: root',
-      '    content: |',
-      scriptIndented,
-      'runcmd:',
-      '  - /usr/local/bin/cast-install-docker.sh',
-      '  - mkdir -p /var/lib/cast',
-      '  - touch /var/lib/cast/docker-ready',
-      '',
-    ].join('\n')
-    fs.writeFileSync(cloudInitPath, cloudInit)
+    try {
+      const createResult = await execCommand('doctl', [
+        'compute', 'droplet', 'create',
+        dropletName,
+        '--region', region,
+        '--size', size,
+        '--image', 'ubuntu-24-04-x64',
+        '--ssh-keys', fingerprint,
+        '--user-data-file', cloudInitPath,
+        '--wait',
+      ], {silent: true})
 
-    const createResult = await execCommand('doctl', [
-      'compute', 'droplet', 'create',
-      dropletName,
-      '--region', region,
-      '--size', size,
-      '--image', 'ubuntu-24-04-x64',
-      '--ssh-keys', fingerprint,
-      '--user-data-file', cloudInitPath,
-      '--wait',
-    ], {silent: true})
+      if (createResult.exitCode !== 0) {
+        throw new Error(`Failed to create droplet: ${createResult.stderr}`)
+      }
 
-    if (createResult.exitCode !== 0) {
-      throw new Error(`Failed to create droplet: ${createResult.stderr}`)
+      // Get IP, then pin the host key before any SSH session.
+      const infoResult = await execCommand('doctl', ['compute', 'droplet', 'get', dropletName, '--format', 'ID,PublicIPv4', '--no-header'], {silent: true})
+      const parts = infoResult.stdout.trim().split(/\s+/)
+      const dropletId = parts[0]
+      const ip = parts[1]
+      if (!dropletId || !ip) {
+        throw new Error('Droplet was created but doctl did not return an id and public IPv4 address')
+      }
+      recordPinnedHostKey(ip, hostKey.publicKey, dropletId)
+      return {id: dropletId, name: dropletName, ip, region}
+    } finally {
+      fs.rmSync(cloudInitPath, {force: true})
     }
-
-    // Get IP
-    const infoResult = await execCommand('doctl', ['compute', 'droplet', 'get', dropletName, '--format', 'ID,PublicIPv4', '--no-header'], {silent: true})
-    const parts = infoResult.stdout.trim().split(/\s+/)
-
-    return {id: parts[0], name: dropletName, ip: parts[1], region}
   }
 
   private async waitForSsh(ip: string): Promise<void> {
     const maxAttempts = 30
     const delayMs = 5000
+    assertPinnedHostKey(ip)
 
     for (let i = 0; i < maxAttempts; i++) {
       try {
@@ -537,8 +591,8 @@ export default class DigitalOceanDeploy extends Command {
         if (result.exitCode === 0) {
           return
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        if (err instanceof SshHostKeyError) throw err
       }
       await new Promise((resolve) => setTimeout(resolve, delayMs))
     }
@@ -575,6 +629,7 @@ export default class DigitalOceanDeploy extends Command {
     // install itself can run for several minutes, so the loop needs
     // many attempts; we just need each one to fail fast.
     const sshTimeoutMs = 15_000
+    assertPinnedHostKey(ip)
 
     for (let i = 0; i < maxAttempts; i++) {
       // Heartbeat every ~30s so the user can see the loop is alive.
@@ -594,8 +649,9 @@ export default class DigitalOceanDeploy extends Command {
       try {
         const sentinel = await execSsh(ip, 'test -f /var/lib/cast/docker-ready', true, sshTimeoutMs)
         sentinelExists = sentinel.exitCode === 0
-      } catch {
-        // ignore — transient SSH error or timeout, retry next iteration
+      } catch (err) {
+        if (err instanceof SshHostKeyError) throw err
+        // Transient SSH error or timeout, retry next iteration.
       }
 
       try {
@@ -606,8 +662,8 @@ export default class DigitalOceanDeploy extends Command {
         // Otherwise fall through and keep polling. If sentinelExists
         // is true the daemon is just slow to come up; if false, the
         // install is probably still in progress.
-      } catch {
-        // ignore
+      } catch (err) {
+        if (err instanceof SshHostKeyError) throw err
       }
 
       await new Promise((resolve) => setTimeout(resolve, delayMs))
@@ -640,8 +696,8 @@ export default class DigitalOceanDeploy extends Command {
         if (out) {
           parts.push(`${label}: ${out.split('\n').slice(0, 5).join(' | ')}`)
         }
-      } catch {
-        // ignore
+      } catch (err) {
+        if (err instanceof SshHostKeyError) throw err
       }
     }
 
@@ -767,13 +823,15 @@ export default class DigitalOceanDeploy extends Command {
     imageTag: string,
     timeoutMs = 900_000,
   ): Promise<void> {
+    assertPinnedHostKey(ip)
     return new Promise<void>((resolve, reject) => {
       // Reuse the shared SSH base options so the streaming SSH gets
       // ServerAliveInterval / ServerAliveCountMax / ConnectTimeout / etc.
       // exactly like every other SSH call in this file. Without
       // keepalive, a half-open TCP connection (e.g. NAT timeout, droplet
-      // suspend) would make this hang indefinitely — which is the bug
+      // suspend) would make this hang indefinitely, which is the bug
       // that motivated this rewrite.
+      // Host key checking stays enabled against the Cast known_hosts file.
       //
       // The remote command is `gunzip | docker load` so the
       // receiving end (the droplet's docker daemon) doesn't have to
@@ -781,7 +839,7 @@ export default class DigitalOceanDeploy extends Command {
       // the build host. `gunzip` is provided by the `gzip` package,
       // which is a hard dep of `apt` on Ubuntu and present in the
       // base image.
-      const sshArgs = [...getSshBaseOptions(), `root@${ip}`, 'gunzip | docker load']
+      const sshArgs = [...digitalOceanSshBaseOptions(), `root@${ip}`, 'gunzip | docker load']
 
       const save = spawn('docker', ['save', imageTag], {
         stdio: ['ignore', 'pipe', 'inherit'],

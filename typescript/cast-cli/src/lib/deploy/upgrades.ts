@@ -13,6 +13,7 @@ import {
 import {writeDockerCompose} from './docker'
 import {writeHostMotdOverSsh} from './motd'
 import {writeRequirementsTxt} from './requirements'
+import {execDigitalOceanSsh} from './ssh-hostkey'
 
 export interface UpgradeHost {
   log(message: string): void
@@ -47,19 +48,12 @@ export function readUpgradeOpenRouterKey(): string | undefined {
  * telling users to run a command that doesn't exist.
  */
 export async function detectOnHostTui(dropletIp: string): Promise<boolean> {
-  const sshKey = path.join(os.homedir(), '.ssh', 'cast_do_key')
-  const sshArgs = [
-    '-i', sshKey,
-    '-o', 'StrictHostKeyChecking=no',
-    '-o', 'UserKnownHostsFile=/dev/null',
-    '-o', 'BatchMode=yes',
-    '-o', 'ConnectTimeout=10',
-    '-o', 'LogLevel=ERROR',
-    `root@${dropletIp}`,
-    'docker exec cast-agent test -e /usr/local/bin/cast-tui',
-  ]
   try {
-    const result = await execCommand('ssh', sshArgs, {silent: true, shell: false})
+    const result = await execDigitalOceanSsh(
+      dropletIp,
+      'docker exec cast-agent test -e /usr/local/bin/cast-tui',
+      {silent: true},
+    )
     return result.exitCode === 0
   } catch {
     return false

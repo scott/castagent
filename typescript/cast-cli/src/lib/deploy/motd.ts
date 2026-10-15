@@ -1,7 +1,4 @@
-import * as os from 'os'
-import * as path from 'path'
-import {VERSION} from '../../constants'
-import {execCommand} from './deploy-utils'
+import {execDigitalOceanSsh} from './ssh-hostkey'
 
 /**
  * Context for building the host MOTD. Values are substituted into the
@@ -137,30 +134,10 @@ export function buildCloudInitBaselineMotd(): string {
 }
 
 /**
- * SSH options that prevent interactive prompts. Mirrors the same set
- * used elsewhere in the DigitalOcean deploy path.
- */
-const SSH_BASE_OPTS = [
-  '-o', 'StrictHostKeyChecking=no',
-  '-o', 'UserKnownHostsFile=/dev/null',
-  '-o', 'BatchMode=yes',
-  '-o', 'ConnectTimeout=10',
-  '-o', 'LogLevel=ERROR',
-] as const
-
-/**
- * Build the shell args for `ssh` given a droplet IP and remote command.
- * Uses the same `cast_do_key` that the deploy flow uses.
- */
-function buildSshArgs(ip: string, remoteCmd: string): string[] {
-  const sshKey = path.join(os.homedir(), '.ssh', 'cast_do_key')
-  return ['-i', sshKey, ...SSH_BASE_OPTS, `root@${ip}`, remoteCmd]
-}
-
-/**
  * Write the host MOTD and login-shell snippet over SSH. The content is
  * base64-encoded before being sent so we never have to worry about
  * shell escaping inside the multi-line strings.
+ * The session uses the pinned droplet host key.
  *
  * Writes:
  *   - /etc/motd             (displayed by pam_motd on SSH login)
@@ -178,16 +155,16 @@ export async function writeHostMotdOverSsh(
   const motdB64 = Buffer.from(hostMotd, 'utf8').toString('base64')
   const profileB64 = Buffer.from(profileSnippet, 'utf8').toString('base64')
 
-  const motdResult = await execCommand(
-    'ssh',
-    buildSshArgs(ip, `echo '${motdB64}' | base64 -d > /etc/motd && chmod 644 /etc/motd`),
-    {silent: true, shell: false},
+  const motdResult = await execDigitalOceanSsh(
+    ip,
+    `echo '${motdB64}' | base64 -d > /etc/motd && chmod 644 /etc/motd`,
+    {silent: true},
   )
 
-  const profileResult = await execCommand(
-    'ssh',
-    buildSshArgs(ip, `echo '${profileB64}' | base64 -d > /etc/profile.d/cast.sh && chmod 755 /etc/profile.d/cast.sh`),
-    {silent: true, shell: false},
+  const profileResult = await execDigitalOceanSsh(
+    ip,
+    `echo '${profileB64}' | base64 -d > /etc/profile.d/cast.sh && chmod 755 /etc/profile.d/cast.sh`,
+    {silent: true},
   )
 
   return {
