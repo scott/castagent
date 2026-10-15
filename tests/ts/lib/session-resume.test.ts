@@ -8,6 +8,7 @@ import {resolveCastPythonRuntime} from '../../../typescript/cast-cli/src/lib/cas
 import {
   buildTuiArgs,
   devRuntimeArgs,
+  tuiAuthEnv,
   isTcpPortOpen,
   planSessionResume,
   pythonModuleDirForCommand,
@@ -172,21 +173,76 @@ describe('session resume TUI argv', () => {
     expect(args[0]).to.not.equal('cast')
   })
 
-  it('appends token and edge token after the session id', () => {
+  it('keeps bearer and edge credentials out of argv', () => {
+    const token = 'sentinel-bearer-token'
+    const edgeToken = 'sentinel-edge-token'
     const args = buildTuiArgs({
       tuiPath,
       agentName: 'bb-summarizer',
       url: 'https://bb.example.test',
       mode: 'production',
       sessionId: SESSION_ID,
-      token: 'secret-token',
-      edgeToken: 'edge-token',
     })
+    const joined = args.join('\0')
     expect(args.slice(args.indexOf('--session'))).to.deep.equal([
       '--session', SESSION_ID,
-      '--token', 'secret-token',
-      '--edge-token', 'edge-token',
     ])
+    expect(joined).to.not.include(token)
+    expect(joined).to.not.include(edgeToken)
+    expect(args).to.not.include('--token')
+    expect(args).to.not.include('--edge-token')
+
+    const base = {AUTH_TOKEN: 'inherited-bearer', CAST_EDGE_TOKEN: 'stale-edge'}
+    const env = tuiAuthEnv(base, {token, edgeToken})
+    expect(env.AUTH_TOKEN).to.equal(token)
+    expect(env.CAST_EDGE_TOKEN).to.equal(edgeToken)
+    expect(base.CAST_EDGE_TOKEN).to.equal('stale-edge')
+  })
+
+  it('inherits AUTH_TOKEN and drops a stale edge credential when none is set', () => {
+    const env = tuiAuthEnv({AUTH_TOKEN: 'inherited-bearer', CAST_EDGE_TOKEN: 'stale-edge'}, {})
+    expect(env.AUTH_TOKEN).to.equal('inherited-bearer')
+    expect(env.CAST_EDGE_TOKEN).to.equal(undefined)
+  })
+
+  it('places credentials in the child environment and not on the command line', function (done) {
+    if (process.platform !== 'linux') {
+      this.skip()
+    }
+    const token = 'sentinel-bearer-token'
+    const edgeToken = 'sentinel-edge-token'
+    const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {
+      env: tuiAuthEnv({PATH: process.env.PATH}, {token, edgeToken}),
+      stdio: 'ignore',
+    })
+    let finished = false
+    const finish = (error?: unknown) => {
+      if (finished) return
+      finished = true
+      if (!child.killed) child.kill()
+      done(error)
+    }
+    child.once('error', finish)
+    child.once('exit', () => finish())
+    if (!child.pid) {
+      finish(new Error('child pid was not assigned'))
+      return
+    }
+    try {
+      const cmdline = fs.readFileSync(`/proc/${child.pid}/cmdline`)
+      const environ = fs.readFileSync(`/proc/${child.pid}/environ`)
+      const commandText = cmdline.toString('utf8')
+      const entries = environ.toString('utf8').split('\0')
+      expect(commandText).to.not.include(token)
+      expect(commandText).to.not.include(edgeToken)
+      expect(commandText).to.not.include('--token')
+      expect(commandText).to.not.include('--edge-token')
+      expect(entries).to.include(`AUTH_TOKEN=${token}`)
+      expect(entries).to.include(`CAST_EDGE_TOKEN=${edgeToken}`)
+      finish()
+    } catch (error) {
+      finish(error)
+    }
   })
 
   it('builds the local runtime command with a dynamic port', () => {
@@ -234,10 +290,13 @@ describe('session resume command source', () => {
     'utf8',
   )
 
-  it('spawns cast-tui with the session id', () => {
+  it('spawns cast-tui with the session id and credentials in the environment', () => {
     expect(source).to.include('buildTuiArgs')
     expect(source).to.include('resolveTuiEntry')
     expect(source).to.include("spawn(resolveBun(), buildTuiArgs(")
+    expect(source).to.include('tuiAuthEnv(process.env, {token: opts.token, edgeToken: opts.edgeToken})')
+    expect(source).to.not.include('--token')
+    expect(source).to.not.include('--edge-token')
   })
 
   it('records the dev runtime stdout and stderr for cast logs', () => {

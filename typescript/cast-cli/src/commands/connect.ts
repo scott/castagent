@@ -13,6 +13,7 @@ import {
   resolveSprite as spriteResolveSprite,
   startSpriteProxy as spriteStartProxy,
 } from '../lib/deploy/providers/sprites'
+import {tuiAuthEnv} from '../lib/session-resume'
 
 export default class Connect extends Command {
   static description = 'Connect to deployed agent'
@@ -188,15 +189,9 @@ export default class Connect extends Command {
       '--mode', 'production',
     ]
 
-    if (token) {
-      opentuiArgs.push('--token', token)
-    }
-    if (edgeToken) {
-      opentuiArgs.push('--edge-token', edgeToken)
-    }
-
     const opentui = spawn(bunPath, opentuiArgs, {
       stdio: 'inherit',
+      env: tuiAuthEnv(process.env, {token, edgeToken}),
     })
 
     // Store proxy process reference for cleanup

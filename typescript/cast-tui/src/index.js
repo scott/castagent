@@ -78,9 +78,14 @@ if (require.main === module) {
                 options.url = value;
                 break;
             case '--token':
-                options.token = value;
+            case '--edge-token':
+                console.error(flag + ' is not accepted on the command line. Set the credential in the environment.');
+                process.exit(1);
                 break;
         }
+    }
+    if (process.env.AUTH_TOKEN) {
+        options.token = process.env.AUTH_TOKEN;
     }
     if (!options.url) {
         console.error('Error: --url is required');
