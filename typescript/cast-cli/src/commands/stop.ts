@@ -2,7 +2,7 @@ import {Args, Command, Flags} from '@oclif/core'
 import {defaultStopAgentDeps, stopAgent} from '../lib/stop-agent'
 
 export default class Stop extends Command {
-  static description = 'Stop a running local agent or Docker deployment'
+  static description = 'Stop a running local agent, Docker deployment, or DigitalOcean droplet'
 
   static examples = [
     '<%= config.bin %> <%= command.id %> email-agent',

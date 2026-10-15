@@ -79,6 +79,12 @@ one live deployment exists. `cast stop <name>` stops the running
 container and leaves the deployment row and the `cast-<name>` memory
 volume in place. `cast shutdown` removes both.
 
+A DigitalOcean droplet runs the container `cast-agent`. `cast stop <name>`
+SSHs to the stored droplet address and stops that container when it is
+running. The droplet and its `cast-<name>` memory volume stay.
+`cast shutdown` deletes the droplet and that volume. SSH checks the
+pinned host key. A missing pin is reported as a stop failure.
+
 ## What gets shipped
 
 The deployment is a single Docker image that contains:
@@ -96,8 +102,9 @@ The image exposes A2A on port 8080. Railway and Fly assign a public
 HTTPS URL. A DigitalOcean droplet binds that port to `127.0.0.1` and
 records `https://<droplet-ip>` as the droplet address. `cast connect`
 opens an SSH tunnel to that loopback port and does not send the bearer
-token over public HTTP. Docker maps the port on the machine that ran
-`cast deploy`.
+token over public HTTP. `cast stop` reads that address and stops
+`cast-agent` over SSH. It does not open port 8080. Docker maps the port
+on the machine that ran `cast deploy`.
 
 For Docker, `requirements.txt` is written when you deploy or upgrade. It
 starts from `pip freeze` of `python/.venv` when that virtualenv exists,

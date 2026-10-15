@@ -68,7 +68,8 @@ The runtime fails with a clear error if the port is in use.
 cast stop email-assistant
 ```
 
-`{% ref "cli:stop" %}` stops the run that is active on this machine.
+`{% ref "cli:stop" %}` stops a local run on this machine, a local Docker
+container, or the container on a DigitalOcean droplet.
 
 For a local agent started with `{% ref "cli:dev" %}`, it sends SIGTERM to
 the recorded PID and removes the local-agent row from the database. Use
@@ -82,8 +83,25 @@ with no grace period (`docker stop --time 0`). `docker stop` marks the
 container as stopped, so a restart policy of `unless-stopped` does not
 start it again.
 
+For a DigitalOcean Droplet deployment, it SSHs to the droplet address
+stored on that deployment and runs `docker stop` on the container
+`cast-agent` when that container is running. The current registry URL
+is `https://<droplet-ip>`. Older rows that still say `http://<droplet-ip>:8080`
+use the same address. The droplet, the deployment row, and the
+`cast-<name>` memory volume stay in place. `{% ref "cli:shutdown" %}`
+deletes the droplet and that volume.
+`--force` stops that container with no grace period (`docker stop --time 0`).
+SSH keeps host key checking on and uses the pinned key in
+`~/.cast/ssh/known_hosts`. If that pin is missing, stop reports the
+failure.
+
+A live local process is stopped on its own. When that process is gone,
+a running local Docker container is stopped next. The droplet container
+is stopped when neither of those is running.
+
 If the recorded local PID is already gone, `cast stop` still stops a
-running Docker container for that agent.
+running Docker container on this machine, or the `cast-agent` container
+on the droplet.
 
 ## Logs
 
