@@ -1954,7 +1954,8 @@ describe('DigitalOcean Deploy Provider', () => {
       })
       expect(result.deletedId).to.equal(undefined)
       expect(result.logs.join('\n')).to.include('could not be removed')
-      expect(result.logs.join('\n')).to.include('MicroVM')
+      expect(result.logs.join('\n')).to.include('microvm list failed')
+      expect(result.logs.join('\n')).to.not.include(`Removed DigitalOcean account SSH key '${SSH_KEY_NAME}'`)
     })
 
     it('removes a leftover account SSH key when the droplet is already gone', async () => {
