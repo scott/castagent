@@ -196,7 +196,7 @@ rebuilt, and the new container starts with the same volume. The
 - Every request to the endpoint sends your DigitalOcean token as `Authorization`. Cast also sends the agent token as `X-Cast-Authorization`. If deploy's probe gets 401, rerun with `--edge-auth-only`. That mode trusts any token on the team that has `microvm:access`.
 - Sizes are `1:2048` (default), `2:4096`, `8:16384`, and `16:32768`, passed as `--size`.
 - Upgrade copies memory off the old MicroVM and onto a new one, and packages the current Cast runtime into the new image. Stores larger than 8 MiB are left on the old MicroVM and the upgrade stops.
-- `cast shutdown` deletes the registry tag stored for that MicroVM after the MicroVM is destroyed. Another MicroVM for the same agent keeps its own tag.
+- `cast shutdown` deletes the registry tag stored for that MicroVM after the MicroVM is destroyed. Another MicroVM for the same agent keeps its own tag. If that tag delete fails, Cast warns and names the tag that is still in the registry, then continues the rest of shutdown.
 - A custom-scoped token needs `microvm:create`, `microvm:read`, `microvm:update`, `microvm:delete`, `microvm:access`, and registry read/write.
 
 ## Pre-flight checklist

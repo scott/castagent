@@ -603,6 +603,7 @@ function doctl(token: string, args: string[], opts?: {silent?: boolean; timeoutM
 /**
  * Delete the registry tag stored on a MicroVM deployment.
  * Called only after that MicroVM is gone. A missing tag is success.
+ * A failed delete is a warning that names the leftover tag. Shutdown continues.
  */
 export async function deleteShutdownRegistryTag(token: string, volumeConfig: string | null | undefined): Promise<void> {
   if (!volumeConfig) return
@@ -619,14 +620,20 @@ export async function deleteShutdownRegistryTag(token: string, volumeConfig: str
   }
   const repository = args[3]
   const tag = args[4]
-  const result = await doctl(token, args)
-  const text = `${result.stderr}\n${result.stdout}`
-  if (result.exitCode === 0) {
-    console.log(`Deleted registry tag '${repository}:${tag}'.`)
-    return
+  const label = `${repository}:${tag}`
+  try {
+    const result = await doctl(token, args)
+    const text = `${result.stderr}\n${result.stdout}`
+    if (result.exitCode === 0) {
+      console.log(`Deleted registry tag '${label}'.`)
+      return
+    }
+    if (isMissingMicrovm(text)) return
+    console.warn(`Failed to delete registry tag '${label}'. The tag is still in the registry: ${text.trim() || 'doctl delete-tag failed'}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`Failed to delete registry tag '${label}'. The tag is still in the registry: ${message}`)
   }
-  if (isMissingMicrovm(text)) return
-  throw new Error(`Failed to delete registry tag '${repository}:${tag}': ${text.trim()}`)
 }
 
 export default class MicrovmDeploy extends Command {

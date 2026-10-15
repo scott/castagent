@@ -810,18 +810,51 @@ describe('MicroVM shutdown registry tag', () => {
     expect(logs).to.not.include("Deleted registry tag 'cast-mv-shutdown-agent:abc123'.")
   })
 
-  it('reports a denied registry tag delete after the MicroVM is gone', async () => {
+  it('warns about a leftover tag when the delete is denied and still finishes', async () => {
+    const warnings: string[] = []
+    sandbox.stub(console, 'warn').callsFake((line: unknown) => {
+      warnings.push(String(line))
+    })
     sandbox.stub(db, 'listDeployments').returns([
       {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123')},
     ])
     stubDoctl({tagExit: 1, tagStderr: 'permission denied'})
-    try {
-      await MicrovmDeploy.destroy(agentName, {id: 'abc123', volume_id: 'vm-1'})
-      expect.fail('tag delete should have failed')
-    } catch (error: any) {
-      expect(error.message).to.include("Failed to delete registry tag 'cast-mv-shutdown-agent:abc123'")
-      expect(error.message).to.include('permission denied')
-    }
+    await MicrovmDeploy.destroy(agentName, {id: 'abc123', volume_id: 'vm-1'})
+    expect(logs).to.include("MicroVM 'vm-1' has been destroyed.")
+    expect(warnings).to.deep.equal([
+      "Failed to delete registry tag 'cast-mv-shutdown-agent:abc123'. The tag is still in the registry: permission denied",
+    ])
+  })
+
+  it('destroys the next MicroVM when an earlier tag delete fails', async () => {
+    const warnings: string[] = []
+    sandbox.stub(console, 'warn').callsFake((line: unknown) => {
+      warnings.push(String(line))
+    })
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123', 'vm-1')},
+      {id: 'bbbbbb', provider: 'microvm', volume_id: 'vm-2', volume_config: volumeConfig('bbbbbb', 'vm-2')},
+    ])
+    const calls: string[][] = []
+    sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = []) => {
+      calls.push([command, ...args])
+      const rest = args[0] === '--access-token' ? args.slice(2) : args
+      if (rest[2] === 'delete-tag' && rest.includes('abc123')) {
+        return {exitCode: 1, stdout: '', stderr: 'permission denied'}
+      }
+      if (rest[2] === 'delete-tag' || (rest[1] === 'microvm' && rest[2] === 'delete')) {
+        return {exitCode: 0, stdout: '', stderr: ''}
+      }
+      return {exitCode: 1, stdout: '', stderr: `unexpected ${rest.join(' ')}`}
+    })
+    await MicrovmDeploy.destroy(agentName)
+    expect(calls.some(call => call.includes('vm-2') && call.includes('delete'))).to.equal(true)
+    expect(calls.some(call => call.includes('delete-tag') && call.includes('bbbbbb'))).to.equal(true)
+    expect(logs).to.include("MicroVM 'vm-2' has been destroyed.")
+    expect(logs).to.include("Deleted registry tag 'cast-mv-shutdown-agent:bbbbbb'.")
+    expect(warnings.join('\n')).to.include("Failed to delete registry tag 'cast-mv-shutdown-agent:abc123'")
+    expect(warnings.join('\n')).to.include('still in the registry')
+    expect(warnings.join('\n')).to.not.include('bbbbbb')
   })
 
   it('skips the tag when the row has no volume config', async () => {

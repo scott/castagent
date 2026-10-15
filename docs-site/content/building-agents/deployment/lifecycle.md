@@ -80,7 +80,9 @@ agent. Shutting down any SHA of that provider removes the other rows for
 that same provider, because the remote is shared. A MicroVM is one
 remote per row, so shutting down its SHA leaves every other MicroVM
 running. That shutdown also deletes the container registry tag stored
-for the MicroVM. The tag for another MicroVM stays.
+for the MicroVM. The tag for another MicroVM stays. If the tag delete
+fails, Cast warns and names the tag that is still in the registry, then
+finishes the rest of shutdown.
 
 When shutdown deletes an auth token, the log names the place it was
 removed from. A token taken from the system keychain is reported as
