@@ -12,6 +12,12 @@ from typing import Dict, List, Any, NamedTuple, Optional
 from dataclasses import dataclass, asdict
 
 from cast.castignore import is_ignored, load_rules
+from cast.tar_safety import (
+    UnsafeArchiveError,
+    omit_unsafe_member,
+    reject_link_member,
+    safe_extract,
+)
 
 AGENTS_DIR = Path.home() / ".cast" / "agents"
 
@@ -767,6 +773,10 @@ def extract_release(agent_name: str, version: str, target_dir: Path) -> None:
         members = []
         archived: set[str] = set()
         for member in tar.getmembers():
+            # Refuse links before deleting anything in the working tree.
+            reject_link_member(member)
+            if not member.isdir() and not member.isreg():
+                raise UnsafeArchiveError(f"refusing special member {member.name!r}")
             name = _safe_member_name(member.name)
             if name is None:
                 continue
@@ -820,6 +830,8 @@ def _preserved(rel: str) -> bool:
 
 
 def _reject_metadata(info: tarfile.TarInfo) -> Optional[tarfile.TarInfo]:
+    if omit_unsafe_member(info) is None:
+        return None
     if _safe_member_name(info.name) is None or _preserved(info.name.replace("\\", "/").strip("/")):
         return None
     return info
@@ -837,11 +849,13 @@ def _safe_member_name(name: str) -> Optional[str]:
 
 
 def _extract_members(tar: tarfile.TarFile, target: Path, members: list) -> None:
-    """Extract members. filter='data' is the safe default on Python 3.12+."""
-    try:
-        tar.extractall(target, members=members, filter="data")
-    except TypeError:
-        tar.extractall(target, members=members)
+    """Extract members that already passed the link check.
+
+    Python 3.12 and newer pass filter="data". Older Pythons write
+    regular files and directories only. A missing filter is not an
+    excuse to call extractall without one.
+    """
+    safe_extract(tar, target, members)
 
 
 def _remove_unreleased(target: Path, archived: set[str], rules: list) -> None:

@@ -72,8 +72,12 @@ cast release email-assistant 1.7 --message "Switched model + tightened permissio
    `skills/`, `tools/`, `mcp/`, `tests/`, memory notes, and any other
    project file. Paths listed in `.castignore` are left out, including
    the runtime memory database, logs, `.env`, `__pycache__/`, and
-   `.cast/versions/`. `.cast/` (the undo log and release history) and
+   `.cast/versions/`.    `.cast/` (the undo log and release history) and
    `.git/` are not packed; restore leaves them on disk.
+   Symbolic links and hard links are not packed either. Restore refuses
+   an archive that contains one, including a link whose target is absolute
+   or contains `..`, so a release cannot write a file outside the agent
+   directory.
 5. Writes a row to `releases.json` with timestamp, message, and
    auto-generated changelog.
 6. Records the release in the `releases` table of `cast.db`.
