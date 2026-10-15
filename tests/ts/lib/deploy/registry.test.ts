@@ -225,10 +225,13 @@ describe('deployment provider registry', () => {
     const flags = DeployCommand.flags
     expect(flags.provider.options).to.deep.equal(['railway', 'fly', 'digitalocean', 'microvm', 'sprites', 'docker', 'local'])
     expect(flags.port.default).to.equal(8080)
-    expect(flags.size.default).to.equal('1:2048')
+    // Droplet and MicroVM both declare --size, with different defaults.
+    expect(flags.size.default).to.equal(undefined)
     expect(flags['idle-timeout'].default).to.equal('15m')
     expect(flags['edge-auth-only'].default).to.equal(false)
     expect(flags['with-tui'].default).to.equal(false)
+    expect(String(flags.size.description)).to.include('DigitalOcean Droplet')
+    expect(String(flags.size.description)).to.include('s-2vcpu-2gb')
     expect(String(flags.size.description)).to.include('DigitalOcean MicroVM')
   })
 

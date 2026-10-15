@@ -47,6 +47,8 @@ short version:
 
 DigitalOcean SSH checks the droplet host key. Cast generates an ed25519 key, installs it with the droplet user-data, and saves the public key in `~/.cast/ssh/known_hosts` before the first connection. Later deploys and upgrades reuse that file. A droplet that has no pinned key is refused. Recreate it, or add a key you verified from the DigitalOcean console.
 
+A new droplet uses size `s-2vcpu-2gb`. Pass `--size` with a size slug, such as `s-1vcpu-1gb`, to choose another size. An existing droplet keeps its original size.
+
 `cast deploy --provider local` is not implemented. The command exits with
 `Not yet implemented. Use --provider docker for now.` and does not record
 a deployment. `cast registry` stays empty, and `cast connect` reports that

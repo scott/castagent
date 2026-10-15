@@ -20,6 +20,21 @@ import {db} from '../lib/sqlite'
 
 const DOCKER_INSTALL_URL = 'https://docs.docker.com/get-docker/'
 
+function flagDescription(flag: {description?: unknown}): string {
+  return typeof flag?.description === 'string' ? flag.description : ''
+}
+
+// Two providers can declare the same flag with different defaults. `--size`
+// is a droplet slug for DigitalOcean and `cpu:memory` for MicroVMs. The
+// shared command flag keeps both descriptions and no default. Each provider
+// applies its own default when the user did not pass the flag.
+function mergeProviderFlag(current: any, incoming: any): any {
+  if (current?.type !== 'option' || incoming?.type !== 'option') return current
+  if (current.default === incoming.default) return current
+  const description = [flagDescription(current), flagDescription(incoming)].filter(part => part.length > 0).join(' ')
+  return Flags.string({description})
+}
+
 function buildDeployFlags(): Record<string, any> {
   const flags: Record<string, any> = {
     force: Flags.boolean({
@@ -48,9 +63,14 @@ function buildDeployFlags(): Record<string, any> {
     }),
   }
 
+  const shared = new Set(Object.keys(flags))
   for (const provider of listDeploymentProviders()) {
     for (const [name, flag] of Object.entries(provider.flags || {})) {
-      if (name in flags) continue
+      if (shared.has(name)) continue
+      if (name in flags) {
+        flags[name] = mergeProviderFlag(flags[name], flag)
+        continue
+      }
       flags[name] = flag
     }
   }
@@ -71,12 +91,25 @@ export default class Deploy extends Command {
     '<%= config.bin %> <%= command.id %> email-agent --provider local',
   ]
 
-  static get flags() {
-    return buildDeployFlags()
-  }
-
   static args = {
     agent: Args.string({description: 'Agent name', required: true}),
+  }
+
+  // Typed here so callers see the merged flag map. The runtime property is
+  // the enumerable getter below. oclif help copies enumerable statics with
+  // object spread. A class getter is not enumerable, so `cast deploy --help`
+  // would list no flags. The getter still runs on each read so external
+  // providers stay in --provider.
+  declare static flags: Record<string, any>
+
+  static {
+    Object.defineProperty(this, 'flags', {
+      enumerable: true,
+      configurable: true,
+      get() {
+        return buildDeployFlags()
+      },
+    })
   }
 
   private async prompt(question: string): Promise<string> {

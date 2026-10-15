@@ -229,6 +229,8 @@ DigitalOcean MicroVMs (`--provider microvm`) are separate from Droplets. They ar
 
 DigitalOcean Droplets keep the agent on `127.0.0.1:8080`. Port 8080 is not opened to the internet, and a redeploy removes a public allow rule left by an older deploy. The registry URL is `https://<droplet-ip>`. That value identifies the droplet. It is not a public A2A listener. `cast connect` opens an SSH tunnel to the loopback port and sends the bearer token inside SSH. The token is written to `/var/lib/cast/cast-agent.env` (mode 0600) and passed to `docker run` with `--env-file`, so it is not a shell argument. Redeploy an existing droplet to move it off a public port. The droplet memory volume is named `cast-<agent>`. Shutdown deletes that volume and any older `cast-<agent>-<uuid>-memory` volume from a previous deploy, and it reports the volume as removed only when the delete succeeds.
 
+A new droplet uses size `s-2vcpu-2gb`. Pass `--size` with a DigitalOcean size slug to choose another size, for example `cast deploy demo-agent --provider digitalocean --size s-1vcpu-1gb`. An existing droplet keeps the size it was created with.
+
 ### Chatting On-Host (Docker container shell)
 
 By default, DigitalOcean-deployed agents are **lean** — the image only
