@@ -1,5 +1,6 @@
 """Tests for cast.sessions — the conversation session storage layer."""
 import json
+import os
 import sqlite3
 import tempfile
 from pathlib import Path
@@ -530,3 +531,104 @@ class TestSessionDeleteForAgent:
         items = store.list()
         assert len(items) == 1
         assert items[0].agent_name == "beta"
+
+
+def _mode(path: Path) -> int:
+    return path.stat().st_mode & 0o777
+
+
+class TestPrivateSessionModes:
+    def test_files_are_born_private_under_umask_022(self, temp_cast_home, monkeypatch):
+        births = []
+        dir_births = []
+        chmods = []
+        real_open = os.open
+        real_mkdir = os.mkdir
+        real_chmod = os.chmod
+
+        def wrapped_open(path, flags, mode=0o777, *args, **kwargs):
+            fd = real_open(path, flags, mode, *args, **kwargs)
+            decoded = os.fsdecode(path)
+            base = os.path.basename(decoded)
+            if base.endswith(".json") or ".json." in base or base == "cast.db":
+                births.append((decoded, os.fstat(fd).st_mode & 0o777))
+            return fd
+
+        def wrapped_mkdir(path, mode=0o777, *args, **kwargs):
+            real_mkdir(path, mode, *args, **kwargs)
+            decoded = os.fsdecode(path)
+            dir_births.append((decoded, os.stat(decoded).st_mode & 0o777))
+
+        def wrapped_chmod(path, mode, *args, **kwargs):
+            chmods.append(os.fsdecode(path))
+            return real_chmod(path, mode, *args, **kwargs)
+
+        monkeypatch.setattr(os, "open", wrapped_open)
+        monkeypatch.setattr(os, "mkdir", wrapped_mkdir)
+        monkeypatch.setattr(os, "chmod", wrapped_chmod)
+        previous = os.umask(0o022)
+        try:
+            store = sessions.SessionStore()
+            created = store.create("alpha")
+            store.append_message(created.id, "user", "stand-in transcript")
+            json_path = temp_cast_home / "sessions" / f"{created.id}.json"
+            db_path = temp_cast_home / "cast.db"
+            assert births
+            assert all(mode == 0o600 for _name, mode in births)
+            assert dir_births
+            assert all(mode == 0o700 for _name, mode in dir_births)
+            assert _mode(json_path) == 0o600
+            assert _mode(temp_cast_home / "sessions") == 0o700
+            assert _mode(temp_cast_home) == 0o700
+            assert _mode(db_path) == 0o600
+            assert json.loads(json_path.read_text())["messages"][0]["text"] == "stand-in transcript"
+            assert not any(path.endswith(".json") or path.endswith("cast.db") for path in chmods)
+            leftovers = [
+                name
+                for name in os.listdir(temp_cast_home / "sessions")
+                if name.endswith(".tmp")
+            ]
+            assert leftovers == []
+            during = os.umask(0o022)
+            assert during == 0o022
+        finally:
+            os.umask(previous)
+
+    def test_existing_loose_dirs_and_database_are_tightened(self, temp_cast_home):
+        sessions_dir = temp_cast_home / "sessions"
+        sessions_dir.mkdir()
+        db_path = temp_cast_home / "cast.db"
+        previous = os.umask(0o022)
+        try:
+            os.chmod(temp_cast_home, 0o755)
+            os.chmod(sessions_dir, 0o755)
+            conn = sqlite3.connect(db_path)
+            conn.execute("CREATE TABLE kept (id INTEGER)")
+            conn.execute("INSERT INTO kept (id) VALUES (7)")
+            conn.commit()
+            conn.close()
+            os.chmod(db_path, 0o644)
+            assert _mode(db_path) == 0o644
+            sessions.SessionStore()
+            assert _mode(temp_cast_home) == 0o700
+            assert _mode(sessions_dir) == 0o700
+            assert _mode(db_path) == 0o600
+            kept = sqlite3.connect(db_path).execute("SELECT id FROM kept").fetchone()
+            assert kept == (7,)
+        finally:
+            os.umask(previous)
+
+    def test_export_file_is_private_and_its_directory_stays_as_created(self, store, temp_cast_home):
+        session = store.create("alpha")
+        store.append_message(session.id, "user", "stand-in transcript")
+        dest_dir = temp_cast_home / "shared-export"
+        dest_dir.mkdir()
+        os.chmod(dest_dir, 0o755)
+        previous = os.umask(0o022)
+        try:
+            out = store.export(session.id, dest_dir / "copy.json")
+            assert _mode(out) == 0o600
+            assert _mode(dest_dir) == 0o755
+            assert json.loads(out.read_text())["id"] == session.id
+        finally:
+            os.umask(previous)

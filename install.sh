@@ -894,9 +894,17 @@ echo ""
 # ============================================
 log_info "Creating directories..."
 
+# mkdir applies the process umask. umask 077 makes these directories
+# born mode 0700. chmod repairs a directory this script used to leave
+# at 0755. The caller's umask is restored before later install steps.
+previous_umask="$(umask)"
+umask 077
 mkdir -p "$HOME/.cast"
-mkdir -p "$HOME/.cast/vault"
 mkdir -p "$HOME/.cast/tokens"
+mkdir -p "$HOME/.cast/sessions"
+umask "$previous_umask"
+chmod 700 "$HOME/.cast" "$HOME/.cast/tokens" "$HOME/.cast/sessions"
+mkdir -p "$HOME/.cast/vault"
 mkdir -p "$HOME/.cast/builder"
 mkdir -p "$HOME/.cast/builder/tools"
 mkdir -p "$HOME/.cast/agents"

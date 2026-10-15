@@ -183,14 +183,16 @@ is written at that location. Missing parent directories are created.
 ## Storage
 
 ```
-~/.cast/sessions/
-├── <session-id>.json     # full transcript + metadata
+~/.cast/sessions/         # mode 0700
+├── <session-id>.json     # full transcript + metadata, created mode 0600
 └── ...
 
-cast.db 'sessions' table  # index for fast listing
+cast.db 'sessions' table  # index for fast listing, database file mode 0600
 ```
 
 The session JSON file holds the full conversation, including message
-timestamps and any UI actions. The SQLite `sessions` table is a
-metadata index for fast listing across agents. Deleting an agent
-cascades into its sessions.
+timestamps and any UI actions. `~/.cast/sessions` is mode 0700, and each
+transcript is created mode 0600, so a permissive umask cannot leave the
+conversation world-readable. The SQLite `sessions` table is a metadata
+index for fast listing across agents. Deleting an agent cascades into
+its sessions.
