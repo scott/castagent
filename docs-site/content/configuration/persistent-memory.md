@@ -71,8 +71,11 @@ destroy handler:
 - Fly destroys the app and then attempts to delete its memory volume.
 - DigitalOcean Droplet shutdown deletes the droplet and then deletes the
   `cast-<name>` memory volume. Older volumes named
-  `cast-<name>-<uuid>-memory` are removed as well. Cast reports a volume
-  as removed only when the volume delete succeeds.
+  `cast-<name>-<uuid>-memory` are removed as well. Cast looks each volume
+  up by name and region, then deletes it by its DigitalOcean volume ID.
+  Cast reports a volume as removed only when that delete succeeds. If the
+  lookup finds no volume, shutdown stays quiet. A lookup or delete error
+  is reported.
 - DigitalOcean MicroVM shutdown deletes that MicroVM, including its disk.
 - Sprites shutdown destroys the sprite, which holds its persistent
   directory.

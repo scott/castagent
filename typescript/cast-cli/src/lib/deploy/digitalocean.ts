@@ -394,17 +394,153 @@ export function digitalOceanMemoryVolumesToRemove(
   return [...names].sort()
 }
 
+/** Droplets and their block volumes are created in this region. */
+export const DIGITALOCEAN_DROPLET_REGION = 'nyc3'
+
+const DIGITALOCEAN_VOLUME_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+const DIGITALOCEAN_VOLUME_REGION = /^[a-z]{3}\d$/
+
+export interface ListedDigitalOceanVolume {
+  id: string
+  name: string
+  region: string
+}
+
+export interface DigitalOceanVolumeList {
+  ok: boolean
+  volumes: ListedDigitalOceanVolume[]
+  error: string
+}
+
+export interface DigitalOceanVolumeDeleteTarget {
+  name: string
+  region: string
+  /** DigitalOcean volume id. Null when this name is not listed in the region. */
+  id: string | null
+}
+
+export type RecordedDigitalOceanVolume =
+  | string
+  | null
+  | undefined
+  | {name?: string | null; region?: string | null; volumeConfig?: string | null}
+
+/**
+ * Region stored on the deployment, or the droplet region when the
+ * record does not name one. Volume names are unique per region.
+ */
+export function digitalOceanVolumeRegion(volumeConfig: string | null | undefined): string {
+  if (volumeConfig) {
+    try {
+      const parsed = JSON.parse(volumeConfig) as {region?: unknown}
+      if (typeof parsed.region === 'string' && DIGITALOCEAN_VOLUME_REGION.test(parsed.region)) {
+        return parsed.region
+      }
+    } catch {
+      // The stored config is not JSON. Droplets are created in nyc3.
+    }
+  }
+  return DIGITALOCEAN_DROPLET_REGION
+}
+
+export function recordedDigitalOceanVolume(entry: RecordedDigitalOceanVolume): {name: string; region: string} | null {
+  if (!entry) return null
+  if (typeof entry === 'string') {
+    const name = entry.trim()
+    if (!name) return null
+    return {name, region: DIGITALOCEAN_DROPLET_REGION}
+  }
+  const name = typeof entry.name === 'string' ? entry.name.trim() : ''
+  if (!name) return null
+  const region = typeof entry.region === 'string' && DIGITALOCEAN_VOLUME_REGION.test(entry.region)
+    ? entry.region
+    : digitalOceanVolumeRegion(entry.volumeConfig)
+  return {name, region}
+}
+
+/**
+ * `doctl compute volume list --format ID,Name,Region --no-header`.
+ * A name or region with whitespace is rejected so a bad line is not
+ * treated as an empty account.
+ */
+export function parseDigitalOceanVolumeList(stdout: string): DigitalOceanVolumeList {
+  const volumes: ListedDigitalOceanVolume[] = []
+  for (const raw of stdout.split(/\r?\n/)) {
+    const line = raw.trim()
+    if (!line) continue
+    const parts = line.split(/\s+/)
+    if (parts.length !== 3) {
+      return {ok: false, volumes: [], error: `Could not read volume list line: ${line}`}
+    }
+    const [id, name, region] = parts
+    if (!DIGITALOCEAN_VOLUME_ID.test(id) || !name || !DIGITALOCEAN_VOLUME_REGION.test(region)) {
+      return {ok: false, volumes: [], error: `Could not read volume list line: ${line}`}
+    }
+    volumes.push({id, name, region})
+  }
+  return {ok: true, volumes, error: ''}
+}
+
+export function findDigitalOceanVolumes(
+  volumes: ListedDigitalOceanVolume[],
+  name: string,
+  region: string,
+): ListedDigitalOceanVolume[] {
+  return volumes.filter(volume => volume.name === name && volume.region === region)
+}
+
+/**
+ * Volumes to delete for one agent. A recorded name that the list does
+ * not contain in that region has a null id: the lookup found nothing.
+ * Listed agent volumes are included only in the droplet region and in
+ * regions named on a recorded deployment.
+ */
+export function planDigitalOceanVolumeDeletes(
+  agentName: string,
+  recorded: Array<{name: string; region: string}>,
+  listed: ListedDigitalOceanVolume[],
+): DigitalOceanVolumeDeleteTarget[] {
+  const regions = new Set<string>([DIGITALOCEAN_DROPLET_REGION])
+  for (const row of recorded) {
+    if (row.region) regions.add(row.region)
+  }
+
+  const targets = new Map<string, DigitalOceanVolumeDeleteTarget>()
+  for (const volume of listed) {
+    if (!regions.has(volume.region)) continue
+    if (!isAgentDigitalOceanMemoryVolume(volume.name, agentName)) continue
+    targets.set(volume.id, {name: volume.name, region: volume.region, id: volume.id})
+  }
+  for (const row of recorded) {
+    if (!row.name) continue
+    const matches = findDigitalOceanVolumes(listed, row.name, row.region)
+    if (matches.length === 0) {
+      targets.set(`missing\0${row.region}\0${row.name}`, {name: row.name, region: row.region, id: null})
+      continue
+    }
+    for (const match of matches) {
+      targets.set(match.id, {name: match.name, region: match.region, id: match.id})
+    }
+  }
+
+  return [...targets.values()].sort((a, b) => {
+    const byName = a.name.localeCompare(b.name)
+    if (byName !== 0) return byName
+    return a.region.localeCompare(b.region)
+  })
+}
+
 export interface DoctlCommandResult {
   exitCode: number
   stdout: string
   stderr: string
 }
 
-export function digitalOceanVolumeRemovalMessage(volumeId: string, result: DoctlCommandResult): string | null {
-  if (result.exitCode === 0) return `Memory volume '${volumeId}' has been removed.`
-  const detail = `${result.stderr}\n${result.stdout}`
-  if (/not found/i.test(detail) || /\b404\b/.test(detail)) return null
-  return `Note: Memory volume '${volumeId}' could not be removed.`
+export function digitalOceanVolumeRemovalMessage(volumeName: string, result: DoctlCommandResult): string {
+  if (result.exitCode === 0) return `Memory volume '${volumeName}' has been removed.`
+  const detail = `${result.stderr}\n${result.stdout}`.trim()
+  if (detail) return `Note: Memory volume '${volumeName}' could not be removed (${detail}).`
+  return `Note: Memory volume '${volumeName}' could not be removed.`
 }
 
 export type DoctlRunner = (args: string[]) => Promise<DoctlCommandResult>
@@ -426,25 +562,69 @@ export async function listDigitalOceanVolumeNames(run: DoctlRunner): Promise<str
   }
 }
 
+const VOLUME_LIST_ARGS = ['compute', 'volume', 'list', '--format', 'ID,Name,Region', '--no-header']
+
+/** Look volumes up by id, name, and region. A failed list is an error, not an empty account. */
+export async function readDigitalOceanVolumeList(run: DoctlRunner): Promise<DigitalOceanVolumeList> {
+  try {
+    const result = await run(VOLUME_LIST_ARGS)
+    if (result.exitCode !== 0) {
+      const detail = `${result.stderr}\n${result.stdout}`.trim() || 'volume list failed'
+      return {ok: false, volumes: [], error: detail}
+    }
+    return parseDigitalOceanVolumeList(result.stdout)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {ok: false, volumes: [], error: message}
+  }
+}
+
+/**
+ * Delete one volume after it has been resolved to an id.
+ * A non-zero exit, including Not Found, is a real error.
+ */
+export async function deleteDigitalOceanVolumeById(
+  run: DoctlRunner,
+  volumeId: string,
+): Promise<{deleted: boolean; error: string}> {
+  try {
+    const result = await run(['compute', 'volume', 'delete', volumeId, '--force'])
+    if (result.exitCode === 0) return {deleted: true, error: ''}
+    const detail = `${result.stderr}\n${result.stdout}`.trim() || 'volume delete failed'
+    return {deleted: false, error: detail}
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return {deleted: false, error: message}
+  }
+}
+
 export async function removeDigitalOceanMemoryVolumes(
   agentName: string,
-  recordedVolumeIds: Array<string | null | undefined>,
+  recordedVolumeIds: RecordedDigitalOceanVolume[],
   run: DoctlRunner = defaultDoctlRunner(),
   log: (message: string) => void = console.log,
 ): Promise<void> {
-  const listed = await listDigitalOceanVolumeNames(run)
-  const volumes = digitalOceanMemoryVolumesToRemove(agentName, recordedVolumeIds, listed)
-  for (const volumeId of volumes) {
-    let result: DoctlCommandResult
-    try {
-      result = await run(['compute', 'volume', 'delete', volumeId, '--force'])
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      log(`Note: Memory volume '${volumeId}' could not be removed (${message}).`)
+  const listed = await readDigitalOceanVolumeList(run)
+  if (!listed.ok) {
+    log(`Note: Memory volumes could not be looked up (${listed.error}).`)
+    return
+  }
+  const recorded = recordedVolumeIds
+    .map(entry => recordedDigitalOceanVolume(entry))
+    .filter((entry): entry is {name: string; region: string} => entry !== null)
+  const targets = planDigitalOceanVolumeDeletes(agentName, recorded, listed.volumes)
+  for (const target of targets) {
+    if (!target.id) continue
+    const outcome = await deleteDigitalOceanVolumeById(run, target.id)
+    if (outcome.deleted) {
+      log(`Memory volume '${target.name}' has been removed.`)
       continue
     }
-    const line = digitalOceanVolumeRemovalMessage(volumeId, result)
-    if (line) log(line)
+    log(digitalOceanVolumeRemovalMessage(target.name, {
+      exitCode: 1,
+      stdout: '',
+      stderr: outcome.error,
+    }))
   }
 }
 
@@ -842,9 +1022,28 @@ export async function releaseFailedDroplet(input: FailedDropletRelease): Promise
   }
 
   let volumeDeleted = true
+  let volumeError = ''
   if (input.volumeName) {
-    const deleted = await runCleanupCommand(['compute', 'volume', 'delete', input.volumeName, '--force'])
-    volumeDeleted = deleted.exitCode === 0 || resourceAlreadyGone(deleted.stdout, deleted.stderr)
+    const region = digitalOceanVolumeRegion(input.volumeConfig)
+    const listed = await readDigitalOceanVolumeList(args => runCleanupCommand(args))
+    if (!listed.ok) {
+      volumeDeleted = false
+      volumeError = listed.error
+    } else {
+      const matches = findDigitalOceanVolumes(listed.volumes, input.volumeName, region)
+      if (matches.length === 0) {
+        volumeDeleted = true
+      } else {
+        for (const match of matches) {
+          const deleted = await deleteDigitalOceanVolumeById(args => runCleanupCommand(args), match.id)
+          if (!deleted.deleted) {
+            volumeDeleted = false
+            volumeError = deleted.error
+            break
+          }
+        }
+      }
+    }
   }
 
   if (dropletDeleted && (dropletId || dropletIp)) {
@@ -858,6 +1057,7 @@ export async function releaseFailedDroplet(input: FailedDropletRelease): Promise
       dropletIp,
       dropletDeleted,
       volumeDeleted,
+      volumeError,
       log,
     })
     : false
@@ -880,6 +1080,7 @@ function recordFailedDroplet(
     dropletIp: string
     dropletDeleted: boolean
     volumeDeleted: boolean
+    volumeError: string
     log: (message: string) => void
   },
 ): boolean {
@@ -904,7 +1105,11 @@ function recordFailedDroplet(
   const leftover = !state.dropletDeleted
     ? `droplet '${state.dropletName}'`
     : `memory volume '${input.volumeName}'`
-  state.log(`Could not delete ${leftover}. Recorded the deployment so cast shutdown ${input.agentName} can clean it up.`)
+  const volumeDetail = !state.volumeDeleted
+    ? state.volumeError.trim().replace(/[.\s]+$/, '')
+    : ''
+  const extra = volumeDetail ? ` ${volumeDetail}.` : ''
+  state.log(`Could not delete ${leftover}.${extra} Recorded the deployment so cast shutdown ${input.agentName} can clean it up.`)
   return true
 }
 
@@ -1003,7 +1208,10 @@ export default class DigitalOceanDeploy extends Command {
     // Delete the volume this deploy created, plus any older uuid volume still billing.
     const recorded = db.listDeployments(agentName)
       .filter((row: {provider?: string}) => row.provider === 'digitalocean')
-      .map((row: {volume_id?: string | null}) => row.volume_id)
+      .map((row: {volume_id?: string | null; volume_config?: string | null}) => ({
+        name: row.volume_id,
+        region: digitalOceanVolumeRegion(row.volume_config),
+      }))
     await removeDigitalOceanMemoryVolumes(agentName, recorded)
     await removeUnusedCastAccountSshKey(apiToken, dropletId)
   }
@@ -1094,7 +1302,7 @@ export default class DigitalOceanDeploy extends Command {
       await prepareHostTuiBuildContext(agentPath, projectRoot, { enabled: withTui })
 
       // Get or create droplet
-      const volumeConfigForCleanup = JSON.stringify({deploymentId, mountPath: '/app/agent/memory', region: 'nyc3'})
+      const volumeConfigForCleanup = JSON.stringify({deploymentId, mountPath: '/app/agent/memory', region: DIGITALOCEAN_DROPLET_REGION})
       const droplet = await this.getOrCreateDroplet(agentName, agentPath, apiToken, dropletSize, {
         tokenHash,
         volumeConfig: volumeConfigForCleanup,
@@ -1323,7 +1531,7 @@ export default class DigitalOceanDeploy extends Command {
     rollback?: {tokenHash: string; volumeConfig: string},
   ): Promise<{id: string; name: string; ip: string; region: string; created: boolean}> {
     const dropletName = `cast-${agentName}`
-    const region = 'nyc3'
+    const region = DIGITALOCEAN_DROPLET_REGION
 
     // Check if droplet exists
     const listResult = await execCommand('doctl', ['compute', 'droplet', 'list', '--format', 'ID,Name,PublicIPv4', '--no-header'], {silent: true})

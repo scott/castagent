@@ -51,9 +51,9 @@ A new droplet uses size `s-2vcpu-2gb`. Pass `--size` with a size slug, such as `
 
 Deploy also requires the OpenSSH client (`ssh` and `ssh-keygen`) and checks both before it stores an auth token. If deploy fails after that token is written, Cast deletes the token for that attempt, including `~/.cast/tokens/deployments/<sha>.token`. The agent token file is deleted only when no other deployment is still live.
 
-`cast shutdown` of a droplet deletes the droplet and its memory volume. It also deletes the DigitalOcean account SSH key named `cast-do-key` when no other Cast droplet or Cast MicroVM still uses it. The key stays while another Cast droplet or MicroVM remains. The private key at `~/.ssh/cast_do_key` stays on this machine. The next deploy uploads it again if the account key is missing.
+`cast shutdown` of a droplet deletes the droplet and its memory volume. Shutdown looks that volume up by name and region and deletes the DigitalOcean volume ID. It also deletes the DigitalOcean account SSH key named `cast-do-key` when no other Cast droplet or Cast MicroVM still uses it. The key stays while another Cast droplet or MicroVM remains. The private key at `~/.ssh/cast_do_key` stays on this machine. The next deploy uploads it again if the account key is missing.
 
-A deploy that fails after creating a droplet deletes that droplet, any volume created for the attempt, and the `~/.cast/ssh/known_hosts` entry. A failed deploy does not delete `cast-do-key`. If the droplet or volume cannot be deleted, Cast records the deployment so `cast shutdown` can remove it.
+A deploy that fails after creating a droplet deletes that droplet, any volume created for the attempt, and the `~/.cast/ssh/known_hosts` entry. The volume is deleted by ID after a lookup by name and region. It counts as already gone only when that lookup finds nothing. A failed deploy does not delete `cast-do-key`. If the droplet or volume cannot be deleted, Cast records the deployment so `cast shutdown` can remove it.
 
 `cast deploy --provider local` is not implemented. The command exits with
 `Not yet implemented. Use --provider docker for now.` and does not record

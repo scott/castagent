@@ -66,8 +66,11 @@ cannot delete the image, shutdown prints a note and still removes the
 local records.
 
 Droplet shutdown deletes the droplet, then deletes the `cast-<agent>`
-memory volume and any older `cast-<agent>-<uuid>-memory` volume. A volume
-is reported as removed only when that delete succeeds.
+memory volume and any older `cast-<agent>-<uuid>-memory` volume. Cast
+looks each volume up by name and region and deletes it by volume ID.
+If the lookup finds no volume, shutdown stays quiet. A volume is
+reported as removed only when that delete succeeds. A lookup or delete
+error is reported.
 
 A SHA shuts down only that deployment. Another provider for the same
 agent stays in the registry and keeps its auth token. An agent name is
@@ -88,15 +91,17 @@ removed from. A token taken from the system keychain is reported as
 place.
 
 DigitalOcean droplet shutdown deletes the droplet and its memory
-volume. It also deletes the account SSH key named `cast-do-key` when
+volume. It looks the volume up by name and region and deletes that
+volume ID. It also deletes the account SSH key named `cast-do-key` when
 no other Cast droplet or Cast MicroVM still uses it. The key is left
 in the account when another Cast droplet or MicroVM remains. The login
 key file `~/.ssh/cast_do_key` is not deleted. A deploy that fails after
 creating a droplet deletes that droplet, any volume created for the
-attempt, and the droplet line in `~/.cast/ssh/known_hosts`. A failed
-deploy does not delete `cast-do-key`. If the droplet or volume cannot
-be deleted, Cast records the deployment so `cast shutdown` can remove
-it. A failed deploy also removes the bearer token it stored for that
+attempt, and the droplet line in `~/.cast/ssh/known_hosts`. That volume
+delete uses the same lookup. The volume is already gone only when the
+lookup finds nothing. A failed deploy does not delete `cast-do-key`.
+If the droplet or volume cannot be deleted, Cast records the deployment
+so `cast shutdown` can remove it. A failed deploy also removes the bearer token it stored for that
 attempt, so a missing `ssh` or `ssh-keygen` does not leave
 `~/.cast/tokens/deployments/<sha>.token` behind. A failed MicroVM deploy
 does the same for the token file it wrote, and it deletes the container
