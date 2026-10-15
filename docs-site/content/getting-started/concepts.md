@@ -113,7 +113,7 @@ is stable for the life of that deployment.
 ~/.cast/
 ├── config.yaml                # global config
 ├── cast.db                    # SQLite: agents, releases, deployments
-├── vault/<agent>/             # OAuth credentials (filesystem, mode 0600)
+├── vault/<agent>/             # OAuth credentials (directory 0700, files 0600)
 ├── tokens/<agent>.token              # agent bearer token when the keychain is unavailable (mode 0600)
 ├── tokens/deployments/<sha>.token    # per-deployment bearer token, same fallback
 ├── builder/                   # Builder Agent's instructions and tools

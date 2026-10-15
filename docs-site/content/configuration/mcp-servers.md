@@ -69,9 +69,11 @@ the same way they do for built-in tools.
 ## OAuth credentials
 
 Some MCP servers need an OAuth login. Cast stores the resulting tokens
-in `~/.cast/vault/<agent-name>/<server>-oauth.json` (mode 0600). On
-deploy, these files are bundled into the image and re-mounted at the
-same path inside the container.
+in `~/.cast/vault/<agent-name>/<server>-oauth.json` (mode 0600). The
+vault directory is mode 0700. The callback listens only on 127.0.0.1
+and rejects a login whose `state` does not match the value issued for
+that attempt. On deploy, these files are bundled into the image and
+re-mounted at the same path inside the container.
 
 For Gmail, the Builder uses Google's OAuth flow with a callback on
 `http://localhost:3000/oauth/callback`. The CLI prints the URL when it's
