@@ -6,6 +6,7 @@ The strings below are dummy shapes. They are not real credentials.
 import asyncio
 import sqlite3
 import subprocess
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -253,6 +254,84 @@ class TestBashNotesWrites:
         bash_tool.invoke({"command": "echo hello"})
         assert notes.read_text(encoding="utf-8") == original
         assert notes.stat().st_mtime_ns == before
+
+    @pytest.mark.parametrize("launch", (
+        "(sleep 0.4; {body}) >/dev/null 2>&1 &",
+        "setsid sh -c \"sleep 0.4; {body}\" </dev/null >/dev/null 2>&1 &",
+        "nohup sh -c \"sleep 0.4; {body}\" >/dev/null 2>&1 &",
+        "sh -c \"sleep 0.4; {body}\" >/dev/null 2>&1 &",
+    ))
+    def test_background_bash_write_scrubs_provider_keys(self, tmp_path, monkeypatch, launch):
+        """Issue #293: a background write must get the foreground scrub."""
+        agent = self._agent(tmp_path, monkeypatch)
+        notes = agent / "memory" / "notes.md"
+        notes.write_text("favorite fruit is quince\n", encoding="utf-8")
+        body = (
+            "printf '%s\\n' "
+            f"'deploy {OPENROUTER_DUMMY} provider {PROVIDER_DUMMY} "
+            f"token {DIGITALOCEAN_DUMMY}' >> memory/notes.md"
+        )
+        bash_tool.invoke({"command": launch.format(body=body)})
+        text = _wait_for_notes(
+            notes,
+            lambda value: (
+                "quince" in value
+                and "[REDACTED]" in value
+                and all(secret not in value for secret in (
+                    OPENROUTER_DUMMY,
+                    PROVIDER_DUMMY,
+                    DIGITALOCEAN_DUMMY,
+                ))
+            ),
+        )
+        assert "quince" in text
+        assert "[REDACTED]" in text
+        assert text.count("[REDACTED]") >= 3
+        for secret in (OPENROUTER_DUMMY, PROVIDER_DUMMY, DIGITALOCEAN_DUMMY):
+            assert secret not in text
+
+    def test_setsid_write_is_scrubbed_without_a_delay(self, tmp_path, monkeypatch):
+        """A detached write can finish after the shell has already returned."""
+        agent = self._agent(tmp_path, monkeypatch)
+        notes = agent / "memory" / "notes.md"
+        notes.write_text("favorite fruit is quince\n", encoding="utf-8")
+        command = (
+            "setsid sh -c \"printf '%s\\n' "
+            f"'{OPENROUTER_DUMMY}' >> memory/notes.md\" "
+            "</dev/null >/dev/null 2>&1 &"
+        )
+        bash_tool.invoke({"command": command})
+        text = _wait_for_notes(
+            notes,
+            lambda value: OPENROUTER_DUMMY not in value and "[REDACTED]" in value,
+        )
+        assert OPENROUTER_DUMMY not in text
+        assert "[REDACTED]" in text
+        assert "quince" in text
+
+    def test_background_bash_keeps_a_non_secret_line(self, tmp_path, monkeypatch):
+        agent = self._agent(tmp_path, monkeypatch)
+        notes = agent / "memory" / "notes.md"
+        notes.write_text("favorite fruit is quince\n", encoding="utf-8")
+        command = (
+            "(sleep 0.2; printf '%s\\n' 'favorite color is teal' "
+            ">> memory/notes.md) >/dev/null 2>&1 &"
+        )
+        bash_tool.invoke({"command": command})
+        text = _wait_for_notes(notes, lambda value: "teal" in value)
+        assert text == "favorite fruit is quince\nfavorite color is teal\n"
+        assert "[REDACTED]" not in text
+
+
+def _wait_for_notes(notes: Path, predicate, timeout: float = 3.0) -> str:
+    deadline = time.monotonic() + timeout
+    text = ""
+    while time.monotonic() < deadline:
+        text = notes.read_text(encoding="utf-8") if notes.is_file() else ""
+        if predicate(text):
+            return text
+        time.sleep(0.02)
+    return text
 
 
 class TestGitDoesNotPublishNotes:
