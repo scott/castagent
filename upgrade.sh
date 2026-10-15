@@ -49,8 +49,8 @@ remote has no main branch.
 Leaves ~/.cast agents, config, and tokens untouched. Resets tracked TypeScript
 build info files, which a build rewrites. Stops without rebuilding when any
 other uncommitted change is present, or when the local upstream branch has
-commits that cannot fast-forward. Also stops when gpg is missing (install
-gnupg), or when the origin commit is not signed by the trusted key shipped
+commits that cannot fast-forward. Also stops when gpg is missing (install gnupg).
+Also stops when the origin commit is not signed by the trusted key shipped
 in this script.
 
 This does not upgrade a deployed agent. That command is: cast upgrade <agent>
