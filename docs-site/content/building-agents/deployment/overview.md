@@ -136,6 +136,9 @@ with a non-zero status and does not print a deployment SHA. The same
 readiness check applies to `cast upgrade` of a Docker deployment. A
 MicroVM that fails before the endpoint answers is deleted. If that
 delete fails, Cast records the MicroVM so `cast shutdown` can remove it.
+When the MicroVM is deleted, Cast also deletes the registry tag it pushed
+and the auth token file written for that attempt. The tag and token stay
+when the MicroVM remains and the deployment is recorded.
 
 ## Multi-deployment
 
@@ -186,6 +189,7 @@ rebuilt, and the new container starts with the same volume. The
 - Public preview, region **MKC1** only, **linux/amd64** images only. Not for production.
 - The image is pushed to your team's DigitalOcean Container Registry. Cast reuses the existing registry, or creates one named `cast`. The image includes the Cast package at `/app/cast`.
 - A MicroVM whose workload exits is deleted. If the delete fails, the deployment is recorded so `cast shutdown` can remove it.
+- A failed deploy or readiness probe that deletes the MicroVM also deletes the registry tag pushed for that attempt (for example `cast-<agent>:<id>`) and the auth token file under `~/.cast/tokens/`. The agent token stays when another deployment is still live. The tag and token stay when the MicroVM cannot be deleted and the deployment is recorded. A failed upgrade deletes the replacement tag only after that replacement MicroVM is gone. The previous MicroVM and its tag stay.
 - The MicroVM pauses after an idle timeout (default 15 minutes, maximum 4 hours). The next request resumes it. While it is waking, the endpoint can return HTTP 503. Cast retries that response for about a minute. A paused MicroVM bills storage only.
 - The edge closes each chat response about 15 seconds after the request starts, even while bytes are still arriving. Cast keeps that reply running and continues it on the next request, so a long step such as installing a skill can finish. A keepalive every 5 seconds still covers proxies that drop a quiet stream. Deploy or upgrade the agent so the image includes that runtime, and reconnect with a current build.
 - There is no SSH and no on-host TUI. `--with-tui` is rejected. Logs: `doctl compute microvm exec <id> -- <log command>`.
