@@ -192,6 +192,16 @@ class MemoryStore:
             conn.commit()
             return cursor.rowcount > 0
 
+    def update_content(self, highlight_id: int, content: str) -> bool:
+        """Replace one highlight's text. The id, category, and time stay."""
+        with self._get_conn() as conn:
+            cursor = conn.execute(
+                "UPDATE highlights SET content = ? WHERE id = ?",
+                (content, highlight_id),
+            )
+            conn.commit()
+            return cursor.rowcount > 0
+
     def count(self) -> int:
         with self._get_conn() as conn:
             row = conn.execute("SELECT COUNT(*) as count FROM highlights").fetchone()

@@ -170,6 +170,7 @@ class TestPersistentMemoryPrompt:
         assert "memory/notes.md" in prompt
         assert "memory/memory.db" in prompt
         assert "Do not say that you lack a memory tool." in prompt
+        assert "Live harness.permissions override memories from past sessions." in prompt
 
     @patch("cast.agent.runtime.get_provider")
     @patch("cast.agent.runtime.create_react_agent")

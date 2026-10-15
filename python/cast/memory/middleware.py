@@ -1,13 +1,15 @@
 import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
+from ..harness.permissions import PermissionGate
 from .store import MemoryStore, MemoryHighlight
 from .config import MemoryConfig
 from .retriever import MemoryRetriever
 from .reflection import ReflectionAgent
 from .explicit import explicit_remember_fact
 from .filter import PrivacyFilter
+from .permission_memory import without_stale_permission_claims
 
 
 class MemoryMiddleware:
@@ -18,6 +20,7 @@ class MemoryMiddleware:
         api_key: Optional[str] = None,
     ):
         agent_path = Path(agent_path)
+        self._permission_gate: Optional[PermissionGate] = None
         self.config = MemoryConfig.from_file(agent_path / "memory" / "config.yaml")
         if not self.config.enabled:
             self.store = None
@@ -35,6 +38,52 @@ class MemoryMiddleware:
     def enabled(self) -> bool:
         return self.config.enabled and self.store is not None
 
+    def bind_permissions(self, permissions: Any) -> None:
+        """Remember the live harness.permissions and drop stale rows.
+
+        Called when the runtime starts, including after
+        `cast update --permission` and a restart. A highlight that states
+        a different level is removed before the next prompt is built.
+        """
+        self._permission_gate = PermissionGate(permissions)
+        self.reconcile_permissions()
+
+    def reconcile_permissions(self) -> None:
+        """Delete or trim highlights that contradict the bound gate."""
+        gate = self._permission_gate
+        if gate is None or not self.enabled or self.store is None:
+            return
+        for highlight in list(self.store.get_all()):
+            if highlight.id is None:
+                continue
+            revised = without_stale_permission_claims(highlight.content or "", gate)
+            if revised is None:
+                self.store.delete(highlight.id)
+            elif revised != highlight.content:
+                self.store.update_content(highlight.id, revised)
+
+    def _apply_permission_text(self, text: str) -> str:
+        gate = self._permission_gate
+        if gate is None:
+            return text
+        revised = without_stale_permission_claims(text or "", gate)
+        if revised is None:
+            return ""
+        return revised
+
+    def _apply_permission_highlight(
+        self, highlight: MemoryHighlight
+    ) -> Optional[MemoryHighlight]:
+        """Drop a highlight only when the live gate rejects its permission claim."""
+        gate = self._permission_gate
+        if gate is None:
+            return highlight
+        revised = without_stale_permission_claims(highlight.content or "", gate)
+        if revised is None:
+            return None
+        highlight.content = revised
+        return highlight
+
     async def record(self, user_message: str, agent_response: str, source: str) -> Optional[MemoryHighlight]:
         if not self.enabled:
             return None
@@ -43,6 +92,9 @@ class MemoryMiddleware:
         
         if highlight:
             highlight = self._scrub_highlight(highlight)
+            highlight = self._apply_permission_highlight(highlight)
+            if highlight is None:
+                return None
             self.store.append(highlight)
             self._enforce_limits(highlight.category)
         
@@ -63,6 +115,7 @@ class MemoryMiddleware:
             return None
 
         fact = self._scrub_text(fact)
+        fact = self._apply_permission_text(fact)
         if not fact:
             return None
 
@@ -121,6 +174,9 @@ class MemoryMiddleware:
         
         if highlight:
             highlight = self._scrub_highlight(highlight)
+            highlight = self._apply_permission_highlight(highlight)
+            if highlight is None:
+                return None
             self.store.append(highlight)
             self._enforce_limits(highlight.category)
         
@@ -134,6 +190,9 @@ class MemoryMiddleware:
     def format_memories(self, context: str) -> str:
         if not self.enabled:
             return ""
+
+        # A row recorded earlier in this process can still be stale.
+        self.reconcile_permissions()
 
         # Get relevance-filtered memories
         relevant = self.retriever.retrieve(context, limit=self.config.relevance_count)
