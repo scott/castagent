@@ -1,5 +1,9 @@
-import DigitalOceanDeploy from '../digitalocean'
-import type {DeploymentProvider} from '../types'
+import DigitalOceanDeploy, {
+  dropletHostFromUrl,
+  isLoopbackClientUrl,
+  startDropletSshTunnel,
+} from '../digitalocean'
+import type {ConnectContext, DeploymentProvider} from '../types'
 import {upgradeDigitalOceanDeployment} from '../upgrades'
 import {DIGITALOCEAN_AUTH, DOCTL_CLI} from './shared'
 
@@ -32,5 +36,33 @@ export const digitaloceanProvider: DeploymentProvider = {
   },
   async upgrade(ctx) {
     await upgradeDigitalOceanDeployment(ctx, ctx.agentName, ctx.version, ctx.versionTarballPath)
+  },
+  async connect(ctx: ConnectContext) {
+    let host: string
+    try {
+      host = dropletHostFromUrl(ctx.url)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      ctx.error(message)
+      return
+    }
+    ctx.log(`Opening an SSH tunnel to ${host}. The bearer token stays inside SSH.`)
+    let tunnel: Awaited<ReturnType<typeof startDropletSshTunnel>>
+    try {
+      tunnel = await startDropletSshTunnel(host, ctx.log)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      ctx.error(
+        `Could not open an SSH tunnel to the DigitalOcean droplet at ${host}.\n` +
+        `${message}\n` +
+        'The agent listens on 127.0.0.1:8080. cast connect will not send the bearer token to a public HTTP URL.',
+      )
+      return
+    }
+    if (!isLoopbackClientUrl(tunnel.url)) {
+      try { tunnel.process.kill() } catch { /* already gone */ }
+      ctx.error('Refusing to send the bearer token to a public URL.')
+    }
+    return {url: tunnel.url, proxyProcess: tunnel.process}
   },
 }

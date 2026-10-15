@@ -55,6 +55,20 @@ describe('buildHostMotd', () => {
     expect(motd).to.not.include('cast-tui')
   })
 
+  it('does not advertise a public HTTP URL when access is the SSH tunnel', () => {
+    const motd = buildHostMotd({
+      ...baseCtx,
+      a2aUrl: 'http://203.0.113.1:8080',
+      privateSsh: true,
+    })
+    expect(motd).to.not.include('http://203.0.113.1:8080')
+    expect(motd).to.not.include('http://')
+    expect(motd).to.not.include('curl')
+    expect(motd).to.include('127.0.0.1:8080')
+    expect(motd).to.include('cast connect email-agent')
+    expect(motd).to.include('SSH tunnel')
+  })
+
   it('always shows the log tail command regardless of TUI presence', () => {
     const withTui = buildHostMotd({...baseCtx, onHostTui: true})
     const withoutTui = buildHostMotd({...baseCtx, onHostTui: false})
@@ -87,6 +101,19 @@ describe('buildProfileSnippet', () => {
   it('omits the cast-tui hint when onHostTui is undefined (safe default)', () => {
     const snippet = buildProfileSnippet({...baseCtx})
     expect(snippet).to.not.include('cast-tui')
+  })
+
+  it('points at cast connect and omits the public URL when access is the SSH tunnel', () => {
+    const snippet = buildProfileSnippet({
+      ...baseCtx,
+      a2aUrl: 'http://203.0.113.1:8080',
+      onHostTui: false,
+      privateSsh: true,
+    })
+    expect(snippet).to.not.include('http://203.0.113.1:8080')
+    expect(snippet).to.not.include('http://')
+    expect(snippet).to.include('cast connect email-agent')
+    expect(snippet).to.include('127.0.0.1:8080')
   })
 
   it('uses A2A API hint instead of docker-exec when TUI is absent', () => {

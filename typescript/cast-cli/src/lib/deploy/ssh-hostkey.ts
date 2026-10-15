@@ -294,7 +294,7 @@ function hostKeyRejected(text: string): boolean {
 export async function execDigitalOceanSsh(
   ip: string,
   remoteCmd: string,
-  options?: {silent?: boolean; timeoutMs?: number},
+  options?: {silent?: boolean; timeoutMs?: number; input?: string},
 ): Promise<{stdout: string; stderr: string; exitCode: number}> {
   assertPinnedHostKey(ip)
   const result = await execCommand(
@@ -304,6 +304,7 @@ export async function execDigitalOceanSsh(
       silent: options?.silent ?? true,
       shell: false,
       timeoutMs: options?.timeoutMs,
+      input: options?.input,
     },
   )
   if (result.exitCode !== 0 && hostKeyRejected(`${result.stdout}\n${result.stderr}`)) {

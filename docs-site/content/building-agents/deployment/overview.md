@@ -90,8 +90,12 @@ The deployment is a single Docker image that contains:
 - For DigitalOcean with `--with-tui`: the `cast-tui` binary + Bun, so you
   can SSH into the droplet and run `cast-tui` inside the container.
 
-The image exposes A2A on port 8080. The provider assigns a public URL
-(Railway/Fly/DO) or you use `docker port` to map it locally.
+The image exposes A2A on port 8080. Railway and Fly assign a public
+HTTPS URL. A DigitalOcean droplet binds that port to `127.0.0.1` and
+records `https://<droplet-ip>` as the droplet address. `cast connect`
+opens an SSH tunnel to that loopback port and does not send the bearer
+token over public HTTP. Docker maps the port on the machine that ran
+`cast deploy`.
 
 For Docker, `requirements.txt` is written when you deploy or upgrade. It
 starts from `pip freeze` of `python/.venv` when that virtualenv exists,

@@ -844,6 +844,9 @@ export async function execCommand(
     })
 
     if (options?.input && proc.stdin) {
+      // A failed ssh can close stdin before the write finishes (EPIPE).
+      // The process error and exit handlers report that failure.
+      proc.stdin.on('error', () => {})
       proc.stdin.write(options.input)
       proc.stdin.end()
     }
