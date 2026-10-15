@@ -94,8 +94,10 @@ saved before the model replies. The fact is appended to
 `memory/notes.md` and inserted into `memory/memory.db` as a
 preference. Before either write, the privacy filter scrubs provider
 keys, including a bare OpenRouter key (`sk-or-v1-...`), other `sk-`
-keys, and DigitalOcean tokens (`dop_v1_`, `doo_v1_`, `dor_v1_`). The
-next session includes recent rows from that database
+keys, and DigitalOcean tokens (`dop_v1_`, `doo_v1_`, `dor_v1_`).
+Bash writes to `memory/notes.md` go through the same filter, including
+when the agent saves a note such as "remember this permanently".
+The next session includes recent rows from that database
 in the prompt. The system prompt tells the agent this store exists.
 
 If the agent wants to use the memory from a custom tool:
@@ -128,8 +130,9 @@ docker exec -it cast-agent ls /app/agent/memory/
 ```
 
 `memory/memory.db` is the runtime SQLite database. `cast git` excludes
-it from the agent repository. `memory/notes.md` is excluded too, and
-the agent git tools do not stage that file.
+it from the agent repository. `memory/notes.md` is excluded too.
+`cast git commit` does not commit it, including a copy that was already
+tracked, and the agent git tools do not stage that file.
 
 ## Backing up
 

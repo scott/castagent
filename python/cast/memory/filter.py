@@ -72,3 +72,15 @@ class PrivacyFilter:
             if pattern.search(text):
                 return True
         return False
+
+
+def scrub_notes_text(text: str) -> str:
+    """Redact secrets in notes text and keep line breaks.
+
+    PrivacyFilter.scrub collapses whitespace when preserve_structure is
+    true. A notes file is more than one fact, so callers that rewrite
+    memory/notes.md use this instead.
+    """
+    if not isinstance(text, str) or not text:
+        return text
+    return PrivacyFilter().scrub(text, preserve_structure=False)

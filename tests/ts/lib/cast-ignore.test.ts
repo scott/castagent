@@ -122,6 +122,32 @@ describe('cast ignore rules', () => {
     expect(match).to.contain('memory/notes.md')
   })
 
+  it('stops tracking memory/notes.md that was committed before the ignore rule', () => {
+    const agent = path.join(root, 'tracked-notes')
+    initRepo(agent)
+    fs.mkdirSync(path.join(agent, 'memory'))
+    const secret = 'sk-or-v1-dummy\n'
+    fs.writeFileSync(path.join(agent, 'memory', 'notes.md'), secret)
+    fs.writeFileSync(path.join(agent, '.gitignore'), '*.log\n')
+    fs.writeFileSync(path.join(agent, '.castignore'), '*.log\n')
+    git(agent, ['add', '-A'])
+    git(agent, ['commit', '-m', 'track notes'])
+
+    ensureMemoryDatabaseIgnored(agent)
+
+    expect(fs.readFileSync(path.join(agent, 'memory', 'notes.md'), 'utf8')).to.equal(secret)
+    expect(git(agent, ['ls-files', '--', 'memory/notes.md'])).to.equal('')
+    const staged = git(agent, ['diff', '--cached', '--name-status'])
+    expect(staged).to.contain('D\tmemory/notes.md')
+    expect(git(agent, ['check-ignore', '-v', '--', 'memory/notes.md'])).to.contain('memory/notes.md')
+
+    ensureMemoryDatabaseIgnored(agent)
+    expect(git(agent, ['ls-files', '--', 'memory/notes.md'])).to.equal('')
+    const gitignore = fs.readFileSync(path.join(agent, '.gitignore'), 'utf8')
+    expect(gitignore.match(/memory\/notes\.md/g)).to.have.length(1)
+    expect(fs.readFileSync(path.join(agent, '.castignore'), 'utf8').match(/memory\/notes\.md/g)).to.have.length(1)
+  })
+
   it('adds memory/notes.md to an older repository once', () => {
     const agent = path.join(root, 'notes-legacy')
     initRepo(agent)

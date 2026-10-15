@@ -15,6 +15,8 @@ from cast.harness.permissions import ApprovalBroker, PermissionGate, guard_tool
 from cast.memory.filter import PrivacyFilter
 from cast.memory.middleware import MemoryMiddleware
 from cast.memory.store import MemoryHighlight
+from cast.memory.filter import scrub_notes_text
+from cast.tools.bash import bash_tool
 from cast.tools.git import git_add, git_commit, git_push
 
 
@@ -167,6 +169,90 @@ class TestRememberScrubsBothSinks:
         assert "public-tag" in stored.tags
         assert OPENROUTER_DUMMY.encode() not in _memory_bytes(agent)
         assert DIGITALOCEAN_DUMMY.encode() not in _memory_bytes(agent)
+
+
+class TestBashNotesWrites:
+    """Issue #274: bash is a notes write path, including "remember this permanently"."""
+
+    def test_scrub_notes_text_keeps_line_breaks(self):
+        text = (
+            "Install sk-learn for the model\n"
+            f"key {OPENROUTER_DUMMY} and {DIGITALOCEAN_DUMMY}\n"
+            "favorite fruit is quince\n"
+        )
+        result = scrub_notes_text(text)
+        assert OPENROUTER_DUMMY not in result
+        assert DIGITALOCEAN_DUMMY not in result
+        assert result.splitlines() == [
+            "Install sk-learn for the model",
+            "key [REDACTED] and [REDACTED]",
+            "favorite fruit is quince",
+        ]
+
+    def _agent(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+        agent = tmp_path / "agent"
+        (agent / "memory").mkdir(parents=True)
+        monkeypatch.setenv("CAST_AGENT_PATH", str(agent))
+        return agent
+
+    def test_bash_permanent_note_scrubs_bare_key(self, tmp_path, monkeypatch):
+        agent = self._agent(tmp_path, monkeypatch)
+        command = (
+            "cat > memory/notes.md << 'EOF'\n"
+            f"remember this permanently {OPENROUTER_DUMMY}\n"
+            "favorite fruit is quince\n"
+            "EOF\n"
+        )
+        bash_tool.invoke({"command": command})
+        text = (agent / "memory" / "notes.md").read_text(encoding="utf-8")
+        assert OPENROUTER_DUMMY not in text
+        assert "[REDACTED]" in text
+        assert "remember this permanently" in text
+        assert "quince" in text
+
+    def test_bash_append_scrubs_provider_keys_and_keeps_other_lines(self, tmp_path, monkeypatch):
+        agent = self._agent(tmp_path, monkeypatch)
+        notes = agent / "memory" / "notes.md"
+        notes.write_text("favorite fruit is quince\n", encoding="utf-8")
+        command = (
+            "printf '%s\\n' "
+            f"'deploy {DIGITALOCEAN_DUMMY} provider {PROVIDER_DUMMY} "
+            f"oauth {OAUTH_DUMMY} refresh {REFRESH_DUMMY}' >> memory/notes.md"
+        )
+        bash_tool.invoke({"command": command})
+        text = notes.read_text(encoding="utf-8")
+        for secret in (DIGITALOCEAN_DUMMY, PROVIDER_DUMMY, OAUTH_DUMMY, REFRESH_DUMMY):
+            assert secret not in text
+        assert "quince" in text
+        assert text.count("[REDACTED]") >= 4
+
+    def test_absolute_path_write_is_scrubbed(self, tmp_path, monkeypatch):
+        agent = self._agent(tmp_path, monkeypatch)
+        notes = agent / "memory" / "notes.md"
+        command = f"printf '%s\\n' '{OPENROUTER_DUMMY}' > {notes}"
+        result = bash_tool.invoke({"command": command})
+        assert OPENROUTER_DUMMY not in result
+        text = notes.read_text(encoding="utf-8")
+        assert text == "[REDACTED]\n"
+        assert OPENROUTER_DUMMY not in text
+
+    def test_failed_command_still_scrubs_a_notes_write(self, tmp_path, monkeypatch):
+        agent = self._agent(tmp_path, monkeypatch)
+        notes = agent / "memory" / "notes.md"
+        command = f"printf '%s\\n' '{OPENROUTER_DUMMY}' > memory/notes.md; exit 1"
+        bash_tool.invoke({"command": command})
+        assert OPENROUTER_DUMMY not in notes.read_text(encoding="utf-8")
+        assert "[REDACTED]" in notes.read_text(encoding="utf-8")
+
+    def test_unrelated_bash_leaves_clean_notes_unchanged(self, tmp_path, monkeypatch):
+        agent = self._agent(tmp_path, monkeypatch)
+        notes = agent / "memory" / "notes.md"
+        original = "favorite fruit is quince\n"
+        notes.write_text(original, encoding="utf-8")
+        before = notes.stat().st_mtime_ns
+        bash_tool.invoke({"command": "echo hello"})
+        assert notes.read_text(encoding="utf-8") == original
+        assert notes.stat().st_mtime_ns == before
 
 
 class TestGitDoesNotPublishNotes:

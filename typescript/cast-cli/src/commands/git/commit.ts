@@ -4,6 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 import {simpleGit, type SimpleGit} from 'simple-git'
 import * as yaml from 'yaml'
+import {ensureMemoryDatabaseIgnored, memoryNotesAreTracked, untrackMemoryNotes} from '../../lib/cast-ignore'
 
 export default class GitCommit extends Command {
   static description = 'Commit changes to an agent repository'
@@ -128,15 +129,29 @@ cast dev ${agentName}
     try {
       const git: SimpleGit = simpleGit(agentPath)
 
+      // A clean tree that does not already track notes stays clean.
+      // Tracked notes are removed even when nothing else changed, so
+      // HEAD no longer contains memory/notes.md.
+      const trackedNotes = memoryNotesAreTracked(agentPath)
       const status = await git.status()
-      if (status.isClean()) {
+      if (status.isClean() && !trackedNotes) {
         this.log('Nothing to commit - working tree is clean.')
         return
       }
 
+      ensureMemoryDatabaseIgnored(agentPath)
       this.regenerateReadme(agentPath)
 
       await git.add('.')
+      // git add updates a tracked notes file even after it is ignored.
+      // Drop it again so the commit cannot record the working tree copy.
+      const removedNotes = untrackMemoryNotes(agentPath) || trackedNotes
+
+      const afterAdd = await git.status()
+      if (afterAdd.isClean()) {
+        this.log('Nothing to commit - working tree is clean.')
+        return
+      }
 
       const commitResult = await git.commit(message)
 
@@ -146,6 +161,9 @@ cast dev ${agentName}
       this.log(`  Files: ${commitResult.summary.changes} changed`)
       this.log(`  Insertions: +${commitResult.summary.insertions}`)
       this.log(`  Deletions: -${commitResult.summary.deletions}`)
+      if (removedNotes) {
+        this.log('  memory/notes.md is private and was left untracked.')
+      }
 
     } catch (error: any) {
       this.error(`Failed to commit: ${error.message}`)

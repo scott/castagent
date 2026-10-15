@@ -304,7 +304,7 @@ cast dev <agent-name>
 
 If that name is not on disk yet, `cast dev <agent-name>` starts the same new-agent flow and creates `~/.cast/agents/<agent-name>/` from your description. `cast update`, `cast deploy`, and `cast upgrade` do not create a missing agent; they tell you to run `cast new`.
 
-`cast dev` keeps persistent memory in `~/.cast/agents/<name>/memory/`. A message such as `remember: my favorite fruit is quince` is written to `memory/notes.md` and `memory/memory.db`. Provider keys are scrubbed before those writes, including a bare `sk-or-v1-` key, other `sk-` keys, and DigitalOcean `dop_v1_`, `doo_v1_`, and `dor_v1_` tokens. The `read` tool resolves `memory/notes.md` against that agent directory. `memory/notes.md` is in the default gitignore, and the agent git tools do not stage it.
+`cast dev` keeps persistent memory in `~/.cast/agents/<name>/memory/`. A message such as `remember: my favorite fruit is quince` is written to `memory/notes.md` and `memory/memory.db`. Provider keys are scrubbed before those writes, and again when bash writes `memory/notes.md` (including a note such as "remember this permanently"). Scrubbed values include a bare `sk-or-v1-` key, other `sk-` keys, and DigitalOcean `dop_v1_`, `doo_v1_`, and `dor_v1_` tokens. The `read` tool resolves `memory/notes.md` against that agent directory. `memory/notes.md` is in the default gitignore, and the agent git tools do not stage it.
 
 `cast dev` starts each MCP server listed in `tools.mcp` and keeps that process alive until the agent exits. The server's tools are registered with the agent, and a tool call is proxied to that process. Restart `cast dev` after changing an MCP config. A server file that does not parse, or a server that fails to start, is skipped. The other servers still start. Each server process receives `PATH` and the variables in its YAML `env` map. It does not inherit the rest of the Cast process environment.
 
@@ -535,7 +535,7 @@ A Git repository that has no `.gitignore` yet receives one.
 `repository.branch` is `main`, matching the checked-out branch. If Git
 has no `user.name` and `user.email`, init stops before creating the
 repository and tells you to set them with `git config`. `cast dev`
-adds the memory database rules and `memory/notes.md` to an agent that already has a Git repo.
+adds the memory database rules and `memory/notes.md` to an agent that already has a Git repo, and stops tracking `memory/notes.md` when an older commit already included it. `cast git commit` leaves that file on disk and out of the new commit.
 `git_push` defaults to `ask` when `harness.permissions` has no `git_push` entry. Set `git_push: always-allow` to push without a prompt.
 
 `cast git remote <agent> create` uses `gh` to create the GitHub repository and writes `repository.url` from that repository's owner and host. It does not use the local username, and it leaves the rest of `agent.yaml` unchanged.
