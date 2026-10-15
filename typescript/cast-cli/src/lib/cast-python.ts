@@ -24,8 +24,8 @@ export function resolveCastPythonPath(moduleDir: string = __dirname, homeDir?: s
  * Interpreter and package directory for modules that ship in this
  * checkout, such as `cast.undo`.
  *
- * `cast migrate` copies migrate.py, releases.py, and versioning.py into
- * ~/.cast/python. That copy does not include undo.py, so system python3
+ * `cast migrate` copies its migration modules into ~/.cast/python.
+ * That copy does not include undo.py, so system python3
  * with that directory on sys.path raises ModuleNotFoundError. Prefer the
  * checkout package and the virtualenv created next to it. System python3
  * is only the fallback when that virtualenv has not been created.
