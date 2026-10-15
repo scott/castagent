@@ -61,6 +61,13 @@ def call_text(arguments: dict, initialized: bool) -> str:
         return "initialized" if initialized else "not-initialized"
     if text == "env":
         return os.environ.get("CAST_MCP_MARKER", "")
+    if text == "envkeys":
+        return ",".join(sorted(os.environ))
+    if isinstance(text, str) and text.startswith("env:"):
+        name = text[4:]
+        if not name or name not in os.environ:
+            return "<missing>"
+        return os.environ[name]
     return str(text)
 
 
