@@ -49,8 +49,9 @@ remote has no main branch.
 Leaves ~/.cast agents, config, and tokens untouched. Resets tracked TypeScript
 build info files, which a build rewrites. Stops without rebuilding when any
 other uncommitted change is present, or when the local upstream branch has
-commits that cannot fast-forward. Also stops when the origin commit is not
-signed by the trusted key shipped in this script.
+commits that cannot fast-forward. Also stops when gpg is missing (install gnupg).
+Also stops when the origin commit is not signed by the trusted key shipped
+in this script.
 
 This does not upgrade a deployed agent. That command is: cast upgrade <agent>
 EOF
@@ -444,8 +445,8 @@ verify_signed_commit() {
     local keyfile gpghome status
 
     if ! command -v gpg >/dev/null 2>&1; then
-        log_error "gpg is required to verify the upstream commit."
-        return 1
+        log_error "gpg is required to verify the upstream commit. To continue, install gnupg and run this script again."
+        exit 1
     fi
     keyfile="$(mktemp "${TMPDIR:-/tmp}/cast-trust.XXXXXX")"
     gpghome="$(mktemp -d "${TMPDIR:-/tmp}/cast-gpg.XXXXXX")"

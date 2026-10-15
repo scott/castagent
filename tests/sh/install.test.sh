@@ -306,8 +306,17 @@ EOF
 cat > "$TMP/stubs/pkg-config" << 'EOF'
 #!/bin/bash
 # A developer machine may already have libsecret. Report it missing so the
-# install test always exercises the package-install path.
+# install test always exercises the package-install path, unless a case sets
+# CAST_PKG_CONFIG_OK=1 to pretend libsecret is already present.
+if [[ "${CAST_PKG_CONFIG_OK:-}" == 1 ]]; then
+    exit 0
+fi
 exit 1
+EOF
+
+cat > "$TMP/stubs/gcc" << 'EOF'
+#!/bin/bash
+exit 0
 EOF
 
 cat > "$TMP/stubs/brew" << 'EOF'
@@ -488,7 +497,13 @@ CLONE="$LINUX_HOME/.cast/castagent"
 assert_contains "$CAST_INSTALL_LOG" "git clone --branch main --depth 1 https://github.com/scott/castagent.git $CLONE" "one-liner clones the pinned ref"
 assert_contains "$CAST_INSTALL_LOG" "git -C $CLONE -c gpg.format=openpgp verify-commit HEAD" "one-liner verifies the commit signature"
 assert_not_contains "$CAST_INSTALL_LOG" "raw.githubusercontent.com" "one-liner does not download install.sh again"
-assert_contains "$CAST_INSTALL_LOG" "apt-get install -y git curl ca-certificates tar unzip build-essential pkg-config libsecret-1-dev" "linux installs build packages"
+assert_contains "$CAST_INSTALL_LOG" "apt-get install -y git curl ca-certificates tar unzip build-essential pkg-config libsecret-1-dev gnupg" "linux installs build packages"
+assert_contains "$SCRIPT_SRC" "pkgconf-pkg-config libsecret-devel gnupg2" "dnf installs gnupg2"
+assert_contains "$SCRIPT_SRC" "pkgconfig libsecret-devel gnupg2" "yum installs gnupg2"
+assert_contains "$SCRIPT_SRC" "base-devel pkgconf libsecret gnupg" "pacman installs gnupg"
+assert_contains "$SCRIPT_SRC" "build-base pkgconfig libsecret-dev gnupg" "apk installs gnupg"
+assert_contains "$SCRIPT_SRC" "brew install gnupg" "macOS installs gnupg with Homebrew"
+assert_contains "$SCRIPT_SRC" "libsecret, and gnupg, then run this script again." "unsupported package managers mention gnupg"
 assert_contains "$CAST_INSTALL_LOG" "curl https://nodejs.org/dist/v20.20.2/node-v20.20.2-linux-x64.tar.gz" "node tarball is pinned"
 assert_contains "$TMP/linux.out" "Downloading node-v20.20.2-linux-x64.tar.gz" "linux downloads the x64 tarball"
 assert_contains "$TMP/linux.out" "Verified SHA-256 for node 20.20.2 linux-x64" "node tarball is checked before unpack"
@@ -767,5 +782,37 @@ run_repo_install "$TMP/otherkey-home" "$OTHER_REPO" "$TMP/otherkey-install.out"
 [[ "$RUN_STATUS" -ne 0 ]] || { cat "$TMP/otherkey-install.out" >&2; fail "a commit signed by another key should fail"; }
 assert_contains "$TMP/otherkey-install.out" "The commit is not signed by the trusted key." "another signing key is refused"
 assert_not_contains "$TMP/otherkey-install.out" "RAN_CLONED_INSTALLER" "another key's install.sh is not executed"
+
+# libsecret is present and gpg is not. The installer must still request
+# gnupg, then stop with an install hint instead of a signature error.
+nogpg_bin="$TMP/bin-no-gpg"
+mkdir -p "$nogpg_bin"
+for dir in /usr/bin /bin; do
+    for f in "$dir"/*; do
+        base="${f##*/}"
+        case "$base" in
+            gpg|gpg2) continue ;;
+        esac
+        if [[ ! -e "$nogpg_bin/$base" ]]; then
+            ln -s "$f" "$nogpg_bin/$base"
+        fi
+    done
+done
+saved_path="$PATH"
+PATH="$TMP/stubs:$nogpg_bin"
+export PATH
+export CAST_PKG_CONFIG_OK=1
+command -v gpg >/dev/null 2>&1 && fail "gpg should be hidden for the missing-gpg install"
+NOGPG_HOME="$TMP/nogpg-home"
+reset_log
+run_piped "$NOGPG_HOME" "$TMP/nogpg-install.out"
+PATH="$saved_path"
+export PATH
+unset CAST_PKG_CONFIG_OK
+[[ "$RUN_STATUS" -ne 0 ]] || { cat "$TMP/nogpg-install.out" >&2; fail "missing gpg should fail the install"; }
+assert_contains "$CAST_INSTALL_LOG" "apt-get install -y git curl ca-certificates tar unzip build-essential pkg-config libsecret-1-dev gnupg" "missing gpg still installs gnupg"
+assert_contains "$TMP/nogpg-install.out" "install gnupg" "missing gpg tells you to install gnupg"
+assert_not_contains "$TMP/nogpg-install.out" "The commit is not signed by the trusted key." "missing gpg is not reported as a bad signature"
+assert_not_contains "$CAST_INSTALL_LOG" "npm " "missing gpg does not build"
 
 printf 'ok\n'
