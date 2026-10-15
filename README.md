@@ -304,7 +304,7 @@ If that name is not on disk yet, `cast dev <agent-name>` starts the same new-age
 
 `cast dev` keeps persistent memory in `~/.cast/agents/<name>/memory/`. A message such as `remember: my favorite fruit is quince` is written to `memory/notes.md` and `memory/memory.db`. The `read` tool resolves `memory/notes.md` against that agent directory.
 
-`cast dev` starts each MCP server listed in `tools.mcp` and keeps that process alive until the agent exits. The server's tools are registered with the agent, and a tool call is proxied to that process. Restart `cast dev` after changing an MCP config. A server file that does not parse, or a server that fails to start, is skipped. The other servers still start.
+`cast dev` starts each MCP server listed in `tools.mcp` and keeps that process alive until the agent exits. The server's tools are registered with the agent, and a tool call is proxied to that process. Restart `cast dev` after changing an MCP config. A server file that does not parse, or a server that fails to start, is skipped. The other servers still start. Each server process receives `PATH` and the variables in its YAML `env` map. It does not inherit the rest of the Cast process environment.
 
 Inside that wizard, `/git`, `/undo`, `/redo`, `/describe`, and `/releases` act on the agent just created. Before an agent exists, they reply `No agent is loaded.` `/undo` and `/redo` show the CLI failure reason in the chat. The CLI process does not write that text over the input line.
 

@@ -34,7 +34,23 @@ env:
 
 The `server` key is the MCP server's identifier (used in `agent.yaml`).
 The `command` is what the runtime spawns; the MCP protocol runs over
-stdio between the agent and the server process. `env` is passed through.
+stdio between the agent and the server process.
+
+The server process receives `PATH` and the variables in `env`. Other
+variables from the Cast process are not copied. That includes model
+API keys, `AUTH_TOKEN`, and deployment tokens. To pass one of those
+through, name it in `env` and reference it:
+
+```yaml
+env:
+  GITHUB_TOKEN: ${GITHUB_TOKEN}
+  HOME: ${HOME}
+```
+
+`${NAME}` and `$NAME` expand only when `NAME` is a key in `env`, or
+`PATH`. The value is read from the Cast process, unless this file sets
+`NAME` to a literal. A reference to any other name is left unchanged.
+`~` is expanded while the value is prepared.
 
 The runtime is responsible for keeping the MCP server process alive and
 proxying tool calls.

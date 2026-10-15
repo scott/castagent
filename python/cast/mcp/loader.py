@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import sys
 from typing import Any
@@ -14,6 +15,9 @@ from langchain_core.tools import StructuredTool
 from .session import DEFAULT_TIMEOUT, McpError, McpStdioSession
 
 _NAME_BREAKS = str.maketrans({char: "_" for char in " \t\r\n/\\:."})
+# PATH is the only parent variable an MCP server receives on its own.
+_BASELINE_ENV = ("PATH",)
+_ENV_REF = re.compile(r"\$(\w+|\{[^}]*\}?)", re.ASCII)
 
 
 def load_mcp_tools(
@@ -195,20 +199,82 @@ def _command_argv(config: dict[str, Any]) -> list[str]:
 
 
 def _command_env(config: dict[str, Any]) -> dict[str, str]:
+    """Build the environment for one MCP server process.
+
+    The child receives PATH, when the parent has it, and the variables
+    declared in the server YAML. Other parent variables are not copied.
+    ``${NAME}`` and ``$NAME`` expand only when NAME is one of those
+    variables. A literal in this file wins over the parent value.
+    """
     raw = config.get("env") or {}
     if raw is None:
         raw = {}
     if not isinstance(raw, dict):
         raise TypeError("env must be a mapping")
-    env = os.environ.copy()
+    declared: dict[str, str] = {}
     for key, value in raw.items():
         if not isinstance(key, str) or not key:
             raise TypeError("env keys must be strings")
         text = _env_value(value)
         if text is None:
             raise TypeError(f"env value for {key} must be a string or number")
-        env[key] = os.path.expanduser(os.path.expandvars(text))
+        declared[key] = text
+    allowed = set(declared)
+    allowed.update(_BASELINE_ENV)
+    # Parent values are the fallback. A literal in this file overrides
+    # that fallback before any reference is expanded, so one entry cannot
+    # read a parent secret that another entry replaced.
+    source = {name: os.environ[name] for name in allowed if name in os.environ}
+    pending: list[tuple[str, str]] = []
+    for key, text in declared.items():
+        if _mentions_allowed(text, allowed):
+            pending.append((key, text))
+            continue
+        source[key] = os.path.expanduser(text)
+    env: dict[str, str] = {}
+    for name in _BASELINE_ENV:
+        if name in declared or name not in source:
+            continue
+        env[name] = source[name]
+    pending_keys = {key for key, _ in pending}
+    for key, text in declared.items():
+        if key in pending_keys:
+            env[key] = os.path.expanduser(_expand_listed(text, allowed, source))
+            continue
+        env[key] = source[key]
     return env
+
+
+def _mentions_allowed(text: str, allowed: set[str]) -> bool:
+    for match in _ENV_REF.finditer(text):
+        name = _ref_name(match.group(1))
+        if name is not None and name in allowed:
+            return True
+    return False
+
+
+def _ref_name(raw: str) -> str | None:
+    if raw.startswith("{") and raw.endswith("}"):
+        return raw[1:-1]
+    if raw.startswith("{"):
+        return None
+    return raw
+
+
+def _expand_listed(text: str, allowed: set[str], source: dict[str, str]) -> str:
+    """Expand ``$NAME`` and ``${NAME}`` when NAME is allowed and set.
+
+    A reference to any other name is left unchanged, so mentioning a
+    parent secret in a value does not copy that secret.
+    """
+
+    def replace(match: re.Match[str]) -> str:
+        name = _ref_name(match.group(1))
+        if name is not None and name in allowed and name in source:
+            return source[name]
+        return match.group(0)
+
+    return _ENV_REF.sub(replace, text)
 
 
 def _env_value(value: Any) -> str | None:

@@ -79,6 +79,73 @@ class TestMcpConfigHelpers:
         })
         assert env["GMAIL_CREDENTIALS_PATH"] == str(tmp_path / ".cast/vault/token.json")
         assert env["PORT"] == "3000"
+        assert "HOME" not in env
+
+    def test_env_is_path_plus_declared_names(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+        monkeypatch.setenv("HOME", "/tmp/cast-home")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "dummy-openrouter-key")
+        monkeypatch.setenv("AUTH_TOKEN", "dummy-auth-token")
+        monkeypatch.setenv("DIGITALOCEAN_ACCESS_TOKEN", "dummy-do-token")
+        monkeypatch.setenv("GITHUB_TOKEN", "dummy-github-token")
+        env = _command_env({
+            "env": {
+                "GMAIL_CREDENTIALS_PATH": "~/.cast/vault/token.json",
+                "PORT": 3000,
+                "FLAG": True,
+                "GITHUB_TOKEN": "${GITHUB_TOKEN}",
+                "ALSO_TOKEN": "$GITHUB_TOKEN",
+                "AUTH_TOKEN": "configured-token",
+                "NOTE": "seen=${OPENROUTER_API_KEY}",
+            }
+        })
+        assert set(env) == {
+            "PATH",
+            "GMAIL_CREDENTIALS_PATH",
+            "PORT",
+            "FLAG",
+            "GITHUB_TOKEN",
+            "ALSO_TOKEN",
+            "AUTH_TOKEN",
+            "NOTE",
+        }
+        assert env["PATH"] == "/usr/bin:/bin"
+        assert env["GMAIL_CREDENTIALS_PATH"] == "/tmp/cast-home/.cast/vault/token.json"
+        assert env["PORT"] == "3000"
+        assert env["FLAG"] == "true"
+        assert env["GITHUB_TOKEN"] == "dummy-github-token"
+        assert env["ALSO_TOKEN"] == "dummy-github-token"
+        assert env["AUTH_TOKEN"] == "configured-token"
+        assert env["NOTE"] == "seen=${OPENROUTER_API_KEY}"
+        assert "dummy-openrouter-key" not in env.values()
+        assert "dummy-auth-token" not in env.values()
+        assert "dummy-do-token" not in env.values()
+
+    def test_env_without_path_or_declarations_is_empty(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.delenv("PATH", raising=False)
+        monkeypatch.setenv("AUTH_TOKEN", "dummy-auth-token")
+        assert _command_env({}) == {}
+        assert _command_env({"env": None}) == {}
+        assert _command_env({"env": {}}) == {}
+
+    def test_declared_path_can_extend_the_parent_path(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("PATH", "/usr/bin")
+        monkeypatch.setenv("AUTH_TOKEN", "dummy-auth-token")
+        env = _command_env({"env": {"PATH": "/opt/bin:${PATH}"}})
+        assert env == {"PATH": "/opt/bin:/usr/bin"}
+
+    def test_literal_hides_parent_secret_from_other_entries(self, monkeypatch: pytest.MonkeyPatch):
+        monkeypatch.setenv("PATH", "/usr/bin")
+        monkeypatch.setenv("AUTH_TOKEN", "dummy-auth-token")
+        env = _command_env({
+            "env": {
+                "NOTE": "token=${AUTH_TOKEN}",
+                "AUTH_TOKEN": "configured-token",
+            }
+        })
+        assert env["AUTH_TOKEN"] == "configured-token"
+        assert env["NOTE"] == "token=configured-token"
+        assert "dummy-auth-token" not in env.values()
 
     def test_unique_name_prefixes_collisions(self):
         used = {"bash_tool", "echo_text"}
@@ -237,6 +304,68 @@ class TestMcpLoader:
         assert "outside the agent directory" in warning
         assert "no command" in warning
         assert "failed to start" in warning or "not running" in warning or "exited" in warning
+
+    def test_spawned_server_does_not_inherit_parent_secrets(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ):
+        monkeypatch.setenv("PATH", "/usr/bin:/bin")
+        monkeypatch.setenv("HOME", str(tmp_path))
+        monkeypatch.setenv("OPENROUTER_API_KEY", "dummy-openrouter-key")
+        monkeypatch.setenv("AUTH_TOKEN", "dummy-auth-token")
+        monkeypatch.setenv("DIGITALOCEAN_ACCESS_TOKEN", "dummy-do-token")
+        monkeypatch.setenv("GITHUB_TOKEN", "dummy-github-token")
+        agent_dir = tmp_path / "agent"
+        _write_server(
+            agent_dir,
+            "probe.yaml",
+            "echo",
+            {
+                "CAST_MCP_MARKER": "quince",
+                "GMAIL_CREDENTIALS_PATH": "~/.cast/vault/token.json",
+                "GITHUB_TOKEN": "${GITHUB_TOKEN}",
+                "NOTE": "seen=${OPENROUTER_API_KEY}",
+            },
+        )
+        sessions, tools = load_mcp_tools(
+            str(agent_dir),
+            [{"server": "probe", "config": "mcp/probe.yaml"}],
+            timeout=5,
+        )
+        try:
+            assert len(sessions) == 1
+            # This is the mapping passed to Popen. CPython may later add
+            # LC_CTYPE inside the child; that is not a parent secret.
+            assert set(sessions[0].env) == {
+                "PATH",
+                "CAST_MCP_MARKER",
+                "GMAIL_CREDENTIALS_PATH",
+                "GITHUB_TOKEN",
+                "NOTE",
+            }
+            assert sessions[0].env["GITHUB_TOKEN"] == "dummy-github-token"
+            tool = tools[0]
+            keys = set(tool.invoke({"text": "envkeys"}).split(","))
+            assert keys - set(sessions[0].env) <= {"LC_CTYPE"}
+            assert set(sessions[0].env) <= keys
+            assert tool.invoke({"text": "env"}) == "quince"
+            assert tool.invoke({"text": "env:PATH"}) == "/usr/bin:/bin"
+            assert tool.invoke({"text": "env:GITHUB_TOKEN"}) == "dummy-github-token"
+            assert tool.invoke({"text": "env:NOTE"}) == "seen=${OPENROUTER_API_KEY}"
+            assert tool.invoke({"text": "env:OPENROUTER_API_KEY"}) == "<missing>"
+            assert tool.invoke({"text": "env:AUTH_TOKEN"}) == "<missing>"
+            assert tool.invoke({"text": "env:DIGITALOCEAN_ACCESS_TOKEN"}) == "<missing>"
+            assert tool.invoke({"text": "env:HOME"}) == "<missing>"
+            creds = tool.invoke({"text": "env:GMAIL_CREDENTIALS_PATH"})
+            assert creds == str(tmp_path / ".cast/vault/token.json")
+            joined = "\n".join(
+                tool.invoke({"text": f"env:{name}"}) for name in sorted(keys)
+            )
+            assert "dummy-openrouter-key" not in joined
+            assert "dummy-auth-token" not in joined
+            assert "dummy-do-token" not in joined
+        finally:
+            for session in sessions:
+                session.close()
 
 
 class TestRuntimeAgentMcp:
