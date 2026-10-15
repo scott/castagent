@@ -212,6 +212,7 @@ export default class SessionResume extends Command {
     if (python.command === 'python3' || python.command === 'python') {
       this.warn('Python virtual environment not found at python/.venv/')
       this.warn('Falling back to system python3. Some features may not work correctly.')
+      this.warn('From the repository checkout, run ./setup.sh to create python/.venv.')
     }
 
     this.log(`Starting ${agentName} in development mode...`)

@@ -82,13 +82,15 @@ cd castagent
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-**Quick setup** (if dependencies are already installed):
+**Quick setup** (contributor checkout, including a pull request branch):
 ```bash
-# Just create the global 'cast' command
+npm ci
+npm run build
 ./setup.sh
-
-export PATH="$HOME/.local/bin:$PATH"
+./cast dev <agent>
 ```
+
+`./setup.sh` creates `python/.venv` with the runtime packages `cast dev` imports. It does not install Node dependencies, build the CLI, or change `~/.local/bin/cast`. Pass `--link` to point that command at this checkout. The script prints the previous target when it replaces one. `npm ci` and `npm run build` leave the virtualenv uncreated, and `cast dev` then falls back to system `python3` and exits with `ModuleNotFoundError: No module named 'langchain_core'`. `./upgrade.sh` fast-forwards to a commit signed by the trusted key, so a pull request branch uses `./setup.sh` instead.
 
 **Or manually:**
 ```bash
@@ -105,6 +107,13 @@ npm run build
 mkdir -p ~/.local/bin
 ln -sf $(pwd)/cast ~/.local/bin/cast
 export PATH="$HOME/.local/bin:$PATH"
+
+# Python runtime for cast dev. ./setup.sh does this as well.
+cd python
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .
+pip install langchain langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
 ```
 
 **Upgrading the Cast checkout:**
@@ -226,7 +235,7 @@ cast shutdown abc123   # only that deployment; other providers stay registered
 
 Docker shutdown removes the local image `cast-<agent>:latest` along with the container and memory volumes. The auth token line names the keychain or the token file under `~/.cast/tokens/`, matching the place the token was removed from. DigitalOcean droplet shutdown also removes the account SSH key `cast-do-key` when no other Cast droplet or Cast MicroVM still uses it.
 
-Droplet and MicroVM images copy the Cast package to `/app/cast` and set `PYTHONPATH=/app`. `requirements.txt` lists runtime dependencies and does not pip-install `cast`. The runtime stage installs the git binary. GitPython fails at import when git is missing, and gcc stays in the builder stage so it is not part of the image that runs. A generated Dockerfile that still omits that git install is replaced on the next Droplet or MicroVM deploy. Droplet deploy waits until the container is running and has printed `Agent ready`. A container that exits or keeps restarting fails the deploy, and Cast does not print a deployment SHA. A MicroVM whose workload exits is deleted. If that delete fails, the MicroVM is recorded so `cast shutdown` can remove it. When the MicroVM is deleted, Cast also deletes the registry tag it pushed and the auth token file written for that attempt. The tag and token stay when the MicroVM remains and the deployment is recorded.
+Droplet and MicroVM images copy the Cast package to `/app/cast` and set `PYTHONPATH=/app`. `requirements.txt` lists runtime dependencies and does not pip-install `cast`. The runtime stage installs git with `apt-get install -y --no-install-recommends git` and deletes the apt package lists in that same step. Recommended packages such as openssh-client, xauth, less, and patch stay out of the image. perl stays, because git depends on it. GitPython fails at import when the git binary is missing. gcc stays in the builder stage. A generated Dockerfile that omits this git install is replaced on the next Droplet or MicroVM deploy. Droplet deploy waits until the container is running and has printed `Agent ready`. A container that exits or keeps restarting fails the deploy, and Cast does not print a deployment SHA. A MicroVM whose workload exits is deleted. If that delete fails, the MicroVM is recorded so `cast shutdown` can remove it. When the MicroVM is deleted, Cast also deletes the registry tag it pushed and the auth token file written for that attempt. The tag and token stay when the MicroVM remains and the deployment is recorded.
 
 DigitalOcean MicroVMs (`--provider microvm`) are separate from Droplets. They are in public preview in region MKC1, run linux/amd64 images from DigitalOcean Container Registry, and pause when idle. The next request resumes a paused MicroVM. Cast Agent retries HTTP 503 while it wakes. The edge closes each chat response about 15 seconds after the request starts, even while bytes are still arriving. Cast keeps that reply running and the client continues it on the next request. A keepalive still covers proxies that drop a quiet stream. Deploy or upgrade the agent so the image includes that runtime, and reconnect with a current build. `--with-tui` is rejected. The endpoint expects your DigitalOcean token on `Authorization` and the agent token on `X-Cast-Authorization`. If the edge does not forward that second header, rerun with `--edge-auth-only`. Logs are `doctl compute microvm exec <id> -- <log command>`. `doctl` 1.173.0 or newer is required. A successful `cast shutdown` deletes that deployment's registry tag after the MicroVM is destroyed. Another MicroVM for the same agent keeps its own tag. If that tag delete fails, Cast warns and names the tag that is still in the registry, then continues the rest of shutdown.
 
@@ -570,11 +579,36 @@ castagent/
 │   ├── SPEC.md            # Full specification
 │   └── site/              # Documentation site (Astro, auto-generated)
 ├── cast                   # Bash wrapper script (entry point)
-├── setup.sh               # Quick setup (creates symlink only)
+├── setup.sh               # Contributor setup (python/.venv; --link opts into the global command)
 ├── install.sh             # Full install (deps, build, config)
 ├── upgrade.sh             # Fast-forward to newest upstream and rebuild in place
 └── README.md              # This file
 ```
+
+### Contributor setup
+
+A fresh checkout has no `python/.venv`. Build the CLI, then create that environment before `cast dev`:
+
+```bash
+npm ci
+npm run build
+./setup.sh
+./cast dev <agent>
+```
+
+`./setup.sh` installs the Cast package plus `langchain`, `langchain-openai`, `langchain-core`, `starlette`, `uvicorn`, `pyyaml`, and `python-dotenv` into `python/.venv`. It leaves `~/.local/bin/cast` unchanged. `./setup.sh --link` points that command at this checkout and prints the previous target when it replaces one. When `uv` is on `PATH`, it uses `uv venv` and `uv pip install`. Otherwise it uses `python3 -m venv` and `pip`. On Debian and Ubuntu, `python3 -m venv` needs the `python3-venv` package. The script does not run `npm ci` or `npm run build`. Those steps come first, and the script prints them again when it finishes.
+
+The same environment by hand, from the repository root:
+
+```bash
+cd python
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .
+pip install langchain langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
+```
+
+`cast dev`, `cast new`, and `cast edit` warn when `python/.venv/bin/python3` is missing and tell you to run `./setup.sh`. There is no `python/requirements.txt`. The runtime dependencies live in `python/pyproject.toml` and in the package list above.
 
 ### Building
 
@@ -617,7 +651,7 @@ Every push to `main` and every pull request runs the **Test Coverage** workflow 
 
 ## Configuration
 
-The `cast` command at the repository root is a bash wrapper that delegates to `typescript/cast-cli/bin/run`. When you run `./setup.sh`, `./install.sh`, or `./upgrade.sh`, it creates a symlink from `~/.local/bin/cast` to this wrapper, making the CLI available globally.
+The `cast` command at the repository root is a bash wrapper that delegates to `typescript/cast-cli/bin/run`. `./install.sh` and `./upgrade.sh` create a symlink from `~/.local/bin/cast` to this wrapper. `./setup.sh` leaves that command unchanged unless you pass `--link`.
 
 Create `~/.cast/config.yaml`:
 

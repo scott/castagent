@@ -69,13 +69,45 @@ build and the symlink. To fetch and rebuild in one step, use
 
 ## Quick setup
 
-If dependencies are already installed (e.g. inside a developer checkout):
+`./setup.sh` creates `python/.venv` for a contributor checkout, including
+a pull request branch. It installs the packages `cast dev` imports: the
+Cast package from `python/pyproject.toml`, plus `langchain`,
+`langchain-openai`, `langchain-core`, `starlette`, `uvicorn`, `pyyaml`,
+and `python-dotenv`.
+
+It does not install Node dependencies or build the CLI, and it does not
+change `~/.local/bin/cast`. `./setup.sh --link` points that command at
+this checkout and prints the previous target when it replaces one. When
+it finishes, it prints the remaining steps: `npm ci`, `npm run build`,
+and `./cast dev <agent>`.
+
+`npm ci` and `npm run build` do not create that virtualenv. `cast dev`
+then falls back to system `python3` and exits with
+`ModuleNotFoundError: No module named 'langchain_core'`.
+
+`./upgrade.sh` fast-forwards to a commit signed by the trusted key. A
+pull request branch uses `./setup.sh` instead.
 
 ```bash
+npm ci
+npm run build
 ./setup.sh
-export PATH="$HOME/.local/bin:$PATH"
-cast --version
+./cast dev <agent>
 ```
+
+The same environment by hand, from the repository root:
+
+```bash
+cd python
+python3 -m venv .venv
+. .venv/bin/activate
+pip install -e .
+pip install langchain langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
+```
+
+When `uv` is installed, `./setup.sh` creates the virtualenv with `uv venv`
+and installs with `uv pip`. On Debian and Ubuntu, install `python3-venv`
+before `python3 -m venv`. There is no `python/requirements.txt`.
 
 ## Manual install
 
@@ -87,7 +119,11 @@ npm run build
 mkdir -p ~/.local/bin
 ln -sf "$(pwd)/cast" ~/.local/bin/cast
 export PATH="$HOME/.local/bin:$PATH"
+./setup.sh
 ```
+
+The last step creates `python/.venv`. The [quick setup](#quick-setup)
+section lists the same packages if you want to install them by hand.
 
 ## Verify the install
 
