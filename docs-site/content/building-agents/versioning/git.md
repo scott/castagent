@@ -50,6 +50,11 @@ git config --global user.name "Your Name"
 git config --global user.email "you@example.com"
 ```
 
+`GIT_AUTHOR_NAME`, `GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`,
+`GIT_COMMITTER_EMAIL`, and `GIT_CONFIG_GLOBAL` count as that identity.
+If init fails after it creates `.git`, that directory is removed and
+the agent files are restored, so you can run `cast git init` again.
+
 ## Add a remote
 
 Two paths, depending on whether the repo already exists somewhere:
@@ -228,7 +233,8 @@ manifest does not contain the author's home directory.
 In the TUI, `{% ref "slash:git" %}` dispatches to the same
 subcommands. `/git init` checks out `main` and, when Git has no name
 or email, prints the same `git config` hint instead of creating the
-repository.
+repository. It honors the same `GIT_AUTHOR_NAME` and `GIT_CONFIG_GLOBAL`
+identity. If init fails after creating `.git`, that directory is removed.
 
 ```
 /git status

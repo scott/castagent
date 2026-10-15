@@ -245,6 +245,140 @@ describe('Git Init Command', () => {
         fs.rmSync(agentDir, {recursive: true, force: true})
       }
     })
+
+    it('initializes from GIT_AUTHOR_* when gitconfig has no identity', async () => {
+      const agentName = 'test-git-init-env-' + Date.now()
+      const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
+      fs.mkdirSync(agentDir, {recursive: true})
+      fs.writeFileSync(path.join(agentDir, 'agent.yaml'), 'name: test-agent\nversion: "1.0"\n')
+      const instance = createCommandInstance(GitInit, ['git', 'init', agentName])
+      instance.log = () => {}
+      instance.error = (msg: any) => {
+        throw new Error(typeof msg === 'string' ? msg : String(msg))
+      }
+
+      const saved = snapshotIdentityEnv()
+      hideGitIdentity()
+      process.env.GIT_AUTHOR_NAME = 'Env Author'
+      process.env.GIT_AUTHOR_EMAIL = 'env-author@example.com'
+      process.env.GIT_COMMITTER_NAME = 'Env Committer'
+      process.env.GIT_COMMITTER_EMAIL = 'env-committer@example.com'
+      process.env.GIT_AUTHOR_DATE = '2020-01-02T03:04:05Z'
+      process.env.GIT_COMMITTER_DATE = '2021-05-06T07:08:09Z'
+      try {
+        await instance.run()
+        const ident = execFileSync('git', ['log', '-1', '--format=%an|%ae|%cn|%ce|%aI|%cI'], {
+          cwd: agentDir,
+          encoding: 'utf8',
+        }).trim()
+        expect(ident).to.equal(
+          'Env Author|env-author@example.com|Env Committer|env-committer@example.com|2020-01-02T03:04:05+00:00|2021-05-06T07:08:09+00:00',
+        )
+      } finally {
+        restoreIdentityEnv(saved)
+        fs.rmSync(agentDir, {recursive: true, force: true})
+      }
+    })
+
+    it('initializes from GIT_CONFIG_GLOBAL when author env is unset', async () => {
+      const agentName = 'test-git-init-config-' + Date.now()
+      const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
+      fs.mkdirSync(agentDir, {recursive: true})
+      fs.writeFileSync(path.join(agentDir, 'agent.yaml'), 'name: test-agent\nversion: "1.0"\n')
+      const instance = createCommandInstance(GitInit, ['git', 'init', agentName])
+      instance.log = () => {}
+      instance.error = (msg: any) => {
+        throw new Error(typeof msg === 'string' ? msg : String(msg))
+      }
+
+      const saved = snapshotIdentityEnv()
+      hideGitIdentity()
+      const config = path.join(os.tmpdir(), `cast-identity-gitconfig-${process.pid}-${agentName}`)
+      fs.writeFileSync(config, [
+        '[user]',
+        '\tname = Config User',
+        '\temail = config-user@example.com',
+        '',
+      ].join('\n'))
+      process.env.GIT_CONFIG_GLOBAL = config
+      try {
+        await instance.run()
+        const ident = execFileSync('git', ['log', '-1', '--format=%an|%ae|%cn|%ce'], {
+          cwd: agentDir,
+          encoding: 'utf8',
+        }).trim()
+        expect(ident).to.equal('Config User|config-user@example.com|Config User|config-user@example.com')
+      } finally {
+        restoreIdentityEnv(saved)
+        fs.rmSync(config, {force: true})
+        fs.rmSync(agentDir, {recursive: true, force: true})
+      }
+    })
+
+    it('removes a partial repository when init fails after git init', async () => {
+      const agentName = 'test-git-init-rollback-' + Date.now()
+      const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
+      fs.mkdirSync(agentDir, {recursive: true})
+      const originalYaml = 'name: test-agent\nversion: "1.0"\n'
+      fs.writeFileSync(path.join(agentDir, 'agent.yaml'), originalYaml)
+      const hooks = path.join(os.tmpdir(), `cast-init-hooks-${process.pid}-${agentName}`)
+      fs.mkdirSync(hooks)
+      fs.writeFileSync(path.join(hooks, 'pre-commit'), '#!/bin/sh\necho hook-declined >&2\nexit 1\n')
+      fs.chmodSync(path.join(hooks, 'pre-commit'), 0o755)
+      const config = path.join(os.tmpdir(), `cast-init-hookcfg-${process.pid}-${agentName}`)
+      fs.writeFileSync(config, [
+        '[user]',
+        '\tname = Hook User',
+        '\temail = hook-user@example.com',
+        '[core]',
+        `\thooksPath = ${hooks}`,
+        '',
+      ].join('\n'))
+
+      const failing = createCommandInstance(GitInit, ['git', 'init', agentName])
+      let errorMessage = ''
+      failing.log = () => {}
+      failing.error = (msg: any) => {
+        errorMessage = typeof msg === 'string' ? msg : String(msg)
+      }
+
+      const saved = snapshotIdentityEnv()
+      hideGitIdentity()
+      process.env.GIT_CONFIG_GLOBAL = config
+      try {
+        await failing.run()
+        expect(errorMessage).to.include('hook-declined')
+        expect(errorMessage).to.not.equal(GIT_IDENTITY_HINT)
+        expect(fs.existsSync(path.join(agentDir, '.git'))).to.equal(false)
+        expect(fs.existsSync(path.join(agentDir, '.gitignore'))).to.equal(false)
+        expect(fs.existsSync(path.join(agentDir, 'README.md'))).to.equal(false)
+        expect(fs.readFileSync(path.join(agentDir, 'agent.yaml'), 'utf8')).to.equal(originalYaml)
+
+        fs.writeFileSync(config, [
+          '[user]',
+          '\tname = Hook User',
+          '\temail = hook-user@example.com',
+          '',
+        ].join('\n'))
+        const retry = createCommandInstance(GitInit, ['git', 'init', agentName])
+        retry.log = () => {}
+        retry.error = (msg: any) => {
+          throw new Error(typeof msg === 'string' ? msg : String(msg))
+        }
+        await retry.run()
+        expect(fs.existsSync(path.join(agentDir, '.git'))).to.equal(true)
+        const ident = execFileSync('git', ['log', '-1', '--format=%an|%ae'], {
+          cwd: agentDir,
+          encoding: 'utf8',
+        }).trim()
+        expect(ident).to.equal('Hook User|hook-user@example.com')
+      } finally {
+        restoreIdentityEnv(saved)
+        fs.rmSync(hooks, {recursive: true, force: true})
+        fs.rmSync(config, {force: true})
+        fs.rmSync(agentDir, {recursive: true, force: true})
+      }
+    })
   })
 })
 
@@ -269,6 +403,8 @@ const IDENTITY_ENV_KEYS = [
   'GIT_AUTHOR_EMAIL',
   'GIT_COMMITTER_NAME',
   'GIT_COMMITTER_EMAIL',
+  'GIT_AUTHOR_DATE',
+  'GIT_COMMITTER_DATE',
   'EMAIL',
 ]
 

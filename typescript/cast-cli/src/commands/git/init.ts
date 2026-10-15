@@ -2,10 +2,16 @@ import {Args, Command} from '@oclif/core'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import {simpleGit, type SimpleGit} from 'simple-git'
 import * as yaml from 'yaml'
 import {writeDefaultIgnoreFiles} from '../../lib/cast-ignore'
-import {assertGitAuthorIdentity, GIT_IDENTITY_HINT, isGitIdentityFailure} from '../../lib/git-identity'
+import {
+  assertGitAuthorIdentity,
+  createAgentGit,
+  GIT_IDENTITY_HINT,
+  isGitIdentityFailure,
+  rollbackFailedInit,
+  snapshotInitFiles,
+} from '../../lib/git-identity'
 
 export default class GitInit extends Command {
   static description = 'Initialize a Git repository for an agent'
@@ -127,12 +133,14 @@ cast dev ${agentName}
       return
     }
 
+    let snapshot: Map<string, string | null> | undefined
     try {
       await assertGitAuthorIdentity(agentPath)
+      snapshot = snapshotInitFiles(agentPath)
 
       this.log(`Initializing Git repository for agent '${agentName}'...`)
 
-      const git: SimpleGit = simpleGit(agentPath)
+      const git = createAgentGit(agentPath)
       await git.raw(['init', '-b', 'main'])
 
       this.createCastIgnore(agentPath)
@@ -153,6 +161,7 @@ cast dev ${agentName}
       this.log(`  - Add a remote: cast git remote ${agentName} create origin`)
       this.log(`  - Check status: cast git status ${agentName}`)
     } catch (error: any) {
+      if (snapshot) rollbackFailedInit(agentPath, snapshot)
       if (isGitIdentityFailure(error)) {
         this.error(GIT_IDENTITY_HINT)
         return

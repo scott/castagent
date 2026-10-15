@@ -326,4 +326,64 @@ describe('Git Commit Command', () => {
       }
     })
   })
+
+  it('commits when identity comes only from the environment', async () => {
+    const testAgentName = 'test-commit-env-ident-' + Date.now()
+    const tempAgentDir = path.join(os.homedir(), '.cast', 'agents', testAgentName)
+    fs.mkdirSync(tempAgentDir, {recursive: true})
+    fs.writeFileSync(path.join(tempAgentDir, 'agent.yaml'), 'name: test-agent\nversion: "1.0"\n')
+    execSync('git init -b main', {cwd: tempAgentDir})
+    fs.writeFileSync(path.join(tempAgentDir, 'notes.txt'), 'hello\n')
+
+    const empty = path.join(tempAgentDir, 'empty-gitconfig')
+    fs.writeFileSync(empty, '')
+    const keys = [
+      'GIT_CONFIG_GLOBAL',
+      'GIT_CONFIG_SYSTEM',
+      'GIT_CONFIG_NOSYSTEM',
+      'GIT_CONFIG_COUNT',
+      'GIT_AUTHOR_NAME',
+      'GIT_AUTHOR_EMAIL',
+      'GIT_COMMITTER_NAME',
+      'GIT_COMMITTER_EMAIL',
+      'GIT_AUTHOR_DATE',
+      'GIT_COMMITTER_DATE',
+      'EMAIL',
+    ]
+    const saved = new Map(keys.map(key => [key, process.env[key]]))
+    process.env.GIT_CONFIG_GLOBAL = empty
+    process.env.GIT_CONFIG_SYSTEM = empty
+    process.env.GIT_CONFIG_NOSYSTEM = '1'
+    delete process.env.GIT_CONFIG_COUNT
+    delete process.env.EMAIL
+    process.env.GIT_AUTHOR_NAME = 'Env Author'
+    process.env.GIT_AUTHOR_EMAIL = 'env-author@example.com'
+    process.env.GIT_COMMITTER_NAME = 'Env Committer'
+    process.env.GIT_COMMITTER_EMAIL = 'env-committer@example.com'
+    process.env.GIT_AUTHOR_DATE = '2020-01-02T03:04:05Z'
+    process.env.GIT_COMMITTER_DATE = '2021-05-06T07:08:09Z'
+
+    const instance = createCommandInstance(GitCommit, ['git', 'commit', testAgentName, '-m', 'Env commit'])
+    instance.error = (msg: any) => {
+      throw new Error(typeof msg === 'string' ? msg : String(msg))
+    }
+    instance.log = () => {}
+
+    try {
+      await instance.run()
+      const ident = execFileSync('git', ['log', '-1', '--format=%an|%ae|%cn|%ce|%aI|%cI'], {
+        cwd: tempAgentDir,
+        encoding: 'utf8',
+      }).trim()
+      expect(ident).to.equal(
+        'Env Author|env-author@example.com|Env Committer|env-committer@example.com|2020-01-02T03:04:05+00:00|2021-05-06T07:08:09+00:00',
+      )
+    } finally {
+      for (const [key, value] of saved) {
+        if (value === undefined) delete process.env[key]
+        else process.env[key] = value
+      }
+      fs.rmSync(tempAgentDir, {recursive: true, force: true})
+    }
+  })
 })

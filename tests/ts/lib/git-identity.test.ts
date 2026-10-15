@@ -6,6 +6,7 @@ import * as path from 'path'
 import {
   GIT_IDENTITY_HINT,
   assertGitAuthorIdentity,
+  createAgentGit,
   isGitIdentityFailure,
 } from '../../../typescript/cast-cli/src/lib/git-identity'
 
@@ -18,6 +19,8 @@ const IDENTITY_ENV_KEYS = [
   'GIT_AUTHOR_EMAIL',
   'GIT_COMMITTER_NAME',
   'GIT_COMMITTER_EMAIL',
+  'GIT_AUTHOR_DATE',
+  'GIT_COMMITTER_DATE',
   'EMAIL',
 ]
 
@@ -120,5 +123,76 @@ describe('git author identity', () => {
     }
     expect(stderr).to.match(/unable to auto-detect email address/)
     expect(isGitIdentityFailure(new Error(stderr))).to.equal(true)
+  })
+
+  it('commits with author env when the global gitconfig has no identity', async () => {
+    const saved = snapshotEnv()
+    const empty = path.join(root, 'env-empty-gitconfig')
+    fs.writeFileSync(empty, '')
+    const repo = path.join(root, 'env-repo')
+    fs.mkdirSync(repo)
+    execFileSync('git', ['init', '-b', 'main'], {cwd: repo})
+    fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n')
+    process.env.GIT_CONFIG_GLOBAL = empty
+    process.env.GIT_CONFIG_SYSTEM = empty
+    process.env.GIT_CONFIG_NOSYSTEM = '1'
+    delete process.env.GIT_CONFIG_COUNT
+    delete process.env.EMAIL
+    process.env.GIT_AUTHOR_NAME = 'Env Author'
+    process.env.GIT_AUTHOR_EMAIL = 'env-author@example.com'
+    process.env.GIT_COMMITTER_NAME = 'Env Committer'
+    process.env.GIT_COMMITTER_EMAIL = 'env-committer@example.com'
+    process.env.GIT_AUTHOR_DATE = '2020-01-02T03:04:05Z'
+    process.env.GIT_COMMITTER_DATE = '2021-05-06T07:08:09Z'
+    try {
+      const git = createAgentGit(repo)
+      await git.add(['README.md'])
+      await git.commit('from env')
+      const ident = execFileSync('git', ['log', '-1', '--format=%an|%ae|%cn|%ce|%aI|%cI'], {
+        cwd: repo,
+        encoding: 'utf8',
+      }).trim()
+      expect(ident).to.equal(
+        'Env Author|env-author@example.com|Env Committer|env-committer@example.com|2020-01-02T03:04:05+00:00|2021-05-06T07:08:09+00:00',
+      )
+    } finally {
+      restoreEnv(saved)
+    }
+  })
+
+  it('commits with the name and email from GIT_CONFIG_GLOBAL', async () => {
+    const saved = snapshotEnv()
+    const config = path.join(root, 'identity-gitconfig')
+    fs.writeFileSync(config, [
+      '[user]',
+      '\tname = Config User',
+      '\temail = config-user@example.com',
+      '',
+    ].join('\n'))
+    const empty = path.join(root, 'config-empty-system')
+    fs.writeFileSync(empty, '')
+    const repo = path.join(root, 'config-repo')
+    fs.mkdirSync(repo)
+    execFileSync('git', ['init', '-b', 'main'], {cwd: repo})
+    fs.writeFileSync(path.join(repo, 'README.md'), 'hello\n')
+    process.env.GIT_CONFIG_GLOBAL = config
+    process.env.GIT_CONFIG_SYSTEM = empty
+    process.env.GIT_CONFIG_NOSYSTEM = '1'
+    delete process.env.GIT_CONFIG_COUNT
+    for (const key of ['GIT_AUTHOR_NAME', 'GIT_AUTHOR_EMAIL', 'GIT_COMMITTER_NAME', 'GIT_COMMITTER_EMAIL', 'GIT_AUTHOR_DATE', 'GIT_COMMITTER_DATE', 'EMAIL']) {
+      delete process.env[key]
+    }
+    try {
+      const git = createAgentGit(repo)
+      await git.add(['README.md'])
+      await git.commit('from config')
+      const ident = execFileSync('git', ['log', '-1', '--format=%an|%ae'], {
+        cwd: repo,
+        encoding: 'utf8',
+      }).trim()
+      expect(ident).to.equal('Config User|config-user@example.com')
+    } finally {
+      restoreEnv(saved)
+    }
   })
 })

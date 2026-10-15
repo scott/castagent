@@ -536,7 +536,10 @@ adds the same ignore rules to an ignore file that is already there.
 A Git repository that has no `.gitignore` yet receives one.
 `repository.branch` is `main`, matching the checked-out branch. If Git
 has no `user.name` and `user.email`, init stops before creating the
-repository and tells you to set them with `git config`. `cast dev`
+repository and tells you to set them with `git config`. `GIT_AUTHOR_NAME`,
+`GIT_AUTHOR_EMAIL`, `GIT_COMMITTER_NAME`, `GIT_COMMITTER_EMAIL`, and
+`GIT_CONFIG_GLOBAL` are used too. If init fails after creating `.git`,
+that directory is removed. `cast dev`
 adds the memory database rules and `memory/notes.md` to an agent that already has a Git repo, and stops tracking `memory/notes.md` when an older commit already included it. `cast git commit` leaves that file on disk and out of the new commit.
 `git_push` defaults to `ask` when `harness.permissions` has no `git_push` entry. Set `git_push: always-allow` to push without a prompt.
 
