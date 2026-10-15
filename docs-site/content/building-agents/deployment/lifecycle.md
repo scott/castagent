@@ -98,7 +98,11 @@ deploy does not delete `cast-do-key`. If the droplet or volume cannot
 be deleted, Cast records the deployment so `cast shutdown` can remove
 it. A failed deploy also removes the bearer token it stored for that
 attempt, so a missing `ssh` or `ssh-keygen` does not leave
-`~/.cast/tokens/deployments/<sha>.token` behind.
+`~/.cast/tokens/deployments/<sha>.token` behind. A failed MicroVM deploy
+does the same for the token file it wrote, and it deletes the container
+registry tag it pushed, when the MicroVM itself was deleted. If that
+MicroVM is still on the account, Cast records the deployment and leaves
+the tag and token in place.
 
 In the TUI, `{% ref "slash:shutdown" %}` lists every active deployment
 (including DigitalOcean MicroVM and local) and shuts one down after a

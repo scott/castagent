@@ -3,13 +3,16 @@ import axios from 'axios'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import {keychain} from '../keychain'
 import {db} from '../sqlite'
 import {
+  deploymentShaFromEnv,
   execCommand,
   generateAuthToken,
   generateDeploymentId,
   getAgentPath,
   inferenceEnv,
+  isShaPattern,
   prepareCastImageContext,
   prepareHostTuiBuildContext,
   resolveDeploymentAuthToken,
@@ -495,6 +498,78 @@ export async function resolveFailedMicrovm(input: {
   }
 }
 
+/** `registry.digitalocean.com/<registry>/<repository>:<tag>` from a push this deploy made. */
+export function parsePushedRegistryTag(ociRef: string): {registry: string; repository: string; tag: string} | undefined {
+  const match = /^registry\.digitalocean\.com\/([^/]+)\/([^/:@]+):([^/:@\s]+)$/.exec(ociRef.trim())
+  if (!match) return undefined
+  return {registry: match[1], repository: match[2], tag: match[3]}
+}
+
+export function registryDeleteTagArgs(ociRef: string): string[] {
+  const parsed = parsePushedRegistryTag(ociRef)
+  if (!parsed) {
+    throw new Error(`Cannot delete registry tag. Unrecognized image reference '${ociRef}'.`)
+  }
+  return [
+    'registry', 'repository', 'delete-tag',
+    parsed.repository,
+    parsed.tag,
+    '--registry', parsed.registry,
+    '--force',
+  ]
+}
+
+/**
+ * Drop the bearer token written for a MicroVM deploy that did not finish.
+ * A live deployment keeps the agent token. The per-deployment file for this attempt is always removed.
+ */
+export async function discardFailedMicrovmTokens(
+  agentName: string,
+  deploymentSha: string | undefined,
+): Promise<void> {
+  if (deploymentSha && isShaPattern(deploymentSha)) {
+    await keychain.deleteDeploymentToken(deploymentSha)
+  }
+  if (db.listDeployments(agentName).length === 0) {
+    await keychain.deleteToken(agentName)
+  }
+}
+
+/**
+ * Delete the registry tag and token written for an attempt whose MicroVM is gone.
+ * A MicroVM that is still on the account keeps both, because the recorded deployment uses them.
+ */
+export async function removeFailedMicrovmArtifacts(opts: {
+  token: string
+  ociRef?: string
+  agentName: string
+  deploymentSha?: string
+  removeTokens: boolean
+  warn?: (message: string) => void
+}): Promise<void> {
+  const warn = opts.warn ?? ((message: string) => console.warn(message))
+  if (opts.ociRef) {
+    try {
+      const result = await doctl(opts.token, registryDeleteTagArgs(opts.ociRef))
+      const text = `${result.stderr}\n${result.stdout}`
+      if (result.exitCode !== 0 && !isMissingMicrovm(text)) {
+        throw new Error(text.trim() || `Failed to delete registry tag ${opts.ociRef}`)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      warn(`Failed to delete registry tag from the failed deploy: ${message}`)
+    }
+  }
+  if (opts.removeTokens) {
+    try {
+      await discardFailedMicrovmTokens(opts.agentName, opts.deploymentSha)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      warn(`Failed to remove the auth token from the failed deploy: ${message}`)
+    }
+  }
+}
+
 function volumeConfigJson(config: MicrovmVolumeConfig): string {
   return JSON.stringify(config)
 }
@@ -642,6 +717,15 @@ export default class MicrovmDeploy extends Command {
         created,
         remove: (id) => doctl(token, ['compute', 'microvm', 'delete', id, '--force']).catch(() => undefined),
       })
+      if (!settled.id) {
+        await removeFailedMicrovmArtifacts({
+          token,
+          ociRef,
+          agentName,
+          removeTokens: false,
+          warn: message => log(message),
+        })
+      }
       if (settled.id) {
         throw new Error(`${settled.message} Delete it with doctl compute microvm delete ${settled.id} --force`)
       }
@@ -689,25 +773,26 @@ export default class MicrovmDeploy extends Command {
 
     const deploymentId = generateDeploymentId()
     const sha = process.env.CAST_DEPLOYMENT_SHA || deploymentId
+    const deploymentSha = deploymentShaFromEnv()
     let authToken: string | undefined
     let tokenHash = ''
-    if (!edgeAuthOnly) {
-      const generated = await generateAuthToken(agentName)
-      authToken = generated.authToken
-      tokenHash = generated.tokenHash
-    }
-
-    const ociRef = await buildAndPushImage(agentName, sha, message => this.log(message))
-    const name = sanitizeMicrovmName(agentName, sha)
-    const env = deploymentEnv({
-      agentName,
-      authToken,
-      inference: inferenceEnv(),
-      edgeAuthOnly,
-    })
-
+    let ociRef: string | undefined
     let created: MicrovmRecord | undefined
     try {
+      if (!edgeAuthOnly) {
+        const generated = await generateAuthToken(agentName)
+        authToken = generated.authToken
+        tokenHash = generated.tokenHash
+      }
+
+      ociRef = await buildAndPushImage(agentName, sha, message => this.log(message))
+      const name = sanitizeMicrovmName(agentName, sha)
+      const env = deploymentEnv({
+        agentName,
+        authToken,
+        inference: inferenceEnv(),
+        edgeAuthOnly,
+      })
       created = await createAndWait(token, {
         name,
         ociRef,
@@ -724,7 +809,7 @@ export default class MicrovmDeploy extends Command {
         created,
         remove: (id) => doctl(token, ['compute', 'microvm', 'delete', id, '--force']).catch(() => undefined),
       })
-      if (settled.id) {
+      if (settled.id && ociRef) {
         const endpoint = settled.endpoint || `https://${settled.id}.${settled.region || REGION}.microvm.ondigitalocean.com`
         saveDeployment(agentName, 'microvm', endpoint, tokenHash, settled.id, volumeConfigJson({
           microvmId: settled.id,
@@ -737,7 +822,21 @@ export default class MicrovmDeploy extends Command {
         }))
         this.error(`${settled.message} The deployment was recorded so cast shutdown ${agentName} can remove it.`)
       }
+      if (!settled.id) {
+        await removeFailedMicrovmArtifacts({
+          token,
+          ociRef,
+          agentName,
+          deploymentSha,
+          removeTokens: !edgeAuthOnly,
+          warn: message => this.warn(message),
+        })
+      }
       this.error(settled.message)
+    }
+
+    if (!created || !created.endpoint || !ociRef) {
+      this.error('MicroVM deploy finished without an endpoint.')
     }
 
     const config: MicrovmVolumeConfig = {
