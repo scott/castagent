@@ -1,3 +1,4 @@
+import {Flags} from '@oclif/core'
 import DigitalOceanDeploy, {
   dropletHostFromUrl,
   isLoopbackClientUrl,
@@ -15,6 +16,12 @@ export const digitaloceanProvider: DeploymentProvider = {
   auth: DIGITALOCEAN_AUTH,
   requiresDocker: true,
   withTui: 'supported',
+  flags: {
+    size: Flags.string({
+      description: 'DigitalOcean Droplet size slug. Default s-2vcpu-2gb. Only new droplets use this size.',
+      default: 's-2vcpu-2gb',
+    }),
+  },
   toolChecks: [
     {
       command: 'docker',
@@ -29,6 +36,8 @@ export const digitaloceanProvider: DeploymentProvider = {
   },
   async deploy(ctx) {
     const args = ctx.withTui ? [ctx.agentName, '--with-tui'] : [ctx.agentName]
+    const size = ctx.flags.size
+    if (typeof size === 'string' && size.length > 0) args.push('--size', size)
     await DigitalOceanDeploy.run(args)
   },
   async destroy(ctx) {

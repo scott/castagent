@@ -221,7 +221,7 @@ These behaviors move behind the interface. They do not change.
 |---|---|
 | `railway` | `railway` CLI, `railway login`. Memory is a Railway volume. `destroy` runs `railway down --yes`. |
 | `fly` | `flyctl`, `flyctl auth login`. Memory is a fly volume. |
-| `digitalocean` | Droplet plus `docker load`. `withTui: 'supported'`. Token from `DIGITALOCEAN_ACCESS_TOKEN` or `providers.digitalocean.token`. Requires Docker and `doctl`. SSH pins an ed25519 host key in `~/.cast/ssh/known_hosts` and keeps host key checking enabled. Memory volume is `cast-<agent>`. Shutdown deletes that volume and older `cast-<agent>-<uuid>-memory` volumes, and reports removal only when the delete succeeds. |
+| `digitalocean` | Droplet plus `docker load`. `withTui: 'supported'`. Flag `--size` is a droplet slug (default `s-2vcpu-2gb`) and is forwarded on deploy. Token from `DIGITALOCEAN_ACCESS_TOKEN` or `providers.digitalocean.token`. Requires Docker and `doctl`. SSH pins an ed25519 host key in `~/.cast/ssh/known_hosts` and keeps host key checking enabled. Memory volume is `cast-<agent>`. Shutdown deletes that volume and older `cast-<agent>-<uuid>-memory` volumes, and reports removal only when the delete succeeds. |
 | `microvm` | `withTui: 'rejected'` with the existing error sentence. Flags `--size` (default `1:2048`), `--idle-timeout` (default `15m`), `--edge-auth-only`. `doctl` >= 1.173.0. `connect` sets the edge token and the resume hint. `destroy` deletes the MicroVM, not the registry. |
 | `sprites` | `sprite`, `sprite login`, `SPRITES_TOKEN`. Deploy registers a `cast-agent` service on port 8080. `connect` starts that service, then may start the local proxy. |
 | `docker` | Requires a running Docker daemon. Reads `--port`. |
