@@ -1847,12 +1847,12 @@ describe('DigitalOcean Deploy Provider', () => {
       }
     })
 
-    it('never removes the shared account SSH key', () => {
+    it('chooses whether the shared account key can be removed', () => {
       expect(accountSshKeyCleanup(
         [{id: '99', name: 'cast-demo'}],
         [{id: 42, name: SSH_KEY_NAME}],
         '99',
-      )).to.deep.equal({action: 'keep'})
+      )).to.deep.equal({action: 'remove', id: 42})
       expect(accountSshKeyCleanup(
         [{id: '99', name: 'cast-demo'}, {id: '100', name: 'cast-other'}],
         [{id: 42, name: SSH_KEY_NAME}],
@@ -1862,7 +1862,7 @@ describe('DigitalOcean Deploy Provider', () => {
         [{id: '99', name: 'cast-demo'}, {id: '5', name: 'personal'}],
         [{id: 42, name: SSH_KEY_NAME}],
         '99',
-      )).to.deep.equal({action: 'keep'})
+      ).action).to.equal('remove')
       expect(accountSshKeyCleanup([], [{id: 1, name: 'other'}], '').action).to.equal('absent')
       expect(isDigitalOceanSshKeyDelete(['compute', 'ssh-key', 'delete', '42', '--force'])).to.equal(true)
       expect(isDigitalOceanSshKeyDelete(['compute', 'droplet', 'delete', '42', '--force'])).to.equal(false)
@@ -1943,39 +1943,84 @@ describe('DigitalOcean Deploy Provider', () => {
       return {deletedId, logs}
     }
 
-    it('deletes the droplet and leaves the shared account SSH key', async () => {
+    it('removes the account SSH key after the last Cast droplet is deleted', async () => {
       const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`],
+        dropletLists: [`99 cast-${agentName}\n`, `99 cast-${agentName}\n`],
         sshKeys: `42 ${SSH_KEY_NAME}\n`,
         microvms: '[]',
       })
-      expect(result.deletedId).to.equal(undefined)
-      expect(result.logs.join('\n')).to.include(`Droplet 'cast-${agentName}' deleted.`)
-      expect(result.logs.join('\n')).to.include(`Left DigitalOcean account SSH key '${SSH_KEY_NAME}'`)
-      expect(result.logs.join('\n')).to.not.include(`Removed DigitalOcean account SSH key '${SSH_KEY_NAME}'`)
+      expect(result.deletedId).to.equal('42')
+      expect(result.logs.join('\n')).to.include(`Removed DigitalOcean account SSH key '${SSH_KEY_NAME}'.`)
     })
 
-    it('leaves the shared account SSH key when the droplet is already gone', async () => {
+    it('keeps the account SSH key while another Cast droplet remains', async () => {
       const result = await destroyWith({
-        dropletLists: [''],
-        sshKeys: `9 ${SSH_KEY_NAME}\n`,
-        microvms: '[]',
+        dropletLists: [`99 cast-${agentName}\n`, `99 cast-${agentName}\n100 cast-other\n`],
+        sshKeys: `42 ${SSH_KEY_NAME}\n`,
       })
       expect(result.deletedId).to.equal(undefined)
-      expect(result.logs.join('\n')).to.include(`Droplet 'cast-${agentName}' not found.`)
       expect(result.logs.join('\n')).to.include(`Left DigitalOcean account SSH key '${SSH_KEY_NAME}'`)
-      expect(result.logs.join('\n')).to.not.include('ssh-key')
     })
 
-    it('leaves the shared account SSH key when a Cast MicroVM is still running', async () => {
+    it('keeps the account SSH key while a Cast MicroVM remains', async () => {
       const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`],
+        dropletLists: [`99 cast-${agentName}\n`, ''],
         sshKeys: `42 ${SSH_KEY_NAME}\n`,
         microvms: JSON.stringify([{id: 'mv-1', name: 'cast-other-abc123', tags: ['cast']}]),
       })
       expect(result.deletedId).to.equal(undefined)
-      expect(result.logs.join('\n')).to.include(`Left DigitalOcean account SSH key '${SSH_KEY_NAME}'`)
+      expect(result.logs.join('\n')).to.include('MicroVM')
+    })
+
+    it('removes the account SSH key when the only MicroVM is not one Cast created', async () => {
+      const result = await destroyWith({
+        dropletLists: [`99 cast-${agentName}\n`, ''],
+        sshKeys: `42 ${SSH_KEY_NAME}\n`,
+        microvms: JSON.stringify([{id: 'mv-2', name: 'unrelated-vm'}]),
+      })
+      expect(result.deletedId).to.equal('42')
+    })
+
+    it('removes the account SSH key when a Cast MicroVM lists other SSH keys', async () => {
+      const result = await destroyWith({
+        dropletLists: [`99 cast-${agentName}\n`, ''],
+        sshKeys: `42 ${SSH_KEY_NAME}\n`,
+        microvms: JSON.stringify([{id: 'mv-3', name: 'cast-other', ssh_keys: [{name: 'someone-else'}]}]),
+      })
+      expect(result.deletedId).to.equal('42')
+    })
+
+    it('does not delete the account SSH key when MicroVMs cannot be listed', async () => {
+      const result = await destroyWith({
+        dropletLists: [`99 cast-${agentName}\n`, ''],
+        sshKeys: `42 ${SSH_KEY_NAME}\n`,
+        microvmExit: 1,
+      })
+      expect(result.deletedId).to.equal(undefined)
+      expect(result.logs.join('\n')).to.include('could not be removed')
+      expect(result.logs.join('\n')).to.include('microvm list failed')
       expect(result.logs.join('\n')).to.not.include(`Removed DigitalOcean account SSH key '${SSH_KEY_NAME}'`)
+    })
+
+    it('removes a leftover account SSH key when the droplet is already gone', async () => {
+      const result = await destroyWith({
+        dropletLists: ['', ''],
+        sshKeys: `9 ${SSH_KEY_NAME}\n`,
+        microvms: '[]',
+      })
+      expect(result.deletedId).to.equal('9')
+      expect(result.logs.join('\n')).to.include(`Droplet 'cast-${agentName}' not found.`)
+    })
+
+    it('does not fail shutdown when the account key id is unexpected', async () => {
+      const result = await destroyWith({
+        dropletLists: [`99 cast-${agentName}\n`, ''],
+        sshKeys: `42;rm ${SSH_KEY_NAME}\n`,
+        microvms: '[]',
+      })
+      expect(result.deletedId).to.equal(undefined)
+      expect(result.logs.join('\n')).to.include('could not be removed')
+      expect(result.logs.join('\n')).to.include('unexpected id')
     })
   })
 

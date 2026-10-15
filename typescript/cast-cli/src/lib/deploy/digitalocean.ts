@@ -543,6 +543,7 @@ export interface NamedDroplet {
 }
 
 export type AccountSshKeyCleanup =
+  | {action: 'remove'; id: number | string}
   | {action: 'keep'}
   | {action: 'absent'}
 
@@ -552,19 +553,25 @@ export interface CastAccountKeyConsumer {
 }
 
 /**
- * `cast-do-key` is the login key for every Cast droplet on the account.
- * Shutdown and a failed deploy leave it in place. Other droplets and
- * MicroVMs still need it, so the key is never deleted.
+ * The account key is shared. Remove it only when no other Cast droplet
+ * and no Cast MicroVM (or other Cast resource that still references it)
+ * remains. A droplet still listed under the id just deleted does not count.
+ * Volumes and the container registry do not use this login key.
  */
 export function accountSshKeyCleanup(
-  _droplets: NamedDroplet[],
+  droplets: NamedDroplet[],
   keys: AccountSshKey[],
-  _removedDropletId: string,
-  _stillUsing: CastAccountKeyConsumer[] = [],
+  removedDropletId: string,
+  stillUsing: CastAccountKeyConsumer[] = [],
 ): AccountSshKeyCleanup {
   const key = keys.find(item => item.name === SSH_KEY_NAME)
+  const dropletRemains = droplets.some(droplet =>
+    droplet.id !== removedDropletId && droplet.name.startsWith('cast-'),
+  )
+  const otherRemains = stillUsing.length > 0
+  if (dropletRemains || otherRemains) return key ? {action: 'keep'} : {action: 'absent'}
   if (!key) return {action: 'absent'}
-  return {action: 'keep'}
+  return {action: 'remove', id: key.id}
 }
 
 /** True when a doctl argv would delete an account SSH key. */
@@ -663,6 +670,99 @@ async function listAccountSshKeys(apiToken: string): Promise<AccountSshKey[]> {
     url = digitalOceanKeysPage(response.data?.links?.pages?.next)
   }
   return keys
+}
+
+function assertAccountSshKeyId(id: number | string): string {
+  const text = String(id)
+  if (!/^[0-9]+$/.test(text)) {
+    throw new Error('Refusing to delete an SSH key with an unexpected id')
+  }
+  return text
+}
+
+async function listDropletRecords(): Promise<NamedDroplet[]> {
+  const result = await execCommand(
+    'doctl',
+    ['compute', 'droplet', 'list', '--format', 'ID,Name', '--no-header'],
+    {silent: true},
+  )
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || 'Failed to list DigitalOcean droplets')
+  }
+  const droplets: NamedDroplet[] = []
+  for (const line of result.stdout.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const parts = trimmed.split(/\s+/)
+    if (parts.length < 2 || !parts[0] || !parts[1]) continue
+    droplets.push({id: parts[0], name: parts[1]})
+  }
+  return droplets
+}
+
+async function listAccountSshKeysFromDoctl(): Promise<AccountSshKey[]> {
+  const result = await execCommand(
+    'doctl',
+    ['compute', 'ssh-key', 'list', '--format', 'ID,Name', '--no-header'],
+    {silent: true},
+  )
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || result.stdout || 'Failed to list DigitalOcean SSH keys')
+  }
+  const keys: AccountSshKey[] = []
+  for (const line of result.stdout.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const parts = trimmed.split(/\s+/)
+    if (parts.length < 2 || !parts[0] || !parts[1]) continue
+    keys.push({id: parts[0], name: parts.slice(1).join(' ')})
+  }
+  return keys
+}
+
+async function listCastMicrovmsUsingAccountKey(): Promise<CastAccountKeyConsumer[]> {
+  const result = await execCommand(
+    'doctl',
+    ['compute', 'microvm', 'list', '--output', 'json'],
+    {silent: true},
+  )
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || result.stdout || 'Failed to list DigitalOcean MicroVMs')
+  }
+  return castMicrovmsUsingAccountKey(result.stdout)
+}
+
+/**
+ * Delete `cast-do-key` only when no other Cast droplet, MicroVM, or
+ * other Cast resource still uses it. Failures are logged. The droplet
+ * delete has already finished. A failed deploy does not call this.
+ */
+export async function removeUnusedCastAccountSshKey(
+  _apiToken: string,
+  removedDropletId: string,
+): Promise<'removed' | 'kept' | 'absent' | 'failed'> {
+  try {
+    const droplets = await listDropletRecords()
+    const stillUsing = await listCastMicrovmsUsingAccountKey()
+    const keys = await listAccountSshKeysFromDoctl()
+    const decision = accountSshKeyCleanup(droplets, keys, removedDropletId, stillUsing)
+    if (decision.action === 'keep') {
+      console.log(`Left DigitalOcean account SSH key '${SSH_KEY_NAME}' in place. Another Cast droplet or MicroVM still uses it.`)
+      return 'kept'
+    }
+    if (decision.action === 'absent') return 'absent'
+    const id = assertAccountSshKeyId(decision.id)
+    const deleted = await execCommand('doctl', ['compute', 'ssh-key', 'delete', id, '--force'], {silent: true})
+    if (deleted.exitCode !== 0) {
+      throw new Error(deleted.stderr || deleted.stdout || 'Failed to delete the account SSH key')
+    }
+    console.log(`Removed DigitalOcean account SSH key '${SSH_KEY_NAME}'.`)
+    return 'removed'
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.log(`Note: DigitalOcean account SSH key '${SSH_KEY_NAME}' could not be removed. ${message}`)
+    return 'failed'
+  }
 }
 
 function resourceAlreadyGone(stdout: string, stderr: string): boolean {
@@ -905,7 +1005,7 @@ export default class DigitalOceanDeploy extends Command {
       .filter((row: {provider?: string}) => row.provider === 'digitalocean')
       .map((row: {volume_id?: string | null}) => row.volume_id)
     await removeDigitalOceanMemoryVolumes(agentName, recorded)
-    console.log(`Left DigitalOcean account SSH key '${SSH_KEY_NAME}' in place. It is shared by Cast droplets.`)
+    await removeUnusedCastAccountSshKey(apiToken, dropletId)
   }
 
   async run(): Promise<void> {

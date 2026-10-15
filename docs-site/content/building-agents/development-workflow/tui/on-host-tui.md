@@ -33,8 +33,9 @@ experience — with two important differences:
 
 The trade-off is you need shell access to the droplet, which means
 possession of the SSH key at `~/.ssh/cast_do_key`. `cast shutdown`
-leaves the DigitalOcean account key `cast-do-key` in place because
-other droplets share it. The local file stays.
+removes the matching DigitalOcean account key `cast-do-key` when no
+other Cast droplet or Cast MicroVM still uses it. The local file stays,
+and the next deploy uploads it again if the account key is missing.
 
 ## Opting in
 
