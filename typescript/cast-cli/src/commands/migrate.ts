@@ -4,6 +4,21 @@ import * as path from 'path'
 import * as os from 'os'
 import * as fs from 'fs'
 
+/**
+ * Modules copied into ~/.cast/python/cast before system python3 runs
+ * the migration. versioning.py imports tar_safety, and releases.py
+ * imports tar_safety and castignore. cast/__init__.py imports both,
+ * so leaving either file behind raises ModuleNotFoundError.
+ */
+export const MIGRATION_PYTHON_FILES = [
+  'migrate.py',
+  'releases.py',
+  'versioning.py',
+  '__init__.py',
+  'tar_safety.py',
+  'castignore.py',
+]
+
 export default class Migrate extends Command {
   static description = 'Migrate to the new versioning system'
 
@@ -42,16 +57,8 @@ export default class Migrate extends Command {
       fs.mkdirSync(destCastDir, {recursive: true})
     }
 
-    // Files that need to be copied for migration to work
-    const filesToCopy = [
-      'migrate.py',
-      'releases.py',
-      'versioning.py',
-      '__init__.py',
-    ]
-
     let filesInstalled = false
-    for (const file of filesToCopy) {
+    for (const file of MIGRATION_PYTHON_FILES) {
       const sourcePath = path.join(sourceCastDir, file)
       const destPath = path.join(destCastDir, file)
       if (fs.existsSync(sourcePath)) {
