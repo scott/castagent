@@ -3,6 +3,7 @@ import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import {ensurePrivateDir, writePrivateFile} from './private-path'
 
 const SERVICE_NAME = 'cast'
 const AGENT_NAME = /^[A-Za-z0-9][A-Za-z0-9-]*$/
@@ -45,9 +46,20 @@ function defaultTokenRoot(): string {
   return path.join(os.homedir(), '.cast', 'tokens')
 }
 
-function ensurePrivateDir(dir: string): void {
-  fs.mkdirSync(dir, {recursive: true, mode: 0o700})
-  fs.chmodSync(dir, 0o700)
+function castHomeDir(): string {
+  return path.resolve(path.join(os.homedir(), '.cast'))
+}
+
+/** Token directories live under ~/.cast. Tighten that home when they do. */
+function ensureTokenStoreDirs(root: string, fileDir: string): void {
+  const resolvedRoot = path.resolve(root)
+  const home = castHomeDir()
+  if (resolvedRoot === home || resolvedRoot.startsWith(home + path.sep)) {
+    ensurePrivateDir(home)
+  }
+  ensurePrivateDir(resolvedRoot)
+  const resolvedDir = path.resolve(fileDir)
+  if (resolvedDir !== resolvedRoot) ensurePrivateDir(resolvedDir)
 }
 
 function readTokenFile(filePath: string | null): string | null {
@@ -63,12 +75,8 @@ function readTokenFile(filePath: string | null): string | null {
 
 function writeTokenFile(root: string, filePath: string | null, token: string): boolean {
   if (!filePath || !token) return false
-  const resolvedRoot = path.resolve(root)
-  ensurePrivateDir(resolvedRoot)
-  const dir = path.dirname(filePath)
-  if (dir !== resolvedRoot) ensurePrivateDir(dir)
-  fs.writeFileSync(filePath, token, {mode: 0o600})
-  fs.chmodSync(filePath, 0o600)
+  ensureTokenStoreDirs(root, path.dirname(filePath))
+  writePrivateFile(filePath, token)
   return true
 }
 
@@ -244,9 +252,10 @@ export class KeychainManager {
     const from = this.agentTokenPath(currentName)
     const to = this.agentTokenPath(newName)
     if (from && to && fs.existsSync(from)) {
-      ensurePrivateDir(path.dirname(to))
+      ensureTokenStoreDirs(this.tokenRoot(), path.dirname(to))
       fs.renameSync(from, to)
-      fs.chmodSync(to, 0o600)
+      const mode = fs.statSync(to).mode & 0o777
+      if (mode !== 0o600) fs.chmodSync(to, 0o600)
     }
     try {
       const allCredentials = await keytar.findCredentials(SERVICE_NAME)

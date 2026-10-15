@@ -507,12 +507,22 @@ assert_eq "$(readlink "$LINUX_HOME/.local/bin/python3")" "$LINUX_HOME/.local/py/
 assert_contains "$LINUX_HOME/.bashrc" "castagent-path" "bash profile gains a PATH line"
 assert_not_contains "$CAST_INSTALL_LOG" "npm $SOURCE_ROOT" "install does not build this workspace"
 assert_install_hints "$TMP/linux.out"
+assert_eq "$(stat -c %a "$LINUX_HOME/.cast")" "700" "cast home is created mode 700"
+assert_eq "$(stat -c %a "$LINUX_HOME/.cast/tokens")" "700" "token directory is created mode 700"
+assert_eq "$(stat -c %a "$LINUX_HOME/.cast/sessions")" "700" "session directory is created mode 700"
 
+chmod 755 "$LINUX_HOME/.cast" "$LINUX_HOME/.cast/tokens" "$LINUX_HOME/.cast/sessions"
+install_umask="$(umask)"
+umask 022
 reset_log
 run_piped "$LINUX_HOME" "$TMP/linux-again.out"
 [[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/linux-again.out" >&2; fail "second one-liner failed ($RUN_STATUS)"; }
 assert_contains "$TMP/linux-again.out" "Using existing checkout: $CLONE" "second run reuses the checkout"
 assert_not_contains "$CAST_INSTALL_LOG" "git clone" "second run does not clone again"
+assert_eq "$(stat -c %a "$LINUX_HOME/.cast")" "700" "second run tightens cast home to mode 700"
+assert_eq "$(stat -c %a "$LINUX_HOME/.cast/tokens")" "700" "second run tightens the token directory to mode 700"
+assert_eq "$(stat -c %a "$LINUX_HOME/.cast/sessions")" "700" "second run tightens the session directory to mode 700"
+umask "$install_umask"
 
 OCC_HOME="$TMP/occupied-home"
 mkdir -p "$OCC_HOME/.cast/castagent"

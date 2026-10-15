@@ -110,12 +110,13 @@ is stable for the life of that deployment.
 ## Where things live
 
 ```
-~/.cast/
+~/.cast/                       # mode 0700
 ├── config.yaml                # global config
-├── cast.db                    # SQLite: agents, releases, deployments
+├── cast.db                    # SQLite: agents, releases, deployments (mode 0600)
 ├── vault/<agent>/             # OAuth credentials (directory 0700, files 0600)
 ├── tokens/<agent>.token              # agent bearer token when the keychain is unavailable (mode 0600)
-├── tokens/deployments/<sha>.token    # per-deployment bearer token, same fallback
+├── tokens/deployments/<sha>.token    # per-deployment bearer token, same fallback (directory mode 0700)
+├── sessions/<session-id>.json        # conversation transcript (directory mode 0700, file mode 0600)
 ├── builder/                   # Builder Agent's instructions and tools
 │   ├── instructions.md        # builder system prompt
 │   ├── tools/
@@ -132,4 +133,6 @@ is stable for the life of that deployment.
         └── releases/          # semantic releases (releases.json + *.tar.gz)
 ```
 
-That layout is stable; treat it as Cast's data model.
+That layout is stable; treat it as Cast's data model. `~/.cast`,
+`~/.cast/tokens`, and `~/.cast/sessions` are mode 0700. Token files,
+session transcripts, and `cast.db` are created mode 0600.

@@ -5,8 +5,9 @@ distinct from changes (which are internal agent-state snapshots used for
 undo/redo) and releases (which are the user-facing deployment artifact).
 
 This module owns the JSON-per-session storage layer at ~/.cast/sessions/.
+The directory is mode 0700 and each transcript is created mode 0600.
 The SQLite index for fast listing lives in cast.db and is managed by the
-TypeScript cast-cli.
+TypeScript cast-cli. cast.db is created mode 0600.
 """
 
 import json
@@ -189,8 +190,90 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+_PRIVATE_DIR_MODE = 0o700
+_PRIVATE_FILE_MODE = 0o600
+
+
+def _path_mode(path: Path) -> int:
+    return path.stat().st_mode & 0o777
+
+
+def _is_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+    except ValueError:
+        return False
+    return True
+
+
+def _ensure_private_dir(path: Path) -> None:
+    """Create path mode 0700. An existing directory is tightened in place.
+
+    mkdir applies the process umask, so the mode argument is not the mode
+    the directory is born with. umask 077 makes 0700 stick. chmod runs
+    only when the directory already had a looser mode.
+    """
+    previous = os.umask(0o077)
+    try:
+        path.mkdir(parents=True, exist_ok=True, mode=_PRIVATE_DIR_MODE)
+    finally:
+        os.umask(previous)
+    if path.is_dir() and _path_mode(path) != _PRIVATE_DIR_MODE:
+        os.chmod(path, _PRIVATE_DIR_MODE)
+
+
+def _ensure_private_database(path: Path) -> None:
+    """Create a missing database file mode 0600, then tighten an older one."""
+    if not path.exists():
+        previous = os.umask(0o077)
+        try:
+            fd = os.open(
+                str(path),
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                _PRIVATE_FILE_MODE,
+            )
+            os.close(fd)
+        except FileExistsError:
+            pass
+        finally:
+            os.umask(previous)
+    if path.is_file() and _path_mode(path) != _PRIVATE_FILE_MODE:
+        os.chmod(path, _PRIVATE_FILE_MODE)
+
+
+def _write_private_text(path: Path, text: str) -> None:
+    """Write text via a temp file created mode 0600 in the same directory."""
+    tmp = path.with_name(
+        f".{path.name}.{os.getpid()}.{secrets.token_hex(4)}.tmp"
+    )
+    flags = os.O_CREAT | os.O_EXCL | os.O_WRONLY
+    previous = os.umask(0o077)
+    fd = None
+    try:
+        fd = os.open(str(tmp), flags, _PRIVATE_FILE_MODE)
+    finally:
+        os.umask(previous)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            fd = None
+            handle.write(text)
+        os.replace(tmp, path)
+    except Exception:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+        try:
+            tmp.unlink()
+        except OSError:
+            pass
+        raise
+
+
 def _ensure_sessions_dir() -> Path:
-    SESSIONS_DIR.mkdir(parents=True, exist_ok=True)
+    _ensure_private_dir(CAST_HOME)
+    _ensure_private_dir(SESSIONS_DIR)
     return SESSIONS_DIR
 
 
@@ -205,7 +288,8 @@ def _ensure_sessions_table(db_path: Optional[Path] = None) -> None:
     """Create the sessions table if it does not exist. Mirrors the schema
     declared in typescript/cast-cli/src/lib/sqlite.ts so both sides agree."""
     path = Path(db_path) if db_path is not None else DB_PATH
-    path.parent.mkdir(parents=True, exist_ok=True)
+    _ensure_private_dir(path.parent)
+    _ensure_private_database(path)
     conn = sqlite3.connect(str(path))
     try:
         conn.executescript(
@@ -258,12 +342,18 @@ def _read_session_json(json_path: str) -> Optional[Dict[str, Any]]:
 
 
 def _write_session_json(json_path: str, data: Dict[str, Any]) -> None:
-    p = Path(json_path)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(p.suffix + ".tmp")
-    with open(tmp, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-    os.replace(tmp, p)
+    destination = Path(json_path)
+    # Transcripts live in the session store. Export writes a copy somewhere
+    # else and must not chmod that destination directory.
+    if _is_under(destination, SESSIONS_DIR):
+        _ensure_private_dir(CAST_HOME)
+        _ensure_private_dir(SESSIONS_DIR)
+    else:
+        destination.parent.mkdir(parents=True, exist_ok=True)
+    _write_private_text(
+        destination,
+        json.dumps(data, indent=2, ensure_ascii=False),
+    )
 
 
 def _delete_session_json(json_path: str) -> None:
@@ -285,8 +375,7 @@ class SessionStore:
     def __init__(self, sessions_dir: Optional[Path] = None, db_path: Optional[Path] = None):
         self.sessions_dir = sessions_dir or SESSIONS_DIR
         self.db_path = db_path or DB_PATH
-        self.sessions_dir.mkdir(parents=True, exist_ok=True)
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        _ensure_private_dir(self.sessions_dir)
         _ensure_sessions_table(self.db_path)
 
     # -- low-level db helpers -------------------------------------------------

@@ -28,7 +28,8 @@ appears in shell output. Deploying the same agent to a second provider
 stores a second token and leaves the first one in place. On a machine
 with no Secret Service, those tokens are read from
 `~/.cast/tokens/deployments/<sha>.token` and
-`~/.cast/tokens/<agent>.token` instead of the keychain. The files are
+`~/.cast/tokens/<agent>.token` instead of the keychain. The token
+directory is mode 0700, each file is created mode 0600, and both sit
 outside the agent directory.
 
 In the TUI, `{% ref "slash:connect" %}` opens a modal listing recent

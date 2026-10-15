@@ -3,6 +3,7 @@ import * as path from 'path'
 import * as os from 'os'
 import * as fs from 'fs'
 import * as crypto from 'crypto'
+import {createPrivateFile, ensurePrivateDir, tightenPrivateFile} from './private-path'
 
 const CAST_DIR = path.join(os.homedir(), '.cast')
 const DB_PATH = path.join(CAST_DIR, 'cast.db')
@@ -38,16 +39,35 @@ export function mapSessionRow(row: any): any {
   }
 }
 
+function prepareDatabaseDir(dir: string): void {
+  const home = path.resolve(CAST_DIR)
+  const resolved = path.resolve(dir)
+  const underCast = resolved === home || resolved.startsWith(home + path.sep)
+  // A database opened in a shared directory such as /tmp must not chmod
+  // that directory. ~/.cast and any directory this call creates are private.
+  if (!underCast && fs.existsSync(dir)) return
+  ensurePrivateDir(resolved)
+  if (underCast && resolved !== home) ensurePrivateDir(home)
+}
+
 export class CastDatabase {
   private db: Database.Database
 
   constructor(dbPath: string = DB_PATH) {
-    const dir = path.dirname(dbPath)
-    if (!fs.existsSync(dir)) {
-      fs.mkdirSync(dir, {recursive: true})
+    prepareDatabaseDir(path.dirname(dbPath))
+    createPrivateFile(dbPath)
+    // SQLite opens the existing inode. umask 077 covers sidecar files
+    // (wal, shm) created on this open so they are not born world-readable.
+    const previous = process.umask(0o077)
+    try {
+      this.db = new Database(dbPath)
+    } finally {
+      process.umask(previous)
     }
-
-    this.db = new Database(dbPath)
+    tightenPrivateFile(dbPath)
+    for (const suffix of ['-wal', '-shm']) {
+      tightenPrivateFile(dbPath + suffix)
+    }
     this.initSchema()
   }
 

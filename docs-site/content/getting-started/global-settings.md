@@ -102,13 +102,17 @@ interpolation falls through to the environment if not set in YAML.
 - **Bearer tokens** for deployed agents are stored in the system keychain
   (`keytar`). When the machine has no Secret Service, Cast writes the same
   token to `~/.cast/tokens/<agent>.token` and the per-deployment token to
-  `~/.cast/tokens/deployments/<sha>.token`, both mode `0600`. Those files
-  sit outside the agent directory, so `cast git` cannot publish them.
+  `~/.cast/tokens/deployments/<sha>.token`. The token directory is mode
+  `0700` and each file is created mode `0600`. Those files sit outside
+  the agent directory, so `cast git` cannot publish them.
   Docker deploy passes the token, and any provider API keys, to the
   container as environment variables. It does not write them into
   `docker-compose.yml` or any other file in the agent directory.
 - **Per-agent state** that is safe to share (deploy URLs, deployment SHAs)
-  lives in `~/.cast/cast.db` (SQLite).
+  lives in `~/.cast/cast.db` (SQLite). The database file is created mode
+  `0600`. It stores token hashes, not raw bearer tokens.
+- **Session transcripts** live in `~/.cast/sessions/` (mode `0700`). Each
+  transcript file is created mode `0600`.
 
 ## Per-agent: `agent.yaml`
 

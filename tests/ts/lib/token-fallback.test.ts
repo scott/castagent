@@ -115,6 +115,133 @@ describe('token file fallback', () => {
     await keychain.renameAgentEntries('old-agent', 'new-agent')
 
     expect(fs.existsSync(path.join(tokens, 'old-agent.token'))).to.equal(false)
-    expect(fs.readFileSync(path.join(tokens, 'new-agent.token'), 'utf8')).to.equal('agent-token')
+    const renamed = path.join(tokens, 'new-agent.token')
+    expect(fs.readFileSync(renamed, 'utf8')).to.equal('agent-token')
+    expect(fs.statSync(renamed).mode & 0o777).to.equal(0o600)
+  })
+
+  it('creates the token file mode 0600 under umask 022, before any chmod', async () => {
+    const previous = process.umask(0o022)
+    const births: number[] = []
+    const chmodmed: string[] = []
+    const dirBirths: number[] = []
+    // import * as fs copies getters. Stub the Node module keychain calls.
+    const nodeFs = require('fs') as typeof fs
+    const realOpen = nodeFs.openSync
+    const realMkdir = nodeFs.mkdirSync
+    const realChmod = nodeFs.chmodSync
+    sandbox.stub(nodeFs, 'openSync').callsFake((...args: unknown[]) => {
+      const fd = (realOpen as (...openArgs: unknown[]) => number).apply(nodeFs, args)
+      const file = typeof args[0] === 'string' ? args[0] : ''
+      if (file.endsWith('.token') || file.includes('.token.')) {
+        births.push(nodeFs.fstatSync(fd).mode & 0o777)
+      }
+      return fd
+    })
+    sandbox.stub(nodeFs, 'mkdirSync').callsFake((...args: unknown[]): string | undefined => {
+      const created = (realMkdir as (...mkdirArgs: unknown[]) => string | undefined).apply(nodeFs, args)
+      const dir = typeof args[0] === 'string' ? args[0] : ''
+      if (dir && nodeFs.existsSync(dir) && nodeFs.statSync(dir).isDirectory()) {
+        dirBirths.push(nodeFs.statSync(dir).mode & 0o777)
+      }
+      return created
+    })
+    sandbox.stub(nodeFs, 'chmodSync').callsFake((file: fs.PathLike, mode: fs.Mode) => {
+      chmodmed.push(String(file))
+      return realChmod(file, mode)
+    })
+    sandbox.stub(require('keytar'), 'setPassword').rejects(secretServiceError)
+    try {
+      await keychain.setToken('bb2-chat', 'stand-in-token')
+      await keychain.setDeploymentToken('f6559e', 'stand-in-deploy-token')
+
+      const agentFile = path.join(tokens, 'bb2-chat.token')
+      const deployFile = path.join(tokens, 'deployments', 'f6559e.token')
+      expect(births.length).to.be.greaterThan(0)
+      expect(births.every(mode => mode === 0o600)).to.equal(true)
+      expect(dirBirths.length).to.be.greaterThan(0)
+      expect(dirBirths.every(mode => mode === 0o700)).to.equal(true)
+      expect(fs.statSync(agentFile).mode & 0o777).to.equal(0o600)
+      expect(fs.statSync(deployFile).mode & 0o777).to.equal(0o600)
+      expect(fs.readFileSync(agentFile, 'utf8')).to.equal('stand-in-token')
+      expect(fs.readFileSync(deployFile, 'utf8')).to.equal('stand-in-deploy-token')
+      expect(fs.statSync(tokens).mode & 0o777).to.equal(0o700)
+      expect(fs.statSync(path.join(tokens, 'deployments')).mode & 0o777).to.equal(0o700)
+      expect(chmodmed.some(file => file.endsWith('.token'))).to.equal(false)
+      expect(fs.readdirSync(tokens).filter(name => name.includes('.tmp'))).to.deep.equal([])
+      const during = process.umask(0o022)
+      expect(during).to.equal(0o022)
+    } finally {
+      process.umask(previous)
+    }
+  })
+
+  it('tightens a renamed token file that was mode 0644', async () => {
+    fs.mkdirSync(tokens, {recursive: true})
+    const from = path.join(tokens, 'old-agent.token')
+    fs.writeFileSync(from, 'agent-token')
+    fs.chmodSync(from, 0o644)
+    sandbox.stub(require('keytar'), 'findCredentials').rejects(new Error('Keychain error'))
+    sandbox.stub(console, 'error')
+
+    await keychain.renameAgentEntries('old-agent', 'new-agent')
+
+    const renamed = path.join(tokens, 'new-agent.token')
+    expect(fs.readFileSync(renamed, 'utf8')).to.equal('agent-token')
+    expect(fs.statSync(renamed).mode & 0o777).to.equal(0o600)
+  })
+
+  it('tightens a token directory that already exists as mode 0755', async () => {
+    const previous = process.umask(0o022)
+    fs.mkdirSync(tokens, {recursive: true})
+    fs.chmodSync(tokens, 0o755)
+    sandbox.stub(require('keytar'), 'setPassword').rejects(secretServiceError)
+    try {
+      await keychain.setToken('bb2-chat', 'stand-in-token')
+      expect(fs.statSync(tokens).mode & 0o777).to.equal(0o700)
+      expect(fs.statSync(path.join(tokens, 'bb2-chat.token')).mode & 0o777).to.equal(0o600)
+    } finally {
+      process.umask(previous)
+    }
+  })
+
+  it('replaces an existing token file without leaving a temp file', async () => {
+    const previous = process.umask(0o022)
+    sandbox.stub(require('keytar'), 'setPassword').rejects(secretServiceError)
+    try {
+      await keychain.setToken('bb2-chat', 'first-token')
+      await keychain.setToken('bb2-chat', 'second-token')
+      const filePath = path.join(tokens, 'bb2-chat.token')
+      expect(fs.readFileSync(filePath, 'utf8')).to.equal('second-token')
+      expect(fs.statSync(filePath).mode & 0o777).to.equal(0o600)
+      expect(fs.readdirSync(tokens).filter(name => name.includes('.tmp'))).to.deep.equal([])
+    } finally {
+      process.umask(previous)
+    }
+  })
+
+  it('tightens ~/.cast when the token directory lives there', async () => {
+    const home = path.join(os.homedir(), '.cast')
+    const homeExisted = fs.existsSync(home)
+    const homeMode = homeExisted ? fs.statSync(home).mode & 0o777 : null
+    const tokensDir = path.join(home, `tokens-perm-${process.pid}`)
+    const isolated = new KeychainManager(tokensDir)
+    sandbox.stub(require('keytar'), 'setPassword').rejects(secretServiceError)
+    const previous = process.umask(0o022)
+    try {
+      if (homeExisted) fs.chmodSync(home, 0o755)
+      await isolated.setToken('perm-probe', 'stand-in-token')
+      expect(fs.statSync(home).mode & 0o777).to.equal(0o700)
+      expect(fs.statSync(tokensDir).mode & 0o777).to.equal(0o700)
+      expect(fs.statSync(path.join(tokensDir, 'perm-probe.token')).mode & 0o777).to.equal(0o600)
+    } finally {
+      process.umask(previous)
+      fs.rmSync(tokensDir, {recursive: true, force: true})
+      if (!homeExisted) {
+        fs.rmSync(home, {recursive: true, force: true})
+      } else if (homeMode !== null) {
+        fs.chmodSync(home, homeMode)
+      }
+    }
   })
 })
