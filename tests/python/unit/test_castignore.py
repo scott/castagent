@@ -13,6 +13,7 @@ memory/memory.db
 memory/memory.db-journal
 memory/memory.db-wal
 memory/memory.db-shm
+memory/notes.md
 /Dockerfile
 /docker-compose.yml
 /requirements.txt
@@ -32,6 +33,7 @@ def test_default_rules_skip_runtime_state():
     assert _ignored(DEFAULT, "cast.db")
     assert _ignored(DEFAULT, "memory/memory.db")
     assert _ignored(DEFAULT, "memory/memory.db-wal")
+    assert _ignored(DEFAULT, "memory/notes.md")
     assert _ignored(DEFAULT, ".cast/versions", is_dir=True)
     assert _ignored(DEFAULT, ".cast/versions/001.tar.gz")
     assert _ignored(DEFAULT, "pkg/__pycache__", is_dir=True)

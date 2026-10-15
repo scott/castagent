@@ -14,6 +14,74 @@ def get_agent_path() -> str:
     return os.path.join(home, '.cast', 'agents')
 
 
+# Persistent notes can hold credentials. Never stage this path.
+PRIVATE_NOTE_PATH = "memory/notes.md"
+
+
+def _normalize_repo_path(path: str) -> str:
+    normalized = path.replace("\\", "/").strip()
+    while normalized.startswith("./"):
+        normalized = normalized[2:]
+    return normalized
+
+
+def _is_private_note(path: str) -> bool:
+    return _normalize_repo_path(path) == PRIVATE_NOTE_PATH
+
+
+def _public_paths(paths: List[str]) -> List[str]:
+    return [path for path in paths if path and not _is_private_note(path)]
+
+
+def _staged_paths(repo) -> List[str]:
+    paths = []
+    for item in repo.index.diff("HEAD"):
+        path = getattr(item, "a_path", None) or getattr(item, "b_path", None)
+        if path:
+            paths.append(path)
+    return paths
+
+
+def _index_has_private_note(repo) -> bool:
+    try:
+        listed = repo.git.ls_files("--", PRIVATE_NOTE_PATH)
+    except Exception:
+        return False
+    if not isinstance(listed, str):
+        return False
+    return any(_is_private_note(line.strip()) for line in listed.splitlines() if line.strip())
+
+
+def _head_has_private_note(repo) -> bool:
+    try:
+        repo.git.cat_file("-e", f"HEAD:{PRIVATE_NOTE_PATH}")
+    except Exception:
+        return False
+    return True
+
+
+def _stage_public_changes(repo) -> tuple[bool, bool]:
+    """Stage public changes and keep memory/notes.md out of the index.
+
+    A tracked notes file is removed from the index and left on disk.
+    Returns (skipped_private_note, have_changes_to_commit).
+    """
+    in_index = _index_has_private_note(repo)
+    in_head = _head_has_private_note(repo) if in_index else False
+    if in_index:
+        repo.git.rm("--cached", "--ignore-unmatch", "--", PRIVATE_NOTE_PATH)
+    untracked = [path for path in (repo.untracked_files or []) if path]
+    skipped = in_index or any(_is_private_note(path) for path in untracked)
+    public_untracked = _public_paths(untracked)
+    public_staged = _public_paths(_staged_paths(repo))
+    if public_untracked:
+        repo.index.add(public_untracked)
+    if public_staged:
+        repo.index.add(public_staged)
+    removal = in_index and in_head
+    return skipped, bool(public_untracked or public_staged or removal)
+
+
 def load_agent_config(agent_path: str) -> dict:
     config_path = os.path.join(agent_path, 'agent.yaml')
     if os.path.exists(config_path):
@@ -104,6 +172,9 @@ def git_commit(message: str) -> str:
     """
     Stage all non-ignored files and commit with the given message.
 
+    memory/notes.md is private and is never staged. A copy already in
+    the index is removed from the commit and left on disk.
+
     Args:
         message: The commit message
     """
@@ -122,12 +193,16 @@ def git_commit(message: str) -> str:
         if os.path.exists(readme_path):
             pass
 
-        repo.index.add(repo.untracked_files)
-        repo.index.add([item.a_path for item in repo.index.diff('HEAD')])
+        skipped_notes, staged_public = _stage_public_changes(repo)
+        if skipped_notes and not staged_public:
+            return "Nothing to commit. memory/notes.md is private and was not staged."
 
         commit = repo.index.commit(message)
 
-        return f"Committed successfully!\nCommit: {commit.hexsha[:7]}\nMessage: {message}"
+        result = f"Committed successfully!\nCommit: {commit.hexsha[:7]}\nMessage: {message}"
+        if skipped_notes:
+            result += "\nmemory/notes.md is private and was not staged."
+        return result
 
     except git.InvalidGitRepositoryError:
         return "Not a valid Git repository."
@@ -257,6 +332,8 @@ def git_add(files: Optional[List[str]] = None) -> str:
     """
     Stage specific files for commit.
 
+    memory/notes.md is private and is never staged.
+
     Args:
         files: List of file paths to stage. If None, stages all non-ignored files.
     """
@@ -270,11 +347,19 @@ def git_add(files: Optional[List[str]] = None) -> str:
         repo = git.Repo(agent_path)
 
         if files:
-            repo.index.add(files)
-            return f"Staged {len(files)} file(s)."
+            public = _public_paths(list(files))
+            skipped_notes = any(_is_private_note(path) for path in files)
+            if public:
+                repo.index.add(public)
+            if skipped_notes and not public:
+                return "Skipped memory/notes.md. That file is private and was not staged."
+            if skipped_notes:
+                return f"Staged {len(public)} file(s). Skipped private memory/notes.md."
+            return f"Staged {len(public)} file(s)."
         else:
-            repo.index.add(repo.untracked_files)
-            repo.index.add([item.a_path for item in repo.index.diff('HEAD')])
+            skipped_notes, _staged_public = _stage_public_changes(repo)
+            if skipped_notes:
+                return "Staged all non-ignored files. Skipped private memory/notes.md."
             return "Staged all non-ignored files."
 
     except git.InvalidGitRepositoryError:

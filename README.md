@@ -302,7 +302,7 @@ cast dev <agent-name>
 
 If that name is not on disk yet, `cast dev <agent-name>` starts the same new-agent flow and creates `~/.cast/agents/<agent-name>/` from your description. `cast update`, `cast deploy`, and `cast upgrade` do not create a missing agent; they tell you to run `cast new`.
 
-`cast dev` keeps persistent memory in `~/.cast/agents/<name>/memory/`. A message such as `remember: my favorite fruit is quince` is written to `memory/notes.md` and `memory/memory.db`. The `read` tool resolves `memory/notes.md` against that agent directory.
+`cast dev` keeps persistent memory in `~/.cast/agents/<name>/memory/`. A message such as `remember: my favorite fruit is quince` is written to `memory/notes.md` and `memory/memory.db`. Provider keys are scrubbed before those writes, including a bare `sk-or-v1-` key, other `sk-` keys, and DigitalOcean `dop_v1_`, `doo_v1_`, and `dor_v1_` tokens. The `read` tool resolves `memory/notes.md` against that agent directory. `memory/notes.md` is in the default gitignore, and the agent git tools do not stage it.
 
 `cast dev` starts each MCP server listed in `tools.mcp` and keeps that process alive until the agent exits. The server's tools are registered with the agent, and a tool call is proxied to that process. Restart `cast dev` after changing an MCP config. A server file that does not parse, or a server that fails to start, is skipped. The other servers still start. Each server process receives `PATH` and the variables in its YAML `env` map. It does not inherit the rest of the Cast process environment.
 
@@ -366,7 +366,7 @@ cast update my-agent --model openrouter/openai/gpt-4o --dry-run
 
 Permission levels are enforced while the agent is running. `always-allow` runs the tool. `deny` returns an error and does not run it. `ask` runs it only after the TUI approves in a modal that shows the tool name, the arguments, and Approve / Deny. A headless `message/send` does not run an `ask` tool. Restart `cast dev` after a permission change so the running process reloads `agent.yaml`.
 
-A built-in tool with no `harness.permissions` entry stays `always-allow`. An MCP tool does not. A tool advertised by an MCP server is `deny` until its registered name is listed. `mcp` and `*` set the level for every advertised name that has no entry of its own. Startup prints the advertised names. `cast update my-agent --permission run=ask` or `cast update my-agent --permission mcp=deny` writes those keys. Restart `cast dev` after adding them.
+A built-in tool with no `harness.permissions` entry stays `always-allow`, except `git_push`, which defaults to `ask`. An MCP tool does not. A tool advertised by an MCP server is `deny` until its registered name is listed. `mcp` and `*` set the level for every advertised name that has no entry of its own. Startup prints the advertised names. `cast update my-agent --permission run=ask` or `cast update my-agent --permission mcp=deny` writes those keys. Restart `cast dev` after adding them.
 
 `cast update` checks these values before it writes. A permission level other than `always-allow`, `ask`, or `deny`, an unknown model id, or a Python version other than `3.11` or `3.12` prints an error and exits non-zero. `agent.yaml` is not changed. Unknown models use the same message as `cast model`. A leading `openrouter/` prefix is still accepted, including the shipped default `openrouter/minimax/minimax-m2.5`. A provider that accepts any model id, such as `digitalocean/`, is still accepted.
 
@@ -522,7 +522,7 @@ shows `/git commit [-m] <msg>`.
 
 `cast git init` runs `git init -b main` and writes ignore rules to
 `.gitignore` and `.castignore`. Those rules leave runtime files such
-as `memory/memory.db` and `tools/__pycache__/` out of the repository.
+as `memory/memory.db`, `memory/notes.md`, and `tools/__pycache__/` out of the repository.
 They also leave the Docker deploy files `Dockerfile`,
 `docker-compose.yml`, `requirements.txt`, and `.cast-runtime/` out of
 the repository. `docker-compose.yml` does not contain the deployment
@@ -533,7 +533,8 @@ A Git repository that has no `.gitignore` yet receives one.
 `repository.branch` is `main`, matching the checked-out branch. If Git
 has no `user.name` and `user.email`, init stops before creating the
 repository and tells you to set them with `git config`. `cast dev`
-adds the memory database rules to an agent that already has a Git repo.
+adds the memory database rules and `memory/notes.md` to an agent that already has a Git repo.
+`git_push` defaults to `ask` when `harness.permissions` has no `git_push` entry. Set `git_push: always-allow` to push without a prompt.
 
 `cast git remote <agent> create` uses `gh` to create the GitHub repository and writes `repository.url` from that repository's owner and host. It does not use the local username, and it leaves the rest of `agent.yaml` unchanged.
 

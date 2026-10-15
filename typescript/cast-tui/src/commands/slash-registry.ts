@@ -3539,6 +3539,7 @@ const commands: SlashCommand[] = [
             'memory/memory.db-journal',
             'memory/memory.db-wal',
             'memory/memory.db-shm',
+            'memory/notes.md',
             '/Dockerfile',
             '/docker-compose.yml',
             '/requirements.txt',

@@ -97,7 +97,9 @@ harness:
 ```
 
 The runtime checks the level when the model calls a built-in tool, including
-calls that arrive over A2A. A built-in tool with no entry runs as `always-allow`.
+calls that arrive over A2A. A built-in tool with no entry runs as `always-allow`,
+except `git_push`, which defaults to `ask`. Set `git_push: always-allow`
+when an agent should push without a prompt.
 An MCP tool with no entry is `deny` until its registered name, `mcp`, or `*`
 is set. See [MCP servers](configuration/mcp-servers).
 

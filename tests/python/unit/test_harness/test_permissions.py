@@ -48,6 +48,15 @@ class TestPermissionGate:
         gate = PermissionGate({})
         assert gate.action_for("bash") == ALWAYS_ALLOW
 
+    def test_missing_git_push_asks(self):
+        gate = PermissionGate({})
+        assert gate.action_for("git_push") == ASK
+        assert gate.action_for("git_commit") == ALWAYS_ALLOW
+
+    def test_explicit_git_push_allow_overrides_the_default(self):
+        gate = PermissionGate({"git_push": "always-allow"})
+        assert gate.action_for("git_push") == ALWAYS_ALLOW
+
     def test_unknown_level_is_not_allow(self):
         gate = PermissionGate({"bash": "sometimes"})
         assert gate.action_for("bash") is None
@@ -183,6 +192,8 @@ class TestMcpPermissionDefault:
         gate = PermissionGate({})
         assert gate.action_for("read") == ALWAYS_ALLOW
         assert gate.action_for("read", origin=MCP_ORIGIN) == DENY
+        assert gate.action_for("git_push") == ASK
+        assert gate.action_for("git_push", origin=MCP_ORIGIN) == DENY
 
     def test_exact_name_beats_mcp_deny(self):
         gate = PermissionGate({"mcp": "deny", "run": "always-allow"})
