@@ -32,7 +32,7 @@ file I/O. There's no special API.
 | Docker (local) | `cast-<name>` named volume | managed by `docker volume` |
 | Railway | persistent volume attached to the service | provisioned on first deploy |
 | Fly | volume attached to the app | provisioned on first deploy |
-| DigitalOcean | directory inside the droplet's host filesystem | mounted into the container |
+| DigitalOcean | `cast-<name>` block volume | keyed by the agent name and mounted into the container |
 | DigitalOcean MicroVM | MicroVM disk at `/app/agent/memory` | survives pause and resume. Upgrade copies it to the replacement MicroVM when it is 8 MiB or smaller |
 | Sprites | persistent directory inside the sprite | managed by Sprites |
 
@@ -45,6 +45,12 @@ instead of creating another one. If the registry still points at an older
 `cast-<name>-<deployment-id>-memory` volume, Cast copies its files into
 `cast-<name>` and mounts that. The log says `Creating memory volume` only
 when a volume is created, and `Reusing memory volume` when it is not.
+
+A DigitalOcean Droplet deploy creates a block volume named `cast-<name>`.
+The next deploy reuses that volume. If the account still has an older
+`cast-<name>-<uuid>-memory` volume and no `cast-<name>` volume, Cast
+reuses the older volume. The log says `Creating memory volume` only when
+a volume is created, and `Reusing memory volume` when it is not.
 
 ## The volume_config field
 
@@ -63,8 +69,10 @@ destroy handler:
   as removed only when Docker deletes it.
 - Railway runs `railway down` and leaves the Railway volume in place.
 - Fly destroys the app and then attempts to delete its memory volume.
-- DigitalOcean Droplet shutdown deletes the droplet and then attempts
-  to delete the memory volume.
+- DigitalOcean Droplet shutdown deletes the droplet and then deletes the
+  `cast-<name>` memory volume. Older volumes named
+  `cast-<name>-<uuid>-memory` are removed as well. Cast reports a volume
+  as removed only when the volume delete succeeds.
 - DigitalOcean MicroVM shutdown deletes that MicroVM, including its disk.
 - Sprites shutdown destroys the sprite, which holds its persistent
   directory.
