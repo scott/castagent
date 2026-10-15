@@ -117,6 +117,7 @@ linux_build_ready() {
     check_command tar || return 1
     check_command unzip || return 1
     check_command gcc || return 1
+    check_command gpg || return 1
     check_command pkg-config || return 1
     pkg-config --exists libsecret-1 >/dev/null 2>&1 || return 1
     return 0
@@ -136,22 +137,26 @@ ensure_system_packages() {
             if check_command apt-get; then
                 run_root env DEBIAN_FRONTEND=noninteractive apt-get update
                 run_root env DEBIAN_FRONTEND=noninteractive apt-get install -y \
-                    git curl ca-certificates tar unzip build-essential pkg-config libsecret-1-dev
+                    git curl ca-certificates tar unzip build-essential pkg-config libsecret-1-dev gnupg
             elif check_command dnf; then
-                run_root dnf install -y git curl ca-certificates tar unzip gcc gcc-c++ make pkgconf-pkg-config libsecret-devel
+                run_root dnf install -y git curl ca-certificates tar unzip gcc gcc-c++ make pkgconf-pkg-config libsecret-devel gnupg2
             elif check_command yum; then
-                run_root yum install -y git curl ca-certificates tar unzip gcc gcc-c++ make pkgconfig libsecret-devel
+                run_root yum install -y git curl ca-certificates tar unzip gcc gcc-c++ make pkgconfig libsecret-devel gnupg2
             elif check_command pacman; then
-                run_root pacman -Sy --noconfirm git curl ca-certificates tar unzip base-devel pkgconf libsecret
+                run_root pacman -Sy --noconfirm git curl ca-certificates tar unzip base-devel pkgconf libsecret gnupg
             elif check_command apk; then
-                run_root apk add git curl ca-certificates tar unzip build-base pkgconfig libsecret-dev
+                run_root apk add git curl ca-certificates tar unzip build-base pkgconfig libsecret-dev gnupg
             else
                 log_error "No supported package manager found."
-                log_info "Install git, curl, tar, unzip, a C compiler, and libsecret, then run this script again."
+                log_info "Install git, curl, tar, unzip, a C compiler, libsecret, and gnupg, then run this script again."
                 exit 1
             fi
             ;;
         Darwin)
+            if ! check_command gpg && check_command brew; then
+                log_info "Installing gnupg..."
+                brew install gnupg </dev/null
+            fi
             ;;
         *)
             log_error "Unsupported operating system: $(uname -s)"
@@ -413,8 +418,8 @@ verify_signed_commit() {
     local keyfile gpghome status
 
     if ! command -v gpg >/dev/null 2>&1; then
-        log_error "gpg is required to verify the Cast checkout."
-        return 1
+        log_error "gpg is required to verify the Cast checkout. To continue, install gnupg and run this script again."
+        exit 1
     fi
     keyfile="$(mktemp "${TMPDIR:-/tmp}/cast-trust.XXXXXX")"
     gpghome="$(mktemp -d "${TMPDIR:-/tmp}/cast-gpg.XXXXXX")"

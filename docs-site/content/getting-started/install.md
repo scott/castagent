@@ -19,7 +19,7 @@ them yourself when you clone the repo and run `./install.sh` from that checkout.
 - **Node.js 18 or newer** (the one-liner installs pinned Node.js 20.20.2).
 - **Python 3.11 or newer** (the one-liner installs Python 3.12).
 - **Bun 1.4.3** (the one-liner installs this pinned build). Required to render the TUI.
-- **git**, **tar**, **unzip**, and a C compiler. Linux also needs libsecret.
+- **git**, **gnupg** (the `gpg` command), **tar**, **unzip**, and a C compiler. Linux also needs libsecret.
 
 You will also need an LLM API key to actually run an agent. Either is enough:
 
@@ -45,7 +45,7 @@ On macOS or Linux this installs git, Node.js 20.20.2, Python 3.12, and Bun
 Bun come from pinned archives. The digests in `install-checksums.txt` are
 checked before those archives are unpacked. The one-liner then runs
 `install.sh` from the checkout. It does not download `install.sh` from `main`
-again. Linux also gets a C compiler, unzip, and libsecret. Unzip unpacks the
+again. Linux also gets a C compiler, unzip, libsecret, and gnupg. macOS gets gnupg from Homebrew when `gpg` is missing. Unzip unpacks the
 Bun archive. On Debian and Ubuntu the system Python does not provide
 `ensurepip`, so the script installs `python3-venv` and `python3-pip` when
 that Python is new enough to use. A second run rebuilds the checkout it
@@ -114,7 +114,9 @@ From the checkout:
 the CLI, TUI, and Python runtime in place. The origin commit must be signed
 by the trusted key shipped in the script (`scripts/trusted-commit-key.asc`,
 GitHub's web commit signing key). An unsigned commit, or a commit signed by
-another key, stops the upgrade before any files move. A checkout on any
+another key, stops the upgrade before any files move. If `gpg` is not on
+`PATH`, upgrade stops and tells you to install gnupg. It does not describe
+that commit as unsigned. A checkout on any
 branch is switched, including local `master` that tracks `origin/master`.
 `master` is used only when the remote has no `main` branch. Agents, config,
 and tokens in `~/.cast` stay where they are. A stale pre-TypeScript binary

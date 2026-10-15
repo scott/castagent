@@ -268,6 +268,7 @@ assert_contains "$help_out" "no main branch" "help falls back to master only whe
 assert_contains "$help_out" "cast upgrade <agent>" "help distinguishes deployed-agent upgrade"
 assert_contains "$help_out" "build info files" "help mentions generated build info"
 assert_contains "$help_out" "trusted key" "help requires a signed commit"
+assert_contains "$help_out" "install gnupg" "help says to install gnupg"
 set +e
 bash "$SCRIPT_SRC" --nope >"$TMP/bad.out" 2>&1
 bad_status=$?
@@ -583,6 +584,38 @@ assert_eq "$(git -C "$PAIR_REPO" rev-parse HEAD)" "$other_sha" "another signing 
 assert_contains "$TMP/otherkey/out" "The commit is not signed by the trusted key." "another signing key explains itself"
 assert_not_contains "$CAST_UPGRADE_LOG" "npm " "another signing key does not install"
 export CAST_TRUSTED_KEY_FILE="$saved_key"
+
+# Hide gpg. A signed origin commit must still be refused, with an install
+# hint, and must not be described as unsigned.
+nogpg_bin="$TMP/bin-no-gpg"
+mkdir -p "$nogpg_bin"
+for dir in /usr/bin /bin; do
+    for f in "$dir"/*; do
+        base="${f##*/}"
+        case "$base" in
+            gpg|gpg2) continue ;;
+        esac
+        if [[ ! -e "$nogpg_bin/$base" ]]; then
+            ln -s "$f" "$nogpg_bin/$base"
+        fi
+    done
+done
+make_pair "nogpg"
+nogpg_sha="$(git -C "$PAIR_REPO" rev-parse HEAD)"
+prepare_home "$TMP/nogpg/home" "$PAIR_REPO"
+reset_log
+saved_path="$PATH"
+PATH="$TMP/stubs:$nogpg_bin"
+export PATH
+command -v gpg >/dev/null 2>&1 && fail "gpg should be hidden for the missing-gpg upgrade"
+run_upgrade "$PAIR_REPO/upgrade.sh" "$TMP/nogpg/home" "$TMP/nogpg/out"
+PATH="$saved_path"
+export PATH
+[[ "$RUN_STATUS" -ne 0 ]] || { cat "$TMP/nogpg/out" >&2; fail "missing gpg should fail the upgrade"; }
+assert_eq "$(git -C "$PAIR_REPO" rev-parse HEAD)" "$nogpg_sha" "missing gpg does not check out"
+assert_contains "$TMP/nogpg/out" "install gnupg" "missing gpg tells you to install gnupg"
+assert_not_contains "$TMP/nogpg/out" "The commit is not signed by the trusted key." "missing gpg is not reported as a bad signature"
+assert_not_contains "$CAST_UPGRADE_LOG" "npm " "missing gpg does not install"
 
 if [[ -L /usr/local/bin/cast || -e /usr/local/bin/cast ]]; then
     system_cast_after="$(readlink /usr/local/bin/cast || printf 'file')"
