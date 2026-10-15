@@ -11,6 +11,7 @@ import DigitalOceanDeploy, {
   digitalOceanMemoryVolumesToRemove,
   digitalOceanVolumeRemovalMessage,
   isLegacyDigitalOceanMemoryVolume,
+  parseDropletContainerProbe,
   planDigitalOceanMemoryVolume,
   remoteDockerRunCommand,
   removeDigitalOceanMemoryVolumes,
@@ -425,7 +426,17 @@ describe('DigitalOcean Deploy Provider', () => {
       if (extra?.execCommandReturn) {
         execStub.callsFake(extra.execCommandReturn)
       } else {
-        execStub.resolves({stdout: '', stderr: '', exitCode: 0})
+        execStub.callsFake(async (...args: unknown[]) => {
+          const remote = Array.isArray(args[1]) ? (args[1] as string[]).join(' ') : ''
+          if (remote.includes('---CAST-LOGS---')) {
+            return {
+              stdout: 'running\n---CAST-LOGS---\nAgent ready on port 8080\n',
+              stderr: '',
+              exitCode: 0,
+            }
+          }
+          return {stdout: '', stderr: '', exitCode: 0}
+        })
       }
       sandbox.stub(deployUtils, 'inferenceEnv').returns(
         extra?.openRouterKey ? {OPENROUTER_API_KEY: extra.openRouterKey} : {},
@@ -480,6 +491,7 @@ describe('DigitalOcean Deploy Provider', () => {
       const envInput = (envWrite!.args[2] as {input?: string}).input
       expect(envInput).to.include('AUTH_TOKEN=tok-secret')
       expect(envInput).to.include('CAST_MOTD=')
+      expect(envInput).to.include('PYTHONPATH=/app')
     })
 
     it('should include OPENROUTER_API_KEY when available', async () => {
@@ -584,6 +596,48 @@ describe('DigitalOcean Deploy Provider', () => {
       } catch (e: any) {
         expect(e.message).to.include('Failed to start container')
       }
+    })
+
+    it('fails when the container restarts and does not report success', async () => {
+      const {execStub, motdStub} = stubDeployHelpers({
+        execCommandReturn: (...args: any[]) => {
+          const cmd = ((args[1] as string[]) || []).join(' ')
+          if (cmd.includes('---CAST-LOGS---')) {
+            return {
+              stdout: "restarting\n---CAST-LOGS---\nModuleNotFoundError: No module named 'cast'\n",
+              stderr: '',
+              exitCode: 0,
+            }
+          }
+          return {stdout: '', stderr: '', exitCode: 0}
+        },
+      })
+      try {
+        await instance.deployOnDroplet(
+          defaultArgs.ip, defaultArgs.agentName, defaultArgs.authToken,
+          defaultArgs.imageTag, defaultArgs.volumeId,
+          defaultArgs.deploymentUrl, defaultArgs.deployedVersion,
+        )
+        expect.fail('Should have thrown')
+      } catch (e: any) {
+        expect(e.message).to.include('restarting')
+        expect(e.message).to.include("No module named 'cast'")
+        expect(e.message).to.not.include('Successful')
+      }
+      expect(motdStub.called, 'MOTD is written only after the runtime is ready').to.equal(false)
+      const commands = execStub.getCalls().map((call: sinon.SinonSpyCall) =>
+        ((call.args[1] as string[]) || []).join(' '),
+      )
+      expect(commands.some((cmd: string) => cmd.includes('docker update --restart=no'))).to.equal(true)
+      expect(commands.some((cmd: string) => cmd.includes('tok-secret'))).to.equal(false)
+    })
+
+    it('parses a droplet container probe', () => {
+      const ready = parseDropletContainerProbe('running\n---CAST-LOGS---\nAgent ready on port 8080\n')
+      expect(ready).to.deep.equal({status: 'running', logs: 'Agent ready on port 8080'})
+      const crashed = parseDropletContainerProbe('', "missing\n---CAST-LOGS---\nNo module named 'cast'\n")
+      expect(crashed.status).to.equal('missing')
+      expect(crashed.logs).to.include("No module named 'cast'")
     })
 
     it('should pass onHostTui=true to the MOTD context when withTui is true', async () => {

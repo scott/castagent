@@ -6,6 +6,7 @@ import crypto from 'crypto'
 import YAML from 'yaml'
 import { db } from '../sqlite'
 import { keychain, type TokenStore } from '../keychain'
+import {writeRequirementsTxt} from './requirements'
 
 const CAST_DIR = path.join(os.homedir(), '.cast')
 const CONFIG_PATH = path.join(CAST_DIR, 'config.yaml')
@@ -468,6 +469,79 @@ python-dotenv>=1.0.0
 `
     fs.writeFileSync(requirementsPath, requirements)
   }
+}
+
+const GENERATED_DOCKERFILE_MARKER = 'FROM python:3.11-slim-bookworm AS builder'
+
+/**
+ * Image used by DigitalOcean Droplets and MicroVMs.
+ * `cast` is copied onto PYTHONPATH. It is not a requirements.txt entry,
+ * because pip would look for a different package of that name.
+ */
+export function castRuntimeDockerfile(): string {
+  return `FROM python:3.11-slim-bookworm AS builder
+
+WORKDIR /build
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/* \\
+    && pip install --no-cache-dir -r requirements.txt
+
+# Runtime stage. No build tools, just Python and installed packages.
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+# Copy installed Python packages from the builder stage
+COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# The Cast package is copied from the build context, not installed from requirements.txt.
+COPY .cast-runtime/cast /app/cast
+
+# Copy agent files
+COPY . /app/agent/
+
+# Set environment variables
+ENV CAST_AGENT_PATH=/app/agent
+ENV PYTHONPATH=/app
+
+# Expose port
+EXPOSE 8080
+
+# Run agent
+CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "8080", "--host", "0.0.0.0"]
+`
+}
+
+export function dockerfileCopiesCastPackage(content: string): boolean {
+  return /^\s*COPY\s+\.cast-runtime\/cast\s+\/app\/cast(?:\s|$)/m.test(content)
+}
+
+export function isGeneratedAgentDockerfile(content: string): boolean {
+  return content.includes(GENERATED_DOCKERFILE_MARKER) && content.includes('cast.runtime')
+}
+
+/**
+ * Write the Droplet and MicroVM Dockerfile, or replace a previously
+ * generated file that omitted the Cast package. A custom Dockerfile
+ * is left in place.
+ */
+export function ensureCastRuntimeDockerfile(agentPath: string): void {
+  ensureDockerfile(agentPath)
+  const dockerfilePath = path.join(agentPath, 'Dockerfile')
+  const current = fs.readFileSync(dockerfilePath, 'utf8')
+  if (dockerfileCopiesCastPackage(current) && /PYTHONPATH=\/app(?:\s|$)/.test(current)) return
+  if (!isGeneratedAgentDockerfile(current)) return
+  fs.writeFileSync(dockerfilePath, castRuntimeDockerfile())
+}
+
+/** Dockerfile, dockerignore, and requirements for a Droplet or MicroVM image. */
+export function prepareCastImageContext(agentPath: string, projectRoot: string): void {
+  ensureCastRuntimeDockerfile(agentPath)
+  createDockerignore(agentPath)
+  writeRequirementsTxt(projectRoot, agentPath)
 }
 
 // Budget for the total .cast-tui/ build context (dist + node_modules +

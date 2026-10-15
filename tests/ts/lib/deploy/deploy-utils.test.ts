@@ -13,6 +13,8 @@ import {
   execCommand,
   execCommandIgnoreError,
   ensureDockerfile,
+  ensureCastRuntimeDockerfile,
+  prepareCastImageContext,
   prepareHostTuiBuildContext,
   installPin,
 } from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
@@ -435,6 +437,53 @@ describe('ensureDockerfile', () => {
     ensureDockerfile(tempDir)
     const reqPath = path.join(tempDir, 'requirements.txt')
     expect(fs.existsSync(reqPath)).to.be.true
+  })
+})
+
+describe('ensureCastRuntimeDockerfile', () => {
+  let agentDir = ''
+
+  beforeEach(() => {
+    agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-image-'))
+  })
+
+  afterEach(() => {
+    if (agentDir) fs.rmSync(agentDir, {recursive: true, force: true})
+  })
+
+  it('copies the cast package onto PYTHONPATH and does not pip-install it', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-image-root-'))
+    try {
+      prepareCastImageContext(agentDir, root)
+      const dockerfile = fs.readFileSync(path.join(agentDir, 'Dockerfile'), 'utf8')
+      const requirements = fs.readFileSync(path.join(agentDir, 'requirements.txt'), 'utf8')
+      expect(dockerfile).to.include('COPY .cast-runtime/cast /app/cast')
+      expect(dockerfile).to.match(/PYTHONPATH=\/app(?:\s|$)/)
+      expect(dockerfile).to.not.include('PYTHONPATH=/usr/local')
+      expect(requirements).to.not.match(/^cast\b/m)
+      expect(requirements).to.include('GitPython')
+    } finally {
+      fs.rmSync(root, {recursive: true, force: true})
+    }
+  })
+
+  it('replaces a generated Dockerfile that omitted the cast package', () => {
+    ensureDockerfile(agentDir)
+    const dockerfilePath = path.join(agentDir, 'Dockerfile')
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.include('PYTHONPATH=/usr/local')
+
+    ensureCastRuntimeDockerfile(agentDir)
+    const dockerfile = fs.readFileSync(dockerfilePath, 'utf8')
+    expect(dockerfile).to.include('COPY .cast-runtime/cast /app/cast')
+    expect(dockerfile).to.match(/PYTHONPATH=\/app(?:\s|$)/)
+    expect(dockerfile).to.not.include('PYTHONPATH=/usr/local')
+  })
+
+  it('leaves a custom Dockerfile in place', () => {
+    const dockerfilePath = path.join(agentDir, 'Dockerfile')
+    fs.writeFileSync(dockerfilePath, 'FROM custom:latest\n')
+    ensureCastRuntimeDockerfile(agentDir)
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal('FROM custom:latest\n')
   })
 })
 

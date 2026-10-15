@@ -21,6 +21,21 @@ describe('Docker container readiness', () => {
     })).to.equal('ready')
   })
 
+  it('treats a restart loop and a missing cast import as failed', () => {
+    expect(classifyContainerHealth({
+      status: 'restarting',
+      logs: "ModuleNotFoundError: No module named 'cast'",
+    })).to.equal('failed')
+    expect(classifyContainerHealth({
+      status: 'running',
+      logs: "ModuleNotFoundError: No module named 'cast'",
+    })).to.equal('failed')
+    expect(classifyContainerHealth({
+      status: 'running',
+      logs: "Agent ready on port 8080\nNo module named 'cast'",
+    })).to.equal('ready')
+  })
+
   it('fails immediately when the container has exited', async () => {
     let slept = 0
     const result = await waitForContainerHealth(
@@ -90,6 +105,17 @@ describe('Docker container readiness', () => {
     expect(message).to.include('exited before the runtime was ready')
     expect(message).to.include('ModuleNotFoundError')
     expect(message).to.include('docker logs cast-bb2-chat')
+    expect(message).to.not.include('Successful')
+  })
+
+  it('describes a restart loop without claiming success', () => {
+    const message = containerHealthFailureMessage('cast-agent', {
+      status: 'restarting',
+      logs: "ModuleNotFoundError: No module named 'cast'",
+      reason: 'exited',
+    })
+    expect(message).to.include('is restarting and never became ready')
+    expect(message).to.include("No module named 'cast'")
     expect(message).to.not.include('Successful')
   })
 })

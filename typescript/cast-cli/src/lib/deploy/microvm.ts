@@ -5,13 +5,12 @@ import * as os from 'os'
 import * as path from 'path'
 import {db} from '../sqlite'
 import {
-  createDockerignore,
-  ensureDockerfile,
   execCommand,
   generateAuthToken,
   generateDeploymentId,
   getAgentPath,
   inferenceEnv,
+  prepareCastImageContext,
   prepareHostTuiBuildContext,
   resolveDeploymentAuthToken,
   resolveDigitalOceanToken,
@@ -400,6 +399,102 @@ export function isScopeDenied(output: string): boolean {
   return /403|forbidden|unauthorized/i.test(output)
 }
 
+export interface CommandResult {
+  exitCode: number
+  stdout: string
+  stderr: string
+}
+
+/**
+ * A MicroVM that did not become ready.
+ * `microvmId` is set only when the VM is still on the account.
+ */
+export class MicrovmFailure extends Error {
+  readonly microvmId?: string
+  readonly endpoint?: string
+  readonly region?: string
+
+  constructor(message: string, microvmId?: string, endpoint?: string, region?: string) {
+    super(message)
+    this.name = 'MicrovmFailure'
+    this.microvmId = microvmId
+    this.endpoint = endpoint
+    this.region = region
+  }
+}
+
+export interface FailedMicrovmSettlement {
+  id?: string
+  endpoint?: string
+  region?: string
+  message: string
+}
+
+/** True when the MicroVM is gone (deleted, or already missing). */
+export async function discardFailedMicrovm(
+  id: string,
+  remove: (id: string) => Promise<CommandResult | undefined>,
+): Promise<boolean> {
+  let result: CommandResult | undefined
+  try {
+    result = await remove(id)
+  } catch {
+    return false
+  }
+  if (!result) return false
+  if (result.exitCode === 0) return true
+  return isMissingMicrovm(`${result.stderr}\n${result.stdout}`)
+}
+
+function cleanupNote(message: string, deleted: boolean): string {
+  const deletedNote = 'The MicroVM was deleted.'
+  const remainNote = 'The MicroVM is still on the account.'
+  const text = deleted ? message.replace(remainNote, deletedNote) : message.replace(deletedNote, remainNote)
+  const note = deleted ? deletedNote : remainNote
+  return text.includes(note) ? text : `${text} ${note}`
+}
+
+/**
+ * Delete a MicroVM that failed during create. The returned error carries
+ * the id only when the VM is still on the account.
+ */
+export async function settleFailedMicrovm(
+  record: MicrovmRecord,
+  detail: string,
+  remove: (id: string) => Promise<CommandResult | undefined>,
+): Promise<MicrovmFailure> {
+  const deleted = await discardFailedMicrovm(record.id, remove)
+  return new MicrovmFailure(
+    cleanupNote(`MicroVM ${record.id} failed: ${detail}`, deleted),
+    deleted ? undefined : record.id,
+    deleted ? undefined : record.endpoint,
+    deleted ? undefined : record.region,
+  )
+}
+
+/**
+ * After create or the endpoint probe fails, delete the MicroVM.
+ * An id in the result means the VM is still on the account and should be recorded.
+ */
+export async function resolveFailedMicrovm(input: {
+  error: unknown
+  created?: {id?: string; endpoint?: string; region?: string}
+  remove: (id: string) => Promise<CommandResult | undefined>
+}): Promise<FailedMicrovmSettlement> {
+  const message = input.error instanceof Error ? input.error.message : String(input.error)
+  const failure = input.error instanceof MicrovmFailure ? input.error : undefined
+  const id = input.created?.id || failure?.microvmId
+  if (!id) return {message}
+  const deleted = await discardFailedMicrovm(id, input.remove)
+  if (deleted) return {message: cleanupNote(message, true)}
+  return {
+    id,
+    endpoint: input.created?.endpoint || failure?.endpoint,
+    region: input.created?.region || failure?.region,
+    message: cleanupNote(message, false),
+  }
+}
+
 function volumeConfigJson(config: MicrovmVolumeConfig): string {
   return JSON.stringify(config)
 }
@@ -498,9 +593,11 @@ export default class MicrovmDeploy extends Command {
     // Rebuild from that copy and the image keeps the old runtime, so a
     // quiet chat stream still dies on the MicroVM edge.
     const agentPath = getAgentPath(agentName)
-    if (!copyCastRuntime(agentPath)) {
+    const projectRoot = findProjectRoot()
+    prepareCastImageContext(agentPath, projectRoot)
+    if (!copyCastRuntime(agentPath, projectRoot)) {
       throw new Error(
-        `Cast Python package not found under ${findProjectRoot()}. Run cast upgrade from a Cast Agent checkout so the image includes the current runtime.`,
+        `Cast Python package not found under ${projectRoot}. Run cast upgrade from a Cast Agent checkout so the image includes the current runtime.`,
       )
     }
 
@@ -540,10 +637,15 @@ export default class MicrovmDeploy extends Command {
         await restoreMemory(token, created.id, encoded)
       }
     } catch (error) {
-      if (created?.id) {
-        await doctl(token, ['compute', 'microvm', 'delete', created.id, '--force']).catch(() => undefined)
+      const settled = await resolveFailedMicrovm({
+        error,
+        created,
+        remove: (id) => doctl(token, ['compute', 'microvm', 'delete', id, '--force']).catch(() => undefined),
+      })
+      if (settled.id) {
+        throw new Error(`${settled.message} Delete it with doctl compute microvm delete ${settled.id} --force`)
       }
-      throw error
+      throw new Error(settled.message)
     }
 
     const next: MicrovmVolumeConfig = {
@@ -578,10 +680,12 @@ export default class MicrovmDeploy extends Command {
       this.error(`Agent '${agentName}' not found at ${agentPath}.`)
     }
 
-    ensureDockerfile(agentPath)
-    createDockerignore(agentPath)
-    copyCastRuntime(agentPath)
-    await prepareHostTuiBuildContext(agentPath, findProjectRoot(), {enabled: false})
+    const projectRoot = findProjectRoot()
+    prepareCastImageContext(agentPath, projectRoot)
+    if (!copyCastRuntime(agentPath, projectRoot)) {
+      this.error(`Cast Python package not found under ${projectRoot}. Run cast deploy from a Cast Agent checkout so the image includes the runtime.`)
+    }
+    await prepareHostTuiBuildContext(agentPath, projectRoot, {enabled: false})
 
     const deploymentId = generateDeploymentId()
     const sha = process.env.CAST_DEPLOYMENT_SHA || deploymentId
@@ -614,11 +718,26 @@ export default class MicrovmDeploy extends Command {
         agentName,
       }, message => this.log(message))
       await probeEndpoint(token, created, edgeAuthOnly, authToken)
-    } catch (error: any) {
-      if (created?.id) {
-        await doctl(token, ['compute', 'microvm', 'delete', created.id, '--force']).catch(() => undefined)
+    } catch (error: unknown) {
+      const settled = await resolveFailedMicrovm({
+        error,
+        created,
+        remove: (id) => doctl(token, ['compute', 'microvm', 'delete', id, '--force']).catch(() => undefined),
+      })
+      if (settled.id) {
+        const endpoint = settled.endpoint || `https://${settled.id}.${settled.region || REGION}.microvm.ondigitalocean.com`
+        saveDeployment(agentName, 'microvm', endpoint, tokenHash, settled.id, volumeConfigJson({
+          microvmId: settled.id,
+          region: settled.region || REGION,
+          ociRef,
+          authMode: edgeAuthOnly ? 'edge-only' : 'dual',
+          cpu: size.cpu,
+          memory: size.memory,
+          idleTimeout,
+        }))
+        this.error(`${settled.message} The deployment was recorded so cast shutdown ${agentName} can remove it.`)
       }
-      this.error(error.message || String(error))
+      this.error(settled.message)
     }
 
     const config: MicrovmVolumeConfig = {
@@ -838,18 +957,26 @@ async function createAndWait(
     if (isScopeDenied(text)) throw new Error(`DigitalOcean rejected MicroVM create. ${SCOPE_HINT}\n${text}`)
     throw new Error(`MicroVM create failed: ${text}`)
   }
+  const remove = (id: string) =>
+    doctl(token, ['compute', 'microvm', 'delete', id, '--force']).catch(() => undefined)
   let record = parseMicrovmPayload(created.stdout)
-  for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
-    const readiness = microvmReady(record)
-    if (readiness === 'ready' && record.endpoint) return record
-    if (readiness === 'failed') {
-      throw new Error(`MicroVM ${record.id} failed: ${record.failureReason || record.state}`)
+  try {
+    for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
+      const readiness = microvmReady(record)
+      if (readiness === 'ready' && record.endpoint) return record
+      if (readiness === 'failed') {
+        throw await settleFailedMicrovm(record, record.failureReason || record.state || 'failed', remove)
+      }
+      log(`Waiting for MicroVM ${record.id} (${record.state || 'provisioning'})...`)
+      await delay(POLL_DELAY_MS)
+      record = await getMicrovm(token, record.id)
     }
-    log(`Waiting for MicroVM ${record.id} (${record.state || 'provisioning'})...`)
-    await delay(POLL_DELAY_MS)
-    record = await getMicrovm(token, record.id)
+    throw await settleFailedMicrovm(record, 'did not become ready', remove)
+  } catch (error) {
+    if (error instanceof MicrovmFailure) throw error
+    const detail = error instanceof Error ? error.message : String(error)
+    throw await settleFailedMicrovm(record, detail, remove)
   }
-  throw new Error(`MicroVM ${record.id} did not become ready.`)
 }
 
 async function getMicrovm(token: string, id: string): Promise<MicrovmRecord> {

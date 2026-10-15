@@ -21,10 +21,14 @@ export type ContainerHealthResult =
  */
 export function classifyContainerHealth(probe: ContainerProbe): ContainerHealthKind {
   const status = probe.status.trim().toLowerCase()
-  if (status === 'exited' || status === 'dead' || status === 'removing' || status === 'missing') {
+  if (status === 'running' && probe.logs.includes('Agent ready')) return 'ready'
+  if (
+    status === 'exited' || status === 'dead' || status === 'removing' ||
+    status === 'missing' || status === 'restarting'
+  ) {
     return 'failed'
   }
-  if (status === 'running' && probe.logs.includes('Agent ready')) return 'ready'
+  if (/ModuleNotFoundError|No module named ['"]cast['"]/.test(probe.logs)) return 'failed'
   return 'pending'
 }
 
@@ -91,9 +95,14 @@ export function containerHealthFailureMessage(
   result: {status: string; logs: string; reason: 'exited' | 'timeout'},
 ): string {
   const status = result.status || 'unknown'
-  const summary = result.reason === 'exited'
-    ? `Docker container '${containerName}' exited before the runtime was ready.`
-    : `Docker container '${containerName}' did not become ready (status: ${status}).`
+  const normalized = status.toLowerCase()
+  const summary = result.reason === 'timeout'
+    ? `Docker container '${containerName}' did not become ready (status: ${status}).`
+    : normalized === 'restarting'
+      ? `Docker container '${containerName}' is restarting and never became ready.`
+      : normalized === 'running'
+        ? `Docker container '${containerName}' failed before the runtime was ready.`
+        : `Docker container '${containerName}' exited before the runtime was ready.`
   const logs = tail(result.logs)
   const parts = [summary, `Status: ${status}`]
   if (logs) parts.push(logs)
