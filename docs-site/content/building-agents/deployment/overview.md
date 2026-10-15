@@ -94,7 +94,7 @@ The image exposes A2A on port 8080. The provider assigns a public URL
 For Docker, `requirements.txt` is written when you deploy or upgrade. It
 starts from `pip freeze` of `python/.venv` when that virtualenv exists,
 otherwise from the runtime's dependency list. It always adds dependencies
-from `python/pyproject.toml` (including GitPython, which the runtime
+from `python/pyproject.toml` (including GitPython 3.2.1 or newer, which the runtime
 imports at startup) and every package in the agent's `runtime.requirements`.
 The `cast` package itself is omitted because the image copies that source
 tree in directly.

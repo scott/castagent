@@ -653,7 +653,7 @@ exec python3 /opt/cast-tui/host_tui_launcher.py "$@"
       // dynamically imports at runtime.
       'axios': '^1.6.8',
       'clipboardy': '^4.0.0',
-      'simple-git': '^3.36.0',
+      'simple-git': '^4.0.2',
       'yaml': '^2.4.1',
     },
   }

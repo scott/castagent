@@ -216,6 +216,14 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
+      # python/requirements.lock pins the runtime dependencies from
+      # python/pyproject.toml, including GitPython>=3.2.1. Auditing the
+      # lockfile does not need a project virtualenv.
+      - name: Audit locked Python dependencies
+        run: |
+          python -m pip install pip-audit
+          python -m pip_audit -r python/requirements.lock --disable-pip --progress-spinner=off
+
       # TypeScript linting
       - name: Install TypeScript dependencies
         run: |

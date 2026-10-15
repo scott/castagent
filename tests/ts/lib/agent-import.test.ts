@@ -2,7 +2,7 @@ import {expect} from 'chai'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import simpleGit from 'simple-git'
+import {simpleGit} from 'simple-git'
 import * as yaml from 'yaml'
 import {
   AGENT_NAME_PATTERN,

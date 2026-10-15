@@ -2,7 +2,7 @@ import {Args, Command, Flags} from '@oclif/core'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import simpleGit, {PushResult, SimpleGit} from 'simple-git'
+import {simpleGit, type PushResult, type SimpleGit} from 'simple-git'
 
 export default class GitPush extends Command {
   static description = 'Push commits to the remote repository'
