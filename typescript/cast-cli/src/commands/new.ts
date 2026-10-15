@@ -51,7 +51,7 @@ export default class New extends Command {
     if (!fs.existsSync(venvPython)) {
       this.warn('Python virtual environment not found at python/.venv/')
       this.warn('Falling back to system python3. Some features may not work correctly.')
-      this.warn('Run: python -m venv python/.venv && pip install -r python/requirements.txt')
+      this.warn('From the repository checkout, run ./setup.sh to create python/.venv.')
     }
   }
 
