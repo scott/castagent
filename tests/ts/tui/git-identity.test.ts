@@ -4,7 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 import * as vm from 'vm'
 import ts from 'typescript'
-import {GIT_IDENTITY_HINT as cliHint} from '../../../typescript/cast-cli/src/lib/git-identity'
+import {GIT_IDENTITY_ENV as cliIdentityEnv, GIT_IDENTITY_HINT as cliHint} from '../../../typescript/cast-cli/src/lib/git-identity'
 
 function loadHelper(): typeof import('../../../typescript/cast-tui/src/lib/git-identity') {
   const file = path.resolve(__dirname, '../../../typescript/cast-tui/src/lib/git-identity.ts')
@@ -34,9 +34,12 @@ describe('tui /git init identity', () => {
 
   it('stops /git init on main when git has no email', async () => {
     expect(gitCommand).to.include('assertGitAuthorIdentity(agentPath)')
+    expect(gitCommand).to.include('createAgentGit(agentPath)')
+    expect(gitCommand).to.include('rollbackFailedInit(agentPath, snapshot)')
     expect(gitCommand).to.include("git.raw(['init', '-b', 'main'])")
     expect(gitCommand).to.include('GIT_IDENTITY_HINT')
     expect(gitCommand).to.not.include('await git.init()')
+    expect([...helper.GIT_IDENTITY_ENV]).to.deep.equal([...cliIdentityEnv])
 
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-tui-git-identity-'))
     const empty = path.join(root, 'empty-gitconfig')

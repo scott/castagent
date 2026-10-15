@@ -14,6 +14,7 @@ import {
   resolveProviderAuthToken,
 } from '../lib/deploy/registry'
 import type {DeployContext, DeploymentProvider} from '../lib/deploy/types'
+import {createAgentGit} from '../lib/git-identity'
 import {missingAgentError} from '../lib/missing-agent'
 import {getCurrentRelease} from '../lib/releases'
 import {db} from '../lib/sqlite'
@@ -423,8 +424,7 @@ export default class Deploy extends Command {
     // Check if agent is a git repo and prompt for commit
     const gitDir = path.join(agentPath, '.git')
     if (fs.existsSync(gitDir)) {
-      const {simpleGit} = await import('simple-git')
-      const git = simpleGit(agentPath)
+      const git = createAgentGit(agentPath)
       const status = await git.status()
 
       if (!status.isClean()) {

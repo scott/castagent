@@ -51,7 +51,7 @@ import {
 import type {UiMode} from '../components/header.js'
 import {formatSlashHelp} from '../lib/slash-picker.js'
 import {formatGitLog, loadRecentCommits, parseGitLogCount} from '../lib/git-log.js'
-import {assertGitAuthorIdentity, GIT_IDENTITY_HINT, isGitIdentityFailure} from '../lib/git-identity.js'
+import {assertGitAuthorIdentity, createAgentGit, GIT_IDENTITY_HINT, isGitIdentityFailure, rollbackFailedInit, snapshotInitFiles} from '../lib/git-identity.js'
 import {
   CAPTURED_CHILD_STDIO,
   childProcessFailureReason,
@@ -3523,9 +3523,11 @@ const commands: SlashCommand[] = [
           return
         }
 
+        let snapshot: Map<string, string | null> | undefined
         try {
           await assertGitAuthorIdentity(agentPath)
-          const git = simpleGit(agentPath)
+          snapshot = snapshotInitFiles(agentPath)
+          const git = createAgentGit(agentPath)
           await git.raw(['init', '-b', 'main'])
 
           // Keep in sync with typescript/cast-cli/src/lib/cast-ignore.ts.
@@ -3614,6 +3616,7 @@ cast dev ${agentName}
             ctx.mode
           )
         } catch (err) {
+          if (snapshot) rollbackFailedInit(agentPath, snapshot)
           const message = isGitIdentityFailure(err)
             ? GIT_IDENTITY_HINT
             : `Failed to initialize Git: ${err instanceof Error ? err.message : String(err)}`
@@ -3699,7 +3702,7 @@ cast dev ${agentName}
         let message = parsed.message
 
         try {
-          const git = simpleGit(agentPath)
+          const git = createAgentGit(agentPath)
           const status = await git.status()
 
           if (!message) {

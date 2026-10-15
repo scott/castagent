@@ -2,9 +2,9 @@ import {Args, Command, Flags} from '@oclif/core'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import {simpleGit, type SimpleGit} from 'simple-git'
 import * as yaml from 'yaml'
 import {ensureMemoryDatabaseIgnored, memoryNotesAreTracked, untrackMemoryNotes} from '../../lib/cast-ignore'
+import {createAgentGit} from '../../lib/git-identity'
 
 export default class GitCommit extends Command {
   static description = 'Commit changes to an agent repository'
@@ -127,7 +127,7 @@ cast dev ${agentName}
     }
 
     try {
-      const git: SimpleGit = simpleGit(agentPath)
+      const git = createAgentGit(agentPath)
 
       // A clean tree that does not already track notes stays clean.
       // Tracked notes are removed even when nothing else changed, so
