@@ -16,7 +16,10 @@ import DigitalOceanDeploy, {
   digitalOceanVolumeRemovalMessage,
   findDigitalOceanVolumes,
   parseDigitalOceanVolumeList,
+  parseDropletIdColumn,
   planDigitalOceanVolumeDeletes,
+  volumeDetachClock,
+  VOLUME_DETACH_TIMEOUT_MS,
   discardFailedDigitalOceanTokens,
   DIGITALOCEAN_SSH_TOOL_CHECKS,
   isDigitalOceanSshKeyDelete,
@@ -34,6 +37,16 @@ import * as motd from '../../../../typescript/cast-cli/src/lib/deploy/motd'
 import {castKnownHostsPath, recordPinnedHostKey} from '../../../../typescript/cast-cli/src/lib/deploy/ssh-hostkey'
 import {keychain} from '../../../../typescript/cast-cli/src/lib/keychain'
 import {db} from '../../../../typescript/cast-cli/src/lib/sqlite'
+
+function stubDetachClock(sandbox: sinon.SinonSandbox): () => number {
+  const start = 1_000_000
+  let now = start
+  sandbox.stub(volumeDetachClock, 'now').callsFake(() => now)
+  sandbox.stub(volumeDetachClock, 'sleep').callsFake(async (ms: number) => {
+    now += ms
+  })
+  return () => now - start
+}
 
 describe('DigitalOcean Deploy Provider', () => {
   let sandbox: sinon.SinonSandbox
@@ -201,8 +214,12 @@ describe('DigitalOcean Deploy Provider', () => {
       ].join('\n'))
       expect(parsed.ok).to.equal(true)
       expect(findDigitalOceanVolumes(parsed.volumes, legacy, 'nyc3')).to.deep.equal([
-        {id: legacyId, name: legacy, region: 'nyc3'},
+        {id: legacyId, name: legacy, region: 'nyc3', dropletIds: []},
       ])
+      const attached = parseDigitalOceanVolumeList(`${legacyId}  ${legacy}  nyc3  [4242]\n`)
+      expect(attached.volumes[0].dropletIds).to.deep.equal([4242])
+      expect(parseDropletIdColumn(['[4242', '4243]'])).to.deep.equal([4242, 4243])
+      expect(VOLUME_DETACH_TIMEOUT_MS).to.equal(120_000)
       expect(findDigitalOceanVolumes(parsed.volumes, legacy, 'ams3')).to.deep.equal([])
       expect(digitalOceanVolumeRegion('{"region":"sfo3"}')).to.equal('sfo3')
       expect(digitalOceanVolumeRegion('{"mountPath":"/app/agent/memory"}')).to.equal('nyc3')
@@ -270,7 +287,7 @@ describe('DigitalOcean Deploy Provider', () => {
           return {exitCode: 0, stdout: '', stderr: ''}
         }
         if (args[1] === 'volume' && args[2] === 'list') {
-          expect(args).to.include('ID,Name,Region')
+          expect(args).to.include('ID,Name,Region,DropletIDs')
           return {
             exitCode: 0,
             stdout: [
@@ -335,6 +352,7 @@ describe('DigitalOcean Deploy Provider', () => {
     })
 
     it('does not claim a volume was removed when doctl rejects the delete', async () => {
+      const elapsed = stubDetachClock(sandbox)
       sandbox.stub(db, 'listDeployments').returns([{provider: 'digitalocean', volume_id: 'cast-bb4-do'}])
       sandbox.stub(deployUtils, 'execCommand').callsFake(async (_command: string, args: string[]) => {
         if (args[1] === 'droplet' && args[2] === 'list') return {exitCode: 0, stdout: '', stderr: ''}
@@ -352,12 +370,20 @@ describe('DigitalOcean Deploy Provider', () => {
         logs.push(String(line))
       })
 
-      await DigitalOceanDeploy.destroy('bb4-do')
+      try {
+        await DigitalOceanDeploy.destroy('bb4-do')
+        expect.fail('volume delete should keep the deployment')
+      } catch (error: any) {
+        expect(error.keepDeployment).to.equal(true)
+        expect(error.message).to.include("Memory volume 'cast-bb4-do' could not be removed")
+        expect(error.message).to.include('volume is attached to a droplet')
+        expect(error.message).to.include('still recorded')
+        expect(error.message).to.include('cast shutdown bb4-do')
+      }
 
-      const volumeLogs = logs.filter(line => line.includes('Memory volume'))
-      expect(volumeLogs).to.deep.equal([
-        "Note: Memory volume 'cast-bb4-do' could not be removed (volume is attached to a droplet).",
-      ])
+      expect(logs.some(line => line.includes('has been removed'))).to.equal(false)
+      expect(logs.some(line => line.includes('Waiting for memory volume'))).to.equal(true)
+      expect(elapsed()).to.be.at.least(VOLUME_DETACH_TIMEOUT_MS)
     })
 
     it('stays quiet when the lookup finds no volume', async () => {
@@ -372,31 +398,104 @@ describe('DigitalOcean Deploy Provider', () => {
       expect(calls.some(args => args[2] === 'delete')).to.equal(false)
     })
 
-    it('reports a not found error from delete by id', async () => {
+    it('reports a not found error from delete by id and keeps the deployment', async () => {
       const logs: string[] = []
       const deleted: string[] = []
-      await removeDigitalOceanMemoryVolumes('bb4-do', [legacy], async (args) => {
-        if (args[2] === 'list') return {exitCode: 0, stdout: `${volumeLine(legacyId, legacy)}\n`, stderr: ''}
-        deleted.push(args[3])
-        return {exitCode: 1, stdout: '', stderr: 'Error: Not Found'}
-      }, (line) => logs.push(line))
+      try {
+        await removeDigitalOceanMemoryVolumes('bb4-do', [legacy], async (args) => {
+          if (args[2] === 'list') return {exitCode: 0, stdout: `${volumeLine(legacyId, legacy)}\n`, stderr: ''}
+          deleted.push(args[3])
+          return {exitCode: 1, stdout: '', stderr: 'Error: Not Found'}
+        }, (line) => logs.push(line))
+        expect.fail('not found after lookup should keep the deployment')
+      } catch (error: any) {
+        expect(error.keepDeployment).to.equal(true)
+        expect(error.message).to.include('Error: Not Found')
+        expect(error.message).to.include('still recorded')
+        expect(error.message).to.include('cast shutdown bb4-do')
+      }
       expect(deleted).to.deep.equal([legacyId])
-      expect(logs).to.deep.equal([
-        `Note: Memory volume '${legacy}' could not be removed (Error: Not Found).`,
-      ])
+      expect(logs.some(line => line.includes('has been removed'))).to.equal(false)
     })
 
     it('reports a volume list failure and does not delete by name', async () => {
       const calls: string[][] = []
-      const logs: string[] = []
-      await removeDigitalOceanMemoryVolumes('bb4-do', ['cast-bb4-do'], async (args) => {
-        calls.push(args)
-        return {exitCode: 1, stdout: '', stderr: 'Unable to authenticate'}
-      }, (line) => logs.push(line))
-      expect(logs).to.deep.equal([
-        'Note: Memory volumes could not be looked up (Unable to authenticate).',
-      ])
+      try {
+        await removeDigitalOceanMemoryVolumes('bb4-do', ['cast-bb4-do'], async (args) => {
+          calls.push(args)
+          return {exitCode: 1, stdout: '', stderr: 'Unable to authenticate'}
+        }, () => {})
+        expect.fail('lookup failure should keep the deployment')
+      } catch (error: any) {
+        expect(error.keepDeployment).to.equal(true)
+        expect(error.message).to.include('Unable to authenticate')
+        expect(error.message).to.include('still recorded')
+      }
       expect(calls.some(args => args[2] === 'delete')).to.equal(false)
+    })
+
+    it('waits until droplet ids are gone, then deletes by id', async () => {
+      stubDetachClock(sandbox)
+      const logs: string[] = []
+      const deleted: string[] = []
+      let lists = 0
+      await removeDigitalOceanMemoryVolumes('bb4-do', ['cast-bb4-do'], async (args) => {
+        if (args[2] === 'list') {
+          lists += 1
+          const droplets = lists < 3 ? '[4242]' : '[]'
+          return {exitCode: 0, stdout: `${volumeLine(canonicalId, 'cast-bb4-do')}  ${droplets}\n`, stderr: ''}
+        }
+        deleted.push(args[3])
+        return {exitCode: 0, stdout: '', stderr: ''}
+      }, (line) => logs.push(line))
+      expect(deleted).to.deep.equal([canonicalId])
+      expect(lists).to.be.greaterThan(2)
+      expect(logs).to.include("Waiting for memory volume 'cast-bb4-do' to detach.")
+      expect(logs).to.include("Memory volume 'cast-bb4-do' has been removed.")
+    })
+
+    it('retries a 409 while the volume is still detaching', async () => {
+      const elapsed = stubDetachClock(sandbox)
+      const deleted: string[] = []
+      let deletes = 0
+      await removeDigitalOceanMemoryVolumes('bb4-do', ['cast-bb4-do'], async (args) => {
+        if (args[2] === 'list') {
+          return {exitCode: 0, stdout: `${volumeLine(canonicalId, 'cast-bb4-do')}  []\n`, stderr: ''}
+        }
+        deletes += 1
+        deleted.push(args[3])
+        if (deletes < 3) {
+          return {exitCode: 1, stdout: '', stderr: 'Error: 409 attached volume cannot be deleted'}
+        }
+        return {exitCode: 0, stdout: '', stderr: ''}
+      }, () => {})
+      expect(deleted).to.deep.equal([canonicalId, canonicalId, canonicalId])
+      expect(elapsed()).to.be.greaterThan(0)
+      expect(elapsed()).to.be.below(VOLUME_DETACH_TIMEOUT_MS)
+    })
+
+    it('stops waiting after about two minutes when the volume stays attached', async () => {
+      const elapsed = stubDetachClock(sandbox)
+      const deleted: string[] = []
+      try {
+        await removeDigitalOceanMemoryVolumes('bb4-do', ['cast-bb4-do'], async (args) => {
+          if (args[2] === 'list') {
+            return {exitCode: 0, stdout: `${volumeLine(canonicalId, 'cast-bb4-do')}  [4242]\n`, stderr: ''}
+          }
+          deleted.push(args[3])
+          return {exitCode: 0, stdout: '', stderr: ''}
+        }, () => {})
+        expect.fail('an attached volume should keep the deployment')
+      } catch (error: any) {
+        expect(error.keepDeployment).to.equal(true)
+        expect(error.message).to.include('attached to droplet 4242')
+        expect(error.message).to.include('still detaching')
+        expect(error.message).to.include('still recorded')
+        expect(error.message).to.include('cast shutdown bb4-do')
+      }
+      expect(deleted).to.deep.equal([])
+      expect(elapsed()).to.be.at.least(VOLUME_DETACH_TIMEOUT_MS)
+      expect(elapsed()).to.be.below(VOLUME_DETACH_TIMEOUT_MS + 15_000)
     })
 
     it('does not delete a same-named volume in another region', async () => {
@@ -2209,6 +2308,7 @@ describe('DigitalOcean Deploy Provider', () => {
 
     it('records the deployment when the droplet is gone but the volume remains', async () => {
       recordPinnedHostKey('203.0.113.42', pinnedPublicKey, '4444')
+      const elapsed = stubDetachClock(sandbox)
       const volumeId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
       const logs: string[] = []
       const exec = stubFn(sandbox.stub(deployUtils, 'execCommand') as any).callsFake(async (...args: any[]) => {
@@ -2237,6 +2337,9 @@ describe('DigitalOcean Deploy Provider', () => {
       expect(saved.calledOnce).to.equal(true)
       expect(commandLines(exec).some(line => line.includes('volume') && line.includes('delete') && line.includes(volumeId))).to.equal(true)
       expect(logs.join('\n')).to.include('volume is attached')
+      expect(logs.join('\n')).to.include('still detaching')
+      expect(logs.join('\n')).to.include('cast shutdown mail')
+      expect(elapsed()).to.be.at.least(VOLUME_DETACH_TIMEOUT_MS)
       expect(fs.readFileSync(castKnownHostsPath(), 'utf8')).to.not.include('203.0.113.42')
     })
 

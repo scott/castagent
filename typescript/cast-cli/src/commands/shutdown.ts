@@ -149,6 +149,10 @@ export default class Shutdown extends Command {
         await destroyer(agentName, deployment)
         this.log(`Remote resources destroyed on ${provider}.`)
       } catch (error: any) {
+        if (error?.keepDeployment === true) {
+          this.error(error.message || String(error))
+          return
+        }
         this.warn(`Failed to destroy remote resources: ${error.message || error}`)
         this.warn('Removing local records anyway. You may need to clean up manually.')
       }
