@@ -9,11 +9,14 @@ import json
 import os
 import tarfile
 import shutil
+import tempfile
 import warnings
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, asdict
+
+from cast.tar_safety import omit_unsafe_member, safe_extract
 
 AGENTS_DIR = Path.home() / ".cast" / "agents"
 
@@ -259,7 +262,11 @@ def _write_version_snapshot(
         for file_or_dir in files_to_snapshot:
             file_path = agent_path / file_or_dir
             if file_path.exists():
-                tar.add(file_path, arcname=file_or_dir)
+                tar.add(
+                    file_path,
+                    arcname=file_or_dir,
+                    filter=omit_unsafe_member,
+                )
 
     # Any fresh edit invalidates the undo redo stack: a user who
     # edits after an undo has explicitly diverged from the redo path.
@@ -433,7 +440,7 @@ def revert_to_version(agent_name: str, version_id: Optional[int] = None, message
         temp_extract.mkdir(exist_ok=True)
 
         try:
-            tar.extractall(temp_extract)
+            safe_extract(tar, temp_extract)
 
             # Restore files to agent directory
             for item in temp_extract.iterdir():
@@ -507,9 +514,6 @@ def diff_versions(agent_name: str, version1_id: int, version2_id: int) -> Dict[s
     Returns:
         Dictionary with diff results for each file.
     """
-    import tarfile
-    import tempfile
-
     agent_path = AGENTS_DIR / agent_name
 
     if not agent_path.exists():
@@ -520,8 +524,8 @@ def diff_versions(agent_name: str, version1_id: int, version2_id: int) -> Dict[s
     # Helper to extract and compare files from two versions
     def compare_files(file_paths: list) -> None:
         for file_path in file_paths:
-            v1_path = _get_version_archive_path(agent_name, version1_id)
-            v2_path = _get_version_archive_path(agent_name, version2_id)
+            v1_path = get_version_archive_path(agent_name, version1_id)
+            v2_path = get_version_archive_path(agent_name, version2_id)
 
             if not v1_path or not v2_path:
                 continue
@@ -530,13 +534,13 @@ def diff_versions(agent_name: str, version1_id: int, version2_id: int) -> Dict[s
             with tempfile.TemporaryDirectory() as tmpdir:
                 # Extract version 1
                 with tarfile.open(v1_path, "r:gz") as tar:
-                    tar.extractall(tmpdir)
+                    safe_extract(tar, Path(tmpdir))
                 v1_full_path = Path(tmpdir) / file_path
 
                 # Extract version 2 (need a different temp dir)
                 with tempfile.TemporaryDirectory() as tmpdir2:
                     with tarfile.open(v2_path, "r:gz") as tar:
-                        tar.extractall(tmpdir2)
+                        safe_extract(tar, Path(tmpdir2))
                     v2_full_path = Path(tmpdir2) / file_path
 
                     v1_content = v1_full_path.read_text() if v1_full_path.exists() else None
@@ -558,18 +562,18 @@ def diff_versions(agent_name: str, version1_id: int, version2_id: int) -> Dict[s
 
     # Compare MCP configs
     versions_dir = _get_versions_dir(agent_name)
-    v1_path = _get_version_archive_path(agent_name, version1_id)
-    v2_path = _get_version_archive_path(agent_name, version2_id)
+    v1_path = get_version_archive_path(agent_name, version1_id)
+    v2_path = get_version_archive_path(agent_name, version2_id)
 
     if v1_path and v2_path:
         with tempfile.TemporaryDirectory() as tmpdir:
             with tarfile.open(v1_path, "r:gz") as tar:
-                tar.extractall(tmpdir)
+                safe_extract(tar, Path(tmpdir))
             mcp_dir_v1 = Path(tmpdir) / "mcp"
 
             with tempfile.TemporaryDirectory() as tmpdir2:
                 with tarfile.open(v2_path, "r:gz") as tar:
-                    tar.extractall(tmpdir2)
+                    safe_extract(tar, Path(tmpdir2))
                 mcp_dir_v2 = Path(tmpdir2) / "mcp"
 
                 mcp_changes = {}

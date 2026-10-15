@@ -23,6 +23,7 @@ from typing import List, Optional
 
 import yaml
 
+from cast.tar_safety import safe_extract
 from cast.versioning import (
     AGENTS_DIR,
     _get_changes_dir,
@@ -151,7 +152,7 @@ def _extract_change(agent_name: str, change_id: int, target_dir: Path) -> None:
 
     try:
         with tarfile.open(tarball, "r:gz") as tar:
-            tar.extractall(temp_extract)
+            safe_extract(tar, temp_extract)
 
         for item in temp_extract.iterdir():
             dest = target_dir / item.name

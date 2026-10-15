@@ -45,6 +45,11 @@ added under `tools/` or `mcp/` after the snapshot stay on disk.
 snapshot does not include those sections. A section the snapshot does
 include is restored from the snapshot.
 
+Symbolic links and hard links are left out of the snapshot. Undo, redo,
+and reverting a version refuse an archive member that is a link, and they
+refuse a link target that is absolute or contains `..`. A snapshot cannot
+write a file outside the agent directory.
+
 ## Undo multiple changes
 
 ```bash
