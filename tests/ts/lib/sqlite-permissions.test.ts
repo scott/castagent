@@ -24,23 +24,25 @@ describe('sqlite file modes', () => {
     const births: number[] = []
     const dirBirths: number[] = []
     const chmodmed: string[] = []
-    const realOpen = fs.openSync
-    const realMkdir = fs.mkdirSync
-    const realChmod = fs.chmodSync
-    sandbox.stub(fs, 'openSync').callsFake((...args: unknown[]) => {
-      const fd = (realOpen as (...openArgs: unknown[]) => number).apply(fs, args)
-      if (args[0] === dbPath) births.push(fs.fstatSync(fd).mode & 0o777)
+    // import * as fs copies getters. Stub the Node module sqlite calls.
+    const nodeFs = require('fs') as typeof fs
+    const realOpen = nodeFs.openSync
+    const realMkdir = nodeFs.mkdirSync
+    const realChmod = nodeFs.chmodSync
+    sandbox.stub(nodeFs, 'openSync').callsFake((...args: unknown[]) => {
+      const fd = (realOpen as (...openArgs: unknown[]) => number).apply(nodeFs, args)
+      if (args[0] === dbPath) births.push(nodeFs.fstatSync(fd).mode & 0o777)
       return fd
     })
-    sandbox.stub(fs, 'mkdirSync').callsFake((...args: unknown[]) => {
-      const created = (realMkdir as (...mkdirArgs: unknown[]) => unknown).apply(fs, args)
+    sandbox.stub(nodeFs, 'mkdirSync').callsFake((...args: unknown[]): string | undefined => {
+      const created = (realMkdir as (...mkdirArgs: unknown[]) => string | undefined).apply(nodeFs, args)
       const createdDir = typeof args[0] === 'string' ? args[0] : ''
-      if (createdDir && fs.existsSync(createdDir) && fs.statSync(createdDir).isDirectory()) {
-        dirBirths.push(fs.statSync(createdDir).mode & 0o777)
+      if (createdDir && nodeFs.existsSync(createdDir) && nodeFs.statSync(createdDir).isDirectory()) {
+        dirBirths.push(nodeFs.statSync(createdDir).mode & 0o777)
       }
       return created
     })
-    sandbox.stub(fs, 'chmodSync').callsFake((file: fs.PathLike, mode: fs.Mode) => {
+    sandbox.stub(nodeFs, 'chmodSync').callsFake((file: fs.PathLike, mode: fs.Mode) => {
       chmodmed.push(String(file))
       return realChmod(file, mode)
     })

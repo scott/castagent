@@ -125,26 +125,28 @@ describe('token file fallback', () => {
     const births: number[] = []
     const chmodmed: string[] = []
     const dirBirths: number[] = []
-    const realOpen = fs.openSync
-    const realMkdir = fs.mkdirSync
-    const realChmod = fs.chmodSync
-    sandbox.stub(fs, 'openSync').callsFake((...args: unknown[]) => {
-      const fd = (realOpen as (...openArgs: unknown[]) => number).apply(fs, args)
+    // import * as fs copies getters. Stub the Node module keychain calls.
+    const nodeFs = require('fs') as typeof fs
+    const realOpen = nodeFs.openSync
+    const realMkdir = nodeFs.mkdirSync
+    const realChmod = nodeFs.chmodSync
+    sandbox.stub(nodeFs, 'openSync').callsFake((...args: unknown[]) => {
+      const fd = (realOpen as (...openArgs: unknown[]) => number).apply(nodeFs, args)
       const file = typeof args[0] === 'string' ? args[0] : ''
       if (file.endsWith('.token') || file.includes('.token.')) {
-        births.push(fs.fstatSync(fd).mode & 0o777)
+        births.push(nodeFs.fstatSync(fd).mode & 0o777)
       }
       return fd
     })
-    sandbox.stub(fs, 'mkdirSync').callsFake((...args: unknown[]) => {
-      const created = (realMkdir as (...mkdirArgs: unknown[]) => unknown).apply(fs, args)
+    sandbox.stub(nodeFs, 'mkdirSync').callsFake((...args: unknown[]): string | undefined => {
+      const created = (realMkdir as (...mkdirArgs: unknown[]) => string | undefined).apply(nodeFs, args)
       const dir = typeof args[0] === 'string' ? args[0] : ''
-      if (dir && fs.existsSync(dir) && fs.statSync(dir).isDirectory()) {
-        dirBirths.push(fs.statSync(dir).mode & 0o777)
+      if (dir && nodeFs.existsSync(dir) && nodeFs.statSync(dir).isDirectory()) {
+        dirBirths.push(nodeFs.statSync(dir).mode & 0o777)
       }
       return created
     })
-    sandbox.stub(fs, 'chmodSync').callsFake((file: fs.PathLike, mode: fs.Mode) => {
+    sandbox.stub(nodeFs, 'chmodSync').callsFake((file: fs.PathLike, mode: fs.Mode) => {
       chmodmed.push(String(file))
       return realChmod(file, mode)
     })
