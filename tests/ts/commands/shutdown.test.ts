@@ -936,6 +936,68 @@ describe('shutdown command - error handling', () => {
     sqliteModule.db.getDeploymentBySha = originalGetDeploymentBySha
     deployModule.PROVIDER_DESTROYERS['fly'] = originalDestroyer
   })
+
+  it('keeps the deployment when a DigitalOcean volume is still attached', async () => {
+    const instance = createCommandInstance(Shutdown, ['mail'], {force: true})
+    const logs: string[] = []
+    instance.log = (message: string) => {
+      logs.push(message)
+    }
+    instance.error = (message: string) => {
+      throw new Error(String(message))
+    }
+
+    const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
+    const originalListDeployments = sqliteModule.db.listDeployments
+    const originalGetDeploymentBySha = sqliteModule.db.getDeploymentBySha
+    const originalRemoveAll = sqliteModule.db.removeAllDeployments
+    const originalRemoveSha = sqliteModule.db.removeDeploymentBySha
+    let removed = false
+    sqliteModule.db.listDeployments = () => [{
+      id: 'abc123',
+      agent_name: 'mail',
+      deployment_url: 'https://203.0.113.10',
+      provider: 'digitalocean',
+      volume_id: 'cast-mail',
+    }]
+    sqliteModule.db.getDeploymentBySha = () => null
+    sqliteModule.db.removeAllDeployments = () => {
+      removed = true
+    }
+    sqliteModule.db.removeDeploymentBySha = () => {
+      removed = true
+    }
+
+    const shutdownModule = require('../../../typescript/cast-cli/src/commands/shutdown')
+    const originalDestroyer = shutdownModule.PROVIDER_DESTROYERS.digitalocean
+    shutdownModule.PROVIDER_DESTROYERS.digitalocean = async () => {
+      const error = new Error(
+        "Memory volume 'cast-mail' could not be removed (attached to droplet 4242. The volume is still detaching). The deployment is still recorded. Run cast shutdown mail again to retry.",
+      )
+      ;(error as {keepDeployment?: boolean}).keepDeployment = true
+      throw error
+    }
+
+    try {
+      await instance.run()
+      expect.fail('shutdown should report the volume and keep the deployment')
+    } catch (error: any) {
+      expect(error.message).to.include('still recorded')
+      expect(error.message).to.include('still detaching')
+      expect(error.message).to.include('cast shutdown mail')
+    } finally {
+      sqliteModule.db.listDeployments = originalListDeployments
+      sqliteModule.db.getDeploymentBySha = originalGetDeploymentBySha
+      sqliteModule.db.removeAllDeployments = originalRemoveAll
+      sqliteModule.db.removeDeploymentBySha = originalRemoveSha
+      shutdownModule.PROVIDER_DESTROYERS.digitalocean = originalDestroyer
+    }
+
+    expect(removed).to.equal(false)
+    expect(logs.some(line => line.includes('Remote resources destroyed'))).to.equal(false)
+    expect(logs.some(line => line.includes('Marked'))).to.equal(false)
+    expect(logs.some(line => line.includes('has been shut down'))).to.equal(false)
+  })
 })
 
 describe('shutdown command - provider destroyers', () => {
