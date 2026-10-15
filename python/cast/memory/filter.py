@@ -10,6 +10,13 @@ class PrivacyFilter:
         (r'token["\s:=]+["\']?[^\s"\']{8,}["\']?', 'TOKEN'),
         (r'password["\s:=]+["\']?[^\s"\']{8,}["\']?', 'PASSWORD'),
         (r'bearer\s+[\w-]{20,}', 'BEARER_TOKEN'),
+        # Bare provider keys have no "api key" or "token" label.
+        # OpenRouter keys look like sk-or-v1-.... Other keys Cast sends
+        # use an sk- prefix. DigitalOcean API tokens use dop_v1_,
+        # doo_v1_, or dor_v1_. A short dummy still matches.
+        (r'(?<![A-Za-z0-9])sk-or-v1-[A-Za-z0-9_-]{4,}', 'OPENROUTER_KEY'),
+        (r'(?<![A-Za-z0-9])sk-[A-Za-z0-9_-]{16,}', 'PROVIDER_KEY'),
+        (r'(?<![A-Za-z0-9])do[por]_v1_[A-Za-z0-9_-]{4,}', 'DIGITALOCEAN_TOKEN'),
         (r'ghp_[a-zA-Z0-9]{36}', 'GITHUB_TOKEN'),
         (r'ghs_[a-zA-Z0-9]{36}', 'GITHUB_TOKEN'),
         (r'gho_[a-zA-Z0-9]{36}', 'GITHUB_TOKEN'),

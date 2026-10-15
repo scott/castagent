@@ -2,9 +2,10 @@
 
 Levels written by `cast update --permission` are `always-allow`, `ask`, and
 `deny`. A missing entry for a built-in tool stays allowed so existing agents
-keep working. An MCP tool, and any other name that is not a built-in, is
-`deny` until it is listed. `mcp` and `*` cover names an MCP server advertises
-at startup. An unknown level fails closed.
+keep working, except `git_push`, which defaults to `ask`. An MCP tool, and
+any other name that is not a built-in, is `deny` until it is listed. `mcp`
+and `*` cover names an MCP server advertises at startup. An unknown level
+fails closed.
 """
 
 from __future__ import annotations
@@ -28,9 +29,13 @@ WILDCARD_SCOPE = "*"
 MCP_ORIGIN = "mcp"
 _SCOPE_KEYS = frozenset({MCP_SCOPE, WILDCARD_SCOPE})
 
-# Built-in `harness.permissions` keys. A missing entry stays always-allow.
-# MCP calls pass origin MCP_ORIGIN so a server cannot reuse one of these names
-# to inherit that default.
+# Publishing the agent repository needs a prompt unless the agent opts in.
+# An MCP tool that reuses this name does not inherit the ask default.
+DEFAULT_ASK_TOOLS = frozenset({"git_push"})
+
+# Built-in `harness.permissions` keys. A missing entry stays always-allow,
+# except the names in DEFAULT_ASK_TOOLS. MCP calls pass origin MCP_ORIGIN so
+# a server cannot reuse one of these names to inherit that default.
 BUILTIN_TOOL_NAMES = frozenset({
     "bash",
     "read",
@@ -201,8 +206,10 @@ class PermissionGate:
     def action_for(self, tool_name: str, *, origin: str | None = None) -> str | None:
         """Canonical level, or None when the configured value is unknown.
 
-        A built-in with no entry is `always-allow`. An MCP tool with no entry
-        is `deny`, including when its advertised name matches a built-in.
+        A built-in with no entry is `always-allow`, except `git_push`, which
+        defaults to `ask`. An explicit `git_push: always-allow` still runs.
+        An MCP tool with no entry is `deny`, including when its advertised
+        name matches a built-in.
         """
         if not isinstance(tool_name, str) or not tool_name:
             return DENY
@@ -210,6 +217,8 @@ class PermissionGate:
         if key is not None:
             return normalize_level(self.permissions.get(key))
         if not self._uses_mcp_policy(tool_name, origin):
+            if tool_name in DEFAULT_ASK_TOOLS:
+                return ASK
             return ALWAYS_ALLOW
         return DENY
 

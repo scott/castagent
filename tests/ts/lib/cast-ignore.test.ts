@@ -7,6 +7,7 @@ import {
   CAST_IGNORE_LINES,
   DOCKER_DEPLOY_IGNORE_LINES,
   MEMORY_DATABASE_IGNORE_LINES,
+  MEMORY_NOTES_IGNORE_LINES,
   defaultCastIgnoreContents,
   ensureDockerDeployArtifactsIgnored,
   ensureMemoryDatabaseIgnored,
@@ -37,6 +38,10 @@ describe('cast ignore rules', () => {
       expect(contents).to.contain(`${line}\n`)
     }
     expect(CAST_IGNORE_LINES).to.include('memory/memory.db')
+    expect(CAST_IGNORE_LINES).to.include('memory/notes.md')
+    for (const line of MEMORY_NOTES_IGNORE_LINES) {
+      expect(contents).to.contain(`${line}\n`)
+    }
   })
 
   it('writes the same rules to .castignore and .gitignore', () => {
@@ -92,6 +97,55 @@ describe('cast ignore rules', () => {
     expect(status).to.not.contain('memory/memory.db')
     const match = git(agent, ['check-ignore', '-v', '--', 'memory/memory.db'])
     expect(match).to.contain('.gitignore')
+  })
+
+  it('ignores memory/notes.md in a repository created from the defaults', () => {
+    const agent = path.join(root, 'notes-defaults')
+    initRepo(agent)
+    writeDefaultIgnoreFiles(agent)
+    fs.mkdirSync(path.join(agent, 'memory'))
+    fs.writeFileSync(path.join(agent, 'memory', 'notes.md'), 'sk-or-v1-dummy\n')
+    fs.writeFileSync(path.join(agent, 'README.md'), 'public\n')
+
+    const status = git(agent, ['status', '--porcelain'])
+    expect(status).to.not.contain('memory/notes.md')
+    expect(status).to.not.contain('sk-or-v1-dummy')
+    expect(status).to.contain('README.md')
+
+    git(agent, ['add', '-A'])
+    const staged = git(agent, ['diff', '--cached', '--name-only'])
+    expect(staged).to.not.contain('memory/notes.md')
+    expect(staged).to.not.contain('sk-or-v1-dummy')
+    expect(staged).to.contain('README.md')
+    const match = git(agent, ['check-ignore', '-v', '--', 'memory/notes.md'])
+    expect(match).to.contain('.gitignore')
+    expect(match).to.contain('memory/notes.md')
+  })
+
+  it('adds memory/notes.md to an older repository once', () => {
+    const agent = path.join(root, 'notes-legacy')
+    initRepo(agent)
+    const legacy = '.cast/versions/\ncast.db\n*.log\n.env\n__pycache__/\n'
+    fs.writeFileSync(path.join(agent, '.castignore'), legacy)
+    fs.writeFileSync(path.join(agent, '.gitignore'), legacy)
+    fs.writeFileSync(path.join(agent, 'agent.yaml'), 'name: legacy\n')
+    git(agent, ['add', '.'])
+    git(agent, ['commit', '-m', 'initial'])
+
+    fs.mkdirSync(path.join(agent, 'memory'))
+    fs.writeFileSync(path.join(agent, 'memory', 'notes.md'), 'sk-or-v1-dummy\n')
+
+    ensureMemoryDatabaseIgnored(agent)
+    const once = fs.readFileSync(path.join(agent, '.gitignore'), 'utf8')
+    ensureMemoryDatabaseIgnored(agent)
+    const twice = fs.readFileSync(path.join(agent, '.gitignore'), 'utf8')
+
+    expect(twice).to.equal(once)
+    expect(once).to.contain('memory/notes.md\n')
+    expect(fs.readFileSync(path.join(agent, '.castignore'), 'utf8')).to.contain('memory/notes.md\n')
+    const status = git(agent, ['status', '--porcelain'])
+    expect(status).to.not.contain('memory/notes.md')
+    expect(status).to.not.contain('sk-or-v1-dummy')
   })
 
   it('adds the memory database rules to an older cast git init repo', () => {

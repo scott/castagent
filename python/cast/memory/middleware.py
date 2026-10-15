@@ -42,6 +42,7 @@ class MemoryMiddleware:
         highlight = await self.reflection.reflect(user_message, agent_response, source)
         
         if highlight:
+            highlight = self._scrub_highlight(highlight)
             self.store.append(highlight)
             self._enforce_limits(highlight.category)
         
@@ -61,8 +62,7 @@ class MemoryMiddleware:
         if not fact:
             return None
 
-        scrubber = self.reflection.filter if self.reflection is not None else PrivacyFilter()
-        fact = " ".join(scrubber.scrub(fact).split())
+        fact = self._scrub_text(fact)
         if not fact:
             return None
 
@@ -78,11 +78,31 @@ class MemoryMiddleware:
             source="explicit_remember",
             tags=["explicit", "remember"],
         )
-        self.store.append(highlight)
+        self.store.append(self._scrub_highlight(highlight))
         self._enforce_limits("preference")
         return highlight
 
+    def _scrubber(self) -> PrivacyFilter:
+        if self.reflection is not None:
+            return self.reflection.filter
+        return PrivacyFilter()
+
+    def _scrub_text(self, text: str) -> str:
+        return " ".join(self._scrubber().scrub(text or "").split())
+
+    def _scrub_highlight(self, highlight: MemoryHighlight) -> MemoryHighlight:
+        """Scrub before the sqlite row is written."""
+        highlight.content = self._scrub_text(highlight.content)
+        highlight.tags = [
+            self._scrub_text(tag) if isinstance(tag, str) else tag
+            for tag in (highlight.tags or [])
+        ]
+        return highlight
+
     def _append_note(self, fact: str) -> None:
+        fact = self._scrub_text(fact)
+        if not fact:
+            return
         notes = self.store.memory_dir / "notes.md"
         bullet = f"- {fact}"
         existing = notes.read_text(encoding="utf-8") if notes.is_file() else ""
@@ -100,6 +120,7 @@ class MemoryMiddleware:
         highlight = self.reflection.reflect_sync(user_message, agent_response, source)
         
         if highlight:
+            highlight = self._scrub_highlight(highlight)
             self.store.append(highlight)
             self._enforce_limits(highlight.category)
         
