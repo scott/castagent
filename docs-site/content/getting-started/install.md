@@ -16,9 +16,9 @@ terminal UI. The CLI and the TUI always share the same version.
 The one-liner installs these on macOS and Linux when they are missing. Install
 them yourself when you clone the repo and run `./install.sh` from that checkout.
 
-- **Node.js 18 or newer** (the one-liner installs Node.js 20).
+- **Node.js 18 or newer** (the one-liner installs pinned Node.js 20.20.2).
 - **Python 3.11 or newer** (the one-liner installs Python 3.12).
-- **Bun** — required to render the TUI.
+- **Bun 1.4.3** (the one-liner installs this pinned build). Required to render the TUI.
 - **git**, **tar**, **unzip**, and a C compiler. Linux also needs libsecret.
 
 You will also need an LLM API key to actually run an agent. Either is enough:
@@ -39,14 +39,18 @@ When the repository is public, the fastest path is:
 curl -sL https://raw.githubusercontent.com/scott/castagent/main/install.sh | bash
 ```
 
-On macOS or Linux this installs git, Node.js 20, Python 3.12, and Bun when
-they are missing, clones the repo into `~/.cast/castagent`, builds the CLI and
-TUI, and links `cast`. Linux also gets a C compiler, unzip, and libsecret.
-Unzip is required by the Bun installer. On Debian and Ubuntu the system Python
-does not provide `ensurepip`, so the script installs `python3-venv` and
-`python3-pip` when that Python is new enough to use. A second run updates
-`install.sh` in that checkout and rebuilds it. It does not fetch new commits.
-Update the checkout with [`./upgrade.sh`](#updating).
+On macOS or Linux this installs git, Node.js 20.20.2, Python 3.12, and Bun
+1.4.3 when they are missing, clones the signed `main` commit into
+`~/.cast/castagent`, builds the CLI and TUI, and links `cast`. Node, uv, and
+Bun come from pinned archives. The digests in `install-checksums.txt` are
+checked before those archives are unpacked. The one-liner then runs
+`install.sh` from the checkout. It does not download `install.sh` from `main`
+again. Linux also gets a C compiler, unzip, and libsecret. Unzip unpacks the
+Bun archive. On Debian and Ubuntu the system Python does not provide
+`ensurepip`, so the script installs `python3-venv` and `python3-pip` when
+that Python is new enough to use. A second run rebuilds the checkout it
+already has. It does not fetch new commits. Update the checkout with
+[`./upgrade.sh`](#updating).
 
 ## Full install from a clone
 
@@ -59,7 +63,7 @@ cd castagent
 ./install.sh
 ```
 
-`install.sh` is idempotent — re-run it after pulling new commits to update the
+`install.sh` is idempotent. Re-run it after pulling new commits to update the
 build and the symlink. To fetch and rebuild in one step, use
 [`./upgrade.sh`](#updating).
 
@@ -107,11 +111,14 @@ From the checkout:
 ```
 
 `upgrade.sh` moves this checkout onto the newest `main` commit and rebuilds
-the CLI, TUI, and Python runtime in place. A checkout on any branch is
-switched, including local `master` that tracks `origin/master`. `master` is
-used only when the remote has no `main` branch. Agents, config, and tokens
-in `~/.cast` stay where they are. A stale pre-TypeScript binary at
-`~/.cast/bin/cast` is removed so it cannot shadow the new CLI.
+the CLI, TUI, and Python runtime in place. The origin commit must be signed
+by the trusted key shipped in the script (`scripts/trusted-commit-key.asc`,
+GitHub's web commit signing key). An unsigned commit, or a commit signed by
+another key, stops the upgrade before any files move. A checkout on any
+branch is switched, including local `master` that tracks `origin/master`.
+`master` is used only when the remote has no `main` branch. Agents, config,
+and tokens in `~/.cast` stay where they are. A stale pre-TypeScript binary
+at `~/.cast/bin/cast` is removed so it cannot shadow the new CLI.
 
 Tracked TypeScript build info (`typescript/cast-cli/tsconfig.tsbuildinfo` and
 `typescript/cast-tui/tsconfig.tsbuildinfo`) is reset. A build rewrites those

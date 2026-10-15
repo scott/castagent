@@ -481,7 +481,7 @@ const EMBED_BUDGET_MB = 100
 // a user re-deploys with --with-tui=false after a prior --with-tui=true
 // deploy left a TUI patch in place).
 const TUI_BUNDLE_PATTERN =
-  /(\.cast-tui\/|\/opt\/cast-tui\/|\/opt\/cast-cli\/|CAST_TUI_DIR|Host TUI bundle|apt-get install -y (nodejs|curl unzip)|bun\.sh\/install|npm install.*--no-optional|npm install.*--production|ln -sf \/opt\/cast-tui)/
+  /(\.cast-tui\/|\/opt\/cast-tui\/|\/opt\/cast-cli\/|CAST_TUI_DIR|Host TUI bundle|apt-get install -y (nodejs|curl unzip)|bun\.sh\/install|oven-sh\/bun\/releases|npm install.*--no-optional|npm install.*--production|ln -sf \/opt\/cast-tui)/
 
 /**
  * Strip any/all Host TUI bundle content from a Dockerfile string. A
@@ -489,7 +489,7 @@ const TUI_BUNDLE_PATTERN =
  * bundle — by marker comment, by `.cast-tui/...` paths, by
  * `/opt/cast-tui/...` paths, by `CAST_TUI_DIR` env var, or by RUN
  * commands that install /opt/cast-tui (apt-get for curl+unzip inside
- * the bundle, bun.sh/install, npm install inside the bundle, ln -sf
+ * the bundle, a pinned Bun archive, npm install inside the bundle, ln -sf
  * pointing at the launcher). We detect blocks by walking the file
  * line by line: any line that mentions the TUI bundle (or is a
  * blank/comment line that follows one) gets stripped. Loops until no
@@ -762,7 +762,7 @@ exec python3 /opt/cast-tui/host_tui_launcher.py "$@"
   const NEW_MARKER = '# Host TUI bundle (for on-host chat via `cast-tui`)'
   const patch = `
 ${NEW_MARKER}
-RUN apt-get update && apt-get install -y curl unzip && rm -rf /var/lib/apt/lists/* && curl -fsSL https://bun.sh/install | bash && mv /root/.bun/bin/bun /usr/local/bin/bun
+${pinnedBunRun()}
 COPY .cast-tui/dist /opt/cast-tui/dist
 COPY .cast-tui/cast-cli-dist/lib /opt/cast-cli/dist/lib
 COPY .cast-tui/cast-cli-dist/node_modules /opt/cast-cli/node_modules
@@ -911,6 +911,53 @@ export interface InferenceCatalogEntry {
   configKey: string
   baseUrl: string
   acceptsAnyModel: boolean
+}
+
+export interface InstallPin {
+  name: string
+  version: string
+  target: string
+  sha256: string
+}
+
+/** Pins published in install-checksums.txt next to the installer. */
+export function readInstallPins(root = findCastRoot()): InstallPin[] {
+  const file = path.join(root, 'install-checksums.txt')
+  const pins: InstallPin[] = []
+  for (const line of fs.readFileSync(file, 'utf8').split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed || trimmed.startsWith('#')) continue
+    const [name, version, target, sha256] = trimmed.split(/\s+/)
+    if (!name || !version || !target || !sha256 || !/^[0-9a-f]{64}$/.test(sha256)) {
+      throw new Error(`Invalid install pin: ${trimmed}`)
+    }
+    pins.push({name, version, target, sha256})
+  }
+  return pins
+}
+
+export function installPin(name: string, target: string, root = findCastRoot()): InstallPin {
+  const pin = readInstallPins(root).find(item => item.name === name && item.target === target)
+  if (!pin) {
+    throw new Error(`No pinned checksum for ${name} ${target}`)
+  }
+  return pin
+}
+
+function pinnedBunRun(): string {
+  const x64 = installPin('bun', 'linux-x64')
+  const arm64 = installPin('bun', 'linux-arm64')
+  if (x64.version !== arm64.version) {
+    throw new Error('Bun linux pins must share a version')
+  }
+  return 'RUN apt-get update && apt-get install -y curl unzip ca-certificates && rm -rf /var/lib/apt/lists/*'
+    + ' && arch="$(dpkg --print-architecture)"'
+    + ` && case "$arch" in amd64) bun_sha='${x64.sha256}'; bun_name='bun-linux-x64' ;; arm64) bun_sha='${arm64.sha256}'; bun_name='bun-linux-aarch64' ;; *) echo "unsupported bun architecture: $arch" >&2; exit 1 ;; esac`
+    + ` && curl -fsSL -o /tmp/bun.zip "https://github.com/oven-sh/bun/releases/download/bun-v${x64.version}/$bun_name.zip"`
+    + ' && echo "$bun_sha  /tmp/bun.zip" | sha256sum -c -'
+    + ' && unzip -q /tmp/bun.zip -d /tmp/bun-extract'
+    + ' && install -m 0755 /tmp/bun-extract/$bun_name/bun /usr/local/bin/bun'
+    + ' && rm -rf /tmp/bun-extract /tmp/bun.zip'
 }
 
 function findCastRoot(): string {

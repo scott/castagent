@@ -49,7 +49,8 @@ remote has no main branch.
 Leaves ~/.cast agents, config, and tokens untouched. Resets tracked TypeScript
 build info files, which a build rewrites. Stops without rebuilding when any
 other uncommitted change is present, or when the local upstream branch has
-commits that cannot fast-forward.
+commits that cannot fast-forward. Also stops when the origin commit is not
+signed by the trusted key shipped in this script.
 
 This does not upgrade a deployed agent. That command is: cast upgrade <agent>
 EOF
@@ -393,6 +394,80 @@ ensure_branch_can_track() {
     git -C "$ROOT" config --add remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
 }
 
+# CAST_TRUSTED_KEY_FILE overrides the embedded key for tests and for an
+# operator who pins a different release key. The default is the GitHub
+# web commit signing key, also published at scripts/trusted-commit-key.asc.
+write_trusted_key() {
+    local dest="$1"
+
+    if [[ -n "${CAST_TRUSTED_KEY_FILE:-}" ]]; then
+        if [[ ! -f "$CAST_TRUSTED_KEY_FILE" ]]; then
+            return 1
+        fi
+        cat "$CAST_TRUSTED_KEY_FILE" > "$dest"
+        return 0
+    fi
+    cat > "$dest" << 'EOF'
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mQINBGWmxXYBEACyN+4viFQM6QQoKr0A2W0rGdMobTJwOZso2QPpewbyBsuL3rNW
+5OmHrWwXAhPKNqUIyOzdq8MoSxoTTuqLksoahixEL/X2nyhOBxR9GkYz/oI9R3nY
+cLRaFQoSJoVfOt61opkLUzbWAehpbgT8EKln8JsENq0+0nDlWQi0h2Q9oGmqlgVz
+skwmVZ8Leyv4Mg7hN6swyZ7moZfkkpD5+U7Z2XVurCzkSSfg4zb2lMRLJos2eCAc
+749ECsX0t7OBftF+YqgjIXixXsm2RrUqvU47OkOtZeAhvAYenbC3pr9Fha5NxoBU
+Ea+11MK9W6OcRhwvxVCUrMUR6FTSZyC//VpXTTtrRlOqpU5wGMbP3zpn9geqOXCl
+8rF7+1gAPG/o+QFQTBsVEruwi4JWogiQuQyOwAIlFe/7dvaxWZGpv/yW2+L3guL7
+xaHKFVGsayhlitQQ5Xa+P1iSgKSXDyReCbWotfqAempPySI25LHh3ScXI6NgdHSr
+SBaFojwAfgxbPTEQ6adIsKHCQofrnLrNa3UOeGDGiOOK0aYV3jiEDGAouatkNf2q
+85Eosj1f9laCqAH3YLJD7dcSne1iChK5qRTByMvIyeSD0NbNnVMFOGpXySyWtKb2
+ldpu8AWBQJsJs9FmYBcWAGBA2pp+IxaCn6rBIHIsUVFRN8OVZKsEsBkWywARAQAB
+tBtHaXRIdWIgPG5vcmVwbHlAZ2l0aHViLmNvbT6JAk4EEwEKADgWIQSWhHmhr/kn
+430aVmu1aQ7uu5UhlAUCZabFdgIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAK
+CRC1aQ7uu5UhlIMuEAClvVwC+Neoiq0AdixJZsagKHpx1QrMJWrtMRi4eXVTTaeX
++P1unhC/AmSO4Xxd3uRoejHvfWh4F0gitUJ8XKgiejnmuGcq7Dbt5OoO1JuXGlW2
+BQ+MiGoYVw2B0sOhWDNrIBWOO/WL4LykcGnAtrRXwoS0Wx4MCydztXQY5lcnCWaW
+8rvu7WmduoOikH4HI97rqN5896dc4iBKSx8LZf+46DRCCD/5SfACplBz4hs5zen8
+TL8zd+zxjFrXbzota0jSDEGK9WGO4z55S2xScC6zv6v3Bj1OR8Bs5aodGtmamHZ7
+sE9w0RJoCfNx+9cR/rE82SrOaBpVU7urLe4lg7zaaNhqDdNV8ymuXGmIJarDgrme
+iB5bHS+dLFzLUkTgot4RFlPa9bFiJuJN6Tc9tMu5RJQ9l/zKmxDHIKWsAle5R65u
+zEq04LugTQBdEorGxfQCsF2ga9ncKTDMiAThWTvZpOP3NJ/athZRmOBpG4B9iR6r
+pRU8F/+MokG4fIMwnvtOhWQFiEzdTkJ7U5JAkPtTAmT3/mznwtPEU7DrFWSGAdqg
+IMOlxNCBeGvjwLR0qGH7cB9qHDGNoDLkjaUFpu5tPv4/ivkQaHlHJxjT0ILM6jet
+CAzKpKh48rm65tmrJX6KVpj0r2kKMscFf7s7XaPlCNCFds/YA+0puPbzJKWKfA==
+=NRlX
+-----END PGP PUBLIC KEY BLOCK-----
+EOF
+}
+
+verify_signed_commit() {
+    local rev="$1"
+    local keyfile gpghome status
+
+    if ! command -v gpg >/dev/null 2>&1; then
+        log_error "gpg is required to verify the upstream commit."
+        return 1
+    fi
+    keyfile="$(mktemp "${TMPDIR:-/tmp}/cast-trust.XXXXXX")"
+    gpghome="$(mktemp -d "${TMPDIR:-/tmp}/cast-gpg.XXXXXX")"
+    chmod 700 "$gpghome"
+    if ! write_trusted_key "$keyfile"; then
+        rm -rf "$gpghome" "$keyfile"
+        log_error "No trusted commit key is available."
+        return 1
+    fi
+    if ! GNUPGHOME="$gpghome" gpg --batch --no-tty --import "$keyfile" >/dev/null 2>&1; then
+        rm -rf "$gpghome" "$keyfile"
+        log_error "Could not import the trusted commit key."
+        return 1
+    fi
+    set +e
+    GNUPGHOME="$gpghome" git -C "$ROOT" -c gpg.format=openpgp verify-commit "$rev" >/dev/null 2>&1
+    status=$?
+    set -euo pipefail
+    rm -rf "$gpghome" "$keyfile"
+    return "$status"
+}
+
 fast_forward() {
     local target current choose_rc=0
 
@@ -409,6 +484,11 @@ fast_forward() {
         else
             log_error "Could not fetch origin. Check the network and this checkout's origin remote."
         fi
+        exit 1
+    fi
+
+    if ! verify_signed_commit "origin/$target"; then
+        log_error "Refusing to check out origin/$target. The commit is not signed by the trusted key."
         exit 1
     fi
 

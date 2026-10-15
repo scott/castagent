@@ -110,6 +110,7 @@ if [[ "${1:-}" == "clone" ]]; then
     printf '%s\n' '[project]' 'name = "cast"' > "$dest/python/pyproject.toml"
     printf '%s\n' '{"name":"castagent"}' > "$dest/package.json"
     cp "${CAST_INSTALL_TEST_SCRIPT:?}" "$dest/install.sh"
+    cp "${CAST_INSTALL_TEST_CHECKSUMS:?}" "$dest/install-checksums.txt"
     chmod +x "$dest/install.sh"
     exit 0
 fi
@@ -144,36 +145,21 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 printf 'curl %s\n' "$url" >> "${CAST_INSTALL_LOG:?}"
-if [[ "$url" == *SHASUMS256.txt ]]; then
-    printf '%s\n' "0123456789abcdef  node-v20.19.0-linux-x64.tar.gz"
-    exit 0
-fi
 if [[ "$url" == *nodejs.org* ]]; then
-    printf 'tarball\n' > "$out"
+    printf '%s' 'node-bytes' > "$out"
     exit 0
 fi
-if [[ "$url" == *astral.sh/uv/install.sh ]]; then
-    cat > "$out" << 'EOS'
-#!/bin/sh
-bindir="${UV_UNMANAGED_INSTALL:-$HOME/.local/bin}"
-mkdir -p "$bindir"
-cp "$CAST_UV_STUB" "$bindir/uv"
-chmod +x "$bindir/uv"
-EOS
+if [[ "$url" == *github.com/astral-sh/uv* ]]; then
+    printf '%s' 'uv-bytes' > "$out"
     exit 0
 fi
-if [[ "$url" == *bun.sh/install ]]; then
-    cat > "$out" << 'EOS'
-#!/bin/bash
-mkdir -p "$HOME/.bun/bin"
-printf '%s\n' '#!/bin/bash' 'printf "%s\n" "1.1.0"' > "$HOME/.bun/bin/bun"
-chmod +x "$HOME/.bun/bin/bun"
-EOS
-    exit 0
-fi
-if [[ "$url" == *install.sh ]]; then
-    cp "${CAST_INSTALL_TEST_SCRIPT:?}" "$out"
-    chmod +x "$out"
+if [[ "$url" == *oven-sh/bun* ]]; then
+    case "$url" in
+        *bun-linux-aarch64.zip) printf '%s' 'bun-linux-aarch64' > "$out" ;;
+        *bun-darwin-x64.zip) printf '%s' 'bun-darwin-x64' > "$out" ;;
+        *bun-darwin-aarch64.zip) printf '%s' 'bun-darwin-aarch64' > "$out" ;;
+        *) printf '%s' 'bun-linux-x64' > "$out" ;;
+    esac
     exit 0
 fi
 printf 'unexpected curl %s\n' "$url" >&2
@@ -183,20 +169,31 @@ EOF
 cat > "$TMP/stubs/tar" << 'TARSTUB'
 #!/bin/bash
 dest=""
+archive=""
 while [[ $# -gt 0 ]]; do
     case "$1" in
         -C)
             dest="$2"
             shift 2
             ;;
+        *.tar.gz|*.tgz)
+            archive="$1"
+            shift
+            ;;
         *)
             shift
             ;;
     esac
 done
+printf 'tar-extract %s\n' "$archive" >> "${CAST_INSTALL_LOG:?}"
 if [[ -z "$dest" ]]; then
     printf 'tar stub missing -C\n' >&2
     exit 1
+fi
+if [[ "$archive" == *uv* ]]; then
+    cp "${CAST_UV_STUB:?}" "$dest/uv"
+    chmod +x "$dest/uv"
+    exit 0
 fi
 mkdir -p "$dest/bin"
 cat > "$dest/bin/node" << 'EOF'
@@ -262,6 +259,32 @@ fi
 exit 0
 EOF
 
+cat > "$TMP/stubs/unzip" << 'EOF'
+#!/bin/bash
+dest="."
+file=""
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -d)
+            dest="$2"
+            shift 2
+            ;;
+        -*)
+            shift
+            ;;
+        *)
+            file="$1"
+            shift
+            ;;
+    esac
+done
+name="$(cat "$file")"
+mkdir -p "$dest/$name"
+printf '%s\n' '#!/bin/bash' 'printf "%s\n" "1.1.0"' > "$dest/$name/bun"
+chmod +x "$dest/$name/bun"
+printf 'unzip-extract %s\n' "$file" >> "${CAST_INSTALL_LOG:?}"
+EOF
+
 cat > "$TMP/stubs/sudo" << 'EOF'
 #!/bin/bash
 printf 'sudo %s\n' "$*" >> "${CAST_INSTALL_LOG:?}"
@@ -271,11 +294,6 @@ EOF
 cat > "$TMP/stubs/apt-get" << 'EOF'
 #!/bin/bash
 printf 'apt-get %s\n' "$*" >> "${CAST_INSTALL_LOG:?}"
-if [[ "$*" == *unzip* ]]; then
-    mkdir -p "$HOME/.local/bin"
-    printf '%s\n' '#!/bin/bash' 'exit 0' > "$HOME/.local/bin/unzip"
-    chmod +x "$HOME/.local/bin/unzip"
-fi
 if [[ "$*" == *python3-pip* && -n "${CAST_PYTHON_VENV_READY:-}" ]]; then
     touch "$CAST_PYTHON_VENV_READY"
     mkdir -p "$HOME/.local/bin"
@@ -414,19 +432,73 @@ run_file() {
     set -e
 }
 
+sha256_bytes() {
+    printf '%s' "$1" | sha256sum | awk '{print $1}'
+}
+
+NODE_SHA="$(sha256_bytes node-bytes)"
+UV_SHA="$(sha256_bytes uv-bytes)"
+cat > "$TMP/fixtures/checksums.txt" << EOF
+node 20.20.2 linux-x64 ${NODE_SHA}
+node 20.20.2 linux-arm64 ${NODE_SHA}
+node 20.20.2 darwin-x64 ${NODE_SHA}
+node 20.20.2 darwin-arm64 ${NODE_SHA}
+uv 0.13.1 linux-x64 ${UV_SHA}
+uv 0.13.1 linux-arm64 ${UV_SHA}
+uv 0.13.1 linux-musl-x64 ${UV_SHA}
+uv 0.13.1 linux-musl-arm64 ${UV_SHA}
+uv 0.13.1 darwin-x64 ${UV_SHA}
+uv 0.13.1 darwin-arm64 ${UV_SHA}
+bun 1.4.3 linux-x64 $(sha256_bytes bun-linux-x64)
+bun 1.4.3 linux-arm64 $(sha256_bytes bun-linux-aarch64)
+bun 1.4.3 darwin-x64 $(sha256_bytes bun-darwin-x64)
+bun 1.4.3 darwin-arm64 $(sha256_bytes bun-darwin-aarch64)
+EOF
+export CAST_INSTALL_TEST_CHECKSUMS="$TMP/fixtures/checksums.txt"
+
+assert_not_contains "$SCRIPT_SRC" "raw.githubusercontent.com/scott/castagent/main/install.sh" "installer does not fetch install.sh from main"
+assert_not_contains "$SCRIPT_SRC" "https://astral.sh/uv/install.sh" "installer does not run the uv shell script"
+assert_not_contains "$SCRIPT_SRC" "https://bun.sh/install" "installer does not run the bun shell script"
+assert_not_contains "$SCRIPT_SRC" "https://nodejs.org/dist/latest-" "installer does not follow the floating Node channel"
+grep -F -q 'node 20.20.2 linux-x64 19e56f0825510207dd904f087fe52faa0a4eb6b2aab5f0ea7a33830d04888b8b' "$SOURCE_ROOT/install-checksums.txt" \
+    || fail "published node linux-x64 pin drifted"
+grep -F -q 'uv 0.13.1 linux-x64 eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220' "$SOURCE_ROOT/install-checksums.txt" \
+    || fail "published uv linux-x64 pin drifted"
+grep -F -q 'bun 1.4.3 linux-x64 3e730528d89775f03f87f05c06787c4df4099d0a37f3f252e7b829cb23816e18' "$SOURCE_ROOT/install-checksums.txt" \
+    || fail "published bun linux-x64 pin drifted"
+grep -F -q 'docker-apt-key 1 ubuntu 1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570' "$SOURCE_ROOT/install-checksums.txt" \
+    || fail "published docker apt key pin drifted"
+
+extract_armored_key() {
+    awk 'BEGIN {p=0} /-----BEGIN PGP PUBLIC KEY BLOCK-----/ {p=1} p {print} /-----END PGP PUBLIC KEY BLOCK-----/ {exit}' "$1"
+}
+extract_armored_key "$SCRIPT_SRC" > "$TMP/key-install.asc"
+extract_armored_key "$SOURCE_ROOT/upgrade.sh" > "$TMP/key-upgrade.asc"
+diff -q "$SOURCE_ROOT/scripts/trusted-commit-key.asc" "$TMP/key-install.asc" >/dev/null \
+    || fail "install.sh trusted key does not match scripts/trusted-commit-key.asc"
+diff -q "$SOURCE_ROOT/scripts/trusted-commit-key.asc" "$TMP/key-upgrade.asc" >/dev/null \
+    || fail "upgrade.sh trusted key does not match scripts/trusted-commit-key.asc"
+
 touch "$CAST_GIT_READY"
 reset_log
 LINUX_HOME="$TMP/linux-home"
 run_piped "$LINUX_HOME" "$TMP/linux.out"
 [[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/linux.out" >&2; fail "linux one-liner failed ($RUN_STATUS)"; }
 CLONE="$LINUX_HOME/.cast/castagent"
-assert_contains "$CAST_INSTALL_LOG" "git clone --branch main https://github.com/scott/castagent.git $CLONE" "one-liner clones main"
+assert_contains "$CAST_INSTALL_LOG" "git clone --branch main --depth 1 https://github.com/scott/castagent.git $CLONE" "one-liner clones the pinned ref"
+assert_contains "$CAST_INSTALL_LOG" "git -C $CLONE -c gpg.format=openpgp verify-commit HEAD" "one-liner verifies the commit signature"
+assert_not_contains "$CAST_INSTALL_LOG" "raw.githubusercontent.com" "one-liner does not download install.sh again"
 assert_contains "$CAST_INSTALL_LOG" "apt-get install -y git curl ca-certificates tar unzip build-essential pkg-config libsecret-1-dev" "linux installs build packages"
-assert_contains "$CAST_INSTALL_LOG" "curl https://nodejs.org/dist/latest-v20.x/SHASUMS256.txt" "node version is resolved"
-assert_contains "$TMP/linux.out" "Downloading node-v20.19.0-linux-x64.tar.gz" "linux downloads the x64 tarball"
-assert_contains "$CAST_INSTALL_LOG" "curl https://astral.sh/uv/install.sh" "python comes from uv"
+assert_contains "$CAST_INSTALL_LOG" "curl https://nodejs.org/dist/v20.20.2/node-v20.20.2-linux-x64.tar.gz" "node tarball is pinned"
+assert_contains "$TMP/linux.out" "Downloading node-v20.20.2-linux-x64.tar.gz" "linux downloads the x64 tarball"
+assert_contains "$TMP/linux.out" "Verified SHA-256 for node 20.20.2 linux-x64" "node tarball is checked before unpack"
+assert_contains "$CAST_INSTALL_LOG" "curl https://github.com/astral-sh/uv/releases/download/0.13.1/uv-x86_64-unknown-linux-gnu.tar.gz" "uv archive is pinned"
+assert_contains "$TMP/linux.out" "Verified SHA-256 for uv 0.13.1 linux-x64" "uv archive is checked before unpack"
 assert_contains "$CAST_INSTALL_LOG" "uv python install 3.12" "python 3.12 is installed"
-assert_contains "$CAST_INSTALL_LOG" "curl https://bun.sh/install" "bun is installed"
+assert_contains "$CAST_INSTALL_LOG" "curl https://github.com/oven-sh/bun/releases/download/bun-v1.4.3/bun-linux-x64.zip" "bun archive is pinned"
+assert_contains "$TMP/linux.out" "Verified SHA-256 for bun 1.4.3 linux-x64" "bun archive is checked before unpack"
+assert_not_contains "$CAST_INSTALL_LOG" "astral.sh/uv/install.sh" "uv installer script is not executed"
+assert_not_contains "$CAST_INSTALL_LOG" "bun.sh/install" "bun installer script is not executed"
 assert_contains "$CAST_INSTALL_LOG" "npm $CLONE install" "root npm install runs in the clone"
 assert_contains "$CAST_INSTALL_LOG" "npm $CLONE/typescript/cast-cli run build" "cli build runs in the clone"
 assert_eq "$(readlink "$LINUX_HOME/.local/bin/cast")" "$CLONE/cast" "cast links at the checkout"
@@ -517,7 +589,8 @@ export PATH
 run_piped "$BREW_HOME" "$TMP/brew.out"
 [[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/brew.out" >&2; fail "macOS one-liner failed ($RUN_STATUS)"; }
 assert_contains "$CAST_INSTALL_LOG" "brew install git" "macOS installs git with Homebrew"
-assert_contains "$TMP/brew.out" "Downloading node-v20.19.0-darwin-arm64.tar.gz" "macOS downloads the arm64 tarball"
+assert_contains "$TMP/brew.out" "Downloading node-v20.20.2-darwin-arm64.tar.gz" "macOS downloads the arm64 tarball"
+assert_contains "$CAST_INSTALL_LOG" "curl https://github.com/oven-sh/bun/releases/download/bun-v1.4.3/bun-darwin-aarch64.zip" "macOS bun archive is pinned"
 assert_not_contains "$CAST_INSTALL_LOG" "apt-get " "macOS does not use apt"
 assert_contains "$BREW_HOME/.zshrc" "castagent-path" "zsh profile gains a PATH line"
 assert_eq "$(readlink "$BREW_HOME/.local/bin/cast")" "$BREW_HOME/.cast/castagent/cast" "macOS links cast"
@@ -556,7 +629,133 @@ elif [[ -e /usr/local/bin/cast ]]; then
     fail "/usr/local/bin/cast was created by the tests"
 fi
 
-# REAL_GIT is unused on purpose: the stub must hide the developer git.
-: "$REAL_GIT"
+export CAST_UNAME_S=Linux
+export CAST_UNAME_M=x86_64
+PATH="$TMP/stubs:/usr/bin:/bin"
+export PATH
+
+BAD_NODE="$TMP/fixtures/checksums-bad-node.txt"
+sed -E 's/^(node [^ ]+ [^ ]+) [0-9a-f]{64}$/\1 0000000000000000000000000000000000000000000000000000000000000000/' \
+    "$TMP/fixtures/checksums.txt" > "$BAD_NODE"
+export CAST_INSTALL_TEST_CHECKSUMS="$BAD_NODE"
+BAD_NODE_HOME="$TMP/bad-node-home"
+reset_log
+run_piped "$BAD_NODE_HOME" "$TMP/bad-node.out"
+[[ "$RUN_STATUS" -ne 0 ]] || { cat "$TMP/bad-node.out" >&2; fail "a bad node checksum should fail"; }
+assert_contains "$TMP/bad-node.out" "Checksum mismatch for node 20.20.2 linux-x64." "bad node bytes are rejected"
+assert_not_contains "$CAST_INSTALL_LOG" "tar-extract " "a bad node archive is not unpacked"
+assert_not_contains "$CAST_INSTALL_LOG" "npm " "a bad node archive does not reach npm"
+[[ ! -e "$BAD_NODE_HOME/.local/node" ]] || fail "a bad node archive must not replace the node prefix"
+
+BAD_BUN="$TMP/fixtures/checksums-bad-bun.txt"
+sed -E 's/^(bun [^ ]+ [^ ]+) [0-9a-f]{64}$/\1 1111111111111111111111111111111111111111111111111111111111111111/' \
+    "$TMP/fixtures/checksums.txt" > "$BAD_BUN"
+export CAST_INSTALL_TEST_CHECKSUMS="$BAD_BUN"
+BAD_BUN_HOME="$TMP/bad-bun-home"
+reset_log
+run_piped "$BAD_BUN_HOME" "$TMP/bad-bun.out"
+[[ "$RUN_STATUS" -ne 0 ]] || { cat "$TMP/bad-bun.out" >&2; fail "a bad bun checksum should fail"; }
+assert_contains "$TMP/bad-bun.out" "Checksum mismatch for bun 1.4.3 linux-x64." "bad bun bytes are rejected"
+assert_not_contains "$CAST_INSTALL_LOG" "unzip-extract " "a bad bun archive is not unpacked"
+assert_not_contains "$CAST_INSTALL_LOG" "npm " "a bad bun archive does not reach npm"
+[[ ! -e "$BAD_BUN_HOME/.bun/bin/bun" ]] || fail "a bad bun archive must not install bun"
+
+export CAST_INSTALL_TEST_CHECKSUMS="$TMP/fixtures/checksums.txt"
+OLD_HOME="$TMP/old-installer-home"
+OLD_REPO="$OLD_HOME/.cast/castagent"
+mkdir -p "$OLD_REPO/typescript/cast-cli/bin" "$OLD_REPO/typescript/cast-tui" "$OLD_REPO/python" "$OLD_REPO/.git"
+printf '%s\n' '#!/bin/bash' 'echo cast-cli' > "$OLD_REPO/typescript/cast-cli/bin/run"
+chmod +x "$OLD_REPO/typescript/cast-cli/bin/run"
+printf '%s\n' '{"name":"cast-tui"}' > "$OLD_REPO/typescript/cast-tui/package.json"
+printf '%s\n' '[project]' 'name = "cast"' > "$OLD_REPO/python/pyproject.toml"
+printf '%s\n' '#!/bin/bash' 'echo RAN_OLD_INSTALLER' 'exit 0' > "$OLD_REPO/install.sh"
+chmod +x "$OLD_REPO/install.sh"
+reset_log
+run_piped "$OLD_HOME" "$TMP/old-installer.out"
+[[ "$RUN_STATUS" -ne 0 ]] || { cat "$TMP/old-installer.out" >&2; fail "an unpinned checkout installer should not be executed"; }
+assert_not_contains "$TMP/old-installer.out" "RAN_OLD_INSTALLER" "the old installer is not executed"
+assert_contains "$TMP/old-installer.out" "Existing checkout installer has no checksum pins." "the old installer is skipped"
+assert_contains "$TMP/old-installer.out" "No install-checksums.txt next to this installer." "downloads without pins are refused"
+assert_not_contains "$CAST_INSTALL_LOG" "raw.githubusercontent.com" "the old checkout is not replaced from main"
+assert_not_contains "$CAST_INSTALL_LOG" "curl https://nodejs.org" "node is not downloaded without pins"
+
+# Real git: an unsigned commit, and a commit signed by some other key, are
+# both refused before the cloned install.sh runs.
+mkdir -p "$TMP/realgit"
+ln -sfn "$REAL_GIT" "$TMP/realgit/git"
+SIG_PATH="$TMP/realgit:$TMP/stubs:/usr/bin:/bin"
+
+write_signed_fixture() {
+    local repo="$1"
+    local mode="$2"
+    mkdir -p "$repo/typescript/cast-cli/bin" "$repo/typescript/cast-tui" "$repo/python"
+    printf '%s\n' '#!/bin/bash' 'echo cast-cli' > "$repo/typescript/cast-cli/bin/run"
+    chmod +x "$repo/typescript/cast-cli/bin/run"
+    printf '%s\n' '{"name":"cast-tui"}' > "$repo/typescript/cast-tui/package.json"
+    printf '%s\n' '[project]' 'name = "cast"' > "$repo/python/pyproject.toml"
+    cat > "$repo/install.sh" << 'EOF'
+#!/bin/bash
+require_sha256() { :; }
+echo RAN_CLONED_INSTALLER
+exit 0
+EOF
+    chmod +x "$repo/install.sh"
+    printf '%s\n' 'node 1 linux-x64 aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' > "$repo/install-checksums.txt"
+    "$REAL_GIT" -C "$repo" init -q
+    "$REAL_GIT" -C "$repo" config user.email install-test@example.com
+    "$REAL_GIT" -C "$repo" config user.name "Install Test"
+    "$REAL_GIT" -C "$repo" config gpg.format openpgp
+    "$REAL_GIT" -C "$repo" config commit.gpgsign false
+    "$REAL_GIT" -C "$repo" add .
+    if [[ "$mode" == signed ]]; then
+        "$REAL_GIT" -C "$repo" config user.signingkey "$CAST_TEST_FPR"
+        "$REAL_GIT" -C "$repo" -c commit.gpgsign=true commit -qm "signed fixture"
+    else
+        "$REAL_GIT" -C "$repo" -c commit.gpgsign=false commit -qm "unsigned fixture"
+    fi
+    "$REAL_GIT" -C "$repo" tag v9.9.9
+}
+
+run_repo_install() {
+    local home="$1"
+    local repo="$2"
+    local out="$3"
+    mkdir -p "$home"
+    set +e
+    (
+        cd "$TMP/work"
+        PATH="$SIG_PATH" \
+        HOME="$home" \
+        CAST_INSTALL_REPO="$repo" \
+        CAST_INSTALL_REF="v9.9.9" \
+        bash -c 'cat "$1" | bash' _ "$SCRIPT_SRC" >"$out" 2>&1
+    )
+    RUN_STATUS=$?
+    set -e
+}
+
+UNSIGNED_REPO="$TMP/unsigned-repo"
+write_signed_fixture "$UNSIGNED_REPO" unsigned
+reset_log
+run_repo_install "$TMP/unsigned-home" "$UNSIGNED_REPO" "$TMP/unsigned-install.out"
+[[ "$RUN_STATUS" -ne 0 ]] || { cat "$TMP/unsigned-install.out" >&2; fail "unsigned clone should fail"; }
+assert_contains "$TMP/unsigned-install.out" "The commit is not signed by the trusted key." "unsigned clone is refused"
+assert_not_contains "$TMP/unsigned-install.out" "RAN_CLONED_INSTALLER" "unsigned install.sh is not executed"
+assert_not_contains "$TMP/unsigned-install.out" "Cloned installer has no checksum pins." "refusal happens at the signature check"
+assert_not_contains "$CAST_INSTALL_LOG" "curl https://nodejs.org" "unsigned clone does not download node"
+
+CAST_TEST_GNUPGHOME="$TMP/gnupg"
+mkdir -p "$CAST_TEST_GNUPGHOME"
+chmod 700 "$CAST_TEST_GNUPGHOME"
+GNUPGHOME="$CAST_TEST_GNUPGHOME" gpg --batch --pinentry-mode loopback --passphrase '' \
+    --quick-gen-key "Cast Install Test <install-test@example.com>" ed25519 sign never >/dev/null
+CAST_TEST_FPR="$(GNUPGHOME="$CAST_TEST_GNUPGHOME" gpg --with-colons --list-secret-keys | awk -F: '$1=="fpr" {print $10; exit}')"
+OTHER_REPO="$TMP/otherkey-repo"
+GNUPGHOME="$CAST_TEST_GNUPGHOME" write_signed_fixture "$OTHER_REPO" signed
+reset_log
+run_repo_install "$TMP/otherkey-home" "$OTHER_REPO" "$TMP/otherkey-install.out"
+[[ "$RUN_STATUS" -ne 0 ]] || { cat "$TMP/otherkey-install.out" >&2; fail "a commit signed by another key should fail"; }
+assert_contains "$TMP/otherkey-install.out" "The commit is not signed by the trusted key." "another signing key is refused"
+assert_not_contains "$TMP/otherkey-install.out" "RAN_CLONED_INSTALLER" "another key's install.sh is not executed"
 
 printf 'ok\n'

@@ -649,7 +649,11 @@ describe('DigitalOcean Deploy Provider', () => {
 
         // Key properties of the install script
         expect(scriptContent, 'should try official Docker apt repo first').to.include('download.docker.com')
-        expect(scriptContent, 'should fall back to get.docker.com if apt repo fails').to.include('get.docker.com')
+        expect(scriptContent, 'should check the Docker apt key digest').to.include('sha256sum -c -')
+        expect(scriptContent, 'should pin the published Docker apt key').to.include(deployUtils.installPin('docker-apt-key', 'ubuntu').sha256)
+        expect(scriptContent, 'should refuse an unsigned installer').to.include('Refusing an unsigned installer')
+        expect(scriptContent, 'should not pipe a remote Docker installer').to.not.include('get.docker.com')
+        expect(scriptContent, 'should not pipe a shell').to.not.match(/\| *(bash|sh)\b/)
         expect(scriptContent, 'should log all output to cast-docker-install.log').to.include('/var/log/cast-docker-install.log')
         // The script must NOT run docker or touch the sentinel — those
         // are runcmd's job. The script just installs and exits 0.

@@ -281,8 +281,7 @@ export default class Deploy extends Command {
       this.log('Quick install commands:')
       this.log('  # macOS:')
       this.log('  brew install --cask docker')
-      this.log('  # Linux:')
-      this.log('  curl -fsSL https://get.docker.com | sh')
+      this.log('  # Linux: install docker-ce from the apt repository in the docs above.')
       this.log('')
       const ready = await this.confirm('Have you installed Docker and are ready to continue?', force)
       if (!ready) {
