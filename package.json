@@ -1,6 +1,6 @@
 {
   "name": "castagent",
-  "version": "2.5.1",
+  "version": "2.5.2",
   "description": "Cast - Agent Building & Deployment Platform",
   "private": true,
   "workspaces": [
