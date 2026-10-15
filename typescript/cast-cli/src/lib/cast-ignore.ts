@@ -1,3 +1,4 @@
+import {execFileSync} from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 
@@ -83,6 +84,37 @@ export function appendMissingIgnoreLines(filePath: string, lines: readonly strin
 }
 
 /**
+ * True when memory/notes.md is in the index.
+ * A gitignore rule does not drop a path that is already tracked.
+ */
+export function memoryNotesAreTracked(agentPath: string): boolean {
+  if (!fs.existsSync(path.join(agentPath, '.git'))) return false
+  try {
+    const listed = execFileSync('git', ['ls-files', '--', ...MEMORY_NOTES_IGNORE_LINES], {
+      cwd: agentPath,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    return listed.split(/\r?\n/).some(line => line.trim() === MEMORY_NOTES_IGNORE_LINES[0])
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Remove memory/notes.md from the index and leave the working tree file.
+ * Returns true when the path was tracked.
+ */
+export function untrackMemoryNotes(agentPath: string): boolean {
+  if (!memoryNotesAreTracked(agentPath)) return false
+  execFileSync('git', ['rm', '--cached', '--ignore-unmatch', '--', ...MEMORY_NOTES_IGNORE_LINES], {
+    cwd: agentPath,
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  return true
+}
+
+/**
  * Keep memory/memory.db and memory/notes.md out of an agent Git repository.
  *
  * Git reads .gitignore. Older cast git init releases wrote the rules only
@@ -90,6 +122,8 @@ export function appendMissingIgnoreLines(filePath: string, lines: readonly strin
  * up as untracked. Notes were not listed at all. This appends the memory
  * database and notes rules to ignore files that already exist, and creates
  * .gitignore from .castignore when the repo has no .gitignore yet.
+ * A notes file that is already tracked is removed from the index and left
+ * on disk. The ignore rule alone does not do that.
  */
 export function ensureMemoryDatabaseIgnored(agentPath: string): void {
   if (!fs.existsSync(path.join(agentPath, '.git'))) return
@@ -103,15 +137,13 @@ export function ensureMemoryDatabaseIgnored(agentPath: string): void {
 
   if (isFile(gitignorePath)) {
     appendMissingIgnoreLines(gitignorePath, MEMORY_GIT_IGNORE_LINES)
-    return
-  }
-
-  if (isFile(castIgnorePath)) {
+  } else if (isFile(castIgnorePath)) {
     fs.copyFileSync(castIgnorePath, gitignorePath)
-    return
+  } else {
+    fs.writeFileSync(gitignorePath, `${MEMORY_GIT_IGNORE_LINES.join('\n')}\n`)
   }
 
-  fs.writeFileSync(gitignorePath, `${MEMORY_GIT_IGNORE_LINES.join('\n')}\n`)
+  untrackMemoryNotes(agentPath)
 }
 
 /**

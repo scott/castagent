@@ -3,7 +3,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import sinon from 'sinon'
-import {execSync} from 'child_process'
+import {execFileSync, execSync} from 'child_process'
 import GitCommit from '../../../../typescript/cast-cli/src/commands/git/commit'
 
 // Helper to create command instance with mocked context
@@ -201,6 +201,129 @@ describe('Git Commit Command', () => {
 
       // Cleanup
       fs.rmSync(tempAgentDir, {recursive: true, force: true})
+    })
+  })
+
+  describe('memory notes stay out of the commit', () => {
+    const secret = 'sk-or-v1-dummy'
+
+    function git(dir: string, args: string[]): string {
+      return execFileSync('git', args, {cwd: dir, encoding: 'utf8'})
+    }
+
+    function gitText(dir: string, args: string[]): string {
+      try {
+        return execFileSync('git', args, {
+          cwd: dir,
+          encoding: 'utf8',
+          stdio: ['ignore', 'pipe', 'pipe'],
+        })
+      } catch (error: unknown) {
+        const stdout = (error as {stdout?: string}).stdout
+        return typeof stdout === 'string' ? stdout : ''
+      }
+    }
+
+    async function commitAgent(agentName: string, message: string): Promise<string> {
+      const instance = createCommandInstance(GitCommit, ['git', 'commit', agentName, '-m', message])
+      const lines: string[] = []
+      instance.log = (msg: string) => {
+        lines.push(msg)
+      }
+      instance.error = (err: string) => {
+        throw new Error(err)
+      }
+      await instance.run()
+      return lines.join('\n')
+    }
+
+    it('does not commit notes.md that an older init already tracked', async () => {
+      const testAgentName = 'test-commit-tracked-notes-' + Date.now()
+      const tempAgentDir = path.join(os.homedir(), '.cast', 'agents', testAgentName)
+      fs.mkdirSync(path.join(tempAgentDir, 'memory'), {recursive: true})
+      fs.writeFileSync(path.join(tempAgentDir, 'agent.yaml'), 'name: test-agent\n')
+      fs.writeFileSync(path.join(tempAgentDir, '.gitignore'), '*.log\n')
+      const notesPath = path.join(tempAgentDir, 'memory', 'notes.md')
+      fs.writeFileSync(notesPath, 'old note\n')
+      createGitRepo(tempAgentDir)
+      execFileSync('git', ['add', '-A'], {cwd: tempAgentDir})
+      execFileSync('git', ['commit', '-m', 'track notes'], {cwd: tempAgentDir})
+
+      fs.writeFileSync(notesPath, `${secret}\n`)
+      fs.writeFileSync(path.join(tempAgentDir, 'public.txt'), 'public\n')
+
+      try {
+        const output = await commitAgent(testAgentName, 'drop private notes')
+        expect(output).to.include('left untracked')
+        expect(gitText(tempAgentDir, ['show', 'HEAD:memory/notes.md'])).to.equal('')
+        expect(gitText(tempAgentDir, ['show', 'HEAD:public.txt'])).to.equal('public\n')
+        expect(git(tempAgentDir, ['ls-files'])).to.not.include('memory/notes.md')
+        expect(fs.readFileSync(notesPath, 'utf8')).to.equal(`${secret}\n`)
+        expect(git(tempAgentDir, ['show', 'HEAD~1:memory/notes.md'])).to.equal('old note\n')
+        expect(gitText(tempAgentDir, ['grep', '-I', '-e', secret, 'HEAD'])).to.equal('')
+
+        fs.writeFileSync(path.join(tempAgentDir, 'public.txt'), 'public again\n')
+        await commitAgent(testAgentName, 'public only')
+        expect(gitText(tempAgentDir, ['show', 'HEAD:memory/notes.md'])).to.equal('')
+        expect(gitText(tempAgentDir, ['show', 'HEAD:public.txt'])).to.equal('public again\n')
+        expect(gitText(tempAgentDir, ['grep', '-I', '-e', secret, 'HEAD'])).to.equal('')
+      } finally {
+        fs.rmSync(tempAgentDir, {recursive: true, force: true})
+      }
+    })
+
+    it('drops tracked notes from HEAD when the working tree is otherwise clean', async () => {
+      const testAgentName = 'test-commit-clean-tracked-notes-' + Date.now()
+      const tempAgentDir = path.join(os.homedir(), '.cast', 'agents', testAgentName)
+      fs.mkdirSync(path.join(tempAgentDir, 'memory'), {recursive: true})
+      fs.writeFileSync(path.join(tempAgentDir, 'agent.yaml'), 'name: test-agent\n')
+      fs.writeFileSync(path.join(tempAgentDir, '.gitignore'), '*.log\nmemory/notes.md\n')
+      const notesPath = path.join(tempAgentDir, 'memory', 'notes.md')
+      fs.writeFileSync(notesPath, `${secret}\n`)
+      createGitRepo(tempAgentDir)
+      execFileSync('git', ['add', '-A'], {cwd: tempAgentDir})
+      execFileSync('git', ['add', '-f', '--', 'memory/notes.md'], {cwd: tempAgentDir})
+      execFileSync('git', ['commit', '-m', 'track notes'], {cwd: tempAgentDir})
+      expect(git(tempAgentDir, ['status', '--porcelain'])).to.equal('')
+      expect(git(tempAgentDir, ['show', 'HEAD:memory/notes.md'])).to.equal(`${secret}\n`)
+
+      try {
+        const output = await commitAgent(testAgentName, 'stop tracking notes')
+        expect(output).to.include('left untracked')
+        expect(output).to.not.include('working tree is clean')
+        expect(gitText(tempAgentDir, ['show', 'HEAD:memory/notes.md'])).to.equal('')
+        expect(gitText(tempAgentDir, ['grep', '-I', '-e', secret, 'HEAD'])).to.equal('')
+        expect(fs.readFileSync(notesPath, 'utf8')).to.equal(`${secret}\n`)
+        expect(git(tempAgentDir, ['ls-files'])).to.not.include('memory/notes.md')
+      } finally {
+        fs.rmSync(tempAgentDir, {recursive: true, force: true})
+      }
+    })
+
+    it('does not add an untracked notes.md that the ignore file omitted', async () => {
+      const testAgentName = 'test-commit-untracked-notes-' + Date.now()
+      const tempAgentDir = path.join(os.homedir(), '.cast', 'agents', testAgentName)
+      fs.mkdirSync(path.join(tempAgentDir, 'memory'), {recursive: true})
+      fs.writeFileSync(path.join(tempAgentDir, 'agent.yaml'), 'name: test-agent\n')
+      fs.writeFileSync(path.join(tempAgentDir, '.gitignore'), '*.log\n')
+      const notesPath = path.join(tempAgentDir, 'memory', 'notes.md')
+      fs.writeFileSync(notesPath, `${secret}\n`)
+      fs.writeFileSync(path.join(tempAgentDir, 'public.txt'), 'public\n')
+      createGitRepo(tempAgentDir)
+      execFileSync('git', ['add', 'agent.yaml', '.gitignore'], {cwd: tempAgentDir})
+      execFileSync('git', ['commit', '-m', 'init'], {cwd: tempAgentDir})
+
+      try {
+        await commitAgent(testAgentName, 'public only')
+        expect(gitText(tempAgentDir, ['show', 'HEAD:memory/notes.md'])).to.equal('')
+        expect(gitText(tempAgentDir, ['show', 'HEAD:public.txt'])).to.equal('public\n')
+        expect(git(tempAgentDir, ['ls-tree', '-r', '--name-only', 'HEAD'])).to.not.include('memory/notes.md')
+        expect(gitText(tempAgentDir, ['grep', '-I', '-e', secret, 'HEAD'])).to.equal('')
+        expect(fs.readFileSync(notesPath, 'utf8')).to.equal(`${secret}\n`)
+        expect(fs.readFileSync(path.join(tempAgentDir, '.gitignore'), 'utf8')).to.include('memory/notes.md\n')
+      } finally {
+        fs.rmSync(tempAgentDir, {recursive: true, force: true})
+      }
     })
   })
 })
