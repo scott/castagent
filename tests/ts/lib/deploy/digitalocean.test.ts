@@ -272,10 +272,21 @@ describe('DigitalOcean Deploy Provider', () => {
 
       const sshCommands = execStub.getCalls()
         .map((c: any) => c.args[1] ? (c.args[1] as string[]).join(' ') : '')
-      const runCmd = sshCommands.find((cmd: string) => cmd.includes("'docker'") && cmd.includes('AUTH_TOKEN='))
+      const runCmd = sshCommands.find((cmd: string) => cmd.includes("'docker'") && cmd.includes("'run'"))
       expect(runCmd, 'should have a docker run command').to.exist
-      expect(runCmd).to.include('AUTH_TOKEN=tok-secret')
-      expect(runCmd).to.include('CAST_MOTD=')
+      expect(runCmd).to.include("'--env-file'")
+      expect(runCmd).to.include("'/var/lib/cast/cast-agent.env'")
+      expect(runCmd).to.include("'127.0.0.1:8080:8080'")
+      expect(runCmd).to.not.include('AUTH_TOKEN=')
+      expect(runCmd).to.not.include('tok-secret')
+      expect(runCmd).to.include('StrictHostKeyChecking=yes')
+      const envWrite = execStub.getCalls().find((c: any) =>
+        ((c.args[1] as string[]) || []).join(' ').includes('cast-agent.env'),
+      )
+      expect(envWrite, 'should write the env file').to.exist
+      const envInput = (envWrite!.args[2] as {input?: string}).input
+      expect(envInput).to.include('AUTH_TOKEN=tok-secret')
+      expect(envInput).to.include('CAST_MOTD=')
     })
 
     it('should include OPENROUTER_API_KEY when available', async () => {
@@ -288,8 +299,53 @@ describe('DigitalOcean Deploy Provider', () => {
 
       const sshCommands = execStub.getCalls()
         .map((c: any) => c.args[1] ? (c.args[1] as string[]).join(' ') : '')
-      const runCmd = sshCommands.find((cmd: string) => cmd.includes("'docker'") && cmd.includes('OPENROUTER_API_KEY='))
-      expect(runCmd).to.include('OPENROUTER_API_KEY=or-key-123')
+      const runCmd = sshCommands.find((cmd: string) => cmd.includes("'docker'") && cmd.includes("'run'"))
+      expect(runCmd).to.not.include('OPENROUTER_API_KEY')
+      expect(runCmd).to.not.include('or-key-123')
+      const envWrite = execStub.getCalls().find((c: any) =>
+        ((c.args[1] as string[]) || []).join(' ').includes('cast-agent.env') &&
+        ((c.args[1] as string[]) || []).join(' ').includes('chmod 0600'),
+      )
+      const envInput = (envWrite!.args[2] as {input?: string}).input
+      expect(envInput).to.include('OPENROUTER_API_KEY=or-key-123')
+    })
+
+    it('should bind the agent to loopback and not open public port 8080', async () => {
+      const {execStub, motdStub} = stubDeployHelpers()
+      await instance.deployOnDroplet(
+        defaultArgs.ip, defaultArgs.agentName, defaultArgs.authToken,
+        defaultArgs.imageTag, defaultArgs.volumeId,
+        defaultArgs.deploymentUrl, defaultArgs.deployedVersion,
+      )
+
+      const commands = execStub.getCalls().map((c: any) => ({
+        cmd: ((c.args[1] as string[]) || []).join(' '),
+        opts: c.args[2] as {input?: string; shell?: boolean},
+      }))
+      const joined = commands.map(c => c.cmd).join('\n')
+      expect(joined).to.not.match(/ufw allow 8080/)
+      expect(joined).to.include('ufw --force delete allow 8080/tcp')
+      expect(joined).to.include('StrictHostKeyChecking=yes')
+      expect(joined).to.not.include('StrictHostKeyChecking=no')
+      const run = commands.find(c => c.cmd.includes("'docker'") && c.cmd.includes("'run'"))
+      expect(run!.cmd).to.include('127.0.0.1:8080:8080')
+      expect(run!.cmd).to.not.include('-p 8080:8080')
+      expect(run!.cmd).to.not.include("'8080:8080'")
+      expect(run!.cmd).to.not.include('0.0.0.0:8080')
+      const envWrite = commands.find(c => c.cmd.includes('chmod 0600'))
+      expect(envWrite!.cmd).to.include('chmod 0600')
+      expect(envWrite!.cmd).to.include('umask 077')
+      expect(envWrite!.cmd).to.not.include('tok-secret')
+      expect(envWrite!.opts.shell).to.equal(false)
+      expect(envWrite!.opts.input).to.include('AUTH_TOKEN=tok-secret')
+      for (const command of commands) {
+        expect(command.cmd).to.not.include('tok-secret')
+        expect(command.cmd).to.not.include('StrictHostKeyChecking=no')
+      }
+      const ctx = motdStub.firstCall.args[1] as {privateSsh?: boolean; a2aUrl?: string}
+      expect(ctx.privateSsh).to.equal(true)
+      expect(ctx.a2aUrl).to.equal('https://203.0.113.1')
+      expect(ctx.a2aUrl).to.not.include('http://')
     })
 
     it('should write host MOTD and profile', async () => {
@@ -317,7 +373,13 @@ describe('DigitalOcean Deploy Provider', () => {
 
     it('should fail with error when docker run fails', async () => {
       stubDeployHelpers({
-        execCommandReturn: () => ({stdout: '', stderr: 'port already in use', exitCode: 1}),
+        execCommandReturn: (...args: any[]) => {
+          const cmd = ((args[1] as string[]) || []).join(' ')
+          if (cmd.includes("'docker'") && cmd.includes("'run'")) {
+            return {stdout: '', stderr: 'port already in use', exitCode: 1}
+          }
+          return {stdout: '', stderr: '', exitCode: 0}
+        },
       })
       try {
         await instance.deployOnDroplet(
@@ -363,9 +425,10 @@ describe('DigitalOcean Deploy Provider', () => {
         defaultArgs.imageTag, defaultArgs.volumeId,
         defaultArgs.deploymentUrl, defaultArgs.deployedVersion,
       )
-      const runCall = execStub.getCalls().find((call: sinon.SinonSpyCall) =>
-        ((call.args[1] as string[]) || []).join(' ').includes('docker run'),
-      )
+      const runCall = execStub.getCalls().find((call: sinon.SinonSpyCall) => {
+        const cmd = ((call.args[1] as string[]) || []).join(' ')
+        return cmd.includes("'docker'") && cmd.includes("'run'")
+      })
       expect(runCall, 'docker run ssh call').to.exist
       const args = runCall!.args[1] as string[]
       expect(args).to.include('StrictHostKeyChecking=yes')
@@ -405,20 +468,15 @@ describe('DigitalOcean Deploy Provider', () => {
   })
 
   describe('remoteDockerRunCommand', () => {
-    it('keeps env values, the volume, and the image as single remote words', () => {
+    it('keeps the volume and the image as single remote words and omits secrets', () => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-do-quote-'))
       const marker = path.join(dir, 'marker')
       const token = `sekret'$(touch ${marker})`
       const image = `img$(touch ${marker})`
       const volume = `vol;touch ${marker}`
-      const apiKey = 'key`touch ' + marker + '`'
       const command = remoteDockerRunCommand({
-        agentName: 'agent',
-        authToken: token,
         imageTag: image,
         volumeId: volume,
-        env: {OPENROUTER_API_KEY: apiKey},
-        motdB64: 'YQ==',
       })
 
       try {
@@ -430,12 +488,16 @@ describe('DigitalOcean Deploy Provider', () => {
         ], {encoding: 'utf8'})
         const words = output.split('\n').filter(word => word.length > 0)
         expect(fs.existsSync(marker)).to.equal(false)
-        expect(words).to.include(`AUTH_TOKEN=${token}`)
-        expect(words).to.include(`OPENROUTER_API_KEY=${apiKey}`)
+        expect(command).to.not.include(token)
+        expect(command).to.not.include('AUTH_TOKEN')
+        expect(words).to.include('127.0.0.1:8080:8080')
+        expect(words).to.include('--env-file')
+        expect(words).to.include('/var/lib/cast/cast-agent.env')
         expect(words).to.include(`/mnt/${volume}:/app/agent/memory`)
         expect(words[words.length - 1]).to.equal(image)
         expect(words[0]).to.equal('docker')
         expect(words[1]).to.equal('run')
+        expect(words).to.not.include('8080:8080')
       } finally {
         fs.rmSync(dir, {recursive: true, force: true})
       }

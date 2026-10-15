@@ -421,6 +421,7 @@ export async function upgradeDigitalOceanDeployment(
       a2aUrl: deploymentUrl ?? undefined,
       deployedVersion: version,
       onHostTui,
+      privateSsh: true,
     })
     if (motdStderr) {
       host.warn(`Failed to refresh /etc/motd: ${motdStderr}`)

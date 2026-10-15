@@ -163,7 +163,7 @@ stays on `cast releases`.
 AGENT            SHA       PROVIDER         VERSION    DEPLOYED                 URL
 email-assistant  abc123    railway          1.6        5/12/2026 1:08:33 PM     https://email-assistant.up.railway.app
 email-assistant  def456    fly              1.5        5/9/2026 9:35:20 PM      https://email-assistant.fly.dev
-git-agent        ghi789    digitalocean     —          5/12/2026 1:08:33 PM     http://203.0.113.42:8080
+git-agent        ghi789    digitalocean     —          5/12/2026 1:08:33 PM     https://203.0.113.42
 ```
 
 `cast registry <name>` is that table filtered to one agent. The agent name
@@ -175,10 +175,14 @@ Local Agent Registry: email-assistant
   SHA       PROVIDER        VERSION  DEPLOYED               URL
   abc123    railway         1.6      5/12/2026 1:08 PM     https://email-assistant.up.railway.app
   def456    fly             1.5      5/9/2026  9:35 PM     https://email-assistant.fly.dev
-  ghi789    digitalocean    —        5/12/2026 1:08 PM     http://203.0.113.42:8080
+  ghi789    digitalocean    —        5/12/2026 1:08 PM     https://203.0.113.42
 ─────────────────────────────────────────────────────────────
 ```
 
 `cast upgrade` and `cast shutdown` both accept a SHA to target a specific
 deployment, falling back to the most-recent deployment when given an
 agent name.
+
+A DigitalOcean URL in that table is `https://<droplet-ip>`. It identifies
+the droplet. The agent listens on `127.0.0.1:8080`, and `cast connect`
+reaches it through an SSH tunnel.

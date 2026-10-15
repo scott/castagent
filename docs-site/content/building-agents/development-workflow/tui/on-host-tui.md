@@ -15,18 +15,17 @@ inside the agent container. It is functionally identical to
 `cast connect` — streaming responses, slash commands, full chat
 experience — with two important differences:
 
-1. **No public network exposure.** The chat traffic stays on the
-   container's loopback to the A2A server on `localhost:8080`. The
-   bearer token never leaves the container.
+1. **Loopback only.** The chat traffic stays on the container's
+   loopback to the A2A server on `localhost:8080`. The bearer token
+   never leaves the container.
 2. **No bearer token over the wire.** The agent's `AUTH_TOKEN` is
    inherited from the container's environment, so the TUI uses it
-   locally without any HTTPS round-trip.
+   locally without a network round-trip.
 
 ## When to use it
 
-- You want to chat with a deployed agent but don't want to expose its
-  A2A port publicly (or you don't want to authenticate over the
-  network).
+- You want a shell on the droplet. `cast connect` already reaches the
+  agent through an SSH tunnel, so port 8080 is not a public listener.
 - You're debugging a deploy and want to talk to the agent exactly as it
   runs in production, not as it runs on your laptop.
 - You're operating in an environment where the only ingress is SSH
@@ -81,10 +80,10 @@ command; otherwise it stays silent.
 
 ## Security model
 
-The on-host TUI is *not* a stronger privilege boundary than
-`cast connect` — it's a different one. With `cast connect` you need
-the bearer token. With `cast-tui` you need the SSH key. Both let you
-talk to the agent.
+The on-host TUI is a different path from `cast connect`. `cast connect`
+uses the SSH key to open a tunnel and sends the bearer token through
+that tunnel. `cast-tui` on the droplet uses the SSH key and the token
+already in the container. Both let you talk to the agent.
 
 The MOTD is also a privilege cue: it tells you which mode you're in
 and which path you took to get there. Read it.

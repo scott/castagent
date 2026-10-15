@@ -1,5 +1,6 @@
 import {Args, Command, Flags} from '@oclif/core'
-import {execSync, spawn} from 'child_process'
+import {execSync, spawn, type ChildProcess} from 'child_process'
+import * as net from 'net'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -50,8 +51,9 @@ async function execSsh(
   remoteCmd: string,
   silent = false,
   timeoutMs = 30_000,
+  input?: string,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
-  return execDigitalOceanSsh(ip, remoteCmd, {silent, timeoutMs})
+  return execDigitalOceanSsh(ip, remoteCmd, {silent, timeoutMs, input})
 }
 
 function sshLoginHint(ip: string, remote?: string): string {
@@ -137,32 +139,223 @@ export function buildDropletCloudInit(input: {
 
 /**
  * Remote `docker run` argv, with every word single-quoted.
- * Env values and the image tag are data, not shell syntax.
+ * The publish address is loopback. Secrets stay in the env file, not here.
  */
 export function remoteDockerRunCommand(input: {
-  agentName: string
-  authToken: string
   imageTag: string
   volumeId: string
-  env: Record<string, string>
-  motdB64: string
 }): string {
   const args = [
     'docker', 'run', '-d',
     '--name', 'cast-agent',
     '--restart', 'unless-stopped',
-    '-p', '8080:8080',
+    '-p', '127.0.0.1:8080:8080',
     '-v', `/mnt/${input.volumeId}:/app/agent/memory`,
-    '-e', `CAST_AGENT_NAME=${input.agentName}`,
-    '-e', 'CAST_AGENT_PATH=/app/agent',
-    '-e', `AUTH_TOKEN=${input.authToken}`,
-    '-e', 'PYTHONPATH=/app',
+    '--env-file', DROPLET_ENV_FILE,
+    input.imageTag,
   ]
-  for (const [key, value] of Object.entries(input.env)) {
-    args.push('-e', `${key}=${value}`)
-  }
-  args.push('-e', `CAST_MOTD=${input.motdB64}`, input.imageTag)
   return args.map(shellSingleQuote).join(' ')
+}
+
+/** Registry URL for a droplet. The agent is not served on this URL. */
+export function dropletDeploymentUrl(ip: string): string {
+  if (!/^[A-Za-z0-9.-]+$/.test(ip)) {
+    throw new Error('Refusing to record a deployment URL for an invalid droplet address')
+  }
+  return `https://${ip}`
+}
+
+/**
+ * Droplet address from a stored deployment URL.
+ * Accepts the current https URL and older http://ip:8080 rows.
+ */
+export function dropletHostFromUrl(url: string): string {
+  let parsed: URL
+  try {
+    parsed = new URL(url)
+  } catch {
+    throw new Error('DigitalOcean deployment URL is not valid')
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+    throw new Error('DigitalOcean deployment URL must use https or http')
+  }
+  const host = parsed.hostname
+  if (!/^[A-Za-z0-9.-]+$/.test(host) || host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0') {
+    throw new Error('DigitalOcean deployment URL is missing a droplet address')
+  }
+  return host
+}
+
+export function isLoopbackClientUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    return parsed.protocol === 'http:' && (parsed.hostname === '127.0.0.1' || parsed.hostname === 'localhost')
+  } catch {
+    return false
+  }
+}
+
+/** Root-only env file. docker run reads it with --env-file. */
+export const DROPLET_ENV_FILE = '/var/lib/cast/cast-agent.env'
+
+/**
+ * Remove a public 8080 allow left by an older deploy.
+ * This does not add an allow rule.
+ */
+export const DROPLET_CLOSE_PUBLIC_PORT =
+  'ufw --force delete allow 8080/tcp || true; ufw --force delete allow 8080/tcp || true'
+
+/**
+ * Install the env file from stdin. The secret values are not part of this command.
+ * umask 077 keeps the file private while cat creates it, then chmod locks it to 0600.
+ */
+export const DROPLET_ENV_INSTALL_COMMAND =
+  'install -d -m 0700 /var/lib/cast && chmod 0700 /var/lib/cast && umask 077 && cat > /var/lib/cast/cast-agent.env && chmod 0600 /var/lib/cast/cast-agent.env'
+
+const SHELL_TOKEN = /^[A-Za-z0-9_.:-]+$/
+
+function assertShellToken(value: string, label: string): void {
+  if (!SHELL_TOKEN.test(value)) {
+    throw new Error(`Refusing to place ${label} in the remote shell command`)
+  }
+}
+
+export function buildDropletEnvFile(env: Record<string, string>): string {
+  const lines: string[] = []
+  for (const [key, value] of Object.entries(env)) {
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+      throw new Error(`Refusing to write an env var named ${key}`)
+    }
+    if (/[\n\r\0']/.test(value)) {
+      throw new Error(`Refusing to write ${key} because the value contains a newline or quote`)
+    }
+    const encoded = /[\s#]/.test(value) ? `'${value}'` : value
+    lines.push(`${key}=${encoded}`)
+  }
+  return `${lines.join('\n')}\n`
+}
+
+export function buildDropletDockerRunCommand(volumeId: string, imageTag: string): string {
+  assertShellToken(volumeId, 'volume id')
+  assertShellToken(imageTag, 'image tag')
+  return `docker run -d --name cast-agent --restart unless-stopped -p 127.0.0.1:8080:8080 -v /mnt/${volumeId}:/app/agent/memory --env-file ${DROPLET_ENV_FILE} ${imageTag}`
+}
+
+export function assertDropletDockerRunIsPrivate(command: string, secrets: string[]): void {
+  const withoutLoopback = command.split('127.0.0.1:8080:8080').join('')
+  if (withoutLoopback.includes('8080:8080') || command.includes('0.0.0.0:8080')) {
+    throw new Error('Refusing to publish the droplet agent on a public port')
+  }
+  if (!command.includes('127.0.0.1:8080:8080')) {
+    throw new Error('Droplet agent must bind to 127.0.0.1:8080')
+  }
+  assertCommandHasNoSecrets('docker run', command, secrets)
+}
+
+export function assertCommandHasNoSecrets(label: string, command: string, secrets: string[]): void {
+  for (const secret of secrets) {
+    if (secret && command.includes(secret)) {
+      throw new Error(`Refusing to place a secret in ${label}`)
+    }
+  }
+}
+
+export function buildDropletTunnelArgs(ip: string, localPort: number): string[] {
+  if (!/^[A-Za-z0-9.-]+$/.test(ip)) {
+    throw new Error('Refusing to open an SSH tunnel to an invalid droplet address')
+  }
+  if (!Number.isInteger(localPort) || localPort < 1 || localPort > 65535) {
+    throw new Error('Invalid local tunnel port')
+  }
+  return [
+    ...digitalOceanSshBaseOptions(),
+    '-N',
+    '-o', 'ExitOnForwardFailure=yes',
+    '-L', `127.0.0.1:${localPort}:127.0.0.1:8080`,
+    `root@${ip}`,
+  ]
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+function findLoopbackPort(startPort: number, endPort: number): Promise<number> {
+  const tryPort = (port: number): Promise<number> => {
+    if (port > endPort) {
+      return Promise.reject(new Error('No local port available for the droplet SSH tunnel'))
+    }
+    return new Promise((resolve, reject) => {
+      const server = net.createServer()
+      server.once('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EADDRINUSE') {
+          resolve(tryPort(port + 1))
+          return
+        }
+        reject(err)
+      })
+      server.listen(port, '127.0.0.1', () => {
+        server.close((closeErr) => {
+          if (closeErr) reject(closeErr)
+          else resolve(port)
+        })
+      })
+    })
+  }
+  return tryPort(startPort)
+}
+
+function localPortAccepts(port: number): Promise<boolean> {
+  return new Promise(resolve => {
+    const socket = net.connect({host: '127.0.0.1', port})
+    const done = (open: boolean) => {
+      socket.removeAllListeners()
+      socket.destroy()
+      resolve(open)
+    }
+    socket.setTimeout(200)
+    socket.on('connect', () => done(true))
+    socket.on('timeout', () => done(false))
+    socket.on('error', () => done(false))
+  })
+}
+
+/**
+ * Forward a local loopback port to the agent on the droplet loopback.
+ * The bearer token is not an argument and is not written to this process.
+ */
+export async function startDropletSshTunnel(
+  ip: string,
+  log: (message: string) => void,
+): Promise<{url: string; process: ChildProcess}> {
+  assertPinnedHostKey(ip)
+  const localPort = await findLoopbackPort(18080, 18180)
+  const args = buildDropletTunnelArgs(ip, localPort)
+  log(`Opening an SSH tunnel to ${ip} on 127.0.0.1:${localPort}`)
+  const child = spawn('ssh', args, {stdio: ['ignore', 'pipe', 'pipe']})
+  let stderr = ''
+  child.stderr?.on('data', (chunk: Buffer) => {
+    stderr = (stderr + chunk.toString()).slice(-2000)
+  })
+  const deadline = Date.now() + 10_000
+  while (Date.now() < deadline) {
+    if (child.exitCode !== null || child.killed) {
+      try { child.kill() } catch { /* already gone */ }
+      const detail = stderr.trim()
+      throw new Error(detail
+        ? `SSH tunnel to ${ip} exited before the forward was ready. ${detail}`
+        : `SSH tunnel to ${ip} exited before the forward was ready`)
+    }
+    if (await localPortAccepts(localPort)) {
+      return {url: `http://127.0.0.1:${localPort}`, process: child}
+    }
+    await delay(100)
+  }
+  try { child.kill() } catch { /* ignore */ }
+  const detail = stderr.trim()
+  throw new Error(detail
+    ? `SSH tunnel to ${ip} did not open. ${detail}`
+    : `SSH tunnel to ${ip} did not open`)
 }
 
 export default class DigitalOceanDeploy extends Command {
@@ -355,9 +548,10 @@ export default class DigitalOceanDeploy extends Command {
     this.log('Streaming Docker image to droplet...')
     await this.streamImageToDroplet(droplet.ip, imageTag)
 
-    // Deploy on droplet
+    // Deploy on droplet. The recorded URL is the droplet address.
+    // cast connect does not fetch it. It opens an SSH tunnel instead.
     this.log('Deploying on droplet...')
-    const deploymentUrl = `http://${droplet.ip}:8080`
+    const deploymentUrl = dropletDeploymentUrl(droplet.ip)
 
     // Look up the current agent release version so the SSH login MOTD
     // shows the semantic version (e.g. v1.2.3) instead of a placeholder.
@@ -394,24 +588,21 @@ export default class DigitalOceanDeploy extends Command {
     this.log(`Droplet: ${droplet.name}`)
     this.log(`Provider: digitalocean`)
     this.log('')
+    this.log('The agent listens on 127.0.0.1:8080 inside the droplet.')
+    this.log('Port 8080 is not open to the internet.')
+    this.log('')
     this.log('To view logs:')
     this.log(`  ${sshLoginHint(droplet.ip, '"docker logs -f cast-agent"')}`)
     this.log('')
     this.log('To connect (from your machine):')
     this.log(`  cast connect ${agentName}`)
+    this.log('cast connect opens an SSH tunnel. The bearer token stays inside SSH.')
     this.log('')
     if (withTui) {
-      // TUI is bundled — show the on-host chat path.
       this.log('To chat on-host (SSH into droplet, then inside container):')
       this.log(`  ${sshLoginHint(droplet.ip)}`)
       this.log(`  docker exec -it cast-agent bash`)
       this.log(`  cast-tui`)
-      this.log('')
-    } else {
-      // TUI is not bundled — only the A2A API is available for
-      // talking to the agent. The MOTD on the droplet says the
-      // same.
-      this.log(`Talk to this agent via the A2A API at: ${deploymentUrl}`)
       this.log('')
     }
     this.log('To destroy:')
@@ -753,42 +944,50 @@ export default class DigitalOceanDeploy extends Command {
     deployedVersion?: string,
     withTui: boolean = false,
   ): Promise<void> {
-    // Image is already loaded via streamImageToDroplet; stop old container
+    // Image is already loaded via streamImageToDroplet; stop old container.
+    // Stopping the old container also drops a previous public 8080 publish.
     await execSsh(ip, 'docker stop cast-agent && docker rm cast-agent', true)
 
-    // Open UFW port
-    await execSsh(ip, 'ufw allow 8080/tcp || true', true)
+    const inferred = inferenceEnv()
+    const secrets = [authToken, ...Object.values(inferred)].filter(value => value.length > 0)
 
-    // Build the host MOTD. We pass it base64-encoded so it can be safely
-    // embedded in shell commands without escaping concerns. It's written
-    // to BOTH the host (for SSH login banners) AND the container (as
-    // CAST_MOTD, so the on-host TUI can display the same content in
-    // its first chat message).
-    //
-    // onHostTui is the source of truth for whether the MOTD mentions
-    // `cast-tui` — when false (the default), the banner points users
-    // at the A2A URL only, since the TUI command isn't in the
-    // container and we'd be telling them to run something that
-    // doesn't exist.
+    // Drop a public allow rule left by an older deploy. Do not add one.
+    assertCommandHasNoSecrets('ufw', DROPLET_CLOSE_PUBLIC_PORT, secrets)
+    await execSsh(ip, DROPLET_CLOSE_PUBLIC_PORT, true)
+
+    // CAST_MOTD is base64 so it can live in the env file. The banner
+    // tells the operator to use cast connect or the on-host TUI.
+    const recordedUrl = deploymentUrl.startsWith('https://') ? deploymentUrl : dropletDeploymentUrl(ip)
     const motdCtx: MotdContext = {
       agentName,
       dropletIp: ip,
-      a2aUrl: deploymentUrl,
+      a2aUrl: recordedUrl,
       deployedVersion,
       onHostTui: withTui,
+      privateSsh: true,
     }
     const hostMotd = buildHostMotd(motdCtx)
     const motdB64 = Buffer.from(hostMotd, 'utf8').toString('base64')
 
-    // Run container with volume mount. Every remote word is single-quoted.
-    const runResult = await execSsh(ip, remoteDockerRunCommand({
-      agentName,
-      authToken,
-      imageTag,
-      volumeId,
-      env: inferenceEnv(),
-      motdB64,
-    }), true)
+    // Secrets go to a mode 0600 file over stdin. They are not shell words.
+    // The docker argv is single-quoted and only names the env file.
+    const envFile = buildDropletEnvFile({
+      CAST_AGENT_NAME: agentName,
+      CAST_AGENT_PATH: '/app/agent',
+      PYTHONPATH: '/app',
+      ...inferred,
+      AUTH_TOKEN: authToken,
+      CAST_MOTD: motdB64,
+    })
+    assertCommandHasNoSecrets('env file install', DROPLET_ENV_INSTALL_COMMAND, secrets)
+    const writeResult = await execSsh(ip, DROPLET_ENV_INSTALL_COMMAND, true, 30_000, envFile)
+    if (writeResult.exitCode !== 0) {
+      throw new Error(`Failed to write the agent env file on the droplet: ${writeResult.stderr}`)
+    }
+
+    const runCommand = remoteDockerRunCommand({volumeId, imageTag})
+    assertDropletDockerRunIsPrivate(runCommand, secrets)
+    const runResult = await execSsh(ip, runCommand, true)
 
     if (runResult.exitCode !== 0) {
       throw new Error(`Failed to start container on droplet: ${runResult.stderr}`)
