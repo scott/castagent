@@ -425,6 +425,83 @@ describe('shutdown command', () => {
       }
     })
 
+    it('warns about a leftover MicroVM registry tag and still finishes shutdown', async () => {
+      const testAgentName = 'test-shutdown-microvm-tag-' + Date.now()
+      const instance = createCommandInstance(Shutdown, [testAgentName], {force: true})
+      const logs: string[] = []
+      const commandWarnings: string[] = []
+      instance.log = (msg: string) => {
+        logs.push(msg)
+      }
+      instance.warn = (msg: string) => {
+        commandWarnings.push(msg)
+      }
+
+      const volumeConfig = JSON.stringify({
+        microvmId: 'vm-1',
+        region: 'mkc1',
+        ociRef: 'registry.digitalocean.com/cast/cast-leftover:abc123',
+        authMode: 'dual',
+        cpu: 1,
+        memory: 2048,
+        idleTimeout: '15m',
+      })
+      const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
+      sandbox.stub(sqliteModule.db, 'listDeployments').returns([{
+        id: 'abc123',
+        agent_name: testAgentName,
+        provider: 'microvm',
+        deployment_url: 'https://micro.example',
+        volume_id: 'vm-1',
+        volume_config: volumeConfig,
+      }])
+      sandbox.stub(sqliteModule.db, 'getDeploymentBySha').returns(null)
+      const removeAll = sandbox.stub(sqliteModule.db, 'removeAllDeployments').callsFake(() => {})
+
+      const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
+      sandbox.stub(keychainModule.keychain, 'deleteToken').resolves({removed: true, stores: ['keychain']})
+      stubDeploymentTokenDelete(sandbox)
+
+      const deployUtils = require('../../../typescript/cast-cli/src/lib/deploy/deploy-utils')
+      sandbox.stub(deployUtils, 'execCommand').callsFake(async (...raw: unknown[]) => {
+        const args = Array.isArray(raw[1]) ? raw[1] as string[] : []
+        const rest = args[0] === '--access-token' ? args.slice(2) : args
+        if (rest[2] === 'delete-tag') {
+          return {exitCode: 1, stdout: '', stderr: 'permission denied'}
+        }
+        if (rest[1] === 'microvm' && rest[2] === 'delete') {
+          return {exitCode: 0, stdout: '', stderr: ''}
+        }
+        return {exitCode: 1, stdout: '', stderr: `unexpected ${rest.join(' ')}`}
+      })
+
+      const previousToken = process.env.DIGITALOCEAN_ACCESS_TOKEN
+      process.env.DIGITALOCEAN_ACCESS_TOKEN = 'dop_test'
+      const warnings: string[] = []
+      sandbox.stub(console, 'warn').callsFake((line: unknown) => {
+        warnings.push(String(line))
+      })
+      sandbox.stub(console, 'log').callsFake(() => {})
+
+      try {
+        await instance.run()
+        expect(removeAll.calledOnce).to.equal(true)
+        expect(removeAll.calledWith(testAgentName)).to.equal(true)
+        expect(logs.join('\n')).to.include('Remote resources destroyed on microvm.')
+        expect(logs.join('\n')).to.include('Marked all deployments as deleted in database.')
+        expect(logs.join('\n')).to.include('Removed auth token from keychain.')
+        expect(logs.join('\n')).to.include(`Agent '${testAgentName}' has been shut down.`)
+        expect(commandWarnings.join('\n')).to.not.include('Failed to destroy remote resources')
+        expect(warnings).to.deep.equal([
+          "Failed to delete registry tag 'cast-leftover:abc123'. The tag is still in the registry: permission denied",
+        ])
+      } finally {
+        if (previousToken === undefined) delete process.env.DIGITALOCEAN_ACCESS_TOKEN
+        else process.env.DIGITALOCEAN_ACCESS_TOKEN = previousToken
+        sandbox.restore()
+      }
+    })
+
     it('should remove every row of a shared provider remote and leave other providers', async () => {
       const testAgentName = 'test-shutdown-shared-remote-' + Date.now()
       const instance = createCommandInstance(Shutdown, ['bb7590'], {force: true})

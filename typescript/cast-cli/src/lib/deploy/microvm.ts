@@ -402,6 +402,19 @@ export function isScopeDenied(output: string): boolean {
   return /403|forbidden|unauthorized/i.test(output)
 }
 
+/** `registry.digitalocean.com/<registry>/<repository>:<tag>` for one deployment. */
+export function shutdownRegistryDeleteArgs(ociRef: string): string[] | undefined {
+  const match = /^registry\.digitalocean\.com\/([^/]+)\/([^/:@]+):([^/:@\s]+)$/.exec(ociRef.trim())
+  if (!match) return undefined
+  return [
+    'registry', 'repository', 'delete-tag',
+    match[2],
+    match[3],
+    '--registry', match[1],
+    '--force',
+  ]
+}
+
 export interface CommandResult {
   exitCode: number
   stdout: string
@@ -587,6 +600,42 @@ function doctl(token: string, args: string[], opts?: {silent?: boolean; timeoutM
   return run('doctl', ['--access-token', token, ...args], opts)
 }
 
+/**
+ * Delete the registry tag stored on a MicroVM deployment.
+ * Called only after that MicroVM is gone. A missing tag is success.
+ * A failed delete is a warning that names the leftover tag. Shutdown continues.
+ */
+export async function deleteShutdownRegistryTag(token: string, volumeConfig: string | null | undefined): Promise<void> {
+  if (!volumeConfig) return
+  let ociRef: string
+  try {
+    ociRef = parseVolumeConfig(volumeConfig).ociRef
+  } catch {
+    return
+  }
+  const args = shutdownRegistryDeleteArgs(ociRef)
+  if (!args) {
+    console.log(`Note: Could not parse a registry tag from '${ociRef}'.`)
+    return
+  }
+  const repository = args[3]
+  const tag = args[4]
+  const label = `${repository}:${tag}`
+  try {
+    const result = await doctl(token, args)
+    const text = `${result.stderr}\n${result.stdout}`
+    if (result.exitCode === 0) {
+      console.log(`Deleted registry tag '${label}'.`)
+      return
+    }
+    if (isMissingMicrovm(text)) return
+    console.warn(`Failed to delete registry tag '${label}'. The tag is still in the registry: ${text.trim() || 'doctl delete-tag failed'}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.warn(`Failed to delete registry tag '${label}'. The tag is still in the registry: ${message}`)
+  }
+}
+
 export default class MicrovmDeploy extends Command {
   static description = 'Deploy agent to a DigitalOcean MicroVM'
 
@@ -609,7 +658,11 @@ export default class MicrovmDeploy extends Command {
     }),
   }
 
-  static async destroy(agentName: string, deployment?: {id?: string, volume_id?: string | null}): Promise<void> {
+  static async destroy(agentName: string, deployment?: {
+    id?: string
+    volume_id?: string | null
+    volume_config?: string | null
+  }): Promise<void> {
     const token = resolveDigitalOceanToken()
     let deployments = db.listDeployments(agentName).filter(row => row.provider === 'microvm')
     if (deployment?.volume_id || deployment?.id) {
@@ -618,7 +671,10 @@ export default class MicrovmDeploy extends Command {
         (deployment.id && row.id === deployment.id)
       )
       if (deployment.volume_id) {
-        deployments = matched.length > 0 ? matched : [{volume_id: deployment.volume_id}]
+        deployments = matched.length > 0 ? matched : [{
+          volume_id: deployment.volume_id,
+          volume_config: deployment.volume_config,
+        }]
       } else if (matched.length === 0) {
         console.log(`No MicroVM deployment recorded for '${agentName}' (${deployment.id}).`)
         return
@@ -633,19 +689,20 @@ export default class MicrovmDeploy extends Command {
     if (!token) {
       throw new Error('DigitalOcean API token not found. Set DIGITALOCEAN_ACCESS_TOKEN or run doctl auth init.')
     }
-    for (const deployment of deployments) {
-      const id = deployment.volume_id
+    for (const row of deployments) {
+      const id = row.volume_id
       if (!id) continue
       const result = await doctl(token, ['compute', 'microvm', 'delete', id, '--force'])
       const combined = `${result.stderr}\n${result.stdout}`
-      if (result.exitCode !== 0) {
-        if (isMissingMicrovm(combined)) {
-          console.log(`MicroVM '${id}' does not exist (already deleted).`)
-          continue
-        }
+      if (result.exitCode !== 0 && !isMissingMicrovm(combined)) {
         throw new Error(`Failed to destroy MicroVM '${id}': ${combined}`)
       }
-      console.log(`MicroVM '${id}' has been destroyed.`)
+      if (result.exitCode !== 0) {
+        console.log(`MicroVM '${id}' does not exist (already deleted).`)
+      } else {
+        console.log(`MicroVM '${id}' has been destroyed.`)
+      }
+      await deleteShutdownRegistryTag(token, row.volume_config)
     }
   }
 
