@@ -15,9 +15,11 @@ import DigitalOceanDeploy, {
   digitalOceanVolumeRemovalMessage,
   discardFailedDigitalOceanTokens,
   DIGITALOCEAN_SSH_TOOL_CHECKS,
+  isDigitalOceanSshKeyDelete,
   isLegacyDigitalOceanMemoryVolume,
   parseDropletContainerProbe,
   planDigitalOceanMemoryVolume,
+  releaseFailedDroplet,
   remoteDockerRunCommand,
   removeDigitalOceanMemoryVolumes,
   SSH_KEY_NAME,
@@ -1569,6 +1571,45 @@ describe('DigitalOcean Deploy Provider', () => {
         fs.rmSync(tempDir, {recursive: true, force: true})
       }
     })
+
+    it('deletes the droplet when create fails after the droplet exists', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-test-do-fail-'))
+      recordPinnedHostKey('203.0.113.45', pinnedPublicKey, '4747')
+      const exec = stubFn(sandbox.stub(deployUtils, 'execCommand') as any)
+      exec.onFirstCall().resolves({stdout: '', stderr: '', exitCode: 0})
+        .onSecondCall().resolves({
+          stdout: '3072 MD5:ab:cd:ef:12:34:56:78:90:ab:cd:ef:12:34:56:78:90 key (ED25519)\n',
+          stderr: '',
+          exitCode: 0,
+        })
+        .onThirdCall().resolves({stdout: '', stderr: 'create failed', exitCode: 1})
+        .onCall(3).resolves({
+          stdout: '4747  cast-cleanup-agent  203.0.113.45\n',
+          stderr: '',
+          exitCode: 0,
+        })
+        .onCall(4).resolves({stdout: '', stderr: '', exitCode: 0})
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      sandbox.stub(instance, 'warn').returns(undefined)
+      sandbox.stub(instance, 'log').returns(undefined)
+      try {
+        await instance.getOrCreateDroplet('cleanup-agent', tempDir, 'token', 's-2vcpu-2gb', {
+          tokenHash: 'hash',
+          volumeConfig: '{}',
+        })
+        expect.fail('create should have failed')
+      } catch (error: any) {
+        expect(error.message).to.include('Failed to create droplet')
+      } finally {
+        fs.rmSync(tempDir, {recursive: true, force: true})
+      }
+      const argvs = exec.getCalls().map((call: sinon.SinonSpyCall) => (call.args[1] as string[]) || [])
+      expect(argvs.some(argv => argv.includes('droplet') && argv.includes('delete') && argv.includes('4747'))).to.equal(true)
+      expect(argvs.some(argv => isDigitalOceanSshKeyDelete(argv))).to.equal(false)
+      expect(saved.called).to.equal(false)
+      expect(fs.readFileSync(castKnownHostsPath(), 'utf8')).to.not.include('203.0.113.45')
+      expect(fs.existsSync(path.join(tempDir, '.cloud-init.yml'))).to.equal(false)
+    })
   })
 
   // -----------------------------------------------------------------------
@@ -1823,6 +1864,9 @@ describe('DigitalOcean Deploy Provider', () => {
         '99',
       ).action).to.equal('remove')
       expect(accountSshKeyCleanup([], [{id: 1, name: 'other'}], '').action).to.equal('absent')
+      expect(isDigitalOceanSshKeyDelete(['compute', 'ssh-key', 'delete', '42', '--force'])).to.equal(true)
+      expect(isDigitalOceanSshKeyDelete(['compute', 'droplet', 'delete', '42', '--force'])).to.equal(false)
+      expect(isDigitalOceanSshKeyDelete(['compute', 'volume', 'delete', 'cast-mail', '--force'])).to.equal(false)
       expect(accountSshKeyCleanup(
         [{id: '99', name: 'cast-demo'}],
         [{id: 42, name: SSH_KEY_NAME}],
@@ -1977,6 +2021,221 @@ describe('DigitalOcean Deploy Provider', () => {
       expect(result.deletedId).to.equal(undefined)
       expect(result.logs.join('\n')).to.include('could not be removed')
       expect(result.logs.join('\n')).to.include('unexpected id')
+    })
+  })
+
+  describe('failed droplet cleanup', () => {
+    function commandLines(exec: sinon.SinonStub): string[] {
+      return exec.getCalls().map(call => ((call.args[1] as string[]) || []).join(' '))
+    }
+
+    it('deletes the droplet and volume and removes the known_hosts entry', async () => {
+      recordPinnedHostKey('203.0.113.40', pinnedPublicKey, '4242')
+      const exec = stubFn(sandbox.stub(deployUtils, 'execCommand') as any).resolves({
+        stdout: '', stderr: '', exitCode: 0,
+      })
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const result = await releaseFailedDroplet({
+        agentName: 'mail',
+        dropletId: '4242',
+        dropletIp: '203.0.113.40',
+        volumeName: 'cast-mail',
+        deploymentUrl: 'https://203.0.113.40',
+        tokenHash: 'hash',
+      })
+      expect(result).to.deep.include({
+        dropletDeleted: true,
+        volumeDeleted: true,
+        hostKeyRemoved: true,
+        recorded: false,
+      })
+      expect(saved.called).to.equal(false)
+      const commands = commandLines(exec)
+      expect(commands.some(line => line.includes('droplet') && line.includes('delete') && line.includes('4242'))).to.equal(true)
+      expect(commands.some(line => line.includes('volume') && line.includes('delete') && line.includes('cast-mail'))).to.equal(true)
+      expect(commands.some(line => line.includes('ssh-key'))).to.equal(false)
+      expect(fs.readFileSync(castKnownHostsPath(), 'utf8')).to.not.include('203.0.113.40')
+    })
+
+    it('records the deployment and keeps known_hosts when the droplet cannot be deleted', async () => {
+      recordPinnedHostKey('203.0.113.41', pinnedPublicKey, '4343')
+      const exec = stubFn(sandbox.stub(deployUtils, 'execCommand') as any).resolves({
+        stdout: '', stderr: 'rate limited', exitCode: 1,
+      })
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const logs: string[] = []
+      const result = await releaseFailedDroplet({
+        agentName: 'mail',
+        dropletId: '4343',
+        dropletIp: '203.0.113.41',
+        volumeName: 'cast-mail',
+        tokenHash: 'hash',
+        volumeConfig: '{"region":"nyc3"}',
+        log: message => logs.push(message),
+      })
+      expect(result.dropletDeleted).to.equal(false)
+      expect(result.recorded).to.equal(true)
+      expect(result.hostKeyRemoved).to.equal(false)
+      expect(saved.calledOnce).to.equal(true)
+      expect(saved.firstCall.args.slice(0, 5)).to.deep.equal([
+        'mail',
+        'digitalocean',
+        'https://203.0.113.41',
+        'hash',
+        'cast-mail',
+      ])
+      expect(commandLines(exec).some(line => line.includes('ssh-key'))).to.equal(false)
+      expect(fs.readFileSync(castKnownHostsPath(), 'utf8')).to.include('203.0.113.41')
+      expect(logs.join('\n')).to.include('cast shutdown mail')
+      expect(logs.join('\n')).to.not.include(SSH_KEY_NAME)
+    })
+
+    it('records the deployment when the droplet is gone but the volume remains', async () => {
+      recordPinnedHostKey('203.0.113.42', pinnedPublicKey, '4444')
+      stubFn(sandbox.stub(deployUtils, 'execCommand') as any)
+        .onFirstCall().resolves({stdout: '', stderr: '', exitCode: 0})
+        .onSecondCall().resolves({stdout: '', stderr: 'volume is attached', exitCode: 1})
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const result = await releaseFailedDroplet({
+        agentName: 'mail',
+        dropletId: '4444',
+        dropletIp: '203.0.113.42',
+        volumeName: 'cast-mail',
+        tokenHash: 'hash',
+      })
+      expect(result.dropletDeleted).to.equal(true)
+      expect(result.volumeDeleted).to.equal(false)
+      expect(result.hostKeyRemoved).to.equal(true)
+      expect(result.recorded).to.equal(true)
+      expect(saved.calledOnce).to.equal(true)
+      expect(fs.readFileSync(castKnownHostsPath(), 'utf8')).to.not.include('203.0.113.42')
+    })
+
+    it('deletes a droplet found by name when create did not return an id', async () => {
+      recordPinnedHostKey('203.0.113.43', pinnedPublicKey, '4545')
+      const exec = stubFn(sandbox.stub(deployUtils, 'execCommand') as any)
+        .onFirstCall().resolves({
+          stdout: '4545  cast-mail  203.0.113.43\n',
+          stderr: '',
+          exitCode: 0,
+        })
+        .onSecondCall().resolves({stdout: '', stderr: '', exitCode: 0})
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const result = await releaseFailedDroplet({
+        agentName: 'mail',
+        tokenHash: 'hash',
+      })
+      expect(result.dropletDeleted).to.equal(true)
+      expect(result.recorded).to.equal(false)
+      expect(saved.called).to.equal(false)
+      expect(commandLines(exec)[1]).to.include('4545')
+      expect(commandLines(exec).some(line => line.includes('ssh-key'))).to.equal(false)
+      expect(fs.readFileSync(castKnownHostsPath(), 'utf8')).to.not.include('203.0.113.43')
+    })
+
+    it('records the deployment when the droplet list cannot be read', async () => {
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      stubFn(sandbox.stub(deployUtils, 'execCommand') as any).resolves({
+        stdout: '', stderr: 'doctl unavailable', exitCode: 1,
+      })
+      const result = await releaseFailedDroplet({
+        agentName: 'mail',
+        tokenHash: 'hash',
+      })
+      expect(result.dropletDeleted).to.equal(false)
+      expect(result.recorded).to.equal(true)
+      expect(saved.firstCall.args[2]).to.equal('https://cast-mail.droplet.invalid')
+    })
+
+    async function runUntilReadiness(created: boolean, deleteExit: number): Promise<{
+      error: string
+      commands: string[]
+    }> {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-do-ready-'))
+      const previousHome = process.env.HOME
+      const agentName = 'readiness-agent'
+      process.env.HOME = home
+      sandbox.stub(require('keytar'), 'setPassword').rejects(new Error('no secret service'))
+      sandbox.stub(require('keytar'), 'deletePassword').rejects(new Error('no secret service'))
+      sandbox.stub(console, 'error')
+      sandbox.stub(db, 'listDeployments').returns([])
+      sandbox.stub(instance, 'parse').resolves({
+        args: {agent: agentName},
+        flags: {'with-tui': false, size: 's-2vcpu-2gb'},
+      })
+      sandbox.stub(instance, 'log').returns(undefined)
+      sandbox.stub(instance, 'warn').returns(undefined)
+      sandbox.stub(instance, 'error').callsFake((message: unknown) => {
+        throw new Error(String(message))
+      })
+      sandbox.stub(instance, 'findProjectRoot').returns(home)
+      const exec = stubFn(sandbox.stub(deployUtils, 'execCommand') as any).callsFake(async (...args: any[]) => {
+        const argv = (args[1] as string[]) || []
+        if (argv.includes('droplet') && argv.includes('delete')) {
+          return {stdout: '', stderr: deleteExit === 0 ? '' : 'rate limited', exitCode: deleteExit}
+        }
+        return {stdout: '', stderr: '', exitCode: 0}
+      })
+      sandbox.stub(deployUtils, 'checkCli').resolves()
+      sandbox.stub(deployUtils, 'getProviderToken').returns('test-token')
+      sandbox.stub(axios, 'get').resolves({data: {ssh_keys: [{id: 7, name: SSH_KEY_NAME}]}})
+      sandbox.stub(instance, 'getOrCreateDroplet').resolves({
+        id: '4646',
+        name: `cast-${agentName}`,
+        ip: '203.0.113.44',
+        region: 'nyc3',
+        created,
+      })
+      sandbox.stub(instance, 'waitForSsh').rejects(new Error('Timed out waiting for SSH on droplet'))
+      let error = ''
+      try {
+        fs.mkdirSync(path.join(home, '.cast', 'agents', agentName), {recursive: true})
+        fs.mkdirSync(path.join(home, 'python', 'cast'), {recursive: true})
+        await instance.run()
+      } catch (err: any) {
+        error = err.message
+      } finally {
+        if (previousHome === undefined) delete process.env.HOME
+        else process.env.HOME = previousHome
+        fs.rmSync(home, {recursive: true, force: true})
+      }
+      return {
+        error,
+        commands: exec.getCalls().map((call: sinon.SinonSpyCall) => ((call.args[1] as string[]) || []).join(' ')),
+      }
+    }
+
+    it('deletes a new droplet when readiness fails and does not delete the shared SSH key', async () => {
+      recordPinnedHostKey('203.0.113.44', pinnedPublicKey, '4646')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const result = await runUntilReadiness(true, 0)
+      expect(result.error).to.include('Timed out waiting for SSH')
+      expect(result.commands.some(line => line.includes('droplet') && line.includes('delete') && line.includes('4646'))).to.equal(true)
+      expect(result.commands.some(line => line.includes('ssh-key'))).to.equal(false)
+      expect(saved.called).to.equal(false)
+      expect(fs.readFileSync(castKnownHostsPath(), 'utf8')).to.not.include('203.0.113.44')
+    })
+
+    it('leaves an existing droplet in place when a later step fails', async () => {
+      recordPinnedHostKey('203.0.113.44', pinnedPublicKey, '4646')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const result = await runUntilReadiness(false, 0)
+      expect(result.error).to.include('Timed out waiting for SSH')
+      expect(result.commands.some(line => line.includes('droplet') && line.includes('delete'))).to.equal(false)
+      expect(saved.called).to.equal(false)
+      expect(fs.readFileSync(castKnownHostsPath(), 'utf8')).to.include('203.0.113.44')
+    })
+
+    it('records the new droplet when cleanup cannot delete it', async () => {
+      recordPinnedHostKey('203.0.113.44', pinnedPublicKey, '4646')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const result = await runUntilReadiness(true, 1)
+      expect(result.error).to.include('Timed out waiting for SSH')
+      expect(saved.calledOnce).to.equal(true)
+      expect(saved.firstCall.args[1]).to.equal('digitalocean')
+      expect(saved.firstCall.args[2]).to.equal('https://203.0.113.44')
+      expect(result.commands.some(line => line.includes('ssh-key'))).to.equal(false)
+      expect(fs.readFileSync(castKnownHostsPath(), 'utf8')).to.include('203.0.113.44')
     })
   })
 })
