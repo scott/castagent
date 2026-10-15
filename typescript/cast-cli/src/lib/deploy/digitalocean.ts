@@ -17,6 +17,7 @@ import {
   getVolumeName,
   prepareHostTuiBuildContext,
   createDockerignore,
+  installPin,
 } from './deploy-utils'
 import {buildCloudInitBaselineMotd, buildHostMotd, writeHostMotdOverSsh} from './motd'
 import type {MotdContext} from './motd'
@@ -534,12 +535,11 @@ export default class DigitalOceanDeploy extends Command {
     const cloudInitPath = path.join(agentPath, '.cloud-init.yml')
     const baselineMotd = buildCloudInitBaselineMotd()
 
-    // Install script: tries the official Docker apt repo first
-    // (more reliable than get.docker.com which has been observed to
-    // fail silently on some DO regions), then falls back to
-    // get.docker.com. All output is logged. The script is
-    // intentionally tolerant — it always exits 0 so cloud-init
-    // continues to the sentinel touch below.
+    // Install Docker from the signed apt repository. The key file is
+    // checked against the pin in install-checksums.txt before apt
+    // trusts it. There is no unsigned installer fallback. The script
+    // always exits 0 so cloud-init still reaches the sentinel below.
+    const dockerKey = installPin('docker-apt-key', 'ubuntu')
     const installScript = [
       '#!/bin/bash',
       'set +e',
@@ -549,7 +549,11 @@ export default class DigitalOceanDeploy extends Command {
       'apt-get update >> $LOG 2>&1',
       'apt-get install -y ca-certificates curl >> $LOG 2>&1',
       'install -m 0755 -d /etc/apt/keyrings >> $LOG 2>&1',
+      'key_ok=0',
       'if curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc >> $LOG 2>&1; then',
+      `  echo "${dockerKey.sha256}  /etc/apt/keyrings/docker.asc" | sha256sum -c - >> $LOG 2>&1 && key_ok=1`,
+      'fi',
+      'if [ "$key_ok" -eq 1 ]; then',
       '  chmod a+r /etc/apt/keyrings/docker.asc >> $LOG 2>&1',
       '  ARCH=$(dpkg --print-architecture)',
       '  CODENAME=$(. /etc/os-release && echo $VERSION_CODENAME)',
@@ -557,8 +561,8 @@ export default class DigitalOceanDeploy extends Command {
       '  apt-get update >> $LOG 2>&1',
       '  apt-get install -y docker-ce docker-ce-cli containerd.io >> $LOG 2>&1',
       'else',
-      '  echo "[cast] apt-repo fetch failed, falling back to get.docker.com" >> $LOG',
-      '  curl -fsSL https://get.docker.com | sh >> $LOG 2>&1',
+      '  echo "[cast] Docker apt key failed checksum or download. Refusing an unsigned installer." >> $LOG',
+      '  rm -f /etc/apt/keyrings/docker.asc',
       'fi',
       'if command -v docker >/dev/null 2>&1; then',
       '  systemctl enable docker >> $LOG 2>&1',

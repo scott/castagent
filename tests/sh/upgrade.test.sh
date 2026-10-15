@@ -117,6 +117,16 @@ EOF
 
 chmod +x "$TMP/stubs/node" "$TMP/stubs/npm" "$TMP/stubs/python3" "$TMP/stubs/pip3"
 
+CAST_TEST_GNUPGHOME="$TMP/gnupg"
+mkdir -p "$CAST_TEST_GNUPGHOME"
+chmod 700 "$CAST_TEST_GNUPGHOME"
+GNUPGHOME="$CAST_TEST_GNUPGHOME" gpg --batch --pinentry-mode loopback --passphrase '' \
+    --quick-gen-key "Cast Upgrade Test <upgrade-test@example.com>" ed25519 sign never >/dev/null
+CAST_TEST_FPR="$(GNUPGHOME="$CAST_TEST_GNUPGHOME" gpg --with-colons --list-secret-keys | awk -F: '$1=="fpr" {print $10; exit}')"
+GNUPGHOME="$CAST_TEST_GNUPGHOME" gpg --armor --export "$CAST_TEST_FPR" > "$TMP/test-key.asc"
+export GNUPGHOME="$CAST_TEST_GNUPGHOME"
+export CAST_TRUSTED_KEY_FILE="$TMP/test-key.asc"
+
 SYSTEM_CAST_BEFORE=""
 if [[ -L /usr/local/bin/cast || -e /usr/local/bin/cast ]]; then
     SYSTEM_CAST_BEFORE="$(readlink /usr/local/bin/cast || printf 'file')"
@@ -130,7 +140,10 @@ git_identity() {
     local repo="$1"
     git -C "$repo" config user.email upgrade-test@example.com
     git -C "$repo" config user.name "Upgrade Test"
-    git -C "$repo" config commit.gpgsign false
+    git -C "$repo" config commit.gpgsign true
+    git -C "$repo" config gpg.format openpgp
+    git -C "$repo" config user.signingkey "$CAST_TEST_FPR"
+    git -C "$repo" config gpg.program gpg
     git -C "$repo" config protocol.file.allow always
     git -C "$repo" config core.hooksPath "$TMP/empty-hooks"
 }
@@ -254,6 +267,7 @@ assert_contains "$help_out" "tracks origin/master" "help moves a master checkout
 assert_contains "$help_out" "no main branch" "help falls back to master only when main is absent"
 assert_contains "$help_out" "cast upgrade <agent>" "help distinguishes deployed-agent upgrade"
 assert_contains "$help_out" "build info files" "help mentions generated build info"
+assert_contains "$help_out" "trusted key" "help requires a signed commit"
 set +e
 bash "$SCRIPT_SRC" --nope >"$TMP/bad.out" 2>&1
 bad_status=$?
@@ -539,6 +553,36 @@ assert_contains "$CAST_UPGRADE_LOG" "uv $PAIR_REPO/python pip install -e ." "uv 
 assert_contains "$CAST_UPGRADE_LOG" "uv $PAIR_REPO/python pip install langchain langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv" "uv installs runtime deps"
 assert_not_contains "$CAST_UPGRADE_LOG" "python3 $PAIR_REPO/python -m venv" "uv path does not call venv"
 rm -f "$TMP/stubs/uv"
+
+make_pair "unsigned"
+advance_clone="$TMP/unsigned/advance"
+git clone "$PAIR_ORIGIN" "$advance_clone" >/dev/null 2>&1
+git_identity "$advance_clone"
+printf '%s\n' 'unsigned' > "$advance_clone/unsigned.txt"
+git -C "$advance_clone" add unsigned.txt
+git -C "$advance_clone" -c commit.gpgsign=false commit -m "unsigned" >/dev/null
+git -C "$advance_clone" push origin HEAD >/dev/null
+unsigned_sha="$(git -C "$PAIR_REPO" rev-parse HEAD)"
+prepare_home "$TMP/unsigned/home" "$PAIR_REPO"
+reset_log
+run_upgrade "$PAIR_REPO/upgrade.sh" "$TMP/unsigned/home" "$TMP/unsigned/out"
+[[ "$RUN_STATUS" -ne 0 ]] || { cat "$TMP/unsigned/out" >&2; fail "unsigned origin commit should fail"; }
+assert_eq "$(git -C "$PAIR_REPO" rev-parse HEAD)" "$unsigned_sha" "unsigned origin commit is not checked out"
+assert_contains "$TMP/unsigned/out" "The commit is not signed by the trusted key." "unsigned origin commit explains itself"
+assert_not_contains "$CAST_UPGRADE_LOG" "npm " "unsigned origin commit does not install"
+
+saved_key="$CAST_TRUSTED_KEY_FILE"
+unset CAST_TRUSTED_KEY_FILE
+make_pair "otherkey"
+other_sha="$(git -C "$PAIR_REPO" rev-parse HEAD)"
+prepare_home "$TMP/otherkey/home" "$PAIR_REPO"
+reset_log
+run_upgrade "$PAIR_REPO/upgrade.sh" "$TMP/otherkey/home" "$TMP/otherkey/out"
+[[ "$RUN_STATUS" -ne 0 ]] || { cat "$TMP/otherkey/out" >&2; fail "a different signing key should fail"; }
+assert_eq "$(git -C "$PAIR_REPO" rev-parse HEAD)" "$other_sha" "another signing key is not checked out"
+assert_contains "$TMP/otherkey/out" "The commit is not signed by the trusted key." "another signing key explains itself"
+assert_not_contains "$CAST_UPGRADE_LOG" "npm " "another signing key does not install"
+export CAST_TRUSTED_KEY_FILE="$saved_key"
 
 if [[ -L /usr/local/bin/cast || -e /usr/local/bin/cast ]]; then
     system_cast_after="$(readlink /usr/local/bin/cast || printf 'file')"

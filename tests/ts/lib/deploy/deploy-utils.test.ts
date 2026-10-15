@@ -14,12 +14,23 @@ import {
   execCommandIgnoreError,
   ensureDockerfile,
   prepareHostTuiBuildContext,
+  installPin,
 } from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 import * as deployUtils from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 import * as path from 'path'
 import * as os from 'os'
 import * as sinon from 'sinon'
 import * as fs from 'fs'
+
+function expectPinnedBun(dockerfile: string) {
+  const pin = installPin('bun', 'linux-x64')
+  expect(dockerfile).to.include(`bun_sha='${pin.sha256}'`)
+  expect(dockerfile).to.include(`bun-v${pin.version}/$bun_name.zip`)
+  expect(dockerfile).to.include('sha256sum -c -')
+  expect(dockerfile).to.include('oven-sh/bun/releases/download')
+  expect(dockerfile).to.not.include('bun.sh/install')
+  expect(dockerfile).to.not.match(/\| *(bash|sh)\b/)
+}
 
 describe('Deploy Utils', () => {
   describe('getAgentPath', () => {
@@ -524,7 +535,7 @@ describe('prepareHostTuiBuildContext', () => {
     await prepareHostTuiBuildContext(agentDir, projectDir)
     const dockerfile = fs.readFileSync(path.join(agentDir, 'Dockerfile'), 'utf-8')
     expect(dockerfile).to.include('# Host TUI bundle')
-    expect(dockerfile).to.include('bun.sh/install')
+    expectPinnedBun(dockerfile)
     expect(dockerfile).to.include('COPY .cast-tui/dist /opt/cast-tui/dist')
     expect(dockerfile).to.include('COPY .cast-tui/cast-cli-dist/lib /opt/cast-cli/dist/lib')
     expect(dockerfile).to.include('COPY .cast-tui/cast-cli-dist/node_modules /opt/cast-cli/node_modules')
@@ -626,7 +637,7 @@ CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "80
     expect(result).to.include('COPY .cast-tui/node_modules /opt/cast-tui/node_modules')
     expect(result).to.not.include('COPY .cast-tui/package.json')
     expect(result).to.not.include('npm install --no-optional')
-    expect(result).to.include('bun.sh/install')
+    expectPinnedBun(result)
     expect(result).to.include('ln -sf /opt/cast-tui/launcher.sh /usr/local/bin/cast-tui')
 
     // CMD is still at the end
@@ -660,7 +671,7 @@ CMD ["python", "-m", "cast.runtime"]
     // The old marker should be gone
     expect(result).to.not.include('# Host TUI bundle (for cast ssh on-host chat)')
     // The new full patch should be present
-    expect(result).to.include('bun.sh/install')
+    expectPinnedBun(result)
     expect(result).to.include('COPY .cast-tui/launcher.sh /opt/cast-tui/launcher.sh')
     expect(result).to.include('COPY .cast-tui/node_modules /opt/cast-tui/node_modules')
     expect(result).to.include('ln -sf /opt/cast-tui/launcher.sh /usr/local/bin/cast-tui')

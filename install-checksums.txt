@@ -1,0 +1,23 @@
+# Pinned download checksums for install.sh and generated deploy scripts.
+# Each line is: name version target sha256
+# os-arch targets follow uname. uv musl builds use linux-musl-x64 and linux-musl-arm64.
+# docker-apt-key is the SHA-256 of https://download.docker.com/linux/ubuntu/gpg
+
+node 20.20.2 linux-x64 19e56f0825510207dd904f087fe52faa0a4eb6b2aab5f0ea7a33830d04888b8b
+node 20.20.2 linux-arm64 47ef73d543ecf6eb19435f6c03a0ac4809b3bf0dd6b26c7c571efc2a6572a74d
+node 20.20.2 darwin-x64 8be6f5e4bb128c82774f8a0b8d7a1cc1365a7977d9657cece0ca647b3fe04e61
+node 20.20.2 darwin-arm64 466e05f3477c20dfb723054dfebffe55bc74660ee77f612166fca121dacb65b6
+
+uv 0.13.1 linux-x64 eadd9d27c134ab5ac1ffd4473b97a741407f3ea238288f03121fc4deddf90220
+uv 0.13.1 linux-arm64 9041c73c99fdc5892cf128140beb354eca9231d502068cc36e6cb53a8e59ad14
+uv 0.13.1 linux-musl-x64 6c86040a8f045ab9adc9e3ec4cdafa03fd00e9a988ed2bf28971c7fc2d0debd0
+uv 0.13.1 linux-musl-arm64 345a8308e4d1835cdfaadf692836fd3137a6d45864773f05ad7bf59442b1ba16
+uv 0.13.1 darwin-x64 bb7b805bdcf3d0bc8c74ceb94569e6b3e8aa35bd492acdbb9d46bf46d9d4ff6b
+uv 0.13.1 darwin-arm64 cfe454573412ff7380d15fc7dae5997ab53ffce72fce0a78e91ddbc84001acd2
+
+bun 1.4.3 linux-x64 3e730528d89775f03f87f05c06787c4df4099d0a37f3f252e7b829cb23816e18
+bun 1.4.3 linux-arm64 efa9813da5ed72423bf847f916e8d2c47c0d776add972354026a75e10da9aa21
+bun 1.4.3 darwin-x64 62660e6438eb872278877acca77e1152d5d031324df368d4a81b428211489d2d
+bun 1.4.3 darwin-arm64 80afd4c069b46a6fa8f3ec520bebc750a7843e4a8d5b9583d29ad436c00a3403
+
+docker-apt-key 1 ubuntu 1500c1f56fa9e26b9b8f42452a553675796ade0807cdce11975eb98170b3a570

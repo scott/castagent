@@ -13,7 +13,9 @@ BLUE='\033[0;34m'
 NC='\033[0m' # No Color
 
 # Checkout that this run builds. prepare_checkout sets it. A piped one-liner
-# has no script path, so that function clones into ~/.cast/castagent first.
+# has no script path, so that function clones the pinned ref into
+# ~/.cast/castagent, checks the commit signature, and execs install.sh
+# from that checkout.
 SCRIPT_DIR=""
 PROJECT_NAME="Cast"
 export GIT_TERMINAL_PROMPT=0
@@ -207,8 +209,245 @@ node_ok() {
     compare_versions "$(get_node_version)" "18.0.0"
 }
 
+checksums_path() {
+    local source dir
+
+    source="${BASH_SOURCE[0]:-}"
+    if [ -n "$source" ] && [ "$source" != bash ] && [ -f "$source" ]; then
+        dir="$(cd "$(dirname "$source")" && pwd)" || true
+        if [ -f "$dir/install-checksums.txt" ]; then
+            printf '%s\n' "$dir/install-checksums.txt"
+            return 0
+        fi
+    fi
+    if [ -n "${SCRIPT_DIR:-}" ] && [ -f "$SCRIPT_DIR/install-checksums.txt" ]; then
+        printf '%s\n' "$SCRIPT_DIR/install-checksums.txt"
+        return 0
+    fi
+    return 1
+}
+
+pin_version() {
+    local file="$1"
+    local name="$2"
+
+    awk -v n="$name" '
+        $0 ~ /^[[:space:]]*#/ { next }
+        $0 ~ /^[[:space:]]*$/ { next }
+        $1 == n { print $2; exit }
+    ' "$file"
+}
+
+pin_value() {
+    local file="$1"
+    local name="$2"
+    local target="$3"
+
+    awk -v n="$name" -v t="$target" '
+        $0 ~ /^[[:space:]]*#/ { next }
+        $0 ~ /^[[:space:]]*$/ { next }
+        $1 == n && $3 == t { print $4; exit }
+    ' "$file"
+}
+
+sha256_of() {
+    local file="$1"
+    local sum
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        sum="$(sha256sum "$file")" || return 1
+    elif command -v shasum >/dev/null 2>&1; then
+        sum="$(shasum -a 256 "$file")" || return 1
+    else
+        log_error "sha256sum or shasum is required to verify downloads."
+        return 1
+    fi
+    printf '%s\n' "${sum%% *}"
+}
+
+require_sha256() {
+    local file="$1"
+    local expected="$2"
+    local label="$3"
+    local got
+
+    if [ -z "$expected" ]; then
+        log_error "No pinned checksum for $label."
+        return 1
+    fi
+    got="$(sha256_of "$file")" || return 1
+    if [ "$got" != "$expected" ]; then
+        log_error "Checksum mismatch for $label."
+        log_error "Expected $expected"
+        log_error "Got      $got"
+        return 1
+    fi
+    log_info "Verified SHA-256 for $label"
+}
+
+require_pins() {
+    local pins
+
+    if ! pins="$(checksums_path)"; then
+        # stderr: callers read the path from stdout, including command substitutions.
+        log_error "No install-checksums.txt next to this installer. Refusing to download Node, uv, or Bun." >&2
+        exit 1
+    fi
+    printf '%s\n' "$pins"
+}
+
+platform_target() {
+    case "$(uname -s):$(uname -m)" in
+        Linux:x86_64|Linux:amd64) printf 'linux-x64' ;;
+        Linux:aarch64|Linux:arm64) printf 'linux-arm64' ;;
+        Darwin:x86_64|Darwin:amd64) printf 'darwin-x64' ;;
+        Darwin:arm64|Darwin:aarch64) printf 'darwin-arm64' ;;
+        *)
+            log_error "Unsupported platform: $(uname -s) $(uname -m)"
+            return 1
+            ;;
+    esac
+}
+
+linux_is_musl() {
+    if [ "$(uname -s)" != Linux ]; then
+        return 1
+    fi
+    if [ -f /etc/alpine-release ]; then
+        return 0
+    fi
+    if command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl; then
+        return 0
+    fi
+    return 1
+}
+
+uv_checksum_target() {
+    local base
+
+    base="$(platform_target)" || return 1
+    if [ "$base" = linux-x64 ] && linux_is_musl; then
+        printf 'linux-musl-x64'
+        return 0
+    fi
+    if [ "$base" = linux-arm64 ] && linux_is_musl; then
+        printf 'linux-musl-arm64'
+        return 0
+    fi
+    printf '%s\n' "$base"
+}
+
+uv_triple() {
+    case "$(uv_checksum_target)" in
+        linux-x64) printf 'x86_64-unknown-linux-gnu' ;;
+        linux-arm64) printf 'aarch64-unknown-linux-gnu' ;;
+        linux-musl-x64) printf 'x86_64-unknown-linux-musl' ;;
+        linux-musl-arm64) printf 'aarch64-unknown-linux-musl' ;;
+        darwin-x64) printf 'x86_64-apple-darwin' ;;
+        darwin-arm64) printf 'aarch64-apple-darwin' ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+bun_asset_name() {
+    case "$(platform_target)" in
+        linux-x64) printf 'bun-linux-x64' ;;
+        linux-arm64) printf 'bun-linux-aarch64' ;;
+        darwin-x64) printf 'bun-darwin-x64' ;;
+        darwin-arm64) printf 'bun-darwin-aarch64' ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+# CAST_TRUSTED_KEY_FILE overrides the embedded key for tests and for an
+# operator who pins a different release key. The default is the GitHub
+# web commit signing key, also published at scripts/trusted-commit-key.asc.
+write_trusted_key() {
+    local dest="$1"
+
+    if [ -n "${CAST_TRUSTED_KEY_FILE:-}" ]; then
+        if [ ! -f "$CAST_TRUSTED_KEY_FILE" ]; then
+            return 1
+        fi
+        cat "$CAST_TRUSTED_KEY_FILE" > "$dest"
+        return 0
+    fi
+    cat > "$dest" << 'EOF'
+-----BEGIN PGP PUBLIC KEY BLOCK-----
+
+mQINBGWmxXYBEACyN+4viFQM6QQoKr0A2W0rGdMobTJwOZso2QPpewbyBsuL3rNW
+5OmHrWwXAhPKNqUIyOzdq8MoSxoTTuqLksoahixEL/X2nyhOBxR9GkYz/oI9R3nY
+cLRaFQoSJoVfOt61opkLUzbWAehpbgT8EKln8JsENq0+0nDlWQi0h2Q9oGmqlgVz
+skwmVZ8Leyv4Mg7hN6swyZ7moZfkkpD5+U7Z2XVurCzkSSfg4zb2lMRLJos2eCAc
+749ECsX0t7OBftF+YqgjIXixXsm2RrUqvU47OkOtZeAhvAYenbC3pr9Fha5NxoBU
+Ea+11MK9W6OcRhwvxVCUrMUR6FTSZyC//VpXTTtrRlOqpU5wGMbP3zpn9geqOXCl
+8rF7+1gAPG/o+QFQTBsVEruwi4JWogiQuQyOwAIlFe/7dvaxWZGpv/yW2+L3guL7
+xaHKFVGsayhlitQQ5Xa+P1iSgKSXDyReCbWotfqAempPySI25LHh3ScXI6NgdHSr
+SBaFojwAfgxbPTEQ6adIsKHCQofrnLrNa3UOeGDGiOOK0aYV3jiEDGAouatkNf2q
+85Eosj1f9laCqAH3YLJD7dcSne1iChK5qRTByMvIyeSD0NbNnVMFOGpXySyWtKb2
+ldpu8AWBQJsJs9FmYBcWAGBA2pp+IxaCn6rBIHIsUVFRN8OVZKsEsBkWywARAQAB
+tBtHaXRIdWIgPG5vcmVwbHlAZ2l0aHViLmNvbT6JAk4EEwEKADgWIQSWhHmhr/kn
+430aVmu1aQ7uu5UhlAUCZabFdgIbAwULCQgHAgYVCgkICwIEFgIDAQIeAQIXgAAK
+CRC1aQ7uu5UhlIMuEAClvVwC+Neoiq0AdixJZsagKHpx1QrMJWrtMRi4eXVTTaeX
++P1unhC/AmSO4Xxd3uRoejHvfWh4F0gitUJ8XKgiejnmuGcq7Dbt5OoO1JuXGlW2
+BQ+MiGoYVw2B0sOhWDNrIBWOO/WL4LykcGnAtrRXwoS0Wx4MCydztXQY5lcnCWaW
+8rvu7WmduoOikH4HI97rqN5896dc4iBKSx8LZf+46DRCCD/5SfACplBz4hs5zen8
+TL8zd+zxjFrXbzota0jSDEGK9WGO4z55S2xScC6zv6v3Bj1OR8Bs5aodGtmamHZ7
+sE9w0RJoCfNx+9cR/rE82SrOaBpVU7urLe4lg7zaaNhqDdNV8ymuXGmIJarDgrme
+iB5bHS+dLFzLUkTgot4RFlPa9bFiJuJN6Tc9tMu5RJQ9l/zKmxDHIKWsAle5R65u
+zEq04LugTQBdEorGxfQCsF2ga9ncKTDMiAThWTvZpOP3NJ/athZRmOBpG4B9iR6r
+pRU8F/+MokG4fIMwnvtOhWQFiEzdTkJ7U5JAkPtTAmT3/mznwtPEU7DrFWSGAdqg
+IMOlxNCBeGvjwLR0qGH7cB9qHDGNoDLkjaUFpu5tPv4/ivkQaHlHJxjT0ILM6jet
+CAzKpKh48rm65tmrJX6KVpj0r2kKMscFf7s7XaPlCNCFds/YA+0puPbzJKWKfA==
+=NRlX
+-----END PGP PUBLIC KEY BLOCK-----
+EOF
+}
+
+verify_signed_commit() {
+    local dest="$1"
+    local keyfile gpghome status
+
+    if ! command -v gpg >/dev/null 2>&1; then
+        log_error "gpg is required to verify the Cast checkout."
+        return 1
+    fi
+    keyfile="$(mktemp "${TMPDIR:-/tmp}/cast-trust.XXXXXX")"
+    gpghome="$(mktemp -d "${TMPDIR:-/tmp}/cast-gpg.XXXXXX")"
+    chmod 700 "$gpghome"
+    if ! write_trusted_key "$keyfile"; then
+        rm -rf "$gpghome" "$keyfile"
+        log_error "No trusted commit key is available."
+        return 1
+    fi
+    if ! GNUPGHOME="$gpghome" gpg --batch --no-tty --import "$keyfile" >/dev/null 2>&1; then
+        rm -rf "$gpghome" "$keyfile"
+        log_error "Could not import the trusted commit key."
+        return 1
+    fi
+    set +e
+    GNUPGHOME="$gpghome" git -C "$dest" -c gpg.format=openpgp verify-commit HEAD >/dev/null 2>&1
+    status=$?
+    set -e
+    rm -rf "$gpghome" "$keyfile"
+    return "$status"
+}
+
+checkout_installer_is_current() {
+    local dest="$1"
+
+    [ -f "$dest/install.sh" ] || return 1
+    [ -f "$dest/install-checksums.txt" ] || return 1
+    grep -q 'require_sha256()' "$dest/install.sh" || return 1
+    return 0
+}
+
 install_node_tarball() {
-    local os arch version name url tmp prefix
+    local os arch target version name url tmp prefix pins expected
 
     case "$(uname -s)" in
         Linux) os=linux ;;
@@ -227,17 +466,28 @@ install_node_tarball() {
             ;;
     esac
 
-    version="$(curl -fsSL https://nodejs.org/dist/latest-v20.x/SHASUMS256.txt | sed -n 's/.*node-v\([0-9][0-9.]*\)-.*/\1/p' | head -n 1 || true)"
-    if [ -z "$version" ]; then
-        log_error "Could not determine the Node.js 20 version."
+    target="${os}-${arch}"
+    pins="$(require_pins)"
+    version="$(pin_version "$pins" node)"
+    expected="$(pin_value "$pins" node "$target")"
+    if [ -z "$version" ] || [ -z "$expected" ]; then
+        log_error "install-checksums.txt has no Node.js pin for $target."
         exit 1
     fi
-    name="node-v${version}-${os}-${arch}.tar.gz"
+    name="node-v${version}-${target}.tar.gz"
     url="https://nodejs.org/dist/v${version}/${name}"
     tmp="$(mktemp -d "${TMPDIR:-/tmp}/cast-node.XXXXXX")"
     prefix="$HOME/.local/node"
     log_info "Downloading $name"
-    curl -fsSL "$url" -o "$tmp/node.tar.gz"
+    if ! curl -fsSL "$url" -o "$tmp/node.tar.gz"; then
+        rm -rf "$tmp"
+        log_error "Could not download $name."
+        exit 1
+    fi
+    if ! require_sha256 "$tmp/node.tar.gz" "$expected" "node ${version} ${target}"; then
+        rm -rf "$tmp"
+        exit 1
+    fi
     rm -rf "$prefix"
     mkdir -p "$prefix"
     tar -xzf "$tmp/node.tar.gz" -C "$prefix" --strip-components=1
@@ -307,14 +557,40 @@ ensure_pip() {
 }
 
 install_uv_python() {
-    local tmp py
+    local tmp py pins version triple target url expected
 
     if ! check_command uv; then
-        log_info "Installing uv..."
-        tmp="$(mktemp "${TMPDIR:-/tmp}/cast-uv.XXXXXX")"
-        curl -fsSL https://astral.sh/uv/install.sh -o "$tmp"
-        UV_UNMANAGED_INSTALL="$HOME/.local/bin" UV_NO_MODIFY_PATH=1 sh "$tmp" </dev/null
-        rm -f "$tmp"
+        pins="$(require_pins)"
+        version="$(pin_version "$pins" uv)"
+        target="$(uv_checksum_target)" || exit 1
+        triple="$(uv_triple)" || exit 1
+        expected="$(pin_value "$pins" uv "$target")"
+        if [ -z "$version" ] || [ -z "$expected" ]; then
+            log_error "install-checksums.txt has no uv pin for $target."
+            exit 1
+        fi
+        log_info "Installing uv ${version}..."
+        url="https://github.com/astral-sh/uv/releases/download/${version}/uv-${triple}.tar.gz"
+        tmp="$(mktemp -d "${TMPDIR:-/tmp}/cast-uv.XXXXXX")"
+        if ! curl -fsSL "$url" -o "$tmp/uv.tar.gz"; then
+            rm -rf "$tmp"
+            log_error "Could not download uv."
+            exit 1
+        fi
+        if ! require_sha256 "$tmp/uv.tar.gz" "$expected" "uv ${version} ${target}"; then
+            rm -rf "$tmp"
+            exit 1
+        fi
+        mkdir -p "$tmp/root"
+        tar -xzf "$tmp/uv.tar.gz" -C "$tmp/root" --strip-components=1
+        if [ ! -x "$tmp/root/uv" ]; then
+            rm -rf "$tmp"
+            log_error "uv archive did not contain an executable."
+            exit 1
+        fi
+        mkdir -p "$HOME/.local/bin"
+        install -m 0755 "$tmp/root/uv" "$HOME/.local/bin/uv"
+        rm -rf "$tmp"
         export_tool_path
     fi
     if ! check_command uv; then
@@ -383,7 +659,7 @@ ensure_unzip() {
 }
 
 ensure_bun() {
-    local tmp
+    local tmp pins version target asset url expected
 
     export_tool_path
     if check_command bun || [ -x "$HOME/.bun/bin/bun" ]; then
@@ -394,22 +670,42 @@ ensure_bun() {
         log_warn "Bun was not installed. The TUI needs it: https://bun.sh"
         return 0
     fi
-    log_info "Installing Bun..."
-    tmp="$(mktemp "${TMPDIR:-/tmp}/cast-bun.XXXXXX")"
-    if ! curl -fsSL https://bun.sh/install -o "$tmp"; then
+    pins="$(require_pins)"
+    version="$(pin_version "$pins" bun)"
+    target="$(platform_target)" || exit 1
+    asset="$(bun_asset_name)" || exit 1
+    expected="$(pin_value "$pins" bun "$target")"
+    if [ -z "$version" ] || [ -z "$expected" ]; then
+        log_error "install-checksums.txt has no Bun pin for $target."
+        exit 1
+    fi
+    log_info "Installing Bun ${version}..."
+    url="https://github.com/oven-sh/bun/releases/download/bun-v${version}/${asset}.zip"
+    tmp="$(mktemp -d "${TMPDIR:-/tmp}/cast-bun.XXXXXX")"
+    if ! curl -fsSL "$url" -o "$tmp/bun.zip"; then
         log_warn "Could not download Bun. The TUI needs it: https://bun.sh"
-        rm -f "$tmp"
+        rm -rf "$tmp"
         return 0
     fi
-    if ! BUN_INSTALL="$HOME/.bun" bash "$tmp" </dev/null; then
-        log_warn "Bun installation failed. The TUI needs it: https://bun.sh"
-        rm -f "$tmp"
-        return 0
+    if ! require_sha256 "$tmp/bun.zip" "$expected" "bun ${version} ${target}"; then
+        rm -rf "$tmp"
+        exit 1
     fi
-    rm -f "$tmp"
-    if [ -x "$HOME/.bun/bin/bun" ]; then
-        publish_bin bun "$HOME/.bun/bin/bun"
+    mkdir -p "$tmp/root"
+    if ! unzip -q "$tmp/bun.zip" -d "$tmp/root"; then
+        rm -rf "$tmp"
+        log_error "Could not unpack Bun."
+        exit 1
     fi
+    if [ ! -f "$tmp/root/${asset}/bun" ]; then
+        rm -rf "$tmp"
+        log_error "Bun archive did not contain ${asset}/bun."
+        exit 1
+    fi
+    mkdir -p "$HOME/.bun/bin"
+    install -m 0755 "$tmp/root/${asset}/bun" "$HOME/.bun/bin/bun"
+    rm -rf "$tmp"
+    publish_bin bun "$HOME/.bun/bin/bun"
     export_tool_path
 }
 
@@ -433,46 +729,54 @@ persist_path() {
     done
 }
 
-use_downloaded_installer() {
-    local dest="$1"
-    local source="${BASH_SOURCE[0]:-}"
-
-    # A piped one-liner has no script file. An existing checkout may still
-    # contain the installer from an earlier run, so replace it before exec.
-    if [ -n "$source" ] && [ "$source" != bash ] && [ -f "$source" ]; then
-        return 0
-    fi
-    log_info "Using the downloaded installer for $dest"
-    if ! curl -fsSL https://raw.githubusercontent.com/scott/castagent/main/install.sh -o "$dest/install.sh"; then
-        log_error "Could not download install.sh into $dest"
-        exit 1
-    fi
-    chmod +x "$dest/install.sh"
+install_repo() {
+    printf '%s\n' "${CAST_INSTALL_REPO:-https://github.com/scott/castagent.git}"
 }
 
-clone_and_reexec() {
-    local dest
+install_ref() {
+    printf '%s\n' "${CAST_INSTALL_REF:-main}"
+}
+
+# A piped one-liner has no script file. Clone the pinned ref, require a
+# commit signed by the trusted key, and exec install.sh from that checkout.
+# Do not download install.sh from main again. An older checkout that has
+# no checksum pins is built by this script instead of its own installer.
+clone_pinned_checkout() {
+    local dest repo ref
 
     dest="${CAST_INSTALL_DIR:-$HOME/.cast/castagent}"
+    repo="$(install_repo)"
+    ref="$(install_ref)"
     if [ -e "$dest" ] || [ -L "$dest" ]; then
         if is_cast_checkout "$dest"; then
             log_info "Using existing checkout: $dest"
-            use_downloaded_installer "$dest"
-            export CAST_INSTALL_PACKAGES_DONE=1
-            exec bash "$dest/install.sh"
+            if checkout_installer_is_current "$dest"; then
+                export CAST_INSTALL_PACKAGES_DONE=1
+                exec bash "$dest/install.sh"
+            fi
+            log_info "Existing checkout installer has no checksum pins. Continuing with this installer."
+            SCRIPT_DIR="$dest"
+            return 0
         fi
         log_error "$dest exists and is not a Cast checkout."
         log_info "Move it aside or set CAST_INSTALL_DIR to a new path, then run this script again."
         exit 1
     fi
 
-    log_info "Cloning Cast into $dest"
+    log_info "Cloning Cast ${ref} into $dest"
     mkdir -p "$(dirname "$dest")"
-    if ! git clone --branch main https://github.com/scott/castagent.git "$dest" </dev/null; then
+    if ! git clone --branch "$ref" --depth 1 "$repo" "$dest" </dev/null; then
         log_error "Could not clone Cast into $dest"
         exit 1
     fi
-    use_downloaded_installer "$dest"
+    if ! verify_signed_commit "$dest"; then
+        log_error "Refusing to run install.sh from $dest. The commit is not signed by the trusted key."
+        exit 1
+    fi
+    if ! checkout_installer_is_current "$dest"; then
+        log_error "Cloned installer has no checksum pins. Refusing to continue."
+        exit 1
+    fi
     export CAST_INSTALL_PACKAGES_DONE=1
     exec bash "$dest/install.sh"
 }
@@ -486,7 +790,7 @@ prepare_checkout() {
     fi
     ensure_system_packages
     ensure_git
-    clone_and_reexec
+    clone_pinned_checkout
 }
 
 prepare_checkout
@@ -579,7 +883,7 @@ if check_command uv; then
     UV_AVAILABLE=true
 else
     log_warn "UV not found. UV is recommended for Python dependency management"
-    log_info "Install UV: curl -LsSf https://astral.sh/uv/install.sh | sh"
+    log_info "install-checksums.txt pins the uv archive. The installer checks that digest before unpacking."
     log_info "Continuing with pip..."
 fi
 
