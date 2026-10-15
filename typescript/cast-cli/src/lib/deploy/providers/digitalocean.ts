@@ -1,5 +1,6 @@
 import {Flags} from '@oclif/core'
 import DigitalOceanDeploy, {
+  DIGITALOCEAN_SSH_TOOL_CHECKS,
   dropletHostFromUrl,
   isLoopbackClientUrl,
   startDropletSshTunnel,
@@ -28,6 +29,7 @@ export const digitaloceanProvider: DeploymentProvider = {
       installUrl: 'https://docs.docker.com/get-docker/',
       error: 'Docker is required for DigitalOcean deployment.\nInstall it from: https://docs.docker.com/get-docker/',
     },
+    ...DIGITALOCEAN_SSH_TOOL_CHECKS,
   ],
   memory: {
     mountPath: '/app/agent/memory',

@@ -32,7 +32,10 @@ experience — with two important differences:
   (locked-down VPC, restricted egress, etc.).
 
 The trade-off is you need shell access to the droplet, which means
-possession of the SSH key at `~/.ssh/cast_do_key`.
+possession of the SSH key at `~/.ssh/cast_do_key`. `cast shutdown`
+removes the matching DigitalOcean account key `cast-do-key` when no
+other Cast droplet or Cast MicroVM still uses it. The local file stays,
+and the next deploy uploads it again if the account key is missing.
 
 ## Opting in
 
