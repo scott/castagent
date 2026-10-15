@@ -20,6 +20,7 @@ import {
 } from './deploy-utils'
 import {buildCloudInitBaselineMotd, buildHostMotd, writeHostMotdOverSsh} from './motd'
 import type {MotdContext} from './motd'
+import {shellSingleQuote} from './sprites-service'
 import {db} from '../sqlite'
 
 const SSH_KEY_NAME = 'cast-do-key'
@@ -54,6 +55,36 @@ async function execSsh(
   timeoutMs = 30_000,
 ): Promise<{ stdout: string; stderr: string; exitCode: number }> {
   return execCommand('ssh', buildSshArgs(ip, remoteCmd), { silent, shell: false, timeoutMs })
+}
+
+/**
+ * Remote `docker run` argv, with every word single-quoted.
+ * Env values and the image tag are data, not shell syntax.
+ */
+export function remoteDockerRunCommand(input: {
+  agentName: string
+  authToken: string
+  imageTag: string
+  volumeId: string
+  env: Record<string, string>
+  motdB64: string
+}): string {
+  const args = [
+    'docker', 'run', '-d',
+    '--name', 'cast-agent',
+    '--restart', 'unless-stopped',
+    '-p', '8080:8080',
+    '-v', `/mnt/${input.volumeId}:/app/agent/memory`,
+    '-e', `CAST_AGENT_NAME=${input.agentName}`,
+    '-e', 'CAST_AGENT_PATH=/app/agent',
+    '-e', `AUTH_TOKEN=${input.authToken}`,
+    '-e', 'PYTHONPATH=/app',
+  ]
+  for (const [key, value] of Object.entries(input.env)) {
+    args.push('-e', `${key}=${value}`)
+  }
+  args.push('-e', `CAST_MOTD=${input.motdB64}`, input.imageTag)
+  return args.map(shellSingleQuote).join(' ')
 }
 
 export default class DigitalOceanDeploy extends Command {
@@ -668,18 +699,6 @@ export default class DigitalOceanDeploy extends Command {
     // Open UFW port
     await execSsh(ip, 'ufw allow 8080/tcp || true', true)
 
-    // Build env vars
-    const envArgs = [
-      `-e CAST_AGENT_NAME=${agentName}`,
-      `-e CAST_AGENT_PATH=/app/agent`,
-      `-e AUTH_TOKEN=${authToken}`,
-      `-e PYTHONPATH=/app`,
-    ]
-
-    for (const [key, value] of Object.entries(inferenceEnv())) {
-      envArgs.push(`-e ${key}=${value}`)
-    }
-
     // Build the host MOTD. We pass it base64-encoded so it can be safely
     // embedded in shell commands without escaping concerns. It's written
     // to BOTH the host (for SSH login banners) AND the container (as
@@ -701,11 +720,15 @@ export default class DigitalOceanDeploy extends Command {
     const hostMotd = buildHostMotd(motdCtx)
     const motdB64 = Buffer.from(hostMotd, 'utf8').toString('base64')
 
-    // Inject the env var so the container can pick it up
-    envArgs.push(`-e CAST_MOTD=${motdB64}`)
-
-    // Run container with volume mount
-    const runResult = await execSsh(ip, `docker run -d --name cast-agent --restart unless-stopped -p 8080:8080 -v /mnt/${volumeId}:/app/agent/memory ${envArgs.join(' ')} ${imageTag}`, true)
+    // Run container with volume mount. Every remote word is single-quoted.
+    const runResult = await execSsh(ip, remoteDockerRunCommand({
+      agentName,
+      authToken,
+      imageTag,
+      volumeId,
+      env: inferenceEnv(),
+      motdB64,
+    }), true)
 
     if (runResult.exitCode !== 0) {
       throw new Error(`Failed to start container on droplet: ${runResult.stderr}`)

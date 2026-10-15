@@ -101,6 +101,49 @@ describe('versioning lib', () => {
         expect(combined).to.not.include('invalid syntax')
       }
     })
+
+    it('stores shell metacharacters as the version message', async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-version-proof-'))
+      const marker = path.join(dir, 'marker')
+      const agentName = `versioning-shell-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
+      const message = `x"; touch ${marker}; echo "$(touch ${marker}) \`touch ${marker}\`"\nit's a note`
+      fs.mkdirSync(agentDir, {recursive: true})
+      fs.writeFileSync(path.join(agentDir, 'agent.yaml'), 'name: shell-test\nversion: "1.0"\n')
+
+      try {
+        await versioning.createVersion(agentName, `cli"; touch ${marker}; echo "`, message)
+        expect(fs.existsSync(marker)).to.equal(false)
+
+        const changesJsonPath = path.join(agentDir, '.cast', 'changes', 'changes.json')
+        expect(fs.existsSync(changesJsonPath)).to.equal(true)
+        const saved = JSON.parse(fs.readFileSync(changesJsonPath, 'utf8'))
+        const last = saved.versions[saved.versions.length - 1]
+        expect(last.message).to.equal(message)
+        expect(last.source).to.equal(`cli"; touch ${marker}; echo "`)
+
+        const listed = await versioning.listVersions(agentName)
+        expect(listed[0].message).to.equal(message)
+        const info = await versioning.getVersionInfo(agentName, last.id)
+        expect(info && info.message).to.equal(message)
+      } finally {
+        fs.rmSync(agentDir, {recursive: true, force: true})
+        fs.rmSync(dir, {recursive: true, force: true})
+      }
+    })
+
+    it('does not run a shell when the agent name contains quotes', async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-version-name-'))
+      const marker = path.join(dir, 'marker')
+      try {
+        await versioning.createVersion(`x"; touch ${marker}; echo "`, 'cli', 'plain')
+        await versioning.getCurrentVersion(`$(touch ${marker})`)
+        await versioning.listVersions('`touch ' + marker + '`')
+        expect(fs.existsSync(marker)).to.equal(false)
+      } finally {
+        fs.rmSync(dir, {recursive: true, force: true})
+      }
+    })
   })
 
   describe('revertVersion', () => {
@@ -140,6 +183,27 @@ describe('versioning lib', () => {
         await versioning.revertVersion('test-agent', 1, 'Custom message')
       } catch (e) {
         expect((e as Error).message).to.include('Revert failed')
+      }
+    })
+
+    it('stores a revert message that contains shell syntax', async () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-revert-proof-'))
+      const marker = path.join(dir, 'marker')
+      const agentName = `versioning-revert-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
+      const message = `reverted"; touch ${marker}; echo "$(touch ${marker})"`
+      fs.mkdirSync(agentDir, {recursive: true})
+      fs.writeFileSync(path.join(agentDir, 'agent.yaml'), 'name: revert-test\nversion: "1.0"\n')
+
+      try {
+        await versioning.createVersion(agentName, 'cli', 'before revert')
+        await versioning.revertVersion(agentName, 1, message)
+        expect(fs.existsSync(marker)).to.equal(false)
+        const listed = await versioning.listVersions(agentName)
+        expect(listed.some((version: {message: string}) => version.message === message)).to.equal(true)
+      } finally {
+        fs.rmSync(agentDir, {recursive: true, force: true})
+        fs.rmSync(dir, {recursive: true, force: true})
       }
     })
   })

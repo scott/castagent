@@ -1,5 +1,8 @@
 import {expect} from 'chai'
-import SpritesDeploy from '../../../../typescript/cast-cli/src/lib/deploy/sprites'
+import * as fs from 'fs'
+import * as os from 'os'
+import * as path from 'path'
+import SpritesDeploy, {runSpriteExec, spriteExecArgv, spriteReadyArgv} from '../../../../typescript/cast-cli/src/lib/deploy/sprites'
 
 describe('Sprites Deploy Provider', () => {
   describe('static properties', () => {
@@ -64,6 +67,47 @@ describe('Sprites Deploy Provider', () => {
     it('should handle authentication errors', () => {
       // The implementation checks for sprite auth
       expect(SpritesDeploy).to.be.a('function')
+    })
+  })
+
+  describe('sprite exec argv', () => {
+    it('passes the sprite name and command as separate arguments', () => {
+      const spriteName = 'cast-demo"; echo broke'
+      const command = "true'; echo broke"
+      expect(spriteExecArgv(spriteName, command)).to.deep.equal([
+        'exec', '-s', spriteName, '--', 'sudo', 'bash', '-c', command,
+      ])
+      expect(spriteReadyArgv(spriteName)).to.deep.equal([
+        'exec', '-s', spriteName, '--', 'echo', 'ready',
+      ])
+    })
+
+    it('does not run a local shell around sprite exec', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-sprite-proof-'))
+      const marker = path.join(dir, 'marker')
+      const log = path.join(dir, 'argv.txt')
+      const fakeSprite = path.join(dir, 'sprite')
+      fs.writeFileSync(fakeSprite, '#!/bin/sh\nprintf "%s\\n" "$@" > "$SPRITE_ARGV_LOG"\n')
+      fs.chmodSync(fakeSprite, 0o755)
+      const previousPath = process.env.PATH
+      const previousLog = process.env.SPRITE_ARGV_LOG
+      process.env.PATH = `${dir}${path.delimiter}${previousPath || ''}`
+      process.env.SPRITE_ARGV_LOG = log
+      const spriteName = `n"; touch ${marker}; echo "`
+      const command = `c'; touch ${marker}; echo '`
+
+      try {
+        runSpriteExec(spriteName, command, 5000)
+        expect(fs.existsSync(marker)).to.equal(false)
+        const argv = fs.readFileSync(log, 'utf8').split('\n').filter(line => line.length > 0)
+        expect(argv).to.deep.equal(spriteExecArgv(spriteName, command))
+      } finally {
+        if (previousPath === undefined) delete process.env.PATH
+        else process.env.PATH = previousPath
+        if (previousLog === undefined) delete process.env.SPRITE_ARGV_LOG
+        else process.env.SPRITE_ARGV_LOG = previousLog
+        fs.rmSync(dir, {recursive: true, force: true})
+      }
     })
   })
 })

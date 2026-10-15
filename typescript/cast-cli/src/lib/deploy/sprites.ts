@@ -1,5 +1,5 @@
 import {Args, Command} from '@oclif/core'
-import {execSync, spawn} from 'child_process'
+import {execFileSync, spawn} from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -22,6 +22,32 @@ import {
 
 const AGENT_DIR = '/opt/cast-agent'
 const HOST_MOUNT_BASE = '/mnt/cast-memory'
+
+/** argv for `sprite exec` with no local shell. The remote command is one argument. */
+export function spriteExecArgv(spriteName: string, command: string): string[] {
+  return ['exec', '-s', spriteName, '--', 'sudo', 'bash', '-c', command]
+}
+
+export function spriteReadyArgv(spriteName: string): string[] {
+  return ['exec', '-s', spriteName, '--', 'echo', 'ready']
+}
+
+export function runSpriteExec(spriteName: string, command: string, timeout = 120000): string {
+  try {
+    return execFileSync('sprite', spriteExecArgv(spriteName, command), {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout,
+    })
+  } catch (e: any) {
+    const errorMsg = e?.message || ''
+    const stderr = typeof e?.stderr === 'string' ? e.stderr : e?.stderr?.toString?.() || ''
+    if (errorMsg.includes('ETIMEDOUT') || errorMsg.includes('timed out')) {
+      throw new Error(`Sprite command timed out after ${timeout / 1000}s: ${command.substring(0, 50)}...`)
+    }
+    throw new Error(`Sprite command failed: ${stderr || errorMsg}`)
+  }
+}
 
 export default class SpritesDeploy extends Command {
   static description = 'Deploy agent to Sprites (Fly.io Firecracker VM)'
@@ -180,31 +206,18 @@ export default class SpritesDeploy extends Command {
   }
 
   private async execOnSprite(spriteName: string, command: string, timeout?: number): Promise<string> {
-    // Use execSync directly to avoid shell=true mangling && and other operators
-    // All commands run via sudo since sprite exec runs as the 'sprite' user
-    try {
-      const stdout = execSync(
-        `sprite exec -s "${spriteName}" -- bash -c 'sudo bash -c "${command.replace(/"/g, '\\"')}"'`,
-        {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: timeout || 120000},
-      )
-      return stdout
-    } catch (e: any) {
-      // Provide more helpful error message
-      const errorMsg = e.message || ''
-      if (errorMsg.includes('ETIMEDOUT') || errorMsg.includes('timed out')) {
-        throw new Error(`Sprite command timed out after ${(timeout || 120000) / 1000}s: ${command.substring(0, 50)}...`)
-      }
-      throw new Error(`Sprite command failed: ${e.stderr || errorMsg}`)
-    }
+    // sprite exec runs as the sprite user, so the remote command uses sudo.
+    // Name and command are argv. A local shell would treat quotes in either as syntax.
+    return runSpriteExec(spriteName, command, timeout || 120000)
   }
 
   private async checkSpriteReady(spriteName: string): Promise<boolean> {
     try {
-      // Run a quick test command to see if sprite is responsive
-      const result = execSync(
-        `sprite exec -s "${spriteName}" -- echo "ready"`,
-        {encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 30000},
-      )
+      const result = execFileSync('sprite', spriteReadyArgv(spriteName), {
+        encoding: 'utf8',
+        stdio: ['pipe', 'pipe', 'pipe'],
+        timeout: 30000,
+      })
       return result.trim() === 'ready'
     } catch {
       return false
@@ -225,7 +238,7 @@ export default class SpritesDeploy extends Command {
       // Note: We don't exclude files here as macOS tar (BSD) has limited exclude support.
       // The main fix is the streaming transfer to avoid the string length limit.
       // Large files should be cleaned up before deployment or will be handled by user.
-      execSync(`tar czf "${tarPath}" -C "${agentPath}" .`, {
+      execFileSync('tar', ['czf', tarPath, '-C', agentPath, '.'], {
         encoding: 'utf8',
         stdio: 'pipe',
       })

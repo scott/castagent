@@ -84,6 +84,7 @@ export default class RailwayDeploy extends Command {
       const setResult = await execCommand('railway', ['variables', 'set', `${key}=${value}`], {
         cwd: agentPath,
         silent: true,
+        shell: false,
       })
       if (setResult.exitCode !== 0) {
         this.warn(`Failed to set variable ${key}: ${setResult.stderr}`)

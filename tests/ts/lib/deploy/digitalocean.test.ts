@@ -5,7 +5,8 @@ import * as fs from 'fs'
 import * as os from 'os'
 import axios from 'axios'
 
-import DigitalOceanDeploy from '../../../../typescript/cast-cli/src/lib/deploy/digitalocean'
+import {execFileSync} from 'child_process'
+import DigitalOceanDeploy, {remoteDockerRunCommand} from '../../../../typescript/cast-cli/src/lib/deploy/digitalocean'
 import * as deployUtils from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 import * as motd from '../../../../typescript/cast-cli/src/lib/deploy/motd'
 
@@ -252,7 +253,7 @@ describe('DigitalOcean Deploy Provider', () => {
 
       const sshCommands = execStub.getCalls()
         .map((c: any) => c.args[1] ? (c.args[1] as string[]).join(' ') : '')
-      const runCmd = sshCommands.find((cmd: string) => cmd.includes('docker run'))
+      const runCmd = sshCommands.find((cmd: string) => cmd.includes("'docker'") && cmd.includes('AUTH_TOKEN='))
       expect(runCmd, 'should have a docker run command').to.exist
       expect(runCmd).to.include('AUTH_TOKEN=tok-secret')
       expect(runCmd).to.include('CAST_MOTD=')
@@ -268,7 +269,7 @@ describe('DigitalOcean Deploy Provider', () => {
 
       const sshCommands = execStub.getCalls()
         .map((c: any) => c.args[1] ? (c.args[1] as string[]).join(' ') : '')
-      const runCmd = sshCommands.find((cmd: string) => cmd.includes('docker run'))
+      const runCmd = sshCommands.find((cmd: string) => cmd.includes("'docker'") && cmd.includes('OPENROUTER_API_KEY='))
       expect(runCmd).to.include('OPENROUTER_API_KEY=or-key-123')
     })
 
@@ -346,6 +347,44 @@ describe('DigitalOcean Deploy Provider', () => {
       )
       const ctx = motdStub.firstCall.args[1] as {onHostTui?: boolean}
       expect(ctx.onHostTui).to.be.false
+    })
+  })
+
+  describe('remoteDockerRunCommand', () => {
+    it('keeps env values, the volume, and the image as single remote words', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-do-quote-'))
+      const marker = path.join(dir, 'marker')
+      const token = `sekret'$(touch ${marker})`
+      const image = `img$(touch ${marker})`
+      const volume = `vol;touch ${marker}`
+      const apiKey = 'key`touch ' + marker + '`'
+      const command = remoteDockerRunCommand({
+        agentName: 'agent',
+        authToken: token,
+        imageTag: image,
+        volumeId: volume,
+        env: {OPENROUTER_API_KEY: apiKey},
+        motdB64: 'YQ==',
+      })
+
+      try {
+        const output = execFileSync('bash', [
+          '-c',
+          'docker() { printf "%s\\n" docker "$@"; }; eval "$1"',
+          'bash',
+          command,
+        ], {encoding: 'utf8'})
+        const words = output.split('\n').filter(word => word.length > 0)
+        expect(fs.existsSync(marker)).to.equal(false)
+        expect(words).to.include(`AUTH_TOKEN=${token}`)
+        expect(words).to.include(`OPENROUTER_API_KEY=${apiKey}`)
+        expect(words).to.include(`/mnt/${volume}:/app/agent/memory`)
+        expect(words[words.length - 1]).to.equal(image)
+        expect(words[0]).to.equal('docker')
+        expect(words[1]).to.equal('run')
+      } finally {
+        fs.rmSync(dir, {recursive: true, force: true})
+      }
     })
   })
 
