@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import * as os from 'os'
 import * as http from 'http'
+import * as crypto from 'crypto'
 import {spawn} from 'child_process'
 import * as readline from 'readline'
 import axios from 'axios'
@@ -11,6 +12,10 @@ const VAULT_DIR = path.join(os.homedir(), '.cast', 'vault')
 const OAUTH_PORT = 34567
 const OAUTH_REDIRECT_PATH = '/callback'
 const OAUTH_TIMEOUT_MS = 5 * 60 * 1000
+/** IPv4 loopback only. A missing host would listen on every interface. */
+const OAUTH_CALLBACK_HOST = '127.0.0.1'
+const VAULT_DIR_MODE = 0o700
+const CREDENTIAL_FILE_MODE = 0o600
 
 export interface OAuthCredentials {
   access_token: string
@@ -22,12 +27,27 @@ export interface OAuthCredentials {
   [key: string]: any
 }
 
+export interface OAuthManagerOptions {
+  /** Credential root. Defaults to ~/.cast/vault. */
+  vaultRoot?: string
+  /** Callback port. Defaults to 34567. The bind address stays 127.0.0.1. */
+  port?: number
+  /** Replaces the browser launcher. The callback server is already listening. */
+  openBrowser?: (url: string) => Promise<boolean>
+}
+
 interface ProviderOAuthConfig {
   authorizeUrl: string
   tokenUrl: string
   refreshUrl: string
   defaultScopes: string
   extraParams?: Record<string, string>
+}
+
+interface CallbackSession {
+  listening: Promise<void>
+  code: Promise<string>
+  close: () => void
 }
 
 const PROVIDER_CONFIGS: Record<string, ProviderOAuthConfig> = {
@@ -50,23 +70,59 @@ const PROVIDER_CONFIGS: Record<string, ProviderOAuthConfig> = {
   },
 }
 
-function getVaultDir(agentName: string): string {
-  return path.join(VAULT_DIR, agentName)
-}
-
-function getCredentialsPath(agentName: string, serverName: string): string {
-  return path.join(getVaultDir(agentName), `${serverName}-oauth.json`)
-}
-
-function ensureVaultDir(agentName: string): void {
-  const dir = getVaultDir(agentName)
-  if (!fs.existsSync(dir)) {
-    fs.mkdirSync(dir, {recursive: true})
-  }
-}
-
 function generateState(): string {
-  return Math.random().toString(36).substring(2, 15) + Math.random().toString(36).substring(2, 15)
+  return crypto.randomBytes(32).toString('base64url')
+}
+
+/**
+ * Constant-time compare of the issued state and the callback value.
+ * A length mismatch still runs a compare so the fast path is the same shape.
+ */
+function statesMatch(expected: string, received: string | null): boolean {
+  const expectedBuf = Buffer.from(expected)
+  if (received == null) {
+    crypto.timingSafeEqual(expectedBuf, expectedBuf)
+    return false
+  }
+  const receivedBuf = Buffer.from(received)
+  if (receivedBuf.length !== expectedBuf.length) {
+    crypto.timingSafeEqual(expectedBuf, expectedBuf)
+    return false
+  }
+  return crypto.timingSafeEqual(expectedBuf, receivedBuf)
+}
+
+function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+}
+
+function htmlPage(succeeded: boolean, detail: string): string {
+  const title = succeeded ? 'Authentication Successful' : 'Authentication Failed'
+  const message = succeeded ? 'You can close this window.' : `Error: ${escapeHtml(detail)}`
+  return `<html><body style="font-family:sans-serif;text-align:center;padding-top:50px;">` +
+    `<h1>${title}</h1>` +
+    `<p>${message}</p>` +
+    `</body></html>`
+}
+
+function ensurePrivateDir(dir: string): void {
+  fs.mkdirSync(dir, {recursive: true, mode: VAULT_DIR_MODE})
+  fs.chmodSync(dir, VAULT_DIR_MODE)
+}
+
+function writePrivateFile(filePath: string, contents: string): void {
+  const fd = fs.openSync(filePath, 'w', CREDENTIAL_FILE_MODE)
+  try {
+    fs.writeFileSync(fd, contents)
+  } finally {
+    fs.closeSync(fd)
+  }
+  fs.chmodSync(filePath, CREDENTIAL_FILE_MODE)
 }
 
 /**
@@ -123,7 +179,143 @@ async function promptForCode(): Promise<string> {
   })
 }
 
+function listenForOAuthCode(state: string, port: number): CallbackSession {
+  let server: http.Server | null = null
+  let settled = false
+  let listeningSettled = false
+  let resolveListening: () => void = () => {}
+  let rejectListening: (error: Error) => void = () => {}
+  let resolveCode: (code: string) => void = () => {}
+  let rejectCode: (error: Error) => void = () => {}
+
+  const listening = new Promise<void>((resolve, reject) => {
+    resolveListening = resolve
+    rejectListening = reject
+  })
+  const codePromise = new Promise<string>((resolve, reject) => {
+    resolveCode = resolve
+    rejectCode = reject
+  })
+
+  let timer: NodeJS.Timeout
+  const finish = (error?: Error, receivedCode?: string): void => {
+    if (settled) return
+    settled = true
+    clearTimeout(timer)
+    if (server) {
+      const current = server
+      server = null
+      current.close()
+    }
+    if (!listeningSettled) {
+      listeningSettled = true
+      if (error) rejectListening(error)
+      else resolveListening()
+    }
+    if (error) rejectCode(error)
+    else resolveCode(receivedCode ?? '')
+  }
+
+  timer = setTimeout(() => {
+    finish(new Error('OAuth flow timed out after 5 minutes'))
+  }, OAUTH_TIMEOUT_MS)
+  timer.unref()
+
+  const rejectRequest = (res: http.ServerResponse, status: number, body: string): void => {
+    res.writeHead(status, {'Content-Type': 'text/plain'})
+    res.end(body)
+  }
+
+  server = http.createServer((req, res) => {
+    if (settled) {
+      rejectRequest(res, 400, 'OAuth callback is closed')
+      return
+    }
+    if (!req.url || req.url.length > 4096) {
+      rejectRequest(res, 400, 'Bad Request')
+      return
+    }
+
+    let url: URL
+    try {
+      url = new URL(req.url, `http://${OAUTH_CALLBACK_HOST}:${port}`)
+    } catch {
+      rejectRequest(res, 400, 'Bad Request')
+      return
+    }
+
+    if (url.pathname !== OAUTH_REDIRECT_PATH) {
+      rejectRequest(res, 404, 'Not Found')
+      return
+    }
+
+    if (!statesMatch(state, url.searchParams.get('state'))) {
+      rejectRequest(res, 400, 'Invalid OAuth state')
+      return
+    }
+
+    const receivedCode = url.searchParams.get('code')
+    const receivedError = url.searchParams.get('error')
+    const safeError = (receivedError ?? '').replace(/[\r\n]/g, ' ').slice(0, 200)
+
+    res.writeHead(200, {'Content-Type': 'text/html'})
+    res.end(htmlPage(!receivedError, safeError))
+
+    if (receivedError) {
+      finish(new Error(`OAuth provider error: ${safeError}`))
+    } else if (receivedCode) {
+      finish(undefined, receivedCode)
+    } else {
+      finish(new Error('No authorization code received in callback'))
+    }
+  })
+
+  server.on('error', (err: NodeJS.ErrnoException) => {
+    finish(new Error(`Failed to start OAuth callback server: ${err.message}`))
+  })
+
+  server.listen(port, OAUTH_CALLBACK_HOST, () => {
+    if (settled || listeningSettled) return
+    listeningSettled = true
+    console.log(`OAuth callback server listening on http://${OAUTH_CALLBACK_HOST}:${port}${OAUTH_REDIRECT_PATH}`)
+    resolveListening()
+  })
+
+  return {
+    listening,
+    code: codePromise,
+    close: () => finish(new Error('OAuth callback server closed')),
+  }
+}
+
 export class OAuthManager {
+  constructor(private readonly options: OAuthManagerOptions = {}) {}
+
+  private vaultRoot(): string {
+    return this.options.vaultRoot ?? VAULT_DIR
+  }
+
+  private callbackPort(): number {
+    return this.options.port ?? OAUTH_PORT
+  }
+
+  private credentialsPath(agentName: string, serverName: string): string {
+    return path.join(this.vaultRoot(), agentName, `${serverName}-oauth.json`)
+  }
+
+  private ensureVault(agentName: string): void {
+    const root = this.vaultRoot()
+    ensurePrivateDir(root)
+    ensurePrivateDir(path.join(root, agentName))
+  }
+
+  private storeCredentials(agentName: string, serverName: string, credentials: OAuthCredentials): string {
+    this.ensureVault(agentName)
+    const credPath = this.credentialsPath(agentName, serverName)
+    writePrivateFile(credPath, JSON.stringify(credentials, null, 2))
+    return credPath
+  }
+
   private getOAuthAppCredentials(provider: string): {clientId: string; clientSecret: string; redirectUri: string} {
     // 1. Check SQLite provider_configs
     const dbConfig = db.getProviderConfig(provider)
@@ -131,7 +323,7 @@ export class OAuthManager {
       return {
         clientId: dbConfig.client_id,
         clientSecret: dbConfig.client_secret,
-        redirectUri: dbConfig.redirect_uri || `http://localhost:${OAUTH_PORT}${OAUTH_REDIRECT_PATH}`,
+        redirectUri: dbConfig.redirect_uri || `http://localhost:${this.callbackPort()}${OAUTH_REDIRECT_PATH}`,
       }
     }
 
@@ -145,7 +337,7 @@ export class OAuthManager {
       return {
         clientId: envClientId,
         clientSecret: envClientSecret,
-        redirectUri: envRedirectUri || `http://localhost:${OAUTH_PORT}${OAUTH_REDIRECT_PATH}`,
+        redirectUri: envRedirectUri || `http://localhost:${this.callbackPort()}${OAUTH_REDIRECT_PATH}`,
       }
     }
 
@@ -158,11 +350,11 @@ export class OAuthManager {
 
   /**
    * Start the OAuth flow for a given agent/server/provider.
-   * 1. Starts a temporary HTTP server on port 34567
-   * 2. Opens the browser to the provider's OAuth URL
-   * 3. Captures the callback at localhost:34567/callback
+   * 1. Starts a temporary HTTP server on 127.0.0.1 port 34567
+   * 2. Opens the browser to the provider's OAuth URL, including a random state
+   * 3. Accepts the callback only when its state matches, at 127.0.0.1:34567/callback
    * 4. Exchanges the code for tokens
-   * 5. Stores credentials in ~/.cast/vault/<agentName>/<serverName>-oauth.json
+   * 5. Stores credentials in ~/.cast/vault/<agentName>/<serverName>-oauth.json mode 0600
    * 6. Falls back to manual code entry if the browser cannot be opened
    */
   async startOAuthFlow(agentName: string, serverName: string, provider: string): Promise<OAuthCredentials> {
@@ -175,6 +367,7 @@ export class OAuthManager {
 
     const {clientId, clientSecret, redirectUri} = this.getOAuthAppCredentials(provider)
     const state = generateState()
+    const port = this.callbackPort()
 
     // Build authorization URL
     const authUrl = new URL(providerConfig.authorizeUrl)
@@ -188,103 +381,42 @@ export class OAuthManager {
       authUrl.searchParams.set(key, value)
     }
 
-    // Start temporary HTTP server to capture callback
-    let server: http.Server | null = null
-    let serverResolved = false
+    const session = listenForOAuthCode(state, port)
+    // Abandoning the callback (manual entry, or a listen failure) rejects this promise.
+    session.code.catch(() => {})
 
-    const cleanup = () => {
-      if (server) {
-        server.close()
-        server = null
-      }
-    }
+    const launchBrowser = this.options.openBrowser ?? openBrowser
+    let code = ''
 
-    const callbackPromise = new Promise<string>((resolve, reject) => {
-      server = http.createServer((req, res) => {
-        if (!req.url) {
-          res.writeHead(400, {'Content-Type': 'text/plain'})
-          res.end('Bad Request')
-          return
-        }
+    try {
+      await session.listening
 
-        const url = new URL(req.url, `http://localhost:${OAUTH_PORT}`)
-        if (url.pathname === OAUTH_REDIRECT_PATH) {
-          const receivedCode = url.searchParams.get('code')
-          const receivedError = url.searchParams.get('error')
+      const browserOpened = await launchBrowser(authUrl.toString())
+      if (!browserOpened) {
+        console.log('Unable to open browser automatically.')
+        console.log('Please visit the following URL and authorize the application:')
+        console.log(authUrl.toString())
 
-          res.writeHead(200, {'Content-Type': 'text/html'})
-          res.end(
-            `<html><body style="font-family:sans-serif;text-align:center;padding-top:50px;">` +
-            `<h1>${receivedError ? 'Authentication Failed' : 'Authentication Successful'}</h1>` +
-            `<p>${receivedError ? `Error: ${receivedError}` : 'You can close this window.'}</p>` +
-            `</body></html>`
-          )
+        const manualPromise = promptForCode().then(entered => ({source: 'manual' as const, code: entered}))
+        const callbackRace = session.code.then(received => ({source: 'callback' as const, code: received}))
 
-          cleanup()
-          serverResolved = true
-
-          if (receivedError) {
-            reject(new Error(`OAuth provider error: ${receivedError}`))
-          } else if (receivedCode) {
-            resolve(receivedCode)
-          } else {
-            reject(new Error('No authorization code received in callback'))
+        try {
+          const result = await Promise.race([callbackRace, manualPromise])
+          code = result.code
+          if (result.source === 'manual') {
+            callbackRace.catch(() => {})
+            session.close()
           }
-        } else {
-          res.writeHead(404, {'Content-Type': 'text/plain'})
-          res.end('Not Found')
+        } catch {
+          callbackRace.catch(() => {})
+          code = await promptForCode()
+          session.close()
         }
-      })
-
-      server.listen(OAUTH_PORT, () => {
-        console.log(`OAuth callback server listening on http://localhost:${OAUTH_PORT}${OAUTH_REDIRECT_PATH}`)
-      })
-
-      server.on('error', (err) => {
-        reject(new Error(`Failed to start OAuth callback server: ${err.message}`))
-        cleanup()
-        serverResolved = true
-      })
-
-      // Timeout after 5 minutes
-      setTimeout(() => {
-        if (!serverResolved) {
-          reject(new Error('OAuth flow timed out after 5 minutes'))
-          cleanup()
-          serverResolved = true
-        }
-      }, OAUTH_TIMEOUT_MS)
-    })
-
-    // Open browser
-    const browserOpened = await openBrowser(authUrl.toString())
-
-    let code: string
-    if (!browserOpened) {
-      console.log('Unable to open browser automatically.')
-      console.log('Please visit the following URL and authorize the application:')
-      console.log(authUrl.toString())
-
-      // Race between callback and manual entry
-      const manualPromise = promptForCode().then(c => ({source: 'manual' as const, code: c}))
-      const callbackRace = callbackPromise.then(c => ({source: 'callback' as const, code: c}))
-
-      try {
-        const result = await Promise.race([callbackRace, manualPromise])
-        code = result.code
-        if (result.source === 'manual') {
-          cleanup()
-          // Suppress unhandled rejection if callback eventually times out
-          callbackPromise.catch(() => {})
-        }
-      } catch (e) {
-        // If callback errored/timed out, fallback to manual
-        code = await promptForCode()
-        cleanup()
-        callbackPromise.catch(() => {})
+      } else {
+        code = await session.code
       }
-    } else {
-      code = await callbackPromise
+    } finally {
+      session.close()
     }
 
     if (!code) {
@@ -315,9 +447,7 @@ export class OAuthManager {
     }
 
     // Store credentials
-    ensureVaultDir(agentName)
-    const credPath = getCredentialsPath(agentName, serverName)
-    fs.writeFileSync(credPath, JSON.stringify(credentials, null, 2))
+    const credPath = this.storeCredentials(agentName, serverName, credentials)
 
     // Update SQLite credentials_path
     try {
@@ -335,7 +465,7 @@ export class OAuthManager {
    * Read stored OAuth credentials for a given agent/server.
    */
   getCredentials(agentName: string, serverName: string): OAuthCredentials | null {
-    const credPath = getCredentialsPath(agentName, serverName)
+    const credPath = this.credentialsPath(agentName, serverName)
     if (!fs.existsSync(credPath)) {
       return null
     }
@@ -402,8 +532,7 @@ export class OAuthManager {
       newCredentials.refresh_token = credentials.refresh_token
     }
 
-    const credPath = getCredentialsPath(agentName, serverName)
-    fs.writeFileSync(credPath, JSON.stringify(newCredentials, null, 2))
+    this.storeCredentials(agentName, serverName, newCredentials)
 
     console.log(`Access token refreshed for ${serverName}`)
     return newCredentials

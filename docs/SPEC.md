@@ -987,12 +987,12 @@ A `digitalocean/<model-id>` string selects DigitalOcean and sends `<model-id>` u
 ### OAuth Flow (Localhost)
 
 ```
-1. TypeScript CLI starts HTTP server on port 34567
-2. Opens browser to provider OAuth URL
+1. TypeScript CLI starts an HTTP server bound to 127.0.0.1 on port 34567
+2. Opens browser to provider OAuth URL with a crypto.randomBytes state
 3. User authenticates
 4. Provider redirects to localhost:34567/callback
-5. TypeScript CLI captures code, exchanges for tokens
-6. Stores in ~/.cast/vault/<agent>/<server>.json
+5. TypeScript CLI checks the state in constant time, then exchanges the code for tokens
+6. Stores in ~/.cast/vault/<agent>/<server>-oauth.json (directory mode 0700, file mode 0600)
 7. Stops temp server
 8. Falls back to manual code entry if browser unavailable
 ```

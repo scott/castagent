@@ -95,8 +95,10 @@ interpolation falls through to the environment if not set in YAML.
 
 - **API keys** go in `~/.cast/config.yaml` or the environment. They are never
   written to per-agent files.
-- **OAuth credentials** (e.g. Gmail) go in `~/.cast/vault/<agent>/` with
-  mode `0600`. The Builder Agent writes them during MCP install.
+- **OAuth credentials** (e.g. Gmail) go in `~/.cast/vault/<agent>/`. The
+  directory is mode `0700` and each credential file is mode `0600`. The
+  Builder Agent writes them during MCP install. The callback listens on
+  `127.0.0.1` and checks the OAuth state before it stores tokens.
 - **Bearer tokens** for deployed agents are stored in the system keychain
   (`keytar`). When the machine has no Secret Service, Cast writes the same
   token to `~/.cast/tokens/<agent>.token` and the per-deployment token to
