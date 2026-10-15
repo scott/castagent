@@ -65,6 +65,10 @@ If the image is already gone, shutdown stays quiet about it. If Docker
 cannot delete the image, shutdown prints a note and still removes the
 local records.
 
+Droplet shutdown deletes the droplet, then deletes the `cast-<agent>`
+memory volume and any older `cast-<agent>-<uuid>-memory` volume. A volume
+is reported as removed only when that delete succeeds.
+
 A SHA shuts down only that deployment. Another provider for the same
 agent stays in the registry and keeps its auth token. An agent name is
 accepted when every live row is the same target, and then every row of

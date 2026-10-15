@@ -137,6 +137,10 @@ the agent's persistent memory. The volume is keyed by the agent name
 `cast upgrade` to a new release, the new container reattaches the same
 volume and the agent's memories survive the upgrade.
 
+A DigitalOcean Droplet uses that same `cast-<name>` volume name. Shutdown
+deletes that volume and any older `cast-<name>-<uuid>-memory` volume left
+by a previous deploy.
+
 ## Rolling back
 
 There is no first-class `cast rollback` (yet). The recipe:

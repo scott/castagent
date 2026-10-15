@@ -15,7 +15,6 @@ import {
   execCommand,
   execCommandIgnoreError,
   generateDeploymentId,
-  getVolumeName,
   prepareHostTuiBuildContext,
   createDockerignore,
   installPin,
@@ -280,6 +279,140 @@ function delay(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
+const LEGACY_DO_VOLUME_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Droplet memory volume keyed by agent name (`cast-<name>`). */
+export function digitalOceanMemoryVolumeName(agentName: string): string {
+  return `cast-${agentName}`
+}
+
+/**
+ * Pre-fix volumes were `cast-<agent>-<uuid>-memory`, one per deploy.
+ * `cast-<agent>-latest-memory` is the name shutdown used to target. It was never created.
+ */
+export function isLegacyDigitalOceanMemoryVolume(volumeName: string, agentName: string): boolean {
+  const prefix = `cast-${agentName}-`
+  const suffix = '-memory'
+  if (!volumeName.startsWith(prefix) || !volumeName.endsWith(suffix)) return false
+  const deploymentId = volumeName.slice(prefix.length, volumeName.length - suffix.length)
+  return LEGACY_DO_VOLUME_ID.test(deploymentId)
+}
+
+export function isAgentDigitalOceanMemoryVolume(volumeName: string, agentName: string): boolean {
+  return volumeName === digitalOceanMemoryVolumeName(agentName) || isLegacyDigitalOceanMemoryVolume(volumeName, agentName)
+}
+
+export interface DigitalOceanMemoryPlan {
+  volumeId: string
+  action: 'create' | 'reuse'
+}
+
+/**
+ * The documented Droplet volume is `cast-<agent>`. A later deploy reuses it.
+ * When that volume is absent and an older uuid volume is still in the account,
+ * the older volume is reused so this deploy does not allocate another one.
+ * If the volume list cannot be read, a recorded volume is reused for the same reason.
+ */
+export function planDigitalOceanMemoryVolume(
+  agentName: string,
+  recordedVolumeId: string | null | undefined,
+  listedVolumeNames: string[] | null,
+): DigitalOceanMemoryPlan {
+  const canonical = digitalOceanMemoryVolumeName(agentName)
+  if (listedVolumeNames === null) {
+    if (recordedVolumeId) return {volumeId: recordedVolumeId, action: 'reuse'}
+    return {volumeId: canonical, action: 'create'}
+  }
+  if (listedVolumeNames.includes(canonical)) {
+    return {volumeId: canonical, action: 'reuse'}
+  }
+  if (recordedVolumeId && listedVolumeNames.includes(recordedVolumeId)) {
+    return {volumeId: recordedVolumeId, action: 'reuse'}
+  }
+  const legacy = listedVolumeNames.find(name => isLegacyDigitalOceanMemoryVolume(name, agentName))
+  if (legacy) return {volumeId: legacy, action: 'reuse'}
+  return {volumeId: canonical, action: 'create'}
+}
+
+export function digitalOceanMemoryVolumesToRemove(
+  agentName: string,
+  recordedVolumeIds: Array<string | null | undefined>,
+  listedVolumeNames: string[] | null,
+): string[] {
+  const names = new Set<string>()
+  for (const id of recordedVolumeIds) {
+    if (id) names.add(id)
+  }
+  if (listedVolumeNames) {
+    for (const name of listedVolumeNames) {
+      if (isAgentDigitalOceanMemoryVolume(name, agentName)) names.add(name)
+    }
+  } else {
+    names.add(digitalOceanMemoryVolumeName(agentName))
+  }
+  return [...names].sort()
+}
+
+export interface DoctlCommandResult {
+  exitCode: number
+  stdout: string
+  stderr: string
+}
+
+export function digitalOceanVolumeRemovalMessage(volumeId: string, result: DoctlCommandResult): string | null {
+  if (result.exitCode === 0) return `Memory volume '${volumeId}' has been removed.`
+  const detail = `${result.stderr}\n${result.stdout}`
+  if (/not found/i.test(detail) || /\b404\b/.test(detail)) return null
+  return `Note: Memory volume '${volumeId}' could not be removed.`
+}
+
+export type DoctlRunner = (args: string[]) => Promise<DoctlCommandResult>
+
+function defaultDoctlRunner(): DoctlRunner {
+  return async (args) => {
+    const result = await execCommand('doctl', args, {silent: true})
+    return {exitCode: result.exitCode, stdout: result.stdout, stderr: result.stderr}
+  }
+}
+
+export async function listDigitalOceanVolumeNames(run: DoctlRunner): Promise<string[] | null> {
+  try {
+    const result = await run(['compute', 'volume', 'list', '--format', 'Name', '--no-header'])
+    if (result.exitCode !== 0) return null
+    return result.stdout.split(/\r?\n/).map(line => line.trim()).filter(line => line.length > 0)
+  } catch {
+    return null
+  }
+}
+
+export async function removeDigitalOceanMemoryVolumes(
+  agentName: string,
+  recordedVolumeIds: Array<string | null | undefined>,
+  run: DoctlRunner = defaultDoctlRunner(),
+  log: (message: string) => void = console.log,
+): Promise<void> {
+  const listed = await listDigitalOceanVolumeNames(run)
+  const volumes = digitalOceanMemoryVolumesToRemove(agentName, recordedVolumeIds, listed)
+  for (const volumeId of volumes) {
+    let result: DoctlCommandResult
+    try {
+      result = await run(['compute', 'volume', 'delete', volumeId, '--force'])
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      log(`Note: Memory volume '${volumeId}' could not be removed (${message}).`)
+      continue
+    }
+    const line = digitalOceanVolumeRemovalMessage(volumeId, result)
+    if (line) log(line)
+  }
+}
+
+function latestDigitalOceanVolumeId(agentName: string): string | null {
+  const row = db.listDeployments(agentName).find((item: {provider?: string; volume_id?: string | null}) => item.provider === 'digitalocean')
+  const volumeId = row?.volume_id
+  return typeof volumeId === 'string' && volumeId.length > 0 ? volumeId : null
+}
+
 function findLoopbackPort(startPort: number, endPort: number): Promise<number> {
   const tryPort = (port: number): Promise<number> => {
     if (port > endPort) {
@@ -414,34 +547,30 @@ export default class DigitalOceanDeploy extends Command {
 
     if (!dropletId) {
       console.log(`Droplet '${dropletName}' not found.`)
-      return
-    }
-
-    // Stop container first
-    if (dropletIp) {
-      try {
-        await execSsh(dropletIp, 'docker stop cast-agent && docker rm cast-agent', true)
-      } catch {
-        // ignore
+    } else {
+      // Stop container first
+      if (dropletIp) {
+        try {
+          await execSsh(dropletIp, 'docker stop cast-agent && docker rm cast-agent', true)
+        } catch {
+          // ignore
+        }
       }
+
+      // Delete droplet
+      const deleteResult = await execCommand('doctl', ['compute', 'droplet', 'delete', dropletId, '--force'], {silent: true})
+      if (deleteResult.exitCode !== 0) {
+        throw new Error(`Failed to delete droplet: ${deleteResult.stderr}`)
+      }
+      console.log(`Droplet '${dropletName}' deleted.`)
+      forgetDropletHostKey(dropletId, dropletIp)
     }
 
-    // Delete droplet
-    const deleteResult = await execCommand('doctl', ['compute', 'droplet', 'delete', dropletId, '--force'], {silent: true})
-    if (deleteResult.exitCode !== 0) {
-      throw new Error(`Failed to delete droplet: ${deleteResult.stderr}`)
-    }
-    console.log(`Droplet '${dropletName}' deleted.`)
-    forgetDropletHostKey(dropletId, dropletIp)
-
-    // Clean up volume
-    const volumeId = getVolumeName(agentName, 'latest')
-    try {
-      await execCommand('doctl', ['compute', 'volume', 'delete', volumeId, '--force'], {silent: true})
-      console.log(`Memory volume '${volumeId}' has been removed.`)
-    } catch {
-      console.log(`Note: Memory volume '${volumeId}' could not be removed.`)
-    }
+    // Delete the volume this deploy created, plus any older uuid volume still billing.
+    const recorded = db.listDeployments(agentName)
+      .filter((row: {provider?: string}) => row.provider === 'digitalocean')
+      .map((row: {volume_id?: string | null}) => row.volume_id)
+    await removeDigitalOceanMemoryVolumes(agentName, recorded)
   }
 
   async run(): Promise<void> {
@@ -492,10 +621,16 @@ export default class DigitalOceanDeploy extends Command {
       fs.cpSync(castRuntimeSrc, castRuntimeDir, { recursive: true })
     }
 
-    // Generate auth token and deployment ID
+    // Generate auth token and deployment ID.
+    // The volume name is the agent name. A uuid is only kept when an older volume is still present.
     const { authToken, tokenHash } = await generateAuthToken(agentName)
     const deploymentId = generateDeploymentId()
-    const volumeId = getVolumeName(agentName, deploymentId)
+    const memoryPlan = planDigitalOceanMemoryVolume(
+      agentName,
+      latestDigitalOceanVolumeId(agentName),
+      await listDigitalOceanVolumeNames(defaultDoctlRunner()),
+    )
+    const volumeId = memoryPlan.volumeId
 
     // Get DO token
     const apiToken = getProviderToken('digitalocean', ['DIGITALOCEAN_ACCESS_TOKEN', 'DIGITALOCEAN_API_TOKEN', 'DIGITALOCEAN_API_KEY'])
@@ -567,11 +702,14 @@ export default class DigitalOceanDeploy extends Command {
 
     await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, volumeId, deploymentUrl, deployedVersion, withTui)
 
-    // Create and attach volume
-    this.log(`Creating memory volume: ${volumeId}`)
-    const volumeResult = await this.createAndAttachVolume(apiToken, droplet.id, volumeId, droplet.region)
-    if (volumeResult) {
-      this.log(`Volume attached at ${volumeResult}`)
+    if (memoryPlan.action === 'create') {
+      this.log(`Creating memory volume: ${volumeId}`)
+      const volumeResult = await this.createAndAttachVolume(apiToken, droplet.id, volumeId, droplet.region)
+      if (volumeResult) {
+        this.log(`Volume attached at ${volumeResult}`)
+      }
+    } else {
+      this.log(`Reusing memory volume: ${volumeId}`)
     }
 
     // Save deployment

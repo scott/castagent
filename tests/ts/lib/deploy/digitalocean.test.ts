@@ -6,7 +6,16 @@ import * as fs from 'fs'
 import * as os from 'os'
 import axios from 'axios'
 
-import DigitalOceanDeploy, {remoteDockerRunCommand} from '../../../../typescript/cast-cli/src/lib/deploy/digitalocean'
+import DigitalOceanDeploy, {
+  digitalOceanMemoryVolumeName,
+  digitalOceanMemoryVolumesToRemove,
+  digitalOceanVolumeRemovalMessage,
+  isLegacyDigitalOceanMemoryVolume,
+  planDigitalOceanMemoryVolume,
+  remoteDockerRunCommand,
+  removeDigitalOceanMemoryVolumes,
+} from '../../../../typescript/cast-cli/src/lib/deploy/digitalocean'
+import {db} from '../../../../typescript/cast-cli/src/lib/sqlite'
 import * as deployUtils from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 import * as motd from '../../../../typescript/cast-cli/src/lib/deploy/motd'
 import {castKnownHostsPath, recordPinnedHostKey} from '../../../../typescript/cast-cli/src/lib/deploy/ssh-hostkey'
@@ -97,6 +106,190 @@ describe('DigitalOcean Deploy Provider', () => {
   describe('static destroy method', () => {
     it('should have destroy method', () => {
       expect(typeof DigitalOceanDeploy.destroy).to.equal('function')
+    })
+  })
+
+  describe('memory volume identity', () => {
+    const legacy = 'cast-bb4-do-11111111-1111-1111-1111-111111111111-memory'
+    const older = 'cast-bb4-do-22222222-2222-2222-2222-222222222222-memory'
+    const wrong = 'cast-bb4-do-latest-memory'
+
+    it('names the volume cast-<agent>', () => {
+      expect(digitalOceanMemoryVolumeName('bb4-do')).to.equal('cast-bb4-do')
+    })
+
+    it('recognizes only pre-fix uuid volumes for that agent', () => {
+      expect(isLegacyDigitalOceanMemoryVolume(legacy, 'bb4-do')).to.equal(true)
+      expect(isLegacyDigitalOceanMemoryVolume('cast-bb4-do', 'bb4-do')).to.equal(false)
+      expect(isLegacyDigitalOceanMemoryVolume(wrong, 'bb4-do')).to.equal(false)
+      expect(isLegacyDigitalOceanMemoryVolume('cast-bb4-do-deploy-123-memory', 'bb4-do')).to.equal(false)
+      expect(isLegacyDigitalOceanMemoryVolume(legacy, 'bb4')).to.equal(false)
+      expect(isLegacyDigitalOceanMemoryVolume('cast-bb4-do-bot', 'bb4-do')).to.equal(false)
+    })
+
+    it('creates cast-<agent> when the account has no volume for the agent', () => {
+      expect(planDigitalOceanMemoryVolume('bb4-do', null, [])).to.deep.equal({
+        volumeId: 'cast-bb4-do',
+        action: 'create',
+      })
+    })
+
+    it('reuses cast-<agent> on a second deploy', () => {
+      expect(planDigitalOceanMemoryVolume('bb4-do', 'cast-bb4-do', ['cast-bb4-do', older])).to.deep.equal({
+        volumeId: 'cast-bb4-do',
+        action: 'reuse',
+      })
+    })
+
+    it('reuses the recorded uuid volume when cast-<agent> does not exist', () => {
+      expect(planDigitalOceanMemoryVolume('bb4-do', legacy, [legacy, older, 'cast-other'])).to.deep.equal({
+        volumeId: legacy,
+        action: 'reuse',
+      })
+    })
+
+    it('reuses the recorded volume when the volume list cannot be read', () => {
+      expect(planDigitalOceanMemoryVolume('bb4-do', legacy, null)).to.deep.equal({
+        volumeId: legacy,
+        action: 'reuse',
+      })
+    })
+
+    it('selects the named volume, recorded volumes, and leftover pre-fix volumes', () => {
+      const names = digitalOceanMemoryVolumesToRemove(
+        'bb4-do',
+        [legacy, null, ''],
+        ['cast-bb4-do', legacy, older, wrong, 'cast-bb4-do-bot', 'cast-other'],
+      )
+      expect(names).to.deep.equal(['cast-bb4-do', legacy, older].sort())
+      expect(names).to.not.include(wrong)
+    })
+
+    it('reports removal only when the volume delete succeeds', () => {
+      expect(digitalOceanVolumeRemovalMessage('cast-bb4-do', {exitCode: 0, stdout: '', stderr: ''}))
+        .to.equal("Memory volume 'cast-bb4-do' has been removed.")
+      expect(digitalOceanVolumeRemovalMessage(legacy, {exitCode: 1, stdout: '', stderr: 'Error: volume not found'}))
+        .to.equal(null)
+      expect(digitalOceanVolumeRemovalMessage(legacy, {exitCode: 1, stdout: '', stderr: 'GET https://api.digitalocean.com/v2/volumes 404'}))
+        .to.equal(null)
+      expect(digitalOceanVolumeRemovalMessage(legacy, {exitCode: 1, stdout: '', stderr: 'volume is attached to a droplet'}))
+        .to.equal("Note: Memory volume '" + legacy + "' could not be removed.")
+    })
+  })
+
+  describe('shutdown memory volumes', () => {
+    const legacy = 'cast-bb4-do-11111111-1111-1111-1111-111111111111-memory'
+    const older = 'cast-bb4-do-22222222-2222-2222-2222-222222222222-memory'
+    const wrong = 'cast-bb4-do-latest-memory'
+    let previousToken: string | undefined
+
+    beforeEach(() => {
+      previousToken = process.env.DIGITALOCEAN_ACCESS_TOKEN
+      process.env.DIGITALOCEAN_ACCESS_TOKEN = 'test-do-token'
+    })
+
+    afterEach(() => {
+      if (previousToken === undefined) delete process.env.DIGITALOCEAN_ACCESS_TOKEN
+      else process.env.DIGITALOCEAN_ACCESS_TOKEN = previousToken
+    })
+
+    it('deletes the uuid volume deploy created and does not claim latest was removed', async () => {
+      sandbox.stub(db, 'listDeployments').returns([
+        {provider: 'digitalocean', volume_id: legacy},
+        {provider: 'fly', volume_id: 'cast-bb4-do-fly'},
+      ])
+      const deleted: string[] = []
+      sandbox.stub(deployUtils, 'execCommand').callsFake(async (_command: string, args: string[]) => {
+        if (args[0] === 'account') return {exitCode: 0, stdout: '', stderr: ''}
+        if (args[1] === 'droplet' && args[2] === 'list') {
+          return {exitCode: 0, stdout: '4242 cast-bb4-do\n', stderr: ''}
+        }
+        if (args[1] === 'droplet' && args[2] === 'delete') {
+          return {exitCode: 0, stdout: '', stderr: ''}
+        }
+        if (args[1] === 'volume' && args[2] === 'list') {
+          return {exitCode: 0, stdout: [legacy, older, 'cast-other', wrong].join('\n'), stderr: ''}
+        }
+        if (args[1] === 'volume' && args[2] === 'delete') {
+          deleted.push(args[3])
+          return {exitCode: 0, stdout: '', stderr: ''}
+        }
+        return {exitCode: 0, stdout: '', stderr: ''}
+      })
+      const logs: string[] = []
+      sandbox.stub(console, 'log').callsFake((line: unknown) => {
+        logs.push(String(line))
+      })
+
+      await DigitalOceanDeploy.destroy('bb4-do')
+
+      expect(deleted.sort()).to.deep.equal([legacy, older].sort())
+      expect(deleted).to.not.include(wrong)
+      expect(deleted).to.not.include('cast-other')
+      expect(deleted).to.not.include('cast-bb4-do-fly')
+      expect(logs).to.include(`Memory volume '${legacy}' has been removed.`)
+      expect(logs).to.include(`Memory volume '${older}' has been removed.`)
+      expect(logs.some(line => line.includes(wrong))).to.equal(false)
+      expect(logs).to.include("Droplet 'cast-bb4-do' deleted.")
+    })
+
+    it('still deletes the recorded volume when the droplet is already gone', async () => {
+      sandbox.stub(db, 'listDeployments').returns([
+        {provider: 'digitalocean', volume_id: legacy},
+      ])
+      const deleted: string[] = []
+      sandbox.stub(deployUtils, 'execCommand').callsFake(async (_command: string, args: string[]) => {
+        if (args[1] === 'droplet' && args[2] === 'list') return {exitCode: 0, stdout: '', stderr: ''}
+        if (args[1] === 'volume' && args[2] === 'list') return {exitCode: 0, stdout: `${legacy}\n`, stderr: ''}
+        if (args[1] === 'volume' && args[2] === 'delete') {
+          deleted.push(args[3])
+          return {exitCode: 0, stdout: '', stderr: ''}
+        }
+        return {exitCode: 0, stdout: '', stderr: ''}
+      })
+      const logs: string[] = []
+      sandbox.stub(console, 'log').callsFake((line: unknown) => {
+        logs.push(String(line))
+      })
+
+      await DigitalOceanDeploy.destroy('bb4-do')
+
+      expect(deleted).to.deep.equal([legacy])
+      expect(logs).to.include("Droplet 'cast-bb4-do' not found.")
+      expect(logs).to.include(`Memory volume '${legacy}' has been removed.`)
+      expect(logs.some(line => line.includes('latest-memory'))).to.equal(false)
+    })
+
+    it('does not claim a volume was removed when doctl rejects the delete', async () => {
+      sandbox.stub(db, 'listDeployments').returns([{provider: 'digitalocean', volume_id: 'cast-bb4-do'}])
+      sandbox.stub(deployUtils, 'execCommand').callsFake(async (_command: string, args: string[]) => {
+        if (args[1] === 'droplet' && args[2] === 'list') return {exitCode: 0, stdout: '', stderr: ''}
+        if (args[1] === 'volume' && args[2] === 'list') return {exitCode: 0, stdout: 'cast-bb4-do\n', stderr: ''}
+        if (args[1] === 'volume' && args[2] === 'delete') {
+          return {exitCode: 1, stdout: '', stderr: 'volume is attached to a droplet'}
+        }
+        return {exitCode: 0, stdout: '', stderr: ''}
+      })
+      const logs: string[] = []
+      sandbox.stub(console, 'log').callsFake((line: unknown) => {
+        logs.push(String(line))
+      })
+
+      await DigitalOceanDeploy.destroy('bb4-do')
+
+      const volumeLogs = logs.filter(line => line.includes('Memory volume'))
+      expect(volumeLogs).to.deep.equal([
+        "Note: Memory volume 'cast-bb4-do' could not be removed.",
+      ])
+    })
+
+    it('stays quiet when the recorded volume is already gone', async () => {
+      const logs: string[] = []
+      await removeDigitalOceanMemoryVolumes('bb4-do', [legacy], async (args) => {
+        if (args[2] === 'list') return {exitCode: 0, stdout: '', stderr: ''}
+        return {exitCode: 1, stdout: '', stderr: 'Error: volume not found'}
+      }, (line) => logs.push(line))
+      expect(logs).to.deep.equal([])
     })
   })
 
