@@ -49,6 +49,10 @@ DigitalOcean SSH checks the droplet host key. Cast generates an ed25519 key, ins
 
 A new droplet uses size `s-2vcpu-2gb`. Pass `--size` with a size slug, such as `s-1vcpu-1gb`, to choose another size. An existing droplet keeps its original size.
 
+Deploy also requires the OpenSSH client (`ssh` and `ssh-keygen`) and checks both before it stores an auth token. If deploy fails after that token is written, Cast deletes the token for that attempt, including `~/.cast/tokens/deployments/<sha>.token`. The agent token file is deleted only when no other deployment is still live.
+
+`cast shutdown` of a droplet deletes the DigitalOcean account SSH key named `cast-do-key` when no other Cast droplet or Cast MicroVM still uses it. The key stays while another Cast droplet or MicroVM remains. The private key at `~/.ssh/cast_do_key` stays on this machine. The next deploy uploads it again if the account key is missing.
+
 `cast deploy --provider local` is not implemented. The command exits with
 `Not yet implemented. Use --provider docker for now.` and does not record
 a deployment. `cast registry` stays empty, and `cast connect` reports that

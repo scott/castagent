@@ -87,6 +87,15 @@ removed from. A token taken from the system keychain is reported as
 `token file`. A token another live deployment still needs is left in
 place.
 
+DigitalOcean droplet shutdown deletes the droplet and its memory
+volume. It also deletes the account SSH key named `cast-do-key` when
+no other Cast droplet or Cast MicroVM still uses it. The key is left
+in the account when another Cast droplet or MicroVM remains. The login
+key file `~/.ssh/cast_do_key` is not deleted. A failed deploy removes
+the bearer token it stored for that attempt, so a missing `ssh` or
+`ssh-keygen` does not leave `~/.cast/tokens/deployments/<sha>.token`
+behind.
+
 In the TUI, `{% ref "slash:shutdown" %}` lists every active deployment
 (including DigitalOcean MicroVM and local) and shuts one down after a
 Y/N confirmation. It runs in dev and production, not in the

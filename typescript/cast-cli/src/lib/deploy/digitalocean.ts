@@ -1,5 +1,5 @@
 import {Args, Command, Flags} from '@oclif/core'
-import {execSync, spawn, type ChildProcess} from 'child_process'
+import {execFileSync, spawn, type ChildProcess} from 'child_process'
 import * as net from 'net'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -17,12 +17,17 @@ import {
   prepareHostTuiBuildContext,
   prepareCastImageContext,
   installPin,
+  checkCli,
+  deploymentShaFromEnv,
+  isShaPattern,
 } from './deploy-utils'
 import {containerHealthFailureMessage, waitForContainerHealth, type ContainerProbe} from './container-health'
 import {buildCloudInitBaselineMotd, buildHostMotd, writeHostMotdOverSsh} from './motd'
 import type {MotdContext} from './motd'
 import {shellSingleQuote} from './sprites-service'
 import {db} from '../sqlite'
+import {keychain} from '../keychain'
+import type {ProviderToolCheck} from './types'
 import {
   assertOpenSshEd25519PrivateKey,
   assertPinnedHostKey,
@@ -38,8 +43,25 @@ import {
   syncDropletAddress,
 } from './ssh-hostkey'
 
-const SSH_KEY_NAME = 'cast-do-key'
-const SSH_KEY_PATH = castDoKeyPath()
+export const SSH_KEY_NAME = 'cast-do-key'
+
+/** OpenSSH client tools. Deploy checks both before it stores an auth token. */
+export const DIGITALOCEAN_SSH_TOOL_CHECKS: ProviderToolCheck[] = [
+  {
+    command: 'ssh',
+    installUrl: 'https://www.openssh.com/',
+    error: 'ssh is required for DigitalOcean deployment. Install the OpenSSH client.',
+  },
+  {
+    command: 'ssh-keygen',
+    installUrl: 'https://www.openssh.com/',
+    error: 'ssh-keygen is required for DigitalOcean deployment. Install OpenSSH.',
+  },
+]
+
+function sshLoginKeyPath(): string {
+  return castDoKeyPath()
+}
 
 // Execute SSH command with shell: false to prevent shell from interfering with options.
 // A 30s default timeout is applied so a hung SSH probe can't block
@@ -510,6 +532,251 @@ export async function startDropletSshTunnel(
     : `SSH tunnel to ${ip} did not open`)
 }
 
+export interface AccountSshKey {
+  id: number | string
+  name: string
+}
+
+export interface NamedDroplet {
+  id: string
+  name: string
+}
+
+export type AccountSshKeyCleanup =
+  | {action: 'remove'; id: number | string}
+  | {action: 'keep'}
+  | {action: 'absent'}
+
+export interface CastAccountKeyConsumer {
+  id: string
+  name: string
+}
+
+/**
+ * The account key is shared. Remove it only when no other Cast droplet
+ * and no Cast MicroVM (or other Cast resource that still references it)
+ * remains. A droplet still listed under the id just deleted does not count.
+ * Volumes and the container registry do not use this login key.
+ */
+export function accountSshKeyCleanup(
+  droplets: NamedDroplet[],
+  keys: AccountSshKey[],
+  removedDropletId: string,
+  stillUsing: CastAccountKeyConsumer[] = [],
+): AccountSshKeyCleanup {
+  const key = keys.find(item => item.name === SSH_KEY_NAME)
+  const dropletRemains = droplets.some(droplet =>
+    droplet.id !== removedDropletId && droplet.name.startsWith('cast-'),
+  )
+  const otherRemains = stillUsing.length > 0
+  if (dropletRemains || otherRemains) return key ? {action: 'keep'} : {action: 'absent'}
+  if (!key) return {action: 'absent'}
+  return {action: 'remove', id: key.id}
+}
+
+function tagNames(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  const names: string[] = []
+  for (const tag of value) {
+    if (typeof tag === 'string' && tag.length > 0) names.push(tag)
+    else if (tag && typeof tag === 'object' && typeof (tag as {name?: unknown}).name === 'string') {
+      names.push((tag as {name: string}).name)
+    }
+  }
+  return names
+}
+
+function sshKeyEntryUsesAccountKey(entry: unknown): boolean {
+  if (typeof entry === 'string') return entry === SSH_KEY_NAME
+  if (!entry || typeof entry !== 'object') return false
+  const name = (entry as {name?: unknown}).name
+  return name === SSH_KEY_NAME
+}
+
+/**
+ * Cast MicroVMs are named `cast-*` or tagged `cast`. A record that lists
+ * SSH keys and does not include `cast-do-key` is not using it. A record
+ * that does not say which keys it uses is treated as still using the key.
+ */
+export function castMicrovmsUsingAccountKey(stdout: string): CastAccountKeyConsumer[] {
+  const trimmed = stdout.trim()
+  if (!trimmed) return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch {
+    throw new Error('Could not read the DigitalOcean MicroVM list')
+  }
+  const records = Array.isArray(parsed)
+    ? parsed
+    : parsed && typeof parsed === 'object' && Array.isArray((parsed as {microvms?: unknown}).microvms)
+      ? (parsed as {microvms: unknown[]}).microvms
+      : []
+  const consumers: CastAccountKeyConsumer[] = []
+  for (const record of records) {
+    if (!record || typeof record !== 'object') continue
+    const item = record as {id?: unknown; name?: unknown; tags?: unknown; ssh_keys?: unknown; sshKeys?: unknown}
+    const id = item.id == null ? '' : String(item.id)
+    const name = typeof item.name === 'string' ? item.name : ''
+    if (!id) continue
+    const createdByCast = name.startsWith('cast-') || tagNames(item.tags).includes('cast')
+    if (!createdByCast) continue
+    const listedKeys = Array.isArray(item.ssh_keys) ? item.ssh_keys : Array.isArray(item.sshKeys) ? item.sshKeys : null
+    if (listedKeys && !listedKeys.some(sshKeyEntryUsesAccountKey)) continue
+    consumers.push({id, name: name || id})
+  }
+  return consumers
+}
+
+function assertAccountSshKeyId(id: number | string): string {
+  const text = String(id)
+  if (!/^[0-9]+$/.test(text)) {
+    throw new Error('Refusing to delete an SSH key with an unexpected id')
+  }
+  return text
+}
+
+/** Follow only the next page of this account's SSH keys. */
+export function digitalOceanKeysPage(value: unknown): string | null {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 2000) return null
+  let parsed: URL
+  try {
+    parsed = new URL(value)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'api.digitalocean.com') return null
+  if (parsed.port && parsed.port !== '443') return null
+  if (parsed.username || parsed.password) return null
+  if (parsed.pathname !== '/v2/account/keys') return null
+  return parsed.toString()
+}
+
+async function listAccountSshKeys(apiToken: string): Promise<AccountSshKey[]> {
+  const keys: AccountSshKey[] = []
+  let url: string | null = 'https://api.digitalocean.com/v2/account/keys?per_page=200'
+  for (let page = 0; page < 20 && url; page++) {
+    const response = await axios.get(url, {
+      headers: {Authorization: `Bearer ${apiToken}`},
+    })
+    const batch = response.data?.ssh_keys
+    if (Array.isArray(batch)) {
+      for (const item of batch) {
+        if (!item || typeof item !== 'object') continue
+        const id = (item as {id?: unknown}).id
+        const name = (item as {name?: unknown}).name
+        if ((typeof id === 'number' || typeof id === 'string') && typeof name === 'string') {
+          keys.push({id, name})
+        }
+      }
+    }
+    url = digitalOceanKeysPage(response.data?.links?.pages?.next)
+  }
+  return keys
+}
+
+async function listDropletRecords(): Promise<NamedDroplet[]> {
+  const result = await execCommand(
+    'doctl',
+    ['compute', 'droplet', 'list', '--format', 'ID,Name', '--no-header'],
+    {silent: true},
+  )
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || 'Failed to list DigitalOcean droplets')
+  }
+  const droplets: NamedDroplet[] = []
+  for (const line of result.stdout.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const parts = trimmed.split(/\s+/)
+    if (parts.length < 2 || !parts[0] || !parts[1]) continue
+    droplets.push({id: parts[0], name: parts[1]})
+  }
+  return droplets
+}
+
+async function listAccountSshKeysFromDoctl(): Promise<AccountSshKey[]> {
+  const result = await execCommand(
+    'doctl',
+    ['compute', 'ssh-key', 'list', '--format', 'ID,Name', '--no-header'],
+    {silent: true},
+  )
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || result.stdout || 'Failed to list DigitalOcean SSH keys')
+  }
+  const keys: AccountSshKey[] = []
+  for (const line of result.stdout.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+    const parts = trimmed.split(/\s+/)
+    if (parts.length < 2 || !parts[0] || !parts[1]) continue
+    keys.push({id: parts[0], name: parts.slice(1).join(' ')})
+  }
+  return keys
+}
+
+async function listCastMicrovmsUsingAccountKey(): Promise<CastAccountKeyConsumer[]> {
+  const result = await execCommand(
+    'doctl',
+    ['compute', 'microvm', 'list', '--output', 'json'],
+    {silent: true},
+  )
+  if (result.exitCode !== 0) {
+    throw new Error(result.stderr || result.stdout || 'Failed to list DigitalOcean MicroVMs')
+  }
+  return castMicrovmsUsingAccountKey(result.stdout)
+}
+
+/**
+ * Delete `cast-do-key` only when no other Cast droplet, MicroVM, or
+ * other Cast resource still uses it. Failures are logged. The droplet
+ * delete has already finished.
+ */
+export async function removeUnusedCastAccountSshKey(
+  _apiToken: string,
+  removedDropletId: string,
+): Promise<'removed' | 'kept' | 'absent' | 'failed'> {
+  try {
+    const droplets = await listDropletRecords()
+    const stillUsing = await listCastMicrovmsUsingAccountKey()
+    const keys = await listAccountSshKeysFromDoctl()
+    const decision = accountSshKeyCleanup(droplets, keys, removedDropletId, stillUsing)
+    if (decision.action === 'keep') {
+      console.log(`Left DigitalOcean account SSH key '${SSH_KEY_NAME}' in place. Another Cast droplet or MicroVM still uses it.`)
+      return 'kept'
+    }
+    if (decision.action === 'absent') return 'absent'
+    const id = assertAccountSshKeyId(decision.id)
+    const deleted = await execCommand('doctl', ['compute', 'ssh-key', 'delete', id, '--force'], {silent: true})
+    if (deleted.exitCode !== 0) {
+      throw new Error(deleted.stderr || deleted.stdout || 'Failed to delete the account SSH key')
+    }
+    console.log(`Removed DigitalOcean account SSH key '${SSH_KEY_NAME}'.`)
+    return 'removed'
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    console.log(`Note: DigitalOcean account SSH key '${SSH_KEY_NAME}' could not be removed. ${message}`)
+    return 'failed'
+  }
+}
+
+/**
+ * Drop the bearer token written for a deploy that did not finish.
+ * A live deployment keeps the agent token. The per-deployment file
+ * for this attempt is always removed.
+ */
+export async function discardFailedDigitalOceanTokens(
+  agentName: string,
+  deploymentSha: string | undefined,
+): Promise<void> {
+  if (deploymentSha && isShaPattern(deploymentSha)) {
+    await keychain.deleteDeploymentToken(deploymentSha)
+  }
+  if (db.listDeployments(agentName).length === 0) {
+    await keychain.deleteToken(agentName)
+  }
+}
+
 export default class DigitalOceanDeploy extends Command {
   static description = 'Deploy agent to DigitalOcean Droplet with Docker'
 
@@ -590,6 +857,7 @@ export default class DigitalOceanDeploy extends Command {
       .filter((row: {provider?: string}) => row.provider === 'digitalocean')
       .map((row: {volume_id?: string | null}) => row.volume_id)
     await removeDigitalOceanMemoryVolumes(agentName, recorded)
+    await removeUnusedCastAccountSshKey(apiToken, dropletId)
   }
 
   async run(): Promise<void> {
@@ -621,6 +889,15 @@ export default class DigitalOceanDeploy extends Command {
       this.error('Docker is required for DigitalOcean deployment. Install from https://docs.docker.com/get-docker/')
     }
 
+    await this.requireSshTools()
+
+    // Get DO token before any bearer token is stored. A missing
+    // prerequisite must not leave a token file behind.
+    const apiToken = getProviderToken('digitalocean', ['DIGITALOCEAN_ACCESS_TOKEN', 'DIGITALOCEAN_API_TOKEN', 'DIGITALOCEAN_API_KEY'])
+    if (!apiToken) {
+      this.error('DigitalOcean API token not found. Set DIGITALOCEAN_ACCESS_TOKEN, DIGITALOCEAN_API_TOKEN, or DIGITALOCEAN_API_KEY environment variable, or add providers.digitalocean.token to ~/.cast/config.yaml')
+    }
+
     // Resolve project root for locating cast runtime
     const projectRoot = this.findProjectRoot()
     prepareCastImageContext(agentPath, projectRoot)
@@ -638,130 +915,149 @@ export default class DigitalOceanDeploy extends Command {
     }
     fs.cpSync(castRuntimeSrc, castRuntimeDir, { recursive: true })
 
-    // Generate auth token and deployment ID.
+    // Generate auth token and deployment ID. Later failures delete it.
     // The volume name is the agent name. A uuid is only kept when an older volume is still present.
-    const { authToken, tokenHash } = await generateAuthToken(agentName)
+    const deploymentSha = deploymentShaFromEnv()
     const deploymentId = generateDeploymentId()
-    const memoryPlan = planDigitalOceanMemoryVolume(
-      agentName,
-      latestDigitalOceanVolumeId(agentName),
-      await listDigitalOceanVolumeNames(defaultDoctlRunner()),
-    )
-    const volumeId = memoryPlan.volumeId
-
-    // Get DO token
-    const apiToken = getProviderToken('digitalocean', ['DIGITALOCEAN_ACCESS_TOKEN', 'DIGITALOCEAN_API_TOKEN', 'DIGITALOCEAN_API_KEY'])
-    if (!apiToken) {
-      this.error('DigitalOcean API token not found. Set DIGITALOCEAN_ACCESS_TOKEN, DIGITALOCEAN_API_TOKEN, or DIGITALOCEAN_API_KEY environment variable, or add providers.digitalocean.token to ~/.cast/config.yaml')
-    }
-
-    // Setup SSH key
-    await this.ensureSshKey()
-
-    // Prepare on-host TUI bundle (cast-tui command inside the container).
-    // Skipped entirely when --with-tui is not set, which keeps the image
-    // ~100MB smaller and substantially reduces streaming time.
-    if (withTui) {
-      this.log('Preparing on-host TUI bundle...')
-    }
-    await prepareHostTuiBuildContext(agentPath, projectRoot, { enabled: withTui })
-
-    // Get or create droplet
-    const droplet = await this.getOrCreateDroplet(agentName, agentPath, apiToken, dropletSize)
-
-    this.log(`Droplet IP: ${droplet.ip}`)
-    this.log('Waiting for SSH to be available...')
-    await this.waitForSsh(droplet.ip)
-
-    // Cloud-init's runcmd (which installs Docker) runs asynchronously and
-    // SSH comes up before that completes. If we try to `docker load` over
-    // SSH right after `waitForSsh`, we'll hit "docker: command not found"
-    // on fresh droplets. Poll for a working Docker daemon before
-    // streaming the image.
-    this.log('Waiting for Docker to be ready on droplet...')
-    await this.waitForDocker(droplet.ip)
-
-    // Build Docker image locally for AMD64 target (DO droplets are x86_64)
-    const imageTag = `cast-${agentName}:latest`
-    this.log('Building Docker image for linux/amd64...')
-    const buildResult = await execCommand('docker', [
-      'buildx', 'build',
-      '--platform', 'linux/amd64',
-      '--load',
-      '-t', imageTag,
-      '-f', path.join(agentPath, 'Dockerfile'),
-      agentPath,
-    ])
-    if (buildResult.exitCode !== 0) {
-      this.error(`Docker build failed: ${buildResult.stderr}`)
-    }
-
-    // Stream image directly to droplet (no intermediate disk write)
-    this.log('Streaming Docker image to droplet...')
-    await this.streamImageToDroplet(droplet.ip, imageTag)
-
-    // Deploy on droplet. The recorded URL is the droplet address.
-    // cast connect does not fetch it. It opens an SSH tunnel instead.
-    this.log('Deploying on droplet...')
-    const deploymentUrl = dropletDeploymentUrl(droplet.ip)
-
-    // Look up the current agent release version so the SSH login MOTD
-    // shows the semantic version (e.g. v1.2.3) instead of a placeholder.
-    let deployedVersion: string | undefined
+    let authToken = ''
+    let tokenHash = ''
     try {
-      const currentRelease = db.getCurrentRelease(agentName)
-      if (currentRelease?.version) {
-        deployedVersion = String(currentRelease.version)
+      const generated = await generateAuthToken(agentName)
+      authToken = generated.authToken
+      tokenHash = generated.tokenHash
+      const memoryPlan = planDigitalOceanMemoryVolume(
+        agentName,
+        latestDigitalOceanVolumeId(agentName),
+        await listDigitalOceanVolumeNames(defaultDoctlRunner()),
+      )
+      const volumeId = memoryPlan.volumeId
+
+      // Setup SSH key. A local key is uploaded when the account key is missing.
+      await this.ensureSshKey()
+
+      // Prepare on-host TUI bundle (cast-tui command inside the container).
+      // Skipped entirely when --with-tui is not set, which keeps the image
+      // ~100MB smaller and substantially reduces streaming time.
+      if (withTui) {
+        this.log('Preparing on-host TUI bundle...')
       }
-    } catch {
-      // DB unavailable — MOTD will fall back to a placeholder
-    }
+      await prepareHostTuiBuildContext(agentPath, projectRoot, { enabled: withTui })
 
-    await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, volumeId, deploymentUrl, deployedVersion, withTui)
+      // Get or create droplet
+      const droplet = await this.getOrCreateDroplet(agentName, agentPath, apiToken, dropletSize)
 
-    if (memoryPlan.action === 'create') {
-      this.log(`Creating memory volume: ${volumeId}`)
-      const volumeResult = await this.createAndAttachVolume(apiToken, droplet.id, volumeId, droplet.region)
-      if (volumeResult) {
-        this.log(`Volume attached at ${volumeResult}`)
+      this.log(`Droplet IP: ${droplet.ip}`)
+      this.log('Waiting for SSH to be available...')
+      await this.waitForSsh(droplet.ip)
+
+      // Cloud-init's runcmd (which installs Docker) runs asynchronously and
+      // SSH comes up before that completes. If we try to `docker load` over
+      // SSH right after `waitForSsh`, we'll hit "docker: command not found"
+      // on fresh droplets. Poll for a working Docker daemon before
+      // streaming the image.
+      this.log('Waiting for Docker to be ready on droplet...')
+      await this.waitForDocker(droplet.ip)
+
+      // Build Docker image locally for AMD64 target (DO droplets are x86_64)
+      const imageTag = `cast-${agentName}:latest`
+      this.log('Building Docker image for linux/amd64...')
+      const buildResult = await execCommand('docker', [
+        'buildx', 'build',
+        '--platform', 'linux/amd64',
+        '--load',
+        '-t', imageTag,
+        '-f', path.join(agentPath, 'Dockerfile'),
+        agentPath,
+      ])
+      if (buildResult.exitCode !== 0) {
+        this.error(`Docker build failed: ${buildResult.stderr}`)
       }
-    } else {
-      this.log(`Reusing memory volume: ${volumeId}`)
-    }
 
-    // Save deployment
-    const volumeConfig = JSON.stringify({ deploymentId, mountPath: '/app/agent/memory', region: droplet.region })
-    saveDeployment(agentName, 'digitalocean', deploymentUrl, tokenHash, volumeId, volumeConfig)
+      // Stream image directly to droplet (no intermediate disk write)
+      this.log('Streaming Docker image to droplet...')
+      await this.streamImageToDroplet(droplet.ip, imageTag)
 
-    this.log('')
-    this.log('╔══════════════════════════════════════════════════════════════╗')
-    this.log('║         DigitalOcean Droplet Deployment Successful!          ║')
-    this.log('╚══════════════════════════════════════════════════════════════╝')
-    this.log('')
-    this.log(`Agent: ${agentName}`)
-    this.log(`URL: ${deploymentUrl}`)
-    this.log(`Droplet: ${droplet.name}`)
-    this.log(`Provider: digitalocean`)
-    this.log('')
-    this.log('The agent listens on 127.0.0.1:8080 inside the droplet.')
-    this.log('Port 8080 is not open to the internet.')
-    this.log('')
-    this.log('To view logs:')
-    this.log(`  ${sshLoginHint(droplet.ip, '"docker logs -f cast-agent"')}`)
-    this.log('')
-    this.log('To connect (from your machine):')
-    this.log(`  cast connect ${agentName}`)
-    this.log('cast connect opens an SSH tunnel. The bearer token stays inside SSH.')
-    this.log('')
-    if (withTui) {
-      this.log('To chat on-host (SSH into droplet, then inside container):')
-      this.log(`  ${sshLoginHint(droplet.ip)}`)
-      this.log(`  docker exec -it cast-agent bash`)
-      this.log(`  cast-tui`)
+      // Deploy on droplet. The recorded URL is the droplet address.
+      // cast connect does not fetch it. It opens an SSH tunnel instead.
+      this.log('Deploying on droplet...')
+      const deploymentUrl = dropletDeploymentUrl(droplet.ip)
+
+      // Look up the current agent release version so the SSH login MOTD
+      // shows the semantic version (e.g. v1.2.3) instead of a placeholder.
+      let deployedVersion: string | undefined
+      try {
+        const currentRelease = db.getCurrentRelease(agentName)
+        if (currentRelease?.version) {
+          deployedVersion = String(currentRelease.version)
+        }
+      } catch {
+        // DB unavailable. MOTD will fall back to a placeholder.
+      }
+
+      await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, volumeId, deploymentUrl, deployedVersion, withTui)
+
+      if (memoryPlan.action === 'create') {
+        this.log(`Creating memory volume: ${volumeId}`)
+        const volumeResult = await this.createAndAttachVolume(apiToken, droplet.id, volumeId, droplet.region)
+        if (volumeResult) {
+          this.log(`Volume attached at ${volumeResult}`)
+        }
+      } else {
+        this.log(`Reusing memory volume: ${volumeId}`)
+      }
+
+      // Save deployment
+      const volumeConfig = JSON.stringify({ deploymentId, mountPath: '/app/agent/memory', region: droplet.region })
+      saveDeployment(agentName, 'digitalocean', deploymentUrl, tokenHash, volumeId, volumeConfig)
+
       this.log('')
+      this.log('╔══════════════════════════════════════════════════════════════╗')
+      this.log('║         DigitalOcean Droplet Deployment Successful!          ║')
+      this.log('╚══════════════════════════════════════════════════════════════╝')
+      this.log('')
+      this.log(`Agent: ${agentName}`)
+      this.log(`URL: ${deploymentUrl}`)
+      this.log(`Droplet: ${droplet.name}`)
+      this.log(`Provider: digitalocean`)
+      this.log('')
+      this.log('The agent listens on 127.0.0.1:8080 inside the droplet.')
+      this.log('Port 8080 is not open to the internet.')
+      this.log('')
+      this.log('To view logs:')
+      this.log(`  ${sshLoginHint(droplet.ip, '"docker logs -f cast-agent"')}`)
+      this.log('')
+      this.log('To connect (from your machine):')
+      this.log(`  cast connect ${agentName}`)
+      this.log('cast connect opens an SSH tunnel. The bearer token stays inside SSH.')
+      this.log('')
+      if (withTui) {
+        this.log('To chat on-host (SSH into droplet, then inside container):')
+        this.log(`  ${sshLoginHint(droplet.ip)}`)
+        this.log(`  docker exec -it cast-agent bash`)
+        this.log(`  cast-tui`)
+        this.log('')
+      }
+      this.log('To destroy:')
+      this.log(`  cast shutdown ${agentName}`)
+    } catch (error) {
+      try {
+        await discardFailedDigitalOceanTokens(agentName, deploymentSha)
+      } catch (cleanupError) {
+        const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+        this.warn(`Failed to remove the auth token from the failed deploy: ${message}`)
+      }
+      throw error
     }
-    this.log('To destroy:')
-    this.log(`  cast shutdown ${agentName}`)
+  }
+
+  private async requireSshTools(): Promise<void> {
+    for (const check of DIGITALOCEAN_SSH_TOOL_CHECKS) {
+      try {
+        await checkCli(check.command, check.installUrl)
+      } catch {
+        this.error(check.error)
+      }
+    }
   }
 
   /**
@@ -791,40 +1087,39 @@ export default class DigitalOceanDeploy extends Command {
   }
 
   private async ensureSshKey(): Promise<void> {
-    if (fs.existsSync(SSH_KEY_PATH)) {
-      return
+    const keyPath = sshLoginKeyPath()
+    if (!fs.existsSync(keyPath)) {
+      fs.mkdirSync(path.dirname(keyPath), {recursive: true, mode: 0o700})
+
+      // ssh-keygen -N '' sets an empty passphrase without a shell.
+      try {
+        execFileSync('ssh-keygen', [
+          '-t', 'ed25519',
+          '-f', keyPath,
+          '-N', '',
+          '-C', 'cast@digitalocean',
+        ], {
+          encoding: 'utf8',
+          stdio: 'pipe',
+        })
+      } catch (e: any) {
+        const stderr = e?.stderr ? String(e.stderr) : ''
+        throw new Error(`Failed to generate SSH key: ${stderr || e.message}`)
+      }
     }
 
-    fs.mkdirSync(path.dirname(SSH_KEY_PATH), {recursive: true, mode: 0o700})
-
-    // Generate SSH key (use execSync directly to handle empty passphrase properly)
-    try {
-      execSync(`ssh-keygen -t ed25519 -f "${SSH_KEY_PATH}" -N "" -C "cast@digitalocean"`, {
-        encoding: 'utf8',
-        stdio: 'pipe',
-      })
-    } catch (e: any) {
-      throw new Error(`Failed to generate SSH key: ${e.stderr || e.message}`)
-    }
-
-    // Upload to DigitalOcean
+    // Upload when the account key is missing, including after shutdown
+    // removed it and the local private key is still here.
     const apiToken = getProviderToken('digitalocean', ['DIGITALOCEAN_ACCESS_TOKEN', 'DIGITALOCEAN_API_TOKEN', 'DIGITALOCEAN_API_KEY'])
     if (!apiToken) {
       throw new Error('DigitalOcean API token not found')
     }
 
-    const pubKeyPath = `${SSH_KEY_PATH}.pub`
-    const pubKey = fs.readFileSync(pubKeyPath, 'utf8').trim()
+    const pubKey = fs.readFileSync(`${keyPath}.pub`, 'utf8').trim()
 
-    // Check if key already exists
     try {
-      const keysResult = await axios.get('https://api.digitalocean.com/v2/account/keys', {
-        headers: {Authorization: `Bearer ${apiToken}`},
-      })
-      const existingKey = keysResult.data.ssh_keys?.find((k: any) => k.name === SSH_KEY_NAME)
-      if (existingKey) {
-        return
-      }
+      const keys = await listAccountSshKeys(apiToken)
+      if (keys.some(key => key.name === SSH_KEY_NAME)) return
     } catch {
       // ignore, will try to create
     }
@@ -861,7 +1156,7 @@ export default class DigitalOceanDeploy extends Command {
     this.log(`Creating droplet '${dropletName}'...`)
 
     // Get SSH key fingerprint (MD5 format required by DO API)
-    const keyResult = await execCommand('ssh-keygen', ['-l', '-E', 'md5', '-f', `${SSH_KEY_PATH}.pub`], {silent: true})
+    const keyResult = await execCommand('ssh-keygen', ['-l', '-E', 'md5', '-f', `${sshLoginKeyPath()}.pub`], {silent: true})
     const fingerprint = keyResult.stdout.trim().split(/\s+/)[1].replace(/^MD5:/, '')
 
     // Write cloud-init to install Docker and seed a baseline MOTD.
