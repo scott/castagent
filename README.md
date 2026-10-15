@@ -155,8 +155,9 @@ cast dev demo-agent --no-tui
 # View agent logs (local runtime output, or Docker container logs)
 cast logs demo-agent
 
-# Stop a running local agent, or a Docker container deployed on this machine.
-# The Docker deployment and its memory volume stay. cast shutdown removes them.
+# Stop a running local agent, a Docker container on this machine, or the
+# container on a DigitalOcean droplet. The deployment and its memory stay.
+# cast shutdown removes them.
 cast stop demo-agent
 
 # Rename an agent
@@ -227,7 +228,7 @@ Docker shutdown removes the local image `cast-<agent>:latest` along with the con
 
 DigitalOcean MicroVMs (`--provider microvm`) are separate from Droplets. They are in public preview in region MKC1, run linux/amd64 images from DigitalOcean Container Registry, and pause when idle. The next request resumes a paused MicroVM. Cast Agent retries HTTP 503 while it wakes. The edge closes each chat response about 15 seconds after the request starts, even while bytes are still arriving. Cast keeps that reply running and the client continues it on the next request. A keepalive still covers proxies that drop a quiet stream. Deploy or upgrade the agent so the image includes that runtime, and reconnect with a current build. `--with-tui` is rejected. The endpoint expects your DigitalOcean token on `Authorization` and the agent token on `X-Cast-Authorization`. If the edge does not forward that second header, rerun with `--edge-auth-only`. Logs are `doctl compute microvm exec <id> -- <log command>`. `doctl` 1.173.0 or newer is required.
 
-DigitalOcean Droplets keep the agent on `127.0.0.1:8080`. Port 8080 is not opened to the internet, and a redeploy removes a public allow rule left by an older deploy. The registry URL is `https://<droplet-ip>`. That value identifies the droplet. It is not a public A2A listener. `cast connect` opens an SSH tunnel to the loopback port and sends the bearer token inside SSH. The token is written to `/var/lib/cast/cast-agent.env` (mode 0600) and passed to `docker run` with `--env-file`, so it is not a shell argument. Redeploy an existing droplet to move it off a public port. The droplet memory volume is named `cast-<agent>`. Shutdown deletes that volume and any older `cast-<agent>-<uuid>-memory` volume from a previous deploy, and it reports the volume as removed only when the delete succeeds.
+DigitalOcean Droplets keep the agent on `127.0.0.1:8080`. Port 8080 is not opened to the internet, and a redeploy removes a public allow rule left by an older deploy. The registry URL is `https://<droplet-ip>`. That value identifies the droplet. It is not a public A2A listener. `cast connect` opens an SSH tunnel to the loopback port and sends the bearer token inside SSH. The token is written to `/var/lib/cast/cast-agent.env` (mode 0600) and passed to `docker run` with `--env-file`, so it is not a shell argument. Redeploy an existing droplet to move it off a public port. `cast stop` SSHs to that address and runs `docker stop cast-agent` when the container is running. The droplet and its memory volume stay in place. `cast shutdown` deletes the droplet. The droplet memory volume is named `cast-<agent>`. Shutdown deletes that volume and any older `cast-<agent>-<uuid>-memory` volume from a previous deploy, and it reports the volume as removed only when the delete succeeds.
 
 A new droplet uses size `s-2vcpu-2gb`. Pass `--size` with a DigitalOcean size slug to choose another size, for example `cast deploy demo-agent --provider digitalocean --size s-1vcpu-1gb`. An existing droplet keeps the size it was created with.
 

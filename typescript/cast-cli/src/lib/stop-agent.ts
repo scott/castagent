@@ -1,4 +1,6 @@
 import {execCommand} from './deploy/deploy-utils'
+import {dropletHostFromUrl} from './deploy/digitalocean'
+import {execDigitalOceanSsh, isIpv4Address} from './deploy/ssh-hostkey'
 import {dockerContainerName} from './runtime-logs'
 import {db} from './sqlite'
 
@@ -11,6 +13,7 @@ export interface LocalAgentRecord {
 
 export interface DeploymentRecord {
   provider: string
+  deployment_url?: string | null
 }
 
 export interface CommandResult {
@@ -23,6 +26,8 @@ export interface StopAgentDeps {
   getLocalAgent: (name: string) => LocalAgentRecord | null | undefined
   listDeployments: (name: string) => DeploymentRecord[]
   runDocker: (args: string[]) => Promise<CommandResult>
+  /** SSH to a droplet. The remote command is a fixed `docker` invocation. */
+  runSsh: (ip: string, remoteCmd: string) => Promise<CommandResult>
   signal: (pid: number, signal: NodeJS.Signals | 0) => void
   removeLocalAgent: (name: string) => void
   sleep?: (ms: number) => Promise<void>
@@ -53,6 +58,35 @@ export function dockerStopArgs(containerName: string, force: boolean): string[] 
 
 export function dockerInspectStatusArgs(containerName: string): string[] {
   return ['inspect', '--format', '{{.State.Status}}', containerName]
+}
+
+/** Container name on a DigitalOcean droplet. Deploy always uses this name. */
+export const DIGITALOCEAN_AGENT_CONTAINER = 'cast-agent'
+
+/**
+ * Droplet IPv4 from a deployment URL.
+ * Current rows are `https://<ip>`. Older rows are `http://<ip>:8080`.
+ */
+export function digitalOceanDropletIp(url: string | null | undefined): string {
+  if (typeof url !== 'string' || url.trim() === '') {
+    throw new Error('DigitalOcean deployment has no droplet address')
+  }
+  const host = dropletHostFromUrl(url)
+  if (!isIpv4Address(host)) {
+    throw new Error('DigitalOcean deployment has no IPv4 droplet address')
+  }
+  return host
+}
+
+/** Fixed remote inspect. The agent name and deployment URL are not included. */
+export function digitalOceanInspectCommand(): string {
+  return `docker inspect --format '{{.State.Status}}' ${DIGITALOCEAN_AGENT_CONTAINER}`
+}
+
+/** Fixed remote stop. `--time 0` is the droplet form of `--force`. */
+export function digitalOceanStopCommand(force: boolean): string {
+  if (force) return `docker stop --time 0 ${DIGITALOCEAN_AGENT_CONTAINER}`
+  return `docker stop ${DIGITALOCEAN_AGENT_CONTAINER}`
 }
 
 function log(text: string): StopMessage {
@@ -93,6 +127,10 @@ export function defaultStopAgentDeps(): StopAgentDeps {
     runDocker: (args) => execCommand('docker', args, {
       silent: true,
       shell: false,
+      timeoutMs: 30_000,
+    }),
+    runSsh: (ip, remoteCmd) => execDigitalOceanSsh(ip, remoteCmd, {
+      silent: true,
       timeoutMs: 30_000,
     }),
     signal: (pid, signal) => {
@@ -209,11 +247,78 @@ async function stopDockerDeployment(
 }
 
 /**
- * Stop the running agent on this machine.
+ * Stop container `cast-agent` on the newest DigitalOcean droplet deployment.
+ * Returns null when there is no droplet deployment, or the container is not up.
+ * A missing host key or a failed SSH session is an error, not "not running".
+ */
+async function stopDigitalOceanDeployment(
+  agentName: string,
+  force: boolean,
+  deps: StopAgentDeps,
+): Promise<StopAgentResult | null> {
+  const row = deps.listDeployments(agentName).find(item => item.provider === 'digitalocean')
+  if (!row) return null
+
+  let ip: string
+  try {
+    ip = digitalOceanDropletIp(row.deployment_url)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return failure(`Failed to stop agent: ${message}`)
+  }
+
+  let inspect: CommandResult
+  try {
+    inspect = await deps.runSsh(ip, digitalOceanInspectCommand())
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return failure(`Failed to stop agent: ${message}`)
+  }
+
+  if (missingContainer(inspect) || (inspect.exitCode === 0 && !isDockerContainerRunning(inspect.stdout))) {
+    return null
+  }
+  if (inspect.exitCode !== 0) {
+    const detail = commandDetail(inspect)
+    const text = detail
+      ? `Failed to stop agent: ${detail}`
+      : `Failed to stop agent: ssh exited ${inspect.exitCode}`
+    return failure(text)
+  }
+
+  const messages: StopMessage[] = []
+  const container = DIGITALOCEAN_AGENT_CONTAINER
+  push(messages, log(`Stopping agent '${agentName}' (DigitalOcean droplet ${ip}, container ${container})...`), deps)
+  let stopped: CommandResult
+  try {
+    stopped = await deps.runSsh(ip, digitalOceanStopCommand(force))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    messages.push({kind: 'error', text: `Failed to stop agent: ${message}`})
+    return {status: 'error', messages}
+  }
+  if (stopped.exitCode !== 0) {
+    const detail = commandDetail(stopped)
+    const text = detail
+      ? `Failed to stop agent: ${detail}`
+      : `Failed to stop agent: ssh exited ${stopped.exitCode}`
+    messages.push({kind: 'error', text})
+    return {status: 'error', messages}
+  }
+
+  push(messages, log(`✓ Agent '${agentName}' stopped successfully.`), deps)
+  return {status: 'stopped', messages}
+}
+
+/**
+ * Stop the running agent.
  *
- * A local `cast dev` process is recorded by PID. A Docker deploy is recorded
- * as a deployment and runs as container `cast-<name>`, with no PID row. When
- * the PID is missing or already gone, stop that container if it is up.
+ * A local `cast dev` process is recorded by PID. A Docker deploy runs as
+ * container `cast-<name>` on this machine. A DigitalOcean droplet deploy
+ * runs as container `cast-agent` on the droplet. A live local process is
+ * stopped on its own. When that process is missing or already gone, stop
+ * the local Docker container if it is up. When that container is not
+ * running, stop the droplet container if it is up.
  */
 export async function stopAgent(
   agentName: string,
@@ -230,15 +335,17 @@ export async function stopAgent(
   }
 
   const dockerResult = await stopDockerDeployment(agentName, force, deps)
-  if (!dockerResult) {
+  const dropletResult = dockerResult ? null : await stopDigitalOceanDeployment(agentName, force, deps)
+  const remote = dockerResult ?? dropletResult
+  if (!remote) {
     if (cleaned) return cleaned
     const messages: StopMessage[] = []
     push(messages, log(`Agent '${agentName}' is not currently running.`), deps)
     return {status: 'not_running', messages}
   }
-  if (!cleaned) return dockerResult
+  if (!cleaned) return remote
   return {
-    status: dockerResult.status,
-    messages: [...cleaned.messages, ...dockerResult.messages],
+    status: remote.status,
+    messages: [...cleaned.messages, ...remote.messages],
   }
 }
