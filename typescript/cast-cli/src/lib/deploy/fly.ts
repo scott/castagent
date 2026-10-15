@@ -94,6 +94,7 @@ export default class FlyDeploy extends Command {
     const secretResult = await execCommand('flyctl', ['secrets', 'set', '--app', `cast-${agentName}`, ...secretPairs], {
       cwd: agentPath,
       silent: true,
+      shell: false,
     })
     if (secretResult.exitCode !== 0) {
       this.warn(`Failed to set secrets: ${secretResult.stderr}`)

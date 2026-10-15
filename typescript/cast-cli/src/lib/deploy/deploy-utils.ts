@@ -822,11 +822,14 @@ export async function execCommand(
     const proc = spawn(command, args, {
       cwd: options?.cwd,
       env: options?.env || process.env,
-      shell: options?.shell ?? true,  // default to true for backwards compatibility
+      // argv is passed through as-is. shell:true would join it into sh -c
+      // and interpret quotes, backticks, and $() inside secret values.
+      shell: options?.shell ?? false,
     })
     let stdout = ''
     let stderr = ''
     let killed = false
+    let settled = false
 
     if (!options?.silent) {
       proc.stdout?.pipe(process.stdout)
@@ -852,6 +855,8 @@ export async function execCommand(
     let timeoutHandle: NodeJS.Timeout | undefined
     if (options?.timeoutMs && options.timeoutMs > 0) {
       timeoutHandle = setTimeout(() => {
+        if (settled) return
+        settled = true
         killed = true
         try {
           // SIGKILL is the only reliable way to stop a stuck child
@@ -866,15 +871,29 @@ export async function execCommand(
       }, options.timeoutMs)
     }
 
-    proc.on('error', (err) => {
+    proc.on('error', (err: NodeJS.ErrnoException) => {
       if (timeoutHandle) clearTimeout(timeoutHandle)
+      if (settled) return
+      settled = true
+      // A missing binary used to come back as sh's exit 127 because
+      // shell defaulted to true. Keep that result so callers that only
+      // check exitCode still see "command not found".
+      if (err.code === 'ENOENT') {
+        resolve({
+          stdout,
+          stderr: stderr || err.message,
+          exitCode: 127,
+        })
+        return
+      }
       reject(err)
     })
     proc.on('exit', (code) => {
       if (timeoutHandle) clearTimeout(timeoutHandle)
       // If we killed the process via timeout, the timeout's reject
       // has already been called — don't double-resolve.
-      if (killed) return
+      if (killed || settled) return
+      settled = true
       resolve({ stdout, stderr, exitCode: code || 0 })
     })
   })

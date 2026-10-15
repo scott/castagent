@@ -293,6 +293,20 @@ describe('execCommand', () => {
     // stderr may contain 'error'
     expect(result).to.have.property('stderr')
   })
+
+  it('does not run shell syntax that arrives inside an argument', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-exec-proof-'))
+    const marker = path.join(dir, 'marker')
+    const value = `tok"; touch ${marker}; echo "$(touch ${marker}) \`touch ${marker}\`"`
+    try {
+      const result = await execCommand('printf', ['%s', `AUTH_TOKEN=${value}`], {silent: true})
+      expect(result.exitCode).to.equal(0)
+      expect(result.stdout).to.equal(`AUTH_TOKEN=${value}`)
+      expect(fs.existsSync(marker)).to.equal(false)
+    } finally {
+      fs.rmSync(dir, {recursive: true, force: true})
+    }
+  })
 })
 
 describe('execCommandIgnoreError', () => {
