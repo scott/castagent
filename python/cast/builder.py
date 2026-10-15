@@ -267,6 +267,7 @@ harness:
 - Put the model under brain.model. It must be a catalog id. recommend_model returns catalog ids.
 - Put built-in tools under tools.builtin. Do not set tools to a list.
 - Put permissions under harness.permissions. Levels are always-allow, ask, and deny.
+- An MCP tool is deny until harness.permissions lists its advertised name. mcp and * cover every advertised name that is not listed on its own.
 - Do not set a top-level model, permissions, or memory key. Memory lives in memory/config.yaml.
 - Tell the user a setting changed only when the tool result lists it under Applied.
 - If the tool says nothing was applied, say that. Do not name a model or a permission level the tool did not store.

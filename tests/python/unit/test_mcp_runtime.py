@@ -3,14 +3,24 @@
 import os
 import shlex
 import sys
+from contextlib import contextmanager
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import yaml
+from langchain_core.messages import AIMessage
+
 from cast.agent.base import AgentConfig
 from cast.agent.runtime import RuntimeAgent
+from cast.harness.permissions import (
+    ALWAYS_ALLOW,
+    DENY,
+    MCP_ORIGIN,
+    permission_denied_message,
+)
 from cast.mcp.loader import _command_argv, _command_env, _unique_name, load_mcp_tools
+from cast.runtime import A2AServer
 
 FAKE_SERVER = Path(__file__).with_name("fake_mcp_server.py")
 
@@ -31,7 +41,12 @@ def _write_server(agent_dir: Path, filename: str, mode: str, env: dict | None = 
     (mcp_dir / filename).write_text(yaml.safe_dump(config), encoding="utf-8")
 
 
-def _agent_dir(tmp_path: Path, mcp_entries: list, permissions: dict | None = None) -> Path:
+def _agent_dir(
+    tmp_path: Path,
+    mcp_entries: list,
+    permissions: dict | None = None,
+    builtins: list | None = None,
+) -> Path:
     agent_dir = tmp_path / "agent"
     agent_dir.mkdir()
     config = {
@@ -44,7 +59,7 @@ def _agent_dir(tmp_path: Path, mcp_entries: list, permissions: dict | None = Non
         },
         "harness": {"permissions": permissions or {}},
         "tools": {
-            "builtin": ["bash", "read", "glob"],
+            "builtin": ["bash", "read", "glob"] if builtins is None else builtins,
             "mcp": mcp_entries,
             "custom": [],
         },
@@ -52,6 +67,60 @@ def _agent_dir(tmp_path: Path, mcp_entries: list, permissions: dict | None = Non
     (agent_dir / "agent.yaml").write_text(yaml.safe_dump(config), encoding="utf-8")
     (agent_dir / "instructions.md").write_text("You are a test agent.\n", encoding="utf-8")
     return agent_dir
+
+
+def _quote(path: Path) -> str:
+    return "'" + str(path).replace("'", "'\\''") + "'"
+
+
+def _message(text: str, request_id: str = "1") -> dict:
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "method": "message/send",
+        "params": {
+            "message": {
+                "role": "user",
+                "parts": [{"kind": "text", "text": text}],
+                "messageId": request_id,
+            }
+        },
+    }
+
+
+@contextmanager
+def _guarded_agent(agent_dir: Path, tool_name: str):
+    """Agent whose graph calls one real guarded tool."""
+    calls: dict = {"arguments": {}}
+
+    async def ainvoke(_payload):
+        result = await calls["tool"].ainvoke(calls["arguments"])
+        return {"messages": [AIMessage(content=str(result))]}
+
+    with (
+        patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}),
+        patch("cast.agent.runtime.get_provider") as get_provider,
+        patch("cast.agent.runtime.create_react_agent") as create_graph,
+    ):
+        provider = MagicMock()
+        provider.is_available.return_value = True
+        provider.create_llm.return_value = MagicMock()
+        provider.env_var = "OPENROUTER_API_KEY"
+        provider.name = "OpenRouter"
+        get_provider.return_value = provider
+        graph = MagicMock()
+        graph.ainvoke = ainvoke
+        create_graph.return_value = graph
+        agent = RuntimeAgent(AgentConfig.from_path(str(agent_dir)), agent_path=str(agent_dir))
+        agent.memory.format_memories = MagicMock(return_value="")
+        agent.memory.record = AsyncMock(return_value=None)
+        calls["tool"] = next(
+            tool for tool in create_graph.call_args.kwargs["tools"] if tool.name == tool_name
+        )
+        try:
+            yield agent, calls
+        finally:
+            agent.close()
 
 
 def _count_lines(path: Path) -> int:
@@ -428,3 +497,113 @@ class TestRuntimeAgentMcp:
             assert agent.mcp_sessions[0].is_running()
         finally:
             agent.close()
+
+
+class TestUnlistedMcpTools:
+    """Issue #250: a server-chosen name must not run as always-allow."""
+
+    def _open(self, tmp_path: Path, permissions: dict, *, advertised: str = "run", builtins=None):
+        count_path = tmp_path / "calls.txt"
+        agent_dir = _agent_dir(
+            tmp_path,
+            [{"server": "shell", "config": "mcp/shell.yaml"}],
+            permissions=permissions,
+            builtins=builtins,
+        )
+        env = {"CAST_MCP_COUNT": str(count_path)}
+        if advertised != "run":
+            env["CAST_MCP_TOOL_NAME"] = advertised
+        _write_server(agent_dir, "shell.yaml", "run", env)
+        return agent_dir, count_path
+
+    @pytest.mark.asyncio
+    async def test_message_send_does_not_run_unlisted_command(self, tmp_path: Path, capsys):
+        target = tmp_path / "ran.txt"
+        agent_dir, count_path = self._open(tmp_path, {"bash": "deny"}, builtins=["bash"])
+        command = f"printf ran > {_quote(target)}"
+        with _guarded_agent(agent_dir, "run") as (agent, calls):
+            calls["arguments"] = {"command": command}
+            assert agent.permission_gate.action_for("run") == DENY
+            assert agent.permission_gate.action_for("bash") == DENY
+            server = A2AServer(agent, port=0)
+            response = await server.handle_request(_message("Use run to execute: " + command))
+        err = capsys.readouterr().err
+        text = response["result"]["parts"][0]["text"]
+        assert "Permission denied" in text
+        assert "run" in text
+        assert not target.exists()
+        assert _count_lines(count_path) == 0
+        assert "MCP tools advertised at startup: run" in err
+        assert "Denied until listed in harness.permissions: run." in err
+
+    @pytest.mark.asyncio
+    async def test_listed_name_still_runs(self, tmp_path: Path):
+        target = tmp_path / "ran.txt"
+        agent_dir, count_path = self._open(
+            tmp_path,
+            {"bash": "deny", "run": "always-allow"},
+            builtins=["bash"],
+        )
+        command = f"printf ok > {_quote(target)}"
+        with _guarded_agent(agent_dir, "run") as (agent, calls):
+            calls["arguments"] = {"command": command}
+            server = A2AServer(agent, port=0)
+            response = await server.handle_request(_message("run it"))
+        assert target.read_text() == "ok"
+        assert _count_lines(count_path) == 1
+        assert "Permission denied" not in response["result"]["parts"][0]["text"]
+
+    @pytest.mark.asyncio
+    async def test_mcp_deny_beats_wildcard_allow(self, tmp_path: Path):
+        target = tmp_path / "ran.txt"
+        agent_dir, count_path = self._open(
+            tmp_path,
+            {"mcp": "deny", "*": "always-allow"},
+            builtins=["bash"],
+        )
+        command = f"printf ran > {_quote(target)}"
+        with _guarded_agent(agent_dir, "run") as (agent, calls):
+            calls["arguments"] = {"command": command}
+            assert agent.permission_gate.action_for("run", origin=MCP_ORIGIN) == DENY
+            result = await calls["tool"].ainvoke(calls["arguments"])
+        assert result == permission_denied_message("run", DENY)
+        assert not target.exists()
+        assert _count_lines(count_path) == 0
+
+    @pytest.mark.asyncio
+    async def test_advertised_builtin_name_does_not_inherit_allow(self, tmp_path: Path, capsys):
+        target = tmp_path / "ran.txt"
+        agent_dir, count_path = self._open(
+            tmp_path,
+            {"bash": "deny"},
+            advertised="read",
+            builtins=["bash", "read"],
+        )
+        command = f"printf ran > {_quote(target)}"
+        with _guarded_agent(agent_dir, "read") as (agent, calls):
+            assert agent.permission_gate.action_for("read") == ALWAYS_ALLOW
+            assert agent.permission_gate.action_for("read", origin=MCP_ORIGIN) == DENY
+            calls["arguments"] = {"command": command}
+            result = await calls["tool"].ainvoke(calls["arguments"])
+        err = capsys.readouterr().err
+        assert result == permission_denied_message("read", DENY)
+        assert not target.exists()
+        assert _count_lines(count_path) == 0
+        assert "MCP tools sharing a built-in permissions key: read." in err
+
+    @pytest.mark.asyncio
+    async def test_mcp_ask_message_send_does_not_run(self, tmp_path: Path, capsys):
+        target = tmp_path / "ran.txt"
+        agent_dir, count_path = self._open(tmp_path, {"mcp": "ask"}, builtins=["bash"])
+        command = f"printf ran > {_quote(target)}"
+        with _guarded_agent(agent_dir, "run") as (agent, calls):
+            calls["arguments"] = {"command": command}
+            server = A2AServer(agent, port=0)
+            response = await server.handle_request(_message("run it"))
+        err = capsys.readouterr().err
+        text = response["result"]["parts"][0]["text"]
+        assert "Approval is required" in text
+        assert not target.exists()
+        assert _count_lines(count_path) == 0
+        assert "MCP tools advertised at startup: run" in err
+        assert "Denied until listed" not in err

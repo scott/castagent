@@ -7,7 +7,13 @@ from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langgraph.prebuilt import create_react_agent
 
 from .base import AgentConfig
-from ..harness.permissions import ApprovalBroker, PermissionGate, PermissionPrompt, guard_tool
+from ..harness.permissions import (
+    MCP_ORIGIN,
+    ApprovalBroker,
+    PermissionGate,
+    PermissionPrompt,
+    guard_tool,
+)
 from ..mcp.loader import load_mcp_tools
 from ..memory import MemoryMiddleware
 from ..memory.prompt import append_persistent_memory_instructions
@@ -112,6 +118,10 @@ class RuntimeAgent:
         self.mcp_sessions = sessions
         self.mcp_tools = mcp_tools
         self.tools = [*builtin, *mcp_tools]
+        for line in self.permission_gate.mcp_startup_messages(
+            [tool.name for tool in mcp_tools]
+        ):
+            print(line, file=sys.stderr, flush=True)
 
     def _warn_if_tools_unreadable(self) -> None:
         """A tools list is not tools.builtin. Say that, and do not blame the provider."""
@@ -153,8 +163,9 @@ class RuntimeAgent:
             # The graph receives guarded copies so harness.permissions is
             # checked before each call. self.tools stays the raw implementations.
             # Built-in permissions use the agent.yaml name (`bash`), not the
-            # model-facing name (`bash_tool`). MCP tools use the name the
-            # server advertised.
+            # model-facing name (`bash_tool`). A missing built-in entry stays
+            # always-allow. MCP tools use the registered name and are deny
+            # until that name, `mcp`, or `*` is set.
             builtin_tool_names = self.config.tools.get("builtin", [])
             if not isinstance(builtin_tool_names, list):
                 builtin_tool_names = []
@@ -164,7 +175,7 @@ class RuntimeAgent:
                 if isinstance(name, str) and name in BUILTIN_TOOLS
             ]
             guarded.extend(
-                guard_tool(tool, tool.name, self.permission_gate)
+                guard_tool(tool, tool.name, self.permission_gate, origin=MCP_ORIGIN)
                 for tool in self.mcp_tools
             )
             

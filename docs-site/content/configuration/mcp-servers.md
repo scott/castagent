@@ -79,8 +79,25 @@ server needs it.
 
 A call checks `harness.permissions` under the registered tool name.
 That matches the name the server advertised when no other tool already
-uses it. A missing entry is `always-allow`. `ask` and `deny` behave
-the same way they do for built-in tools.
+uses it. Startup prints those names. An MCP tool with no entry is
+`deny`, including when the advertised name matches a built-in such as
+`read`. A built-in tool with no entry stays `always-allow`.
+
+`mcp` sets one level for every advertised name that is not listed on
+its own. `*` does the same for MCP tools and other unknown names. A
+listed name wins over `mcp` and `*`, and `mcp` wins over `*`. `ask`
+and `deny` then behave the same way they do for built-in tools. Add
+each advertised name to `harness.permissions` before the first call.
+`mcp: always-allow` or `*: always-allow` allows every advertised tool
+on purpose. Listing each name is the safer choice.
+
+```yaml
+harness:
+  permissions:
+    bash: deny
+    mcp: deny
+    run: ask
+```
 
 ## OAuth credentials
 
