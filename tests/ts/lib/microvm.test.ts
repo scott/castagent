@@ -32,6 +32,7 @@ import MicrovmDeploy, {
   sanitizeRepoName,
   copyCastRuntime,
   settleFailedMicrovm,
+  shutdownRegistryDeleteArgs,
 } from '../../../typescript/cast-cli/src/lib/deploy/microvm'
 import * as deployUtils from '../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 import {readDoctlAccessToken} from '../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
@@ -270,6 +271,17 @@ describe('DigitalOcean MicroVM helpers', () => {
       '--force',
     ])
     expect(() => registryDeleteTagArgs('not-a-ref')).to.throw(/Unrecognized image reference/)
+  })
+
+  it('builds the shutdown delete-tag command from the stored image ref', () => {
+    expect(shutdownRegistryDeleteArgs('registry.digitalocean.com/cast/cast-mv-shutdown-agent:abc123')).to.deep.equal([
+      'registry', 'repository', 'delete-tag',
+      'cast-mv-shutdown-agent',
+      'abc123',
+      '--registry', 'cast',
+      '--force',
+    ])
+    expect(shutdownRegistryDeleteArgs('docker.io/library/cast:latest')).to.equal(undefined)
   })
 })
 
@@ -688,5 +700,143 @@ describe('failed MicroVM deploy cleanup', () => {
       expect(error.message).to.include('vm-new')
     }
     expect(tagDeletes(calls)).to.have.length(0)
+  })
+})
+
+describe('MicroVM shutdown registry tag', () => {
+  const agentName = 'mv-shutdown-agent'
+  let sandbox: sinon.SinonSandbox
+  let previousToken: string | undefined
+  let logs: string[]
+
+  function volumeConfig(tag: string, microvmId = 'vm-1'): string {
+    return JSON.stringify({
+      microvmId,
+      region: 'mkc1',
+      ociRef: `registry.digitalocean.com/cast/cast-mv-shutdown-agent:${tag}`,
+      authMode: 'dual',
+      cpu: 1,
+      memory: 2048,
+      idleTimeout: '15m',
+    })
+  }
+
+  beforeEach(() => {
+    sandbox = sinon.createSandbox()
+    previousToken = process.env.DIGITALOCEAN_ACCESS_TOKEN
+    process.env.DIGITALOCEAN_ACCESS_TOKEN = 'dop_test'
+    logs = []
+    sandbox.stub(console, 'log').callsFake((line: unknown) => {
+      logs.push(String(line))
+    })
+  })
+
+  afterEach(() => {
+    sandbox.restore()
+    if (previousToken === undefined) delete process.env.DIGITALOCEAN_ACCESS_TOKEN
+    else process.env.DIGITALOCEAN_ACCESS_TOKEN = previousToken
+  })
+
+  function stubDoctl(opts: {vmExit?: number; vmStderr?: string; tagExit?: number; tagStderr?: string} = {}): string[][] {
+    const calls: string[][] = []
+    sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = []) => {
+      calls.push([command, ...args])
+      const rest = args[0] === '--access-token' ? args.slice(2) : args
+      if (rest[1] === 'microvm' && rest[2] === 'delete') {
+        return {exitCode: opts.vmExit ?? 0, stdout: '', stderr: opts.vmStderr ?? ''}
+      }
+      if (rest[2] === 'delete-tag') {
+        return {exitCode: opts.tagExit ?? 0, stdout: '', stderr: opts.tagStderr ?? ''}
+      }
+      return {exitCode: 1, stdout: '', stderr: `unexpected ${rest.join(' ')}`}
+    })
+    return calls
+  }
+
+  function tagDeletes(calls: string[][]): string[][] {
+    return calls.filter(call => call.includes('delete-tag'))
+  }
+
+  it('deletes that deployment tag after the MicroVM is destroyed', async () => {
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123', 'vm-1')},
+      {id: 'bbbbbb', provider: 'microvm', volume_id: 'vm-2', volume_config: volumeConfig('bbbbbb', 'vm-2')},
+    ])
+    const calls = stubDoctl()
+    await MicrovmDeploy.destroy(agentName, {id: 'abc123', volume_id: 'vm-1'})
+    const tags = tagDeletes(calls)
+    expect(tags).to.have.length(1)
+    expect(tags[0]).to.include.members([
+      'cast-mv-shutdown-agent', 'abc123', '--registry', 'cast', '--force',
+    ])
+    expect(tags[0]).to.not.include('bbbbbb')
+    expect(calls.some(call => call.includes('vm-2'))).to.equal(false)
+    expect(logs).to.include("Deleted registry tag 'cast-mv-shutdown-agent:abc123'.")
+    expect(logs).to.include("MicroVM 'vm-1' has been destroyed.")
+  })
+
+  it('deletes the tag when the MicroVM is already gone', async () => {
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123')},
+    ])
+    const calls = stubDoctl({vmExit: 1, vmStderr: 'not found'})
+    await MicrovmDeploy.destroy(agentName, {id: 'abc123', volume_id: 'vm-1'})
+    expect(tagDeletes(calls)).to.have.length(1)
+    expect(logs).to.include("MicroVM 'vm-1' does not exist (already deleted).")
+    expect(logs).to.include("Deleted registry tag 'cast-mv-shutdown-agent:abc123'.")
+  })
+
+  it('leaves the tag when destroying the MicroVM fails', async () => {
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123')},
+    ])
+    const calls = stubDoctl({vmExit: 1, vmStderr: 'denied'})
+    try {
+      await MicrovmDeploy.destroy(agentName, {id: 'abc123', volume_id: 'vm-1'})
+      expect.fail('destroy should have failed')
+    } catch (error: any) {
+      expect(error.message).to.include("Failed to destroy MicroVM 'vm-1'")
+      expect(error.message).to.include('denied')
+    }
+    expect(tagDeletes(calls)).to.have.length(0)
+  })
+
+  it('treats a missing registry tag as a successful shutdown', async () => {
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123')},
+    ])
+    stubDoctl({tagExit: 1, tagStderr: 'tag not found'})
+    await MicrovmDeploy.destroy(agentName, {id: 'abc123', volume_id: 'vm-1'})
+    expect(logs).to.not.include("Deleted registry tag 'cast-mv-shutdown-agent:abc123'.")
+  })
+
+  it('reports a denied registry tag delete after the MicroVM is gone', async () => {
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123')},
+    ])
+    stubDoctl({tagExit: 1, tagStderr: 'permission denied'})
+    try {
+      await MicrovmDeploy.destroy(agentName, {id: 'abc123', volume_id: 'vm-1'})
+      expect.fail('tag delete should have failed')
+    } catch (error: any) {
+      expect(error.message).to.include("Failed to delete registry tag 'cast-mv-shutdown-agent:abc123'")
+      expect(error.message).to.include('permission denied')
+    }
+  })
+
+  it('skips the tag when the row has no volume config', async () => {
+    sandbox.stub(db, 'listDeployments').returns([])
+    const calls = stubDoctl()
+    await MicrovmDeploy.destroy(agentName, {volume_id: 'vm-1'})
+    expect(tagDeletes(calls)).to.have.length(0)
+    expect(logs).to.include("MicroVM 'vm-1' has been destroyed.")
+  })
+
+  it('uses the caller volume config when the database row is missing', async () => {
+    sandbox.stub(db, 'listDeployments').returns([])
+    const calls = stubDoctl()
+    await MicrovmDeploy.destroy(agentName, {volume_id: 'vm-1', volume_config: volumeConfig('abc123')})
+    expect(tagDeletes(calls)).to.have.length(1)
+    expect(tagDeletes(calls)[0]).to.include('abc123')
   })
 })
