@@ -675,7 +675,7 @@ describe('Deploy Command - agent.yaml', () => {
       expect(error.oclif?.exit).to.equal(1)
       expect(error.message).to.include('agent.yaml could not be parsed')
       expect(error.message).to.include('brain: [unclosed')
-      expect(error.message).to.include(`${path.join(os.homedir(), '.cast', 'agents', agentName, 'agent.yaml')}:3`)
+      expect(error.message).to.include(`${path.join(os.homedir(), '.cast', 'agents', agentName, 'agent.yaml')}:2)`)
       expect(error.message).to.not.include('Not yet implemented')
       expect(error.message).to.not.include('Deployment to local failed')
       expect(output).to.not.include('Deploying ')

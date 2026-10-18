@@ -113,10 +113,18 @@ is not a direct agent URL, and the deploy banner points at `cast connect`
 instead of presenting it as one.
 
 `cast connect` treats that 302 as Sprites auth. It starts the sprite
-service, then opens a local proxy:
+service, then opens a local proxy. Cast copies `SPRITES_TOKEN` onto
+`SPRITE_TOKEN` only for the `sprite` processes it starts. A proxy you
+start yourself does not get that copy. Run `sprite login` first, or set
+`SPRITE_TOKEN="$SPRITES_TOKEN"` on the command. Without one of those,
+`sprite` exits with "no organizations configured". The value stays in
+the environment. It is not a command argument.
+
+`sprite proxy` runs in the foreground until you stop it. Use a second
+terminal for the HTTP call, or end the proxy command with `&`.
 
 ```bash
-sprite proxy <port>:8080 -s cast-<agent>
+SPRITE_TOKEN="$SPRITES_TOKEN" sprite proxy <port>:8080 -s cast-<agent>
 ```
 
 The TUI talks to `http://127.0.0.1:<port>`. The proxy forwards to port
@@ -131,7 +139,8 @@ has no Secret Service. Put it in the environment and send it as a
 header. Do not pass it as an argument to `sprite` or `curl`.
 
 ```bash
-sprite proxy 8080:8080 -s cast-<agent>
+# Foreground. Second terminal for curl, or append &.
+SPRITE_TOKEN="$SPRITES_TOKEN" sprite proxy 8080:8080 -s cast-<agent>
 # CAST_TOKEN is the deployment bearer token, not SPRITES_TOKEN.
 curl --silent --show-error --config - http://127.0.0.1:8080/ <<EOF
 header = "Authorization: Bearer ${CAST_TOKEN}"
@@ -140,8 +149,20 @@ data = "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"agent/card\",\"params\":{
 EOF
 ```
 
-`message/send` is the same POST with a different `method`. A GET of
-`/health` or `/.well-known/agent.json` through the proxy returns 404.
+`message/send` needs `params.message` with `role` and `parts`. An empty
+`params` object returns JSON-RPC `-32602`, "No text content found in
+message".
+
+```bash
+curl --silent --show-error --config - http://127.0.0.1:8080/ <<EOF
+header = "Authorization: Bearer ${CAST_TOKEN}"
+header = "Content-Type: application/json"
+data = "{\"jsonrpc\":\"2.0\",\"id\":\"2\",\"method\":\"message/send\",\"params\":{\"message\":{\"role\":\"user\",\"parts\":[{\"kind\":\"text\",\"text\":\"Hello\"}]}}}"
+EOF
+```
+
+A GET of `/health` or `/.well-known/agent.json` through the proxy
+returns 404.
 
 `sprite url update --auth public -s cast-<agent>` turns off Sprites org
 auth for that address. Anyone with the URL can open a connection to the

@@ -97,8 +97,26 @@ class TestAgentConfig:
         message = str(exc_info.value)
         assert "agent.yaml could not be parsed" in message
         assert invalid_yaml_path in message
-        assert f"{invalid_yaml_path}:3" in message
-        assert "line 2" in message
+        assert f"{invalid_yaml_path}:2)" in message
+        assert f"{invalid_yaml_path}:3)" not in message
+        assert "brain: [unclosed" in message
+
+    def test_parse_error_uses_the_quoted_line(self, temp_agent_dir):
+        """The location is the bad line, not the blank line after it."""
+        yaml_path = os.path.join(temp_agent_dir, "agent.yaml")
+        lines = ["name: demo"]
+        lines.extend(f"key{i}: value" for i in range(20))
+        lines.append("brain: [unclosed")
+        assert len(lines) == 22
+        with open(yaml_path, "w") as handle:
+            handle.write("\n".join(lines) + "\n")
+
+        with pytest.raises(AgentConfigError) as exc_info:
+            AgentConfig.from_path(temp_agent_dir)
+
+        message = str(exc_info.value)
+        assert f"{yaml_path}:22)" in message
+        assert f"{yaml_path}:23)" not in message
         assert "brain: [unclosed" in message
 
     def test_from_path_with_non_mapping_yaml(self, temp_agent_dir):

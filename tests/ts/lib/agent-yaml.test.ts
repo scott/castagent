@@ -45,9 +45,26 @@ describe('agent.yaml load', () => {
       expect.fail('load should throw')
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
-      expect(message).to.include(`${yamlPath}:3`)
+      expect(message).to.include(`${yamlPath}:2)`)
+      expect(message).to.not.include(`${yamlPath}:3)`)
       expect(message).to.include('brain: [unclosed')
-      expect(message).to.include('line 3')
+    }
+  })
+
+  it('reports the quoted line, not the blank line after an unclosed token', () => {
+    const lines = ['name: demo']
+    for (let i = 0; i < 20; i++) lines.push(`key${i}: value`)
+    lines.push('brain: [unclosed')
+    expect(lines).to.have.length(22)
+    const yamlPath = write(`${lines.join('\n')}\n`)
+    try {
+      loadAgentYaml(dir)
+      expect.fail('load should throw')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      expect(message).to.include(`${yamlPath}:22)`)
+      expect(message).to.not.include(`${yamlPath}:23)`)
+      expect(message).to.include('brain: [unclosed')
     }
   })
 

@@ -2,6 +2,20 @@ import * as fs from 'fs'
 import * as path from 'path'
 import {parseDocument, YAMLParseError} from 'yaml'
 
+/**
+ * Line the parser quotes. A mark at column 1 of a blank line is the parser
+ * stopping after an unclosed token, one past that token.
+ */
+export function quotedYamlLine(text: string, line: number, column: number): number {
+  if (line > 1 && column === 1) {
+    const lines = text.split(/\r?\n/)
+    const pointed = lines[line - 1] ?? ''
+    const previous = lines[line - 2] ?? ''
+    if (pointed.trim() === '' && previous.trim() !== '') return line - 1
+  }
+  return line
+}
+
 export class AgentYamlError extends Error {
   constructor(message: string) {
     super(message)
@@ -30,7 +44,8 @@ export function loadAgentYaml(agentPath: string): Record<string, unknown> {
   const doc = parseDocument(text)
   const error = doc.errors.find(item => item.code !== 'DUPLICATE_KEY')
   if (error) {
-    const line = error instanceof YAMLParseError ? error.linePos?.[0]?.line : undefined
+    const pos = error instanceof YAMLParseError ? error.linePos?.[0] : undefined
+    const line = pos ? quotedYamlLine(text, pos.line, pos.col) : undefined
     const location = typeof line === 'number' ? `${yamlPath}:${line}` : yamlPath
     throw new AgentYamlError(`agent.yaml could not be parsed (${location}): ${error.message}`)
   }
