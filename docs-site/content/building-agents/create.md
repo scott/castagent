@@ -54,9 +54,9 @@ echo "Summarises incoming email and drafts replies." | cast new
 ```
 
 `cast new` reads that text and writes the scaffold to
-`~/.cast/agents/<name>/`. `Name: my-agent` or `named my-agent` sets the
-agent name. Otherwise Cast derives one from the description, so an email
-assistant becomes `email-agent`. It records that name in
+`~/.cast/agents/<name>/`. A `Name: my-agent` label sets the agent name.
+Otherwise Cast derives one from the description, so an email assistant
+becomes `email-agent`. It records that name in
 `~/.cast/cast.db` and prints the agent name and path.
 It does not open the TUI. A blank pipe is an error. On a terminal, the
 same command still opens the Builder wizard and asks you to confirm the

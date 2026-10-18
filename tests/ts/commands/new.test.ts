@@ -657,6 +657,35 @@ exit 2
     })
   })
 
+  it('does not treat "called inbox" as the agent name', function () {
+    const probe = spawnSync('python3', ['-c', 'import langchain_core, yaml'], {encoding: 'utf8'})
+    if (probe.status !== 0) {
+      this.skip()
+    }
+    const venv = path.join(repoRoot, 'python', '.venv', 'bin', 'python3')
+    if (fs.existsSync(venv)) {
+      const venvProbe = spawnSync(venv, ['-c', 'import langchain_core, yaml'], {encoding: 'utf8'})
+      if (venvProbe.status !== 0) {
+        this.skip()
+      }
+    }
+
+    const agents = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-called-'))
+    const description = 'Summarises emails from a mailbox called inbox and drafts replies.'
+    withMarkerRestore(() => {
+      try {
+        const result = runNew(`${description}\n`, {CAST_AGENTS_DIR: agents})
+        expect(result.status, result.stderr || result.stdout).to.equal(0)
+        expect(result.stdout).to.include("Created agent 'email-agent'")
+        expect(result.stdout).to.not.include("Created agent 'inbox'")
+        expect(fs.existsSync(path.join(agents, 'email-agent', 'agent.yaml'))).to.equal(true)
+        expect(fs.existsSync(path.join(agents, 'inbox'))).to.equal(false)
+      } finally {
+        fs.rmSync(agents, {recursive: true, force: true})
+      }
+    })
+  })
+
   it('creates an agent from a piped description', function () {
     const probe = spawnSync('python3', ['-c', 'import langchain_core, yaml'], {encoding: 'utf8'})
     if (probe.status !== 0) {

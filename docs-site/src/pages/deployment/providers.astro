@@ -15,11 +15,12 @@ const providers = getProviders().sort((a, b) => a.name.localeCompare(b.name))
     <code>typescript/cast-cli/src/lib/deploy</code>.
   </p>
   <p>
-    Sprites needs the <code>sprite</code> CLI. Run <code>sprite login</code>, or set
-    <code>SPRITES_TOKEN</code> to a token created at
-    <a href="https://sprites.dev/account">sprites.dev/account</a> in the
-    <code>org/token-id/secret</code> format.
-    <code>FLY_API_TOKEN</code> is not a Sprites token.
+    Sprites needs the <code>sprite</code> CLI. Set <code>SPRITES_TOKEN</code> to a
+    token created at <a href="https://sprites.dev/account">sprites.dev/account</a>
+    in the <code>org-slug/org-id/token-id/token-value</code> format.
+    <code>sprite login</code> is an alternative.
+    <code>FLY_API_TOKEN</code> is not a Sprites token. Cast copies
+    <code>SPRITES_TOKEN</code> to <code>SPRITE_TOKEN</code> for the sprite CLI.
   </p>
 
   <table>

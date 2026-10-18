@@ -1091,7 +1091,7 @@ Connect:
 
 ### Sprites authentication
 
-Sprites does not accept `FLY_API_TOKEN`. Install the `sprite` CLI, then either run `sprite login` or set `SPRITES_TOKEN`. Create that token at https://sprites.dev/account. The value uses the `org/token-id/secret` format.
+Sprites does not accept `FLY_API_TOKEN`. Install the `sprite` CLI, then set `SPRITES_TOKEN` or run `sprite login`. Create the token at https://sprites.dev/account in the `org-slug/org-id/token-id/token-value` format. Cast copies `SPRITES_TOKEN` to `SPRITE_TOKEN` for sprite commands.
 
 ### Deployment Flow
 

@@ -138,45 +138,29 @@ def _sanitize_name(name: str) -> str:
     return name or "new-agent"
 
 
-# Words that follow "named" without being the requested agent name.
-_EXPLICIT_NAME_STOP_WORDS = {
-    "a", "an", "the", "my", "your", "our", "this", "that", "it", "after",
-    "for", "to", "from", "with", "and", "or", "agent", "new", "name",
-}
-
-_EXPLICIT_NAME_PATTERNS = (
-    # "Name: bbfly-123" or "name = bbfly-123"
-    re.compile(
-        r"""(?:^|[\s.;])name\s*[:=]\s*["']?([A-Za-z0-9][A-Za-z0-9-]*)""",
-        re.IGNORECASE,
-    ),
-    # "agent named bbfly-123" / "agent called bbfly-123"
-    re.compile(
-        r"""\bagent\s+(?:named|called)\s+["']?([A-Za-z0-9][A-Za-z0-9-]*)""",
-        re.IGNORECASE,
-    ),
-    re.compile(
-        r"""\b(?:named|called)\s+["']?([A-Za-z0-9][A-Za-z0-9-]*)""",
-        re.IGNORECASE,
-    ),
+# A label, not a phrase such as "called inbox" or "named inbox".
+# Matches "Name: bbfly-123" at the start, on its own line, or after a sentence.
+_EXPLICIT_NAME_PATTERN = re.compile(
+    r"""(?:\A|\n\s*|[.;!?]\s+)name\s*[:=]\s*["']?([A-Za-z0-9][A-Za-z0-9-]*)""",
+    re.IGNORECASE,
 )
 
 
 def _explicit_name_from_description(description: str) -> Optional[str]:
-    """Return a name the description asks for.
+    """Return a name the description labels with ``Name:``.
 
-    ``Name: bbfly-123`` and ``named bbfly-123`` are the requested name.
-    Keyword guesses such as ``test`` -> ``test-agent`` do not override them.
+    ``Name: bbfly-123`` is the requested name. ``called inbox`` and
+    ``named inbox`` stay part of the description, and keyword guesses
+    such as ``test`` -> ``test-agent`` still apply.
     """
-    for pattern in _EXPLICIT_NAME_PATTERNS:
-        match = pattern.search(description)
-        if not match:
-            continue
-        name = _sanitize_name(match.group(1))
-        if name in _EXPLICIT_NAME_STOP_WORDS or name == "new-agent":
-            continue
-        if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
-            return name
+    match = _EXPLICIT_NAME_PATTERN.search(description)
+    if not match:
+        return None
+    name = _sanitize_name(match.group(1))
+    if name == "new-agent":
+        return None
+    if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", name):
+        return name
     return None
 
 
@@ -396,10 +380,9 @@ def create_agent(name: str, description: str = "") -> str:
 def create_from_description(description: str) -> Dict[str, str]:
     """Create an agent from piped text when ``cast new`` has no TTY.
 
-    Blank input is refused. An explicit name (``Name: my-agent`` or
-    ``named my-agent``) is used when the text asks for one. Otherwise
-    the name is chosen the same way as ``suggest_name``, including a
-    numeric suffix when that name is taken.
+    Blank input is refused. A ``Name: my-agent`` label is used when the
+    text includes one. Otherwise the name is chosen the same way as
+    ``suggest_name``, including a numeric suffix when that name is taken.
     ``CAST_AGENTS_DIR`` overrides the agents directory for this call only.
     """
     text = description.strip()

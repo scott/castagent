@@ -219,7 +219,7 @@ Cast Agent supports deploying agents to multiple platforms:
 | **Fly.io** | Deploy to Fly.io's global edge network | `cast deploy demo-agent --provider fly` |
 | **Sprites** | Firecracker VMs on Fly.io. The agent runs as a sprite service and comes back after the VM wakes. `sprite login` or `SPRITES_TOKEN` authenticates the sprite CLI. Deploy ships `requirements.txt` and the Cast runtime, and fails unless the service becomes ready. | `cast deploy demo-agent --provider sprites` |
 
-Sprites needs the `sprite` CLI. Authenticate with `sprite login`, or set `SPRITES_TOKEN` to a token created at [sprites.dev/account](https://sprites.dev/account) in the `org/token-id/secret` format. `FLY_API_TOKEN` is not a Sprites token.
+Sprites needs the `sprite` CLI. Set `SPRITES_TOKEN` to a token created at [sprites.dev/account](https://sprites.dev/account) in the `org-slug/org-id/token-id/token-value` format. `sprite login` is an alternative. `FLY_API_TOKEN` is not a Sprites token. Cast copies `SPRITES_TOKEN` to `SPRITE_TOKEN` for the sprite CLI.
 
 `--provider local` is not implemented. `cast deploy <agent> --provider local` exits with an error and does not record a deployment. Use `--provider docker` to run on this machine. That command prints a deployment SHA and stores the same id. `cast registry` lists it, and `cast connect <sha>` finds that deployment.
 
@@ -307,7 +307,7 @@ The Builder Agent will:
 
 The Builder stores a model, tools, and permissions only in the documented `agent.yaml` shape: `brain.model`, `tools.builtin`, and `harness.permissions`. A flat `tools` list, a top-level `model`, a top-level `permissions` block, or a top-level `memory` block is rejected and the file is left unchanged. The Builder then says those settings were not applied. Permission levels are `always-allow`, `ask`, and `deny`. Model ids must be in the catalog, including the id `recommend_model` returns. Each undo-log entry gets its own id.
 
-Pipe a description when stdin is not a terminal. Cast writes the scaffold without opening the TUI. `Name: my-agent` or `named my-agent` is used as the agent name. Otherwise Cast derives one from the description:
+Pipe a description when stdin is not a terminal. Cast writes the scaffold without opening the TUI. A `Name: my-agent` label sets the agent name. Otherwise Cast derives one from the description:
 
 ```bash
 echo "Summarises incoming email and drafts replies." | cast new
@@ -687,7 +687,7 @@ export OPENROUTER_API_KEY="your-key"
 export DIGITALOCEAN_MODEL_ACCESS_KEY="your-model-access-key"
 export RAILWAY_API_TOKEN="your-token"
 export FLY_API_TOKEN="your-token"  # Fly.io only; not a Sprites token
-export SPRITES_TOKEN="org/token-id/secret"  # from https://sprites.dev/account, or run: sprite login
+export SPRITES_TOKEN="org-slug/org-id/token-id/token-value"  # from https://sprites.dev/account; or run: sprite login
 export DO_API_TOKEN="your-token"  # DigitalOcean deploy token
 ```
 
