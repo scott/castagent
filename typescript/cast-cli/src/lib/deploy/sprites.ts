@@ -10,13 +10,17 @@ import {
   execCommand,
   saveDeployment,
   inferenceEnv,
+  filterInferenceEnv,
+  readAgentModel,
+  secretValues,
+  assertSecretsNotInArgv,
   generateDeploymentId,
   getVolumeName,
 } from './deploy-utils'
 import {
   SPRITE_SERVICE_NAME,
   spriteAgentLaunchScript,
-  spriteInstallServiceCommand,
+  spriteInstallExecArgs,
   spriteServiceStatusArgs,
 } from './sprites-service'
 
@@ -346,10 +350,14 @@ export default class SpritesDeploy extends Command {
 
     // stdin is the script. The remote bash -c string must stay one argument.
     this.log('  Creating startup script...')
+    const inference = filterInferenceEnv(readAgentModel(getAgentPath(agentName)), inferenceEnv())
+    const args = spriteInstallExecArgs(spriteName)
+    const script = spriteAgentLaunchScript(agentName, authToken, inference)
+    assertSecretsNotInArgv('sprite exec', args, secretValues({AUTH_TOKEN: authToken, ...inference}))
     const startResult = await execCommand(
       'sprite',
-      ['exec', '-s', spriteName, '--', 'bash', '-c', spriteInstallServiceCommand()],
-      {silent: true, shell: false, input: spriteAgentLaunchScript(agentName, authToken, inferenceEnv())},
+      args,
+      {silent: true, shell: false, input: script},
     )
     if (startResult.exitCode !== 0) {
       const detail = (startResult.stderr || startResult.stdout).trim()

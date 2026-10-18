@@ -109,6 +109,13 @@ The deployment is a single Docker image that contains:
 - For DigitalOcean with `--with-tui`: the `cast-tui` binary + Bun, so you
   can SSH into the droplet and run `cast-tui` inside the container.
 
+Deploy sends `AUTH_TOKEN` and the API key for the provider selected by
+`brain.model`. Other inference keys stay on the machine that runs
+`cast deploy`. Fly imports the values on stdin. Docker passes an env
+file on stdin. Railway reads each value from stdin. A droplet writes
+them to a mode 0600 env file over SSH stdin. A sprite sends the launch
+script on stdin. A MicroVM sends them in the create request body.
+
 The image exposes A2A on port 8080. Railway and Fly assign a public
 HTTPS URL. A DigitalOcean droplet binds that port to `127.0.0.1` and
 records `https://<droplet-ip>` as the droplet address. `cast connect`

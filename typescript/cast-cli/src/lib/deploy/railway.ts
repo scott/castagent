@@ -9,6 +9,11 @@ import {
   execCommand,
   saveDeployment,
   inferenceEnv,
+  filterInferenceEnv,
+  readAgentModel,
+  railwaySecretSetArgs,
+  secretValues,
+  assertSecretsNotInArgv,
   getProviderToken,
   generateDeploymentId,
   getVolumeName,
@@ -77,14 +82,17 @@ export default class RailwayDeploy extends Command {
       CAST_AGENT_NAME: agentName,
       AUTH_TOKEN: authToken,
       CAST_MEMORY_PATH: `/var/runtime/data/${volumeId}`,
-      ...inferenceEnv(),
+      ...filterInferenceEnv(readAgentModel(agentPath), inferenceEnv()),
     }
 
     for (const [key, value] of Object.entries(envVars)) {
-      const setResult = await execCommand('railway', ['variables', 'set', `${key}=${value}`], {
+      const args = railwaySecretSetArgs(key)
+      assertSecretsNotInArgv('railway variables set', args, secretValues({[key]: value}))
+      const setResult = await execCommand('railway', args, {
         cwd: agentPath,
         silent: true,
         shell: false,
+        input: value,
       })
       if (setResult.exitCode !== 0) {
         this.warn(`Failed to set variable ${key}: ${setResult.stderr}`)

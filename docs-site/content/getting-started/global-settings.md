@@ -72,9 +72,9 @@ inferenceProviders:
 A folder at `~/.cast/inference-providers/<key>/` with `provider.json` and
 `provider.py` is loaded the same way, as is a package entry point group
 named `cast.inference`. The model prefix (for example `example/my-model`)
-selects that provider. These providers are included when Cast forwards
-API keys into a deployment. They are not deployment providers, and
-`providers.digitalocean.token` is still only the Droplet and MicroVM token.
+selects that provider. Deploy forwards the API key for the provider
+selected by the agent's `brain.model`, including an external provider.
+`providers.digitalocean.token` is the Droplet and MicroVM deploy token.
 
 ## Environment variables
 
@@ -105,9 +105,12 @@ interpolation falls through to the environment if not set in YAML.
   `~/.cast/tokens/deployments/<sha>.token`. The token directory is mode
   `0700` and each file is created mode `0600`. Those files sit outside
   the agent directory, so `cast git` cannot publish them.
-  Docker deploy passes the token, and any provider API keys, to the
-  container as environment variables. It does not write them into
-  `docker-compose.yml` or any other file in the agent directory.
+  Docker deploy passes the token and the API key for `brain.model` to the
+  container as environment variables, through an env file on the Docker
+  CLI's stdin. It does not write them into `docker-compose.yml` or any
+  other file in the agent directory. Fly, Railway, Sprites, Droplets, and
+  MicroVMs use the same rule: stdin or the provider request body, and only
+  the key that model needs.
 - **Per-agent state** that is safe to share (deploy URLs, deployment SHAs)
   lives in `~/.cast/cast.db` (SQLite). The database file is created mode
   `0600`. It stores token hashes, not raw bearer tokens.

@@ -638,6 +638,7 @@ describe('DigitalOcean Deploy Provider', () => {
     function stubDeployHelpers(extra?: {
       execCommandReturn?: () => any
       openRouterKey?: string
+      inference?: Record<string, string>
       buildMotdReturn?: string
       writeMotdReturn?: {motdStderr: string; profileStderr: string}
     }) {
@@ -658,7 +659,7 @@ describe('DigitalOcean Deploy Provider', () => {
         })
       }
       sandbox.stub(deployUtils, 'inferenceEnv').returns(
-        extra?.openRouterKey ? {OPENROUTER_API_KEY: extra.openRouterKey} : {},
+        extra?.inference ?? (extra?.openRouterKey ? {OPENROUTER_API_KEY: extra.openRouterKey} : {}),
       )
       sandbox.stub(motd, 'buildHostMotd').returns(extra?.buildMotdReturn ?? 'Welcome!\n')
       const motdStub = sandbox.stub(motd, 'writeHostMotdOverSsh')
@@ -732,6 +733,48 @@ describe('DigitalOcean Deploy Provider', () => {
       )
       const envInput = (envWrite!.args[2] as {input?: string}).input
       expect(envInput).to.include('OPENROUTER_API_KEY=or-key-123')
+    })
+
+    it('writes only the inference key for the agent model and keeps both values off argv', async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-do-secrets-'))
+      const previousHome = process.env.HOME
+      process.env.HOME = home
+      const agent = path.join(home, '.cast', 'agents', 'test-agent')
+      fs.mkdirSync(agent, {recursive: true})
+      fs.writeFileSync(path.join(agent, 'agent.yaml'), 'brain:\n  model: openrouter/minimax/minimax-m2.5\n')
+      const openRouter = 'or-key-12345678'
+      const digitalOcean = 'do-key-12345678'
+      try {
+        const {execStub} = stubDeployHelpers({
+          inference: {
+            OPENROUTER_API_KEY: openRouter,
+            DIGITALOCEAN_MODEL_ACCESS_KEY: digitalOcean,
+          },
+        })
+        await instance.deployOnDroplet(
+          defaultArgs.ip, defaultArgs.agentName, defaultArgs.authToken,
+          defaultArgs.imageTag, defaultArgs.volumeId,
+          defaultArgs.deploymentUrl, defaultArgs.deployedVersion,
+        )
+        const commands = execStub.getCalls().map((c: any) => ({
+          cmd: ((c.args[1] as string[]) || []).join(' '),
+          input: (c.args[2] as {input?: string} | undefined)?.input || '',
+        }))
+        const envWrite = commands.find(c => c.cmd.includes('chmod 0600'))
+        expect(envWrite!.input).to.include(`OPENROUTER_API_KEY=${openRouter}`)
+        expect(envWrite!.input).to.include('AUTH_TOKEN=tok-secret')
+        expect(envWrite!.input).to.not.include(digitalOcean)
+        expect(envWrite!.input).to.not.include('DIGITALOCEAN_MODEL_ACCESS_KEY')
+        for (const command of commands) {
+          expect(command.cmd).to.not.include(openRouter)
+          expect(command.cmd).to.not.include(digitalOcean)
+          expect(command.cmd).to.not.include('tok-secret')
+        }
+      } finally {
+        if (previousHome === undefined) delete process.env.HOME
+        else process.env.HOME = previousHome
+        fs.rmSync(home, {recursive: true, force: true})
+      }
     })
 
     it('should bind the agent to loopback and not open public port 8080', async () => {

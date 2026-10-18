@@ -64,6 +64,11 @@ export function spriteInstallServiceCommand(): string {
   ].join(' && ')
 }
 
+/** Local argv for `sprite exec`. The launch script, including secrets, is stdin. */
+export function spriteInstallExecArgs(spriteName: string): string[] {
+  return ['exec', '-s', spriteName, '--', 'bash', '-c', spriteInstallServiceCommand()]
+}
+
 /** argv after `sprite`. `services start` leaves an already-running service on its current pid. */
 export function spriteStartServiceArgs(spriteName: string): string[] {
   return ['exec', '-s', spriteName, '--', SPRITE_ENV, 'services', 'start', SPRITE_SERVICE_NAME]

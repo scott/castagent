@@ -959,7 +959,7 @@ External providers load after built-ins, with no edit to this repository:
 
 An external key or prefix that collides with a provider loaded earlier fails at load and names both sources. An external cannot set `default`. A provider file that fails to import is reported with its path. Built-ins still register.
 
-`python -m cast.providers.catalog` prints the loaded catalog as JSON. `knownModels` is not in that payload. Deploy code calls `inferenceEnv()`, which runs the catalog, resolves each `envVar` from the environment and then from `configKey`, and returns only the pairs that have a value.
+`python -m cast.providers.catalog` prints the loaded catalog as JSON. `knownModels` is not in that payload. Deploy code calls `inferenceEnv()`, which runs the catalog, resolves each `envVar` from the environment and then from `configKey`, and returns only the pairs that have a value. The deploy then keeps the key for the provider selected by `brain.model`. Secret values are passed on stdin or in the provider create body.
 
 ### Provider Implementations
 

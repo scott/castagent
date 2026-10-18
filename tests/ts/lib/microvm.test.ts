@@ -6,7 +6,7 @@ import * as path from 'path'
 import * as sinon from 'sinon'
 import MicrovmDeploy, {
   assertUpgradeable,
-  buildCreateArgs,
+  microvmCreatePayload,
   decodeMemoryExport,
   deploymentEnv,
   discardFailedMicrovmTokens,
@@ -85,17 +85,17 @@ describe('DigitalOcean MicroVM helpers', () => {
     expect(() => parseIdleTimeout('15')).to.throw(/Invalid idle timeout/)
   })
 
-  it('builds create args with env and omits AUTH_TOKEN for edge-only', () => {
+  it('builds a create payload with env and omits AUTH_TOKEN for edge-only', () => {
     const env = deploymentEnv({
       agentName: 'demo',
-      authToken: 'secret',
-      inference: {OPENROUTER_API_KEY: 'sk'},
+      authToken: 'secret-token-value',
+      inference: {OPENROUTER_API_KEY: 'sk-or-v1-example'},
       edgeAuthOnly: false,
     })
-    expect(env.AUTH_TOKEN).to.equal('secret')
-    const edgeEnv = deploymentEnv({agentName: 'demo', authToken: 'secret', edgeAuthOnly: true})
+    expect(env.AUTH_TOKEN).to.equal('secret-token-value')
+    const edgeEnv = deploymentEnv({agentName: 'demo', authToken: 'secret-token-value', edgeAuthOnly: true})
     expect(edgeEnv.AUTH_TOKEN).to.equal(undefined)
-    const args = buildCreateArgs({
+    const payload = microvmCreatePayload({
       name: 'cast-demo-abc',
       ociRef: 'registry.digitalocean.com/cast/cast-demo:abc',
       cpu: 1,
@@ -104,11 +104,24 @@ describe('DigitalOcean MicroVM helpers', () => {
       env: edgeEnv,
       agentName: 'demo',
     })
-    expect(args).to.include('--region')
-    expect(args).to.include('mkc1')
-    expect(args).to.include('--http-port')
-    expect(args).to.include('8080')
-    expect(args.join(' ')).to.not.include('AUTH_TOKEN')
+    expect(payload.region).to.equal('mkc1')
+    expect(payload.http_port).to.equal(8080)
+    expect(payload.http_protocol).to.equal('http')
+    expect(JSON.stringify(payload)).to.not.include('AUTH_TOKEN')
+    expect(JSON.stringify(payload)).to.not.include('secret-token-value')
+    const withSecret = microvmCreatePayload({
+      name: 'cast-demo-abc',
+      ociRef: 'registry.digitalocean.com/cast/cast-demo:abc',
+      cpu: 1,
+      memory: 2048,
+      idleTimeout: '15m',
+      env,
+      agentName: 'demo',
+    })
+    const environment = withSecret.environment as Record<string, string>
+    expect(environment.AUTH_TOKEN).to.equal('secret-token-value')
+    expect(environment.OPENROUTER_API_KEY).to.equal('sk-or-v1-example')
+    expect(JSON.stringify(withSecret)).to.not.include('--env')
   })
 
   it('parses a wrapped MicroVM payload and decides readiness', () => {
@@ -474,7 +487,11 @@ describe('failed MicroVM deploy cleanup', () => {
       }
       return {exitCode: 1, stdout: '', stderr: `unexpected doctl ${rest.join(' ')}`}
     })
-    sandbox.stub(axios, 'post').callsFake(async () => {
+    sandbox.stub(axios, 'post').callsFake(async (url: unknown) => {
+      if (String(url).includes('/v2/microvms')) {
+        const raw = opts.mode === 'workload-failed' ? failedVm() : readyVm()
+        return {status: 201, data: JSON.parse(raw)}
+      }
       if (opts.mode === 'probe-401' && !opts.edgeAuthOnly && !(opts.deployments && opts.deployments.length > 0)) {
         expect(fs.existsSync(deploymentTokenPath())).to.equal(true)
         expect(fs.statSync(deploymentTokenPath()).mode & 0o777).to.equal(0o600)
@@ -622,7 +639,12 @@ describe('failed MicroVM deploy cleanup', () => {
       if (rest[0] === 'registry' && rest[2] === 'delete-tag') return ok('')
       return {exitCode: 1, stdout: '', stderr: `unexpected ${command} ${rest.join(' ')}`}
     })
-    sandbox.stub(axios, 'post').resolves({status: 401, data: {}})
+    sandbox.stub(axios, 'post').callsFake(async (url: unknown) => {
+      if (String(url).includes('/v2/microvms')) {
+        return {status: 201, data: JSON.parse(readyVm())}
+      }
+      return {status: 401, data: {}}
+    })
     const logs: string[] = []
     try {
       await MicrovmDeploy.upgrade(agentName, {
@@ -679,7 +701,12 @@ describe('failed MicroVM deploy cleanup', () => {
       if (rest[0] === 'registry' && rest[2] === 'delete-tag') return ok('')
       return {exitCode: 1, stdout: '', stderr: `unexpected ${command} ${rest.join(' ')}`}
     })
-    sandbox.stub(axios, 'post').resolves({status: 401, data: {}})
+    sandbox.stub(axios, 'post').callsFake(async (url: unknown) => {
+      if (String(url).includes('/v2/microvms')) {
+        return {status: 201, data: JSON.parse(readyVm())}
+      }
+      return {status: 401, data: {}}
+    })
     try {
       await MicrovmDeploy.upgrade(agentName, {
         id: 'abc123',
