@@ -68,6 +68,14 @@ describe('Sprites Deploy Provider', () => {
       // The implementation checks for sprite auth
       expect(SpritesDeploy).to.be.a('function')
     })
+
+    it('points a missing sprites login at sprite login or SPRITES_TOKEN', () => {
+      const source = fs.readFileSync(
+        path.join(__dirname, '../../../../typescript/cast-cli/src/lib/deploy/sprites.ts'),
+        'utf8',
+      )
+      expect(source).to.include('Not authenticated with Sprites. Run "sprite login" or set SPRITES_TOKEN.')
+    })
   })
 
   describe('sprite exec argv', () => {

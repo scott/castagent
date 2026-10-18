@@ -1084,9 +1084,14 @@ Connect:
 |----------|---------|---------|
 | Railway | Managed containers | `cast <agent> deploy --provider railway` |
 | Fly.io | Distributed containers | `cast <agent> deploy --provider fly` |
+| Sprites | Firecracker VMs via the `sprite` CLI | `cast <agent> deploy --provider sprites` |
 | DigitalOcean | App Platform | `cast <agent> deploy --provider digitalocean` |
 | Docker | Self-hosted | `cast <agent> deploy --provider docker` |
 | Local | Local production | `cast <agent> deploy --provider local` |
+
+### Sprites authentication
+
+Sprites does not accept `FLY_API_TOKEN`. Install the `sprite` CLI, then either run `sprite login` or set `SPRITES_TOKEN`. Create that token at https://sprites.dev/account. The value uses the `org/token-id/secret` format.
 
 ### Deployment Flow
 

@@ -66,6 +66,11 @@ Each provider has its own CLI auth (`railway login`, `flyctl auth login`,
 `doctl auth init`, `sprite login`). `cast deploy` walks you through any
 prerequisites interactively if you haven't set them up.
 
+Sprites needs the `sprite` CLI and its own token. Run `sprite login`, or
+set `SPRITES_TOKEN` to a token created at
+[sprites.dev/account](https://sprites.dev/account) in the
+`org/token-id/secret` format. `FLY_API_TOKEN` is not a Sprites token.
+
 Sprites pause when idle. A process started only for the deploy command
 is gone on the next wake, and chat then fails as soon as the local proxy
 resets the socket. Cast registers the agent as a sprite service on port

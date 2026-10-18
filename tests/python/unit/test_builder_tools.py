@@ -631,6 +631,17 @@ class TestCreateFromDescription:
         recorded = (tmp_path / "builder" / "created-agent").read_text(encoding="utf-8").strip()
         assert recorded == "email-agent"
 
+    def test_explicit_name_overrides_test_keyword(self, tmp_path, monkeypatch):
+        tools, agents = self._isolate(tmp_path, monkeypatch)
+        description = "A minimal echo test agent named bbfly-123. Name: bbfly-123"
+        info = tools.create_from_description(description)
+        assert info["name"] == "bbfly-123"
+        assert info["description"] == description
+        assert info["path"] == str(agents / "bbfly-123")
+        config = yaml.safe_load((agents / "bbfly-123" / "agent.yaml").read_text())
+        assert config["name"] == "bbfly-123"
+        assert not (agents / "test-agent").exists()
+
     def test_docs_example_picks_email_agent(self, tmp_path, monkeypatch):
         tools, agents = self._isolate(tmp_path, monkeypatch)
         description = "Summarises incoming email and drafts replies."

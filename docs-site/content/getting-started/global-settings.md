@@ -83,13 +83,19 @@ selected by the agent's `brain.model`, including an external provider.
 | `OPENROUTER_API_KEY` | Default LLM provider auth. |
 | `DIGITALOCEAN_MODEL_ACCESS_KEY` | DigitalOcean serverless inference. Not the deploy token. |
 | `RAILWAY_API_TOKEN` | Railway deploys (alternative to `railway login`). |
-| `FLY_API_TOKEN` | Fly.io deploys (alternative to `flyctl auth login`). |
+| `FLY_API_TOKEN` | Fly.io deploys (alternative to `flyctl auth login`). Not a Sprites token. |
 | `DIGITALOCEAN_ACCESS_TOKEN` | DigitalOcean deploys (also accepts `DIGITALOCEAN_API_TOKEN`, `DIGITALOCEAN_API_KEY`). |
-| `SPRITES_TOKEN` | Sprites deploys (alternative to `sprite login`). The sprite CLI reads `SPRITE_TOKEN`, not `SPRITES_TOKEN`. When `SPRITE_TOKEN` is unset, Cast copies `SPRITES_TOKEN` into `SPRITE_TOKEN` for sprite child processes. The token is not placed on a command line. |
+| `SPRITES_TOKEN` | Sprites deploys. Create the token at [sprites.dev/account](https://sprites.dev/account) in the `org-slug/org-id/token-id/token-value` format. `sprite login` is an alternative. The sprite CLI reads `SPRITE_TOKEN`, not `SPRITES_TOKEN`. When `SPRITE_TOKEN` is unset, Cast copies `SPRITES_TOKEN` into `SPRITE_TOKEN` for sprite child processes. The token is not placed on a command line. `FLY_API_TOKEN` is not a Sprites token. |
 | `CAST_DEPLOYMENT_SHA` | Set automatically during `cast deploy`; useful for child processes. |
 
 Anything in `config.yaml` can use `${VAR}` interpolation, and the
 interpolation falls through to the environment if not set in YAML.
+
+Sprites needs the `sprite` CLI. Set `SPRITES_TOKEN` to a token created at
+[sprites.dev/account](https://sprites.dev/account) in the
+`org-slug/org-id/token-id/token-value` format, or run `sprite login`.
+`FLY_API_TOKEN` is not a Sprites token. Cast copies `SPRITES_TOKEN` to
+`SPRITE_TOKEN` for sprite child processes when `SPRITE_TOKEN` is unset.
 
 ## Secrets
 
