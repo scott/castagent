@@ -621,6 +621,71 @@ exit 2
     }
   })
 
+  it('uses the requested name from stdin instead of test-agent', function () {
+    const probe = spawnSync('python3', ['-c', 'import langchain_core, yaml'], {encoding: 'utf8'})
+    if (probe.status !== 0) {
+      this.skip()
+    }
+    const venv = path.join(repoRoot, 'python', '.venv', 'bin', 'python3')
+    if (fs.existsSync(venv)) {
+      const venvProbe = spawnSync(venv, ['-c', 'import langchain_core, yaml'], {encoding: 'utf8'})
+      if (venvProbe.status !== 0) {
+        this.skip()
+      }
+    }
+
+    const agents = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-named-'))
+    const description = 'A minimal echo test agent named bbfly-123. Name: bbfly-123'
+    const homeSide = path.join(os.homedir(), '.cast', 'agents', 'bbfly-123')
+    const homeExisted = fs.existsSync(homeSide)
+    withMarkerRestore(() => {
+      try {
+        const result = runNew(`${description}\n`, {CAST_AGENTS_DIR: agents})
+        expect(result.status, result.stderr || result.stdout).to.equal(0)
+        expect(result.stdout).to.include("Created agent 'bbfly-123'")
+        expect(result.stdout).to.not.include("Created agent 'test-agent'")
+        expect(result.stdout).to.not.include('Launching OpenTUI')
+        const agentYaml = fs.readFileSync(path.join(agents, 'bbfly-123', 'agent.yaml'), 'utf8')
+        expect(agentYaml).to.include('name: bbfly-123')
+        expect(fs.existsSync(path.join(agents, 'test-agent'))).to.equal(false)
+        if (!homeExisted) {
+          expect(fs.existsSync(homeSide)).to.equal(false)
+        }
+      } finally {
+        fs.rmSync(agents, {recursive: true, force: true})
+      }
+    })
+  })
+
+  it('does not treat "called inbox" as the agent name', function () {
+    const probe = spawnSync('python3', ['-c', 'import langchain_core, yaml'], {encoding: 'utf8'})
+    if (probe.status !== 0) {
+      this.skip()
+    }
+    const venv = path.join(repoRoot, 'python', '.venv', 'bin', 'python3')
+    if (fs.existsSync(venv)) {
+      const venvProbe = spawnSync(venv, ['-c', 'import langchain_core, yaml'], {encoding: 'utf8'})
+      if (venvProbe.status !== 0) {
+        this.skip()
+      }
+    }
+
+    const agents = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-called-'))
+    const description = 'Summarises emails from a mailbox called inbox and drafts replies.'
+    withMarkerRestore(() => {
+      try {
+        const result = runNew(`${description}\n`, {CAST_AGENTS_DIR: agents})
+        expect(result.status, result.stderr || result.stdout).to.equal(0)
+        expect(result.stdout).to.include("Created agent 'email-agent'")
+        expect(result.stdout).to.not.include("Created agent 'inbox'")
+        expect(fs.existsSync(path.join(agents, 'email-agent', 'agent.yaml'))).to.equal(true)
+        expect(fs.existsSync(path.join(agents, 'inbox'))).to.equal(false)
+      } finally {
+        fs.rmSync(agents, {recursive: true, force: true})
+      }
+    })
+  })
+
   it('creates an agent from a piped description', function () {
     const probe = spawnSync('python3', ['-c', 'import langchain_core, yaml'], {encoding: 'utf8'})
     if (probe.status !== 0) {

@@ -66,6 +66,11 @@ Each provider has its own CLI auth (`railway login`, `flyctl auth login`,
 `doctl auth init`, `sprite login`). `cast deploy` walks you through any
 prerequisites interactively if you haven't set them up.
 
+Sprites needs the `sprite` CLI. Set `SPRITES_TOKEN` to a token created at
+[sprites.dev/account](https://sprites.dev/account) in the
+`org-slug/org-id/token-id/token-value` format. `sprite login` is an
+alternative. `FLY_API_TOKEN` is not a Sprites token.
+
 Sprites pause when idle. A process started only for the deploy command
 is gone on the next wake, and chat then fails as soon as the local proxy
 resets the socket. Cast registers the agent as a sprite service on port
@@ -74,9 +79,9 @@ it before opening the proxy. Deploy the sprite again if it was created
 before that service existed.
 
 `sprite login` or `SPRITES_TOKEN` authenticates a Sprites deploy. The
-sprite CLI reads `SPRITE_TOKEN` and ignores `SPRITES_TOKEN`, so Cast
-copies `SPRITES_TOKEN` into the environment of each `sprite` process
-when `SPRITE_TOKEN` is unset. The token is not passed as an argument.
+sprite CLI reads `SPRITE_TOKEN`, so Cast copies `SPRITES_TOKEN` into
+the environment of each `sprite` process when `SPRITE_TOKEN` is unset.
+The token is not passed as an argument.
 The launch script goes to `sprite exec` on stdin and contains the
 deployment token plus the API key for `brain.model`. Other inference
 keys stay on the machine running `cast deploy`.

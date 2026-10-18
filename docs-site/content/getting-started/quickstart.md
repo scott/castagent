@@ -30,7 +30,7 @@ scaffolds a complete agent.
 cast new
 ```
 
-Pipe a description when there is no terminal. Cast picks a name and writes the agent without opening the wizard:
+Pipe a description when there is no terminal. Cast writes the agent without opening the wizard. A `Name: my-agent` label sets the name. Otherwise Cast derives one from the description:
 
 ```bash
 echo "Summarises incoming email and drafts replies." | cast new

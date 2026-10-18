@@ -631,6 +631,41 @@ class TestCreateFromDescription:
         recorded = (tmp_path / "builder" / "created-agent").read_text(encoding="utf-8").strip()
         assert recorded == "email-agent"
 
+    def test_explicit_name_overrides_test_keyword(self, tmp_path, monkeypatch):
+        tools, agents = self._isolate(tmp_path, monkeypatch)
+        description = "A minimal echo test agent named bbfly-123. Name: bbfly-123"
+        info = tools.create_from_description(description)
+        assert info["name"] == "bbfly-123"
+        assert info["description"] == description
+        assert info["path"] == str(agents / "bbfly-123")
+        config = yaml.safe_load((agents / "bbfly-123" / "agent.yaml").read_text())
+        assert config["name"] == "bbfly-123"
+        assert not (agents / "test-agent").exists()
+
+    def test_leading_name_label_overrides_test_keyword(self, tmp_path, monkeypatch):
+        tools, agents = self._isolate(tmp_path, monkeypatch)
+        description = "Name: bbfly-123\nA minimal echo test agent"
+        info = tools.create_from_description(description)
+        assert info["name"] == "bbfly-123"
+        assert (agents / "bbfly-123" / "agent.yaml").is_file()
+        assert not (agents / "test-agent").exists()
+
+    def test_called_in_prose_is_not_the_agent_name(self, tmp_path, monkeypatch):
+        tools, agents = self._isolate(tmp_path, monkeypatch)
+        description = "Summarises emails from a mailbox called inbox and drafts replies."
+        info = tools.create_from_description(description)
+        assert info["name"] == "email-agent"
+        assert info["description"] == description
+        assert (agents / "email-agent" / "agent.yaml").is_file()
+        assert not (agents / "inbox").exists()
+
+    def test_named_in_prose_does_not_override_keywords(self, tmp_path, monkeypatch):
+        tools, agents = self._isolate(tmp_path, monkeypatch)
+        description = "A minimal echo test agent named bbfly-123"
+        info = tools.create_from_description(description)
+        assert info["name"] == "test-agent"
+        assert not (agents / "bbfly-123").exists()
+
     def test_docs_example_picks_email_agent(self, tmp_path, monkeypatch):
         tools, agents = self._isolate(tmp_path, monkeypatch)
         description = "Summarises incoming email and drafts replies."
