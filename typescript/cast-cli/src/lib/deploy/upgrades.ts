@@ -453,10 +453,13 @@ export async function upgradeSpritesDeployment(
 
   host.log('Triggering Sprites deploy...')
   const {spawn} = await import('child_process')
+  const {ensureSpriteCliToken, spriteCliEnv} = await import('./sprites-service')
+  ensureSpriteCliToken()
 
   const deployProc = spawn('sprite', ['deploy', agentName], {
     cwd: agentPath,
     stdio: 'inherit',
+    env: spriteCliEnv(),
   })
 
   await new Promise<void>((resolve, reject) => {

@@ -217,7 +217,7 @@ Cast Agent supports deploying agents to multiple platforms:
 | **Docker** | Containerized deployment to any Docker host. The image installs `python/pyproject.toml` dependencies (GitPython 3.2.1 or newer) and `runtime.requirements`, then deploy waits until the container is running. A container that exits is a failed deploy. Memory is the `cast-<agent>` volume, reused on the next deploy. `cast stop` stops the running container and leaves the deployment and volume in place. `cast shutdown` removes the container, the `cast-<agent>:latest` image, that volume, and any older `cast-<agent>-<id>-memory` volumes. | `cast deploy demo-agent --provider docker` |
 | **Railway** | Deploy to Railway's cloud platform | `cast deploy demo-agent --provider railway` |
 | **Fly.io** | Deploy to Fly.io's global edge network | `cast deploy demo-agent --provider fly` |
-| **Sprites** | Firecracker VMs on Fly.io. The agent runs as a sprite service and comes back after the VM wakes. | `cast deploy demo-agent --provider sprites` |
+| **Sprites** | Firecracker VMs on Fly.io. The agent runs as a sprite service and comes back after the VM wakes. `sprite login` or `SPRITES_TOKEN` authenticates the sprite CLI. Deploy ships `requirements.txt` and the Cast runtime, and fails unless the service becomes ready. | `cast deploy demo-agent --provider sprites` |
 
 `--provider local` is not implemented. `cast deploy <agent> --provider local` exits with an error and does not record a deployment. Use `--provider docker` to run on this machine. That command prints a deployment SHA and stores the same id. `cast registry` lists it, and `cast connect <sha>` finds that deployment.
 

@@ -34,7 +34,7 @@ file I/O. There's no special API.
 | Fly | volume attached to the app | provisioned on first deploy |
 | DigitalOcean | `cast-<name>` block volume | keyed by the agent name and mounted into the container |
 | DigitalOcean MicroVM | MicroVM disk at `/app/agent/memory` | survives pause and resume. Upgrade copies it to the replacement MicroVM when it is 8 MiB or smaller |
-| Sprites | persistent directory inside the sprite | managed by Sprites |
+| Sprites | `/opt/cast-agent/memory` on the sprite | Cast does not create a local directory |
 
 The volume is **keyed by the agent name**, not the deployment SHA. So
 when you `cast upgrade <sha> 1.7`, the new container
@@ -80,8 +80,13 @@ destroy handler:
   shutdown reports the error and leaves the deployment recorded so a later
   `cast shutdown` can retry.
 - DigitalOcean MicroVM shutdown deletes that MicroVM, including its disk.
-- Sprites shutdown destroys the sprite, which holds its persistent
-  directory.
+- Sprites shutdown destroys the sprite, which holds
+  `/opt/cast-agent/memory`. Deploy does not create a world-writable
+  directory on the local machine. If an older deployment recorded a host
+  path under `/mnt/cast-memory`, shutdown removes that recorded path and
+  reports the removal only when the directory is gone. A path that is
+  still present is reported as not removed. Shutdown does not build a
+  new path for the attempt.
 
 ## How the runtime exposes the volume
 

@@ -84,7 +84,7 @@
     {
       "id": "logs",
       "full": "cast logs",
-      "description": "Print local runtime logs or Docker container logs"
+      "description": "Print local runtime logs, Docker container logs, or Sprites service logs"
     },
     {
       "id": "test",

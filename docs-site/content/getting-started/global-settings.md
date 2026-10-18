@@ -85,7 +85,7 @@ selected by the agent's `brain.model`, including an external provider.
 | `RAILWAY_API_TOKEN` | Railway deploys (alternative to `railway login`). |
 | `FLY_API_TOKEN` | Fly.io deploys (alternative to `flyctl auth login`). |
 | `DIGITALOCEAN_ACCESS_TOKEN` | DigitalOcean deploys (also accepts `DIGITALOCEAN_API_TOKEN`, `DIGITALOCEAN_API_KEY`). |
-| `SPRITES_TOKEN` | Sprites deploys (alternative to `sprite login`). |
+| `SPRITES_TOKEN` | Sprites deploys (alternative to `sprite login`). The sprite CLI reads `SPRITE_TOKEN`, not `SPRITES_TOKEN`. When `SPRITE_TOKEN` is unset, Cast copies `SPRITES_TOKEN` into `SPRITE_TOKEN` for sprite child processes. The token is not placed on a command line. |
 | `CAST_DEPLOYMENT_SHA` | Set automatically during `cast deploy`; useful for child processes. |
 
 Anything in `config.yaml` can use `${VAR}` interpolation, and the
