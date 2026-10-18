@@ -920,6 +920,112 @@ describe('Fly runtime image and health', () => {
     expect(discarded).to.deep.equal([])
   })
 
+  async function deployWithHealthLogs(input: {
+    name: string
+    machineState: string
+    logs: string
+    probeUrl: () => Promise<boolean>
+  }): Promise<{host: ReturnType<typeof flyHost>; error?: Error; probes: number; discarded: unknown[][]}> {
+    const dir = path.join(root, input.name)
+    fs.mkdirSync(dir, {recursive: true})
+    const host = flyHost()
+    let probes = 0
+    const discarded: unknown[][] = []
+    const exec: FlyDeployDeps['exec'] = async (args) => {
+      if (args[0] === 'status') return flyResult(0, 'running\n')
+      if (args[0] === 'volumes' && args[1] === 'list') return flyResult(0, '[]')
+      if (args[0] === 'volumes' && args[1] === 'create') return flyResult(0)
+      if (args[0] === 'deploy') return flyResult(0)
+      if (args[0] === 'machines') {
+        probes += 1
+        return flyResult(0, JSON.stringify([{id: 'machine1', state: input.machineState}]))
+      }
+      if (args[0] === 'logs') return flyResult(0, input.logs, '')
+      return flyResult(1, '', `unexpected ${args.join(' ')}`)
+    }
+    try {
+      await deployFlyAgent({agentName: input.name, agentPath: dir, host}, {
+        exec,
+        generateAuthToken: async () => ({authToken: 'token', tokenHash: 'hash'}),
+        saveDeployment: () => 'abc123',
+        listDeployments: () => [],
+        discardTokens: async (...args: unknown[]) => {
+          discarded.push(args)
+        },
+        inferenceEnv: () => ({}),
+        importSecrets: async () => flyResult(0),
+        stageRuntime: () => {},
+        checkCli: async () => {},
+        confirmReady: (ready) => waitForFlyHealth({
+          ...ready,
+          timeoutMs: 0,
+          intervalMs: 0,
+          sleep: async () => {},
+          probeUrl: input.probeUrl,
+        }),
+      })
+      return {host, probes, discarded}
+    } catch (error) {
+      return {host, error: error as Error, probes, discarded}
+    }
+  }
+
+  it('fails the deploy when a started machine logs a current agent config error', async () => {
+    const configError = 'Error loading agent config: agent.yaml could not be parsed (/opt/cast-agent/agent.yaml:2): brain: [unclosed\n'
+    const result = await deployWithHealthLogs({
+      name: 'config-started',
+      machineState: 'started',
+      logs: configError,
+      probeUrl: async () => {
+        throw new Error('agent card should not be probed after a current config error')
+      },
+    })
+    expect(result.error?.message).to.include('failed before the runtime was ready')
+    expect(result.error?.message).to.include('Error loading agent config')
+    expect(result.error?.message).to.include(flyAgentCardUrl('https://cast-config-started.fly.dev'))
+    expect(result.probes).to.equal(1)
+    expect(result.host.logs.join('\n')).to.not.include('Deployment Successful')
+    expect(result.discarded).to.deep.equal([])
+  })
+
+  it('fails the deploy when a starting machine logs a current agent config error', async () => {
+    const result = await deployWithHealthLogs({
+      name: 'config-starting',
+      machineState: 'starting',
+      logs: 'Error loading agent config: agent.yaml could not be parsed\n',
+      probeUrl: async () => false,
+    })
+    expect(result.error?.message).to.include('Error loading agent config')
+    expect(result.error?.message).to.include('failed before the runtime was ready')
+    expect(result.probes).to.equal(1)
+    expect(result.host.logs.join('\n')).to.not.include('Deployment Successful')
+    expect(result.discarded).to.deep.equal([])
+  })
+
+  it('keeps a deploy that serves the agent card after an older config error', async () => {
+    const result = await deployWithHealthLogs({
+      name: 'config-recovered',
+      machineState: 'started',
+      logs: 'Error loading agent config: agent.yaml could not be parsed\nAgent ready on port 8080\n',
+      probeUrl: async () => true,
+    })
+    expect(result.error).to.equal(undefined)
+    expect(result.host.logs.join('\n')).to.include('Deployment Successful')
+  })
+
+  it('does not fail a starting machine on a stale missing-module log', async () => {
+    const result = await deployWithHealthLogs({
+      name: 'stale-crash',
+      machineState: 'started',
+      logs: "ModuleNotFoundError: No module named 'cast'\n",
+      probeUrl: async () => false,
+    })
+    expect(result.error?.message).to.include('did not become ready')
+    expect(result.error?.message).to.not.include("No module named 'cast'")
+    expect(result.host.logs.join('\n')).to.not.include('Deployment Successful')
+    expect(result.discarded).to.deep.equal([])
+  })
+
   it('records the new token when a redeploy is released and the health check fails', async () => {
     const dir = path.join(root, 'released')
     fs.mkdirSync(dir, {recursive: true})

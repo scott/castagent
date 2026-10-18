@@ -3,7 +3,7 @@ import * as path from 'path'
 import * as fs from 'fs'
 import {db} from '../sqlite'
 import {keychain} from '../keychain'
-import {waitForContainerHealth} from './container-health'
+import {runtimeConfigErrorIsCurrent, waitForContainerHealth} from './container-health'
 import {
   assertSecretsNotInArgv,
   checkCli,
@@ -262,7 +262,9 @@ export function flyHealthFailureMessage(
   const status = result.status || 'unknown'
   const summary = result.reason === 'timeout'
     ? `Fly machine for '${appName}' did not become ready (status: ${status}).`
-    : `Fly machine for '${appName}' exited before the runtime was ready.`
+    : status.toLowerCase() === 'running'
+      ? `Fly machine for '${appName}' failed before the runtime was ready.`
+      : `Fly machine for '${appName}' exited before the runtime was ready.`
   const logs = tailText(result.logs)
   const parts = [summary, `Status: ${status}`, `Expected: ${flyAgentCardUrl(deploymentUrl)}`]
   if (logs) parts.push(logs)
@@ -603,8 +605,13 @@ export async function waitForFlyHealth(input: {
     const logText = `${logs.stdout}\n${logs.stderr}`.trim()
     const state = machines.exitCode === 0 ? flyMachineState(machines.stdout) : 'starting'
     // A started machine is ready only when the public agent card answers.
-    // Older log lines can still mention a previous crash, so those lines
-    // fail the deploy only once every machine is stopped.
+    // Older crash lines stay in flyctl logs, so a missing module fails the
+    // deploy only once every machine is stopped. A current
+    // `Error loading agent config` is the runtime refusing agent.yaml, and
+    // that fails the deploy while the machine is still started or starting.
+    if (state !== 'stopped' && runtimeConfigErrorIsCurrent(logText)) {
+      return {status: 'running', logs: logText}
+    }
     if (state === 'started') {
       const ready = await probeUrl(input.deploymentUrl)
       if (ready) return {status: 'running', logs: 'Agent ready'}

@@ -205,7 +205,10 @@ on the running machine, and Cast keeps that token. After `flyctl deploy` exits 0
 until a machine is started and
 `https://cast-<agent>.fly.dev/.well-known/agent.json` responds. A stopped machine, a
 log line `No module named 'cast'`, or a card that never responds fails
-the deploy. Cast does not print the success banner in that case. The new
+the deploy. A current log line `Error loading agent config` fails it too,
+including while the machine is still started or starting. An older copy
+of that line, followed later by `Agent ready`, does not. Cast does not
+print the success banner in that case. The new
 token stays, because that release is already live.
 `cast shutdown` destroys the machines and the app first, then lists
 volumes with `flyctl volumes list --json` and deletes every remaining
@@ -272,7 +275,9 @@ Droplet, MicroVM, and Fly images copy that same package to `/app/cast` and set
 also omits `cast`. Fly deploy then waits until
 `https://cast-<agent>.fly.dev/.well-known/agent.json` returns the agent
 card. A machine that exits before that, including `No module named 'cast'`,
-fails the deploy and Cast does not print a success banner.
+fails the deploy and Cast does not print a success banner. A current
+log line `Error loading agent config` fails that check while the machine
+is still started or starting.
 
 The runtime stage installs git with
 `--no-install-recommends` and removes the apt lists. gcc stays in the
