@@ -31,6 +31,7 @@ function deps(overrides: Partial<RuntimeLogDeps> = {}): RuntimeLogDeps {
     listDeployments: () => [],
     readLocalLog: () => null,
     dockerLogs: async () => ({stdout: '', stderr: '', exitCode: 0}),
+    flyLogs: async () => ({stdout: '', stderr: '', exitCode: 0}),
     ...overrides,
   }
 }
@@ -175,6 +176,42 @@ describe('runtime logs', () => {
     expect(result.status).to.equal('error')
     expect(result.text).to.include('/.sprite/logs/services/cast-agent.log')
     expect(result.text).to.not.include('/opt/cast-agent/agent.log')
+  })
+
+  it('prints Fly.io logs for a Fly deployment', async () => {
+    const calls: string[][] = []
+    const result = await collectRuntimeLogs('bb2-chat', deps({
+      listDeployments: () => [deployment({
+        provider: 'fly',
+        deployment_url: 'https://cast-bb2-chat.fly.dev',
+      })],
+      flyLogs: async (appName) => {
+        calls.push([appName])
+        return {stdout: 'machine started\n', stderr: '', exitCode: 0}
+      },
+    }))
+
+    expect(result.status).to.equal('ok')
+    expect(result.text).to.equal('machine started\n')
+    expect(calls).to.deep.equal([['cast-bb2-chat']])
+  })
+
+  it('reports a Fly logs failure', async () => {
+    const result = await collectRuntimeLogs('abc123', deps({
+      getDeploymentBySha: () => deployment({
+        provider: 'fly',
+        deployment_url: 'https://cast-bb2-chat.fly.dev',
+      }),
+      flyLogs: async () => ({
+        stdout: '',
+        stderr: 'Error: app not found\n',
+        exitCode: 1,
+      }),
+    }))
+
+    expect(result.status).to.equal('error')
+    expect(result.text).to.include("Fly.io logs for app 'cast-bb2-chat'")
+    expect(result.text).to.include('app not found')
   })
 
   it('refuses providers it cannot read', async () => {

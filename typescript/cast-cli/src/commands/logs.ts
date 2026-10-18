@@ -2,7 +2,7 @@ import {Args, Command} from '@oclif/core'
 import {collectRuntimeLogs} from '../lib/runtime-logs'
 
 export default class Logs extends Command {
-  static description = 'Print local runtime logs, Docker container logs, or Sprites service logs'
+  static description = 'Print local runtime logs, Docker container logs, Sprites service logs, or Fly.io logs'
 
   static examples = [
     '<%= config.bin %> <%= command.id %> email-assistant',

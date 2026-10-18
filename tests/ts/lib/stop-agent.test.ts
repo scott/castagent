@@ -1,6 +1,10 @@
 import {expect} from 'chai'
 import Stop from '../../../typescript/cast-cli/src/commands/stop'
 import {
+  flyMachineStopArgs,
+  flyMachinesListArgs,
+} from '../../../typescript/cast-cli/src/lib/deploy/fly'
+import {
   digitalOceanDropletIp,
   digitalOceanInspectCommand,
   digitalOceanStopCommand,
@@ -29,6 +33,9 @@ function deps(overrides: Partial<StopAgentDeps> = {}): StopAgentDeps & {dockerAr
     runSsh: async () => {
       throw new Error('unexpected ssh')
     },
+    runFly: async () => {
+      throw new Error('unexpected flyctl')
+    },
     signal: () => {},
     removeLocalAgent: () => {},
     sleep: async () => {},
@@ -38,7 +45,7 @@ function deps(overrides: Partial<StopAgentDeps> = {}): StopAgentDeps & {dockerAr
 
 describe('stop agent', () => {
   it('describes stop as covering a local agent or a Docker deployment', () => {
-    expect(Stop.description).to.equal('Stop a running local agent, Docker deployment, or DigitalOcean droplet')
+    expect(Stop.description).to.equal('Stop a running local agent, Docker deployment, DigitalOcean droplet, or Fly.io machine')
   })
 
   it('treats running, restarting, and paused containers as up', () => {
@@ -610,6 +617,74 @@ describe('stop agent', () => {
     expect(result.messages.map(message => message.text)[0]).to.equal(
       "Stopping agent 'bb4-do' (PID: 4242, port: 8080)...",
     )
+  })
+
+  it('stops a started Fly machine when no local or Docker process is running', async () => {
+    const flyCalls: string[][] = []
+    const harness = deps({
+      listDeployments: () => [{provider: 'fly', deployment_url: 'https://cast-bb3-chat.fly.dev'}],
+      runFly: async (args) => {
+        flyCalls.push(args)
+        if (args[0] === 'machines') {
+          return ok(JSON.stringify([{id: '148ed123', state: 'started'}, {id: 'stopped1', state: 'stopped'}]))
+        }
+        return ok('')
+      },
+    })
+
+    const result = await stopAgent('bb3-chat', {}, harness)
+
+    expect(result.status).to.equal('stopped')
+    expect(result.messages.map(message => message.text)).to.deep.equal([
+      "Stopping agent 'bb3-chat' (Fly app cast-bb3-chat)...",
+      "✓ Agent 'bb3-chat' stopped successfully.",
+    ])
+    expect(flyCalls).to.deep.equal([
+      flyMachinesListArgs('cast-bb3-chat'),
+      flyMachineStopArgs('148ed123', 'cast-bb3-chat', false),
+    ])
+    expect(harness.dockerArgs).to.deep.equal([])
+  })
+
+  it('uses SIGKILL when stopping a Fly machine with --force', async () => {
+    const flyCalls: string[][] = []
+    const harness = deps({
+      listDeployments: () => [{provider: 'fly', deployment_url: 'https://cast-bb3-chat.fly.dev'}],
+      runFly: async (args) => {
+        flyCalls.push(args)
+        if (args[0] === 'machines') return ok('[{"id":"abc","state":"starting"}]')
+        return ok('')
+      },
+    })
+
+    const result = await stopAgent('bb3-chat', {force: true}, harness)
+
+    expect(result.status).to.equal('stopped')
+    expect(flyCalls[1]).to.deep.equal(flyMachineStopArgs('abc', 'cast-bb3-chat', true))
+  })
+
+  it('does not claim a Fly app is stopped when flyctl fails', async () => {
+    const harness = deps({
+      listDeployments: () => [{provider: 'fly', deployment_url: 'https://cast-bb3-chat.fly.dev'}],
+      runFly: async () => ({stdout: '', stderr: 'Error: authentication handshake failed\n', exitCode: 1}),
+    })
+
+    const result = await stopAgent('bb3-chat', {}, harness)
+
+    expect(result.status).to.equal('error')
+    expect(result.messages.map(message => message.text).join('\n')).to.include('authentication handshake failed')
+    expect(result.messages.map(message => message.text).join('\n')).to.not.include('stopped successfully')
+  })
+
+  it('reports a stopped Fly app as not running', async () => {
+    const harness = deps({
+      listDeployments: () => [{provider: 'fly', deployment_url: 'https://cast-bb3-chat.fly.dev'}],
+      runFly: async () => ok('[{"id":"abc","state":"stopped"}]'),
+    })
+
+    const result = await stopAgent('bb3-chat', {}, harness)
+
+    expect(result.status).to.equal('not_running')
   })
 
   it('cleans a stale local PID and does not claim a second failure when Docker is down', async () => {

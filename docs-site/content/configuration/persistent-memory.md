@@ -31,7 +31,7 @@ file I/O. There's no special API.
 |---|---|---|
 | Docker (local) | `cast-<name>` named volume | managed by `docker volume` |
 | Railway | persistent volume attached to the service | provisioned on first deploy |
-| Fly | volume attached to the app | provisioned on first deploy |
+| Fly | `cast_<name>_memory` volume at `/app/agent/memory` | Created after the Fly app exists. The name is lowercase letters, numbers, and underscores, at most 30 characters. |
 | DigitalOcean | `cast-<name>` block volume | keyed by the agent name and mounted into the container |
 | DigitalOcean MicroVM | MicroVM disk at `/app/agent/memory` | survives pause and resume. Upgrade copies it to the replacement MicroVM when it is 8 MiB or smaller |
 | Sprites | `/opt/cast-agent/memory` on the sprite | Cast does not create a local directory |
@@ -68,7 +68,7 @@ destroy handler:
   a volume as removed only when Docker deletes it, and reports the image
   as removed only when Docker deletes it.
 - Railway runs `railway down` and leaves the Railway volume in place.
-- Fly destroys the app and then attempts to delete its memory volume.
+- Fly deletes the `cast_<name>_memory` volume (and any other valid Fly volume name stored on the deployment), then destroys the app. Cast looks each name up with `flyctl volumes list --json` and deletes the `vol_...` id. The volume is reported as removed only when that delete exits 0, and as not present only when the list has no volume of that name. The app is reported as destroyed only when `flyctl apps destroy` exits 0.
 - DigitalOcean Droplet shutdown deletes the droplet and then deletes the
   `cast-<name>` memory volume. Older volumes named
   `cast-<name>-<uuid>-memory` are removed as well.   Cast looks each volume

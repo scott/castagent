@@ -190,6 +190,32 @@ running. The droplet and its `cast-<name>` memory volume stay.
 `cast shutdown` deletes the droplet and that volume. SSH checks the
 pinned host key. A missing pin is reported as a stop failure.
 
+A Fly app is named `cast-<agent>`. The first deploy creates it with
+`flyctl apps create` after writing `fly.toml`. It does not use
+`flyctl launch`, which refuses to run when that file is already there.
+The memory volume is created once the app exists, with `--yes`, in region
+`iad`. The volume name is `cast_<agent>_memory` (lowercase letters,
+numbers, and underscores, at most 30 characters). The image copies the
+Cast package to `/app/cast` and sets `PYTHONPATH=/app`, the same layout
+Droplet and MicroVM images use. After `flyctl deploy` exits 0, Cast waits
+until a machine is started and
+`https://cast-<agent>.fly.dev/.well-known/agent.json` responds. A stopped machine, a
+log line `No module named 'cast'`, or a card that never responds fails
+the deploy. Cast does not print the success banner in that case.
+`cast shutdown` lists volumes with `flyctl volumes list --json`, deletes
+the matching volume by its `vol_...` id, and reports it removed only when
+that delete exits 0. It says the volume was not present only when the
+list has no volume of that name, or the app is already gone. It reports
+the app destroyed only when `flyctl apps destroy` exits 0.
+A failed deploy records the deployment as soon as the app exists, so
+`cast shutdown <agent>` can remove the partial app, and deletes the
+token file written for that attempt (`~/.cast/tokens/deployments/<sha>.token`).
+The agent token file is deleted only when no other deployment is still live.
+`cast logs` prints `flyctl logs --no-tail`. `cast stop` stops machines that
+are started, starting, or replacing. `cast status` prints `flyctl status`.
+Pass `--local-only`, `--remote-only`, `--depot`, or `--no-depot` on
+`cast deploy` to choose the builder.
+
 ## What gets shipped
 
 The deployment is a single Docker image that contains:
@@ -231,9 +257,14 @@ imports at startup) and every package in the agent's `runtime.requirements`.
 The `cast` package itself is omitted because the image copies that source
 tree in directly.
 
-Droplet and MicroVM images copy that same package to `/app/cast` and set
+Droplet, MicroVM, and Fly images copy that same package to `/app/cast` and set
 `PYTHONPATH=/app`. Their `requirements.txt` is written the same way and
-also omits `cast`. The runtime stage installs git with
+also omits `cast`. Fly deploy then waits until
+`https://cast-<agent>.fly.dev/.well-known/agent.json` returns the agent
+card. A machine that exits before that, including `No module named 'cast'`,
+fails the deploy and Cast does not print a success banner.
+
+The runtime stage installs git with
 `--no-install-recommends` and removes the apt lists. gcc stays in the
 builder stage. A generated Dockerfile that still points `PYTHONPATH` at
 `/usr/local`, or whose runtime stage omits

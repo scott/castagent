@@ -1,5 +1,15 @@
-import FlyDeploy from '../fly'
-import {execCommand, execCommandIgnoreError} from '../deploy-utils'
+import {Flags} from '@oclif/core'
+import FlyDeploy, {
+  deleteFlyVolumeByName,
+  deployFlyAgent,
+  flyAppName,
+  flyBuilderOptions,
+  flyVolumeCreateArgs,
+  flyVolumeName,
+  flyVolumeNamesForDestroy,
+  isFlyVolumeName,
+} from '../fly'
+import {execCommand} from '../deploy-utils'
 import type {DeploymentProvider} from '../types'
 import {upgradeFlyDeployment} from '../upgrades'
 
@@ -26,20 +36,50 @@ export const flyProvider: DeploymentProvider = {
       error: 'Fly.io CLI (flyctl) is not installed.\nInstall it from: https://fly.io/docs/hands-on/install-flyctl/',
     },
   ],
+  flags: {
+    'local-only': Flags.boolean({
+      description: 'Fly.io: build with the local Docker daemon (flyctl deploy --local-only).',
+    }),
+    'remote-only': Flags.boolean({
+      description: 'Fly.io: build with the Fly remote builder (flyctl deploy --remote-only).',
+    }),
+    depot: Flags.boolean({
+      description: 'Fly.io: build with Depot (flyctl deploy --depot).',
+    }),
+    'no-depot': Flags.boolean({
+      description: 'Fly.io: do not use Depot (flyctl deploy --depot=false).',
+    }),
+  },
   memory: {
     mountPath: '/app/agent/memory',
     async create(ctx) {
-      await execCommand('flyctl', ['volumes', 'create', ctx.volumeId, '--size', '1', '--app', `cast-${ctx.agentName}`])
+      const volumeName = isFlyVolumeName(ctx.volumeId) ? ctx.volumeId : flyVolumeName(ctx.agentName)
+      await execCommand('flyctl', flyVolumeCreateArgs(volumeName, flyAppName(ctx.agentName)))
     },
     async delete(ctx) {
-      await execCommandIgnoreError('flyctl', ['volumes', 'delete', ctx.volumeId, '--app', `cast-${ctx.agentName}`, '--yes'])
+      const names = flyVolumeNamesForDestroy(ctx.agentName, [ctx.volumeId])
+      const exec = (args: string[], opts?: {cwd?: string; silent?: boolean; shell?: boolean}) =>
+        execCommand('flyctl', args, {silent: opts?.silent, shell: opts?.shell})
+      for (const name of names) {
+        await deleteFlyVolumeByName(name, flyAppName(ctx.agentName), exec)
+      }
     },
   },
   async deploy(ctx) {
-    await FlyDeploy.run([ctx.agentName])
+    const builder = flyBuilderOptions(ctx.flags)
+    await deployFlyAgent({
+      agentName: ctx.agentName,
+      agentPath: ctx.agentPath,
+      builder,
+      host: {
+        log: ctx.log,
+        warn: ctx.warn,
+        error: ctx.error,
+      },
+    })
   },
   async destroy(ctx) {
-    await FlyDeploy.destroy(ctx.agentName)
+    await FlyDeploy.destroy(ctx.agentName, ctx.deployment.volume_id)
   },
   async upgrade(ctx) {
     await upgradeFlyDeployment(ctx, ctx.agentName, ctx.version, ctx.versionTarballPath)

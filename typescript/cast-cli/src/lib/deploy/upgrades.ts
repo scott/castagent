@@ -11,6 +11,7 @@ import {
   inferenceEnv,
   readAgentModel,
   resolveDeploymentAuthToken,
+  stageCastRuntime,
 } from './deploy-utils'
 import {dockerContainerEnv, dockerContainerRunArgs, startDockerAgentContainer, writeDockerCompose} from './docker'
 import {writeHostMotdOverSsh} from './motd'
@@ -307,6 +308,7 @@ export async function upgradeFlyDeployment(
     await tar.extract({file: versionTarballPath, cwd: agentPath})
   }
 
+  stageCastRuntime(agentPath)
   host.log('Triggering Fly.io deploy...')
   const {spawn} = await import('child_process')
 

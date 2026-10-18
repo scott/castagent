@@ -1,5 +1,12 @@
 import {execCommand} from './deploy/deploy-utils'
 import {dropletHostFromUrl} from './deploy/digitalocean'
+import {
+  flyAppName,
+  flyMachineStopArgs,
+  flyMachinesListArgs,
+  flyResourceGone,
+  runningFlyMachineIds,
+} from './deploy/fly'
 import {execDigitalOceanSsh, isIpv4Address} from './deploy/ssh-hostkey'
 import {dockerContainerName} from './runtime-logs'
 import {db} from './sqlite'
@@ -28,6 +35,8 @@ export interface StopAgentDeps {
   runDocker: (args: string[]) => Promise<CommandResult>
   /** SSH to a droplet. The remote command is a fixed `docker` invocation. */
   runSsh: (ip: string, remoteCmd: string) => Promise<CommandResult>
+  /** flyctl argv. The app name is cast-<agent>. Machine ids come from flyctl. */
+  runFly: (args: string[]) => Promise<CommandResult>
   signal: (pid: number, signal: NodeJS.Signals | 0) => void
   removeLocalAgent: (name: string) => void
   sleep?: (ms: number) => Promise<void>
@@ -131,6 +140,11 @@ export function defaultStopAgentDeps(): StopAgentDeps {
     }),
     runSsh: (ip, remoteCmd) => execDigitalOceanSsh(ip, remoteCmd, {
       silent: true,
+      timeoutMs: 30_000,
+    }),
+    runFly: (args) => execCommand('flyctl', args, {
+      silent: true,
+      shell: false,
       timeoutMs: 30_000,
     }),
     signal: (pid, signal) => {
@@ -311,14 +325,80 @@ async function stopDigitalOceanDeployment(
 }
 
 /**
+ * Stop started Fly machines for `cast-<name>`.
+ * Returns null when there is no Fly deployment, or no machine is running.
+ */
+async function stopFlyDeployment(
+  agentName: string,
+  force: boolean,
+  deps: StopAgentDeps,
+): Promise<StopAgentResult | null> {
+  const row = deps.listDeployments(agentName).find(item => item.provider === 'fly')
+  if (!row) return null
+
+  const appName = flyAppName(agentName)
+  let listed: CommandResult
+  try {
+    listed = await deps.runFly(flyMachinesListArgs(appName))
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return failure(`Failed to stop agent: ${message}`)
+  }
+
+  if (flyResourceGone(listed.stdout, listed.stderr)) return null
+  if (listed.exitCode !== 0) {
+    const detail = commandDetail(listed)
+    const text = detail
+      ? `Failed to stop agent: ${detail}`
+      : `Failed to stop agent: flyctl exited ${listed.exitCode}`
+    return failure(text)
+  }
+
+  let machineIds: string[]
+  try {
+    machineIds = runningFlyMachineIds(listed.stdout)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    return failure(`Failed to stop agent: ${message}`)
+  }
+  if (machineIds.length === 0) return null
+
+  const messages: StopMessage[] = []
+  push(messages, log(`Stopping agent '${agentName}' (Fly app ${appName})...`), deps)
+  for (const machineId of machineIds) {
+    let stopped: CommandResult
+    try {
+      stopped = await deps.runFly(flyMachineStopArgs(machineId, appName, force))
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      messages.push({kind: 'error', text: `Failed to stop agent: ${message}`})
+      return {status: 'error', messages}
+    }
+    if (stopped.exitCode !== 0 && !flyResourceGone(stopped.stdout, stopped.stderr)) {
+      const detail = commandDetail(stopped)
+      const text = detail
+        ? `Failed to stop agent: ${detail}`
+        : `Failed to stop agent: flyctl exited ${stopped.exitCode}`
+      messages.push({kind: 'error', text})
+      return {status: 'error', messages}
+    }
+  }
+
+  push(messages, log(`✓ Agent '${agentName}' stopped successfully.`), deps)
+  return {status: 'stopped', messages}
+}
+
+/**
  * Stop the running agent.
  *
  * A local `cast dev` process is recorded by PID. A Docker deploy runs as
  * container `cast-<name>` on this machine. A DigitalOcean droplet deploy
- * runs as container `cast-agent` on the droplet. A live local process is
- * stopped on its own. When that process is missing or already gone, stop
- * the local Docker container if it is up. When that container is not
- * running, stop the droplet container if it is up.
+ * runs as container `cast-agent` on the droplet. A Fly deploy runs as
+ * machines on `cast-<name>`. A live local process is stopped on its own.
+ * When that process is missing or already gone, stop the local Docker
+ * container if it is up. When that container is not running, stop the
+ * droplet container if it is up. When that container is not running, stop
+ * Fly machines that are started.
  */
 export async function stopAgent(
   agentName: string,
@@ -336,7 +416,8 @@ export async function stopAgent(
 
   const dockerResult = await stopDockerDeployment(agentName, force, deps)
   const dropletResult = dockerResult ? null : await stopDigitalOceanDeployment(agentName, force, deps)
-  const remote = dockerResult ?? dropletResult
+  const flyResult = dockerResult || dropletResult ? null : await stopFlyDeployment(agentName, force, deps)
+  const remote = dockerResult ?? dropletResult ?? flyResult
   if (!remote) {
     if (cleaned) return cleaned
     const messages: StopMessage[] = []

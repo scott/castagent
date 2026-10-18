@@ -45,7 +45,7 @@ describe('logs command', () => {
   })
 
   it('describes the agent argument', () => {
-    expect(Logs.description).to.equal('Print local runtime logs, Docker container logs, or Sprites service logs')
+    expect(Logs.description).to.equal('Print local runtime logs, Docker container logs, Sprites service logs, or Fly.io logs')
     expect(Logs.args.agent.required).to.equal(true)
     expect(Logs.args.agent.description).to.equal('Agent name or deployment SHA')
   })
