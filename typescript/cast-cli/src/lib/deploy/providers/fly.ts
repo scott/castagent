@@ -2,9 +2,9 @@ import {Flags} from '@oclif/core'
 import FlyDeploy, {
   deleteFlyVolumeByName,
   deployFlyAgent,
+  ensureFlyMemoryVolume,
   flyAppName,
   flyBuilderOptions,
-  flyVolumeCreateArgs,
   flyVolumeName,
   flyVolumeNamesForDestroy,
   isFlyVolumeName,
@@ -54,7 +54,15 @@ export const flyProvider: DeploymentProvider = {
     mountPath: '/app/agent/memory',
     async create(ctx) {
       const volumeName = isFlyVolumeName(ctx.volumeId) ? ctx.volumeId : flyVolumeName(ctx.agentName)
-      await execCommand('flyctl', flyVolumeCreateArgs(volumeName, flyAppName(ctx.agentName)))
+      await ensureFlyMemoryVolume({
+        volumeName,
+        appName: flyAppName(ctx.agentName),
+        exec: (args, opts) => execCommand('flyctl', args, {
+          cwd: opts?.cwd,
+          silent: opts?.silent,
+          shell: opts?.shell,
+        }),
+      })
     },
     async delete(ctx) {
       const names = flyVolumeNamesForDestroy(ctx.agentName, [ctx.volumeId])

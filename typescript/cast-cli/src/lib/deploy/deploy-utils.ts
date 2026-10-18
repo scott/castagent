@@ -1310,8 +1310,9 @@ export function formatFlySecretsImport(env: Record<string, string>): string {
   return `${lines.join('\n')}\n`
 }
 
+/** `--stage` keeps the new secrets off the running machine until `flyctl deploy` succeeds. */
 export function flySecretsImportArgs(appName: string): string[] {
-  return ['secrets', 'import', '--app', appName]
+  return ['secrets', 'import', '--app', appName, '--stage']
 }
 
 export function railwaySecretSetArgs(key: string): string[] {

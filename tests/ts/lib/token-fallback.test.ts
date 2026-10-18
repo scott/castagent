@@ -4,6 +4,7 @@ import * as os from 'os'
 import * as path from 'path'
 import sinon from 'sinon'
 import {KeychainManager} from '../../../typescript/cast-cli/src/lib/keychain'
+import {shutdownTokenRemovalMessage} from '../../../typescript/cast-cli/src/commands/shutdown'
 
 const secretServiceError = new Error(
   'The name org.freedesktop.secrets was not provided by any .service files',
@@ -203,6 +204,22 @@ describe('token file fallback', () => {
     } finally {
       process.umask(previous)
     }
+  })
+
+  it('names the token file when shutdown deletes a file and the keychain is missing', async () => {
+    sandbox.stub(require('keytar'), 'setPassword').rejects(secretServiceError)
+    sandbox.stub(require('keytar'), 'deletePassword').rejects(secretServiceError)
+    await keychain.setToken('bb2-chat', 'file-token')
+    const filePath = path.join(tokens, 'bb2-chat.token')
+    expect(fs.existsSync(filePath)).to.equal(true)
+
+    const result = await keychain.deleteToken('bb2-chat')
+
+    expect(fs.existsSync(filePath)).to.equal(false)
+    expect(result).to.deep.equal({removed: true, stores: ['file']})
+    const message = shutdownTokenRemovalMessage('agent', result.stores, 'bb7590')
+    expect(message).to.equal('Removed auth token from token file.')
+    expect(message).to.not.include('keychain')
   })
 
   it('replaces an existing token file without leaving a temp file', async () => {

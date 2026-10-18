@@ -194,22 +194,28 @@ A Fly app is named `cast-<agent>`. The first deploy creates it with
 `flyctl apps create` after writing `fly.toml`. It does not use
 `flyctl launch`, which refuses to run when that file is already there.
 The memory volume is created once the app exists, with `--yes`, in region
-`iad`. The volume name is `cast_<agent>_memory` (lowercase letters,
+`iad`, and only when the app has no volume of that name. A later deploy
+reuses the existing volume. The volume name is `cast_<agent>_memory` (lowercase letters,
 numbers, and underscores, at most 30 characters). The image copies the
 Cast package to `/app/cast` and sets `PYTHONPATH=/app`, the same layout
-Droplet and MicroVM images use. After `flyctl deploy` exits 0, Cast waits
+Droplet and MicroVM images use. Secrets are sent with
+`flyctl secrets import --stage`, so they reach the machine only when
+`flyctl deploy` succeeds. A failed build leaves the previous `AUTH_TOKEN`
+on the running machine, and Cast keeps that token. After `flyctl deploy` exits 0, Cast waits
 until a machine is started and
 `https://cast-<agent>.fly.dev/.well-known/agent.json` responds. A stopped machine, a
 log line `No module named 'cast'`, or a card that never responds fails
-the deploy. Cast does not print the success banner in that case.
-`cast shutdown` lists volumes with `flyctl volumes list --json`, deletes
-the matching volume by its `vol_...` id, and reports it removed only when
-that delete exits 0. It says the volume was not present only when the
+the deploy. Cast does not print the success banner in that case. The new
+token stays, because that release is already live.
+`cast shutdown` lists volumes with `flyctl volumes list --json` and deletes
+every volume of that name by its `vol_...` id. It reports the volume removed only when
+a delete exits 0. It says the volume was not present only when the
 list has no volume of that name, or the app is already gone. It reports
 the app destroyed only when `flyctl apps destroy` exits 0.
 A failed deploy records the deployment as soon as the app exists, so
 `cast shutdown <agent>` can remove the partial app, and deletes the
-token file written for that attempt (`~/.cast/tokens/deployments/<sha>.token`).
+token file written for that attempt (`~/.cast/tokens/deployments/<sha>.token`)
+when the new release did not go out.
 The agent token file is deleted only when no other deployment is still live.
 `cast logs` prints `flyctl logs --no-tail`. `cast stop` stops machines that
 are started, starting, or replacing. `cast status` prints `flyctl status`.

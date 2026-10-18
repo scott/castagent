@@ -28,7 +28,7 @@ export const FLY_AGENT_CARD_PATH = '/.well-known/agent.json'
 export const FLY_READY_TIMEOUT_MS = 120_000
 export const FLY_READY_INTERVAL_MS = 2_000
 
-/** `flyctl secrets import` reads NAME=VALUE lines from stdin. */
+/** `flyctl secrets import --stage` reads NAME=VALUE lines from stdin and does not restart the app. */
 export async function importFlySecrets(
   cwd: string,
   appName: string,
@@ -165,7 +165,7 @@ export function flyVolumeDeleteArgs(volumeId: string, appName: string): string[]
   return ['volumes', 'delete', volumeId, '--app', appName, '--yes']
 }
 
-export function flyVolumeIdByName(stdout: string, volumeName: string): string | undefined {
+function flyVolumeList(stdout: string): Array<{id?: unknown; name?: unknown}> {
   let parsed: unknown
   try {
     parsed = JSON.parse(stdout.trim() || '[]')
@@ -179,14 +179,22 @@ export function flyVolumeIdByName(stdout: string, volumeName: string): string | 
       ? (parsed as {volumes: unknown[]}).volumes
       : undefined
   if (!list) throw new Error('flyctl volumes list did not return a JSON array')
-  for (const item of list) {
-    if (!item || typeof item !== 'object') continue
-    const record = item as {id?: unknown; name?: unknown}
-    if (record.name === volumeName && typeof record.id === 'string' && record.id.length > 0) {
-      return record.id
+  return list.filter((item): item is {id?: unknown; name?: unknown} => Boolean(item) && typeof item === 'object')
+}
+
+/** Every volume id that uses this name. Fly allows more than one. */
+export function flyVolumeIdsByName(stdout: string, volumeName: string): string[] {
+  const ids: string[] = []
+  for (const record of flyVolumeList(stdout)) {
+    if (record.name === volumeName && typeof record.id === 'string' && record.id.length > 0 && !ids.includes(record.id)) {
+      ids.push(record.id)
     }
   }
-  return undefined
+  return ids
+}
+
+export function flyVolumeIdByName(stdout: string, volumeName: string): string | undefined {
+  return flyVolumeIdsByName(stdout, volumeName)[0]
 }
 
 /**
@@ -479,12 +487,54 @@ export async function deleteFlyVolumeByName(
     if (flyResourceGone(listed.stdout, listed.stderr)) return 'absent'
     throw new Error(`Failed to list Fly volumes for '${appName}': ${commandDetail(listed)}`)
   }
-  const volumeId = flyVolumeIdByName(listed.stdout, volumeName)
-  if (!volumeId) return 'absent'
-  const deleted = await exec(flyVolumeDeleteArgs(volumeId, appName), {silent: true, shell: false})
-  if (deleted.exitCode === 0) return 'removed'
-  if (flyResourceGone(deleted.stdout, deleted.stderr)) return 'absent'
-  throw new Error(`Failed to delete Fly volume '${volumeName}' (${volumeId}): ${commandDetail(deleted)}`)
+  const volumeIds = flyVolumeIdsByName(listed.stdout, volumeName)
+  if (volumeIds.length === 0) return 'absent'
+  let removed = false
+  for (const volumeId of volumeIds) {
+    const deleted = await exec(flyVolumeDeleteArgs(volumeId, appName), {silent: true, shell: false})
+    if (deleted.exitCode === 0) {
+      removed = true
+      continue
+    }
+    if (flyResourceGone(deleted.stdout, deleted.stderr)) continue
+    throw new Error(`Failed to delete Fly volume '${volumeName}' (${volumeId}): ${commandDetail(deleted)}`)
+  }
+  return removed ? 'removed' : 'absent'
+}
+
+/**
+ * Create the named memory volume only when the app does not already have one.
+ * Fly allows several volumes to share a name, so a create that "succeeds"
+ * would add another 1 GB volume instead of attaching the existing one.
+ */
+export async function ensureFlyMemoryVolume(input: {
+  volumeName: string
+  appName: string
+  region?: string
+  cwd?: string
+  exec: FlyDeployDeps['exec']
+  log?: (message: string) => void
+}): Promise<void> {
+  const listed = await input.exec(flyVolumesListArgs(input.appName), {
+    cwd: input.cwd,
+    silent: true,
+    shell: false,
+  })
+  if (listed.exitCode !== 0) {
+    throw new Error(`Failed to list Fly volumes for '${input.appName}': ${commandDetail(listed)}`)
+  }
+  if (flyVolumeIdsByName(listed.stdout, input.volumeName).length > 0) {
+    input.log?.(`Reusing memory volume: ${input.volumeName}`)
+    return
+  }
+  input.log?.(`Creating memory volume: ${input.volumeName}`)
+  const created = await input.exec(
+    flyVolumeCreateArgs(input.volumeName, input.appName, input.region ?? FLY_REGION),
+    {cwd: input.cwd, silent: true, shell: false},
+  )
+  if (created.exitCode !== 0 && !flyAlreadyExists(created.stdout, created.stderr)) {
+    throw new Error(`Failed to create volume: ${commandDetail(created)}`)
+  }
 }
 
 export async function waitForFlyHealth(input: {
@@ -571,13 +621,21 @@ export async function deployFlyAgent(input: {
   const deploymentSha = deploymentShaFromEnv()
   let recordedEarly = false
   let recordedId: string | undefined
+  // True only after `flyctl deploy` exits 0. Staged secrets are live then,
+  // so a later health failure must keep the new token.
+  let released = false
+  let tokenHash = ''
+  let volumeName = ''
+  let volumeConfig = ''
 
   try {
-    const {authToken, tokenHash} = await deps.generateAuthToken(agentName)
-    const volumeName = ensureFlyToml(agentPath, agentName)
+    const generated = await deps.generateAuthToken(agentName)
+    const authToken = generated.authToken
+    tokenHash = generated.tokenHash
+    volumeName = ensureFlyToml(agentPath, agentName)
     const flyToml = fs.readFileSync(path.join(agentPath, 'fly.toml'), 'utf8')
     const region = readFlyPrimaryRegion(flyToml)
-    const volumeConfig = JSON.stringify({mountPath: FLY_MEMORY_MOUNT, region})
+    volumeConfig = JSON.stringify({mountPath: FLY_MEMORY_MOUNT, region})
 
     await ensureFlyApp(appName, agentPath, deps, host)
 
@@ -587,14 +645,14 @@ export async function deployFlyAgent(input: {
       recordedEarly = true
     }
 
-    host.log(`Creating memory volume: ${volumeName}`)
-    const volumeResult = await deps.exec(flyVolumeCreateArgs(volumeName, appName, region), {
+    await ensureFlyMemoryVolume({
+      volumeName,
+      appName,
+      region,
       cwd: agentPath,
-      silent: true,
+      exec: (args, opts) => deps.exec(args, opts),
+      log: message => host.log(message),
     })
-    if (volumeResult.exitCode !== 0 && !flyAlreadyExists(volumeResult.stdout, volumeResult.stderr)) {
-      throw new Error(`Failed to create volume: ${commandDetail(volumeResult)}`)
-    }
 
     host.log('Setting secrets...')
     const secrets: Record<string, string> = {
@@ -604,7 +662,7 @@ export async function deployFlyAgent(input: {
     }
     const secretResult = await deps.importSecrets(agentPath, appName, secrets)
     if (secretResult.exitCode !== 0) {
-      host.warn(`Failed to set secrets: ${secretResult.stderr}`)
+      throw new Error(`Failed to set secrets: ${commandDetail(secretResult)}`)
     }
 
     host.log('Deploying to Fly.io...')
@@ -614,6 +672,7 @@ export async function deployFlyAgent(input: {
     if (deployResult.exitCode !== 0) {
       throw new Error(`Fly.io deployment failed: ${commandDetail(deployResult)}`)
     }
+    released = true
 
     host.log('Waiting for the Fly machine to become ready...')
     await deps.confirmReady({
@@ -644,11 +703,26 @@ export async function deployFlyAgent(input: {
     host.log('To connect:')
     host.log(`  cast connect ${agentName}`)
   } catch (error) {
-    try {
-      await deps.discardTokens(agentName, deploymentSha, recordedEarly ? recordedId : undefined)
-    } catch (cleanupError) {
-      const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
-      host.warn(`Failed to remove the auth token from the failed deploy: ${message}`)
+    // A failed build never released the staged secrets, so the running
+    // machine still has its previous token. Drop only this attempt.
+    // Once deploy has exited 0 the new token is the live one: keep it,
+    // and record the row when this was a redeploy.
+    if (released && !recordedEarly && tokenHash) {
+      try {
+        recordedId = deps.saveDeployment(agentName, 'fly', deploymentUrl, tokenHash, volumeName, volumeConfig)
+        recordedEarly = true
+      } catch (saveError) {
+        const message = saveError instanceof Error ? saveError.message : String(saveError)
+        host.warn(`Failed to record the Fly deployment after the release: ${message}`)
+      }
+    }
+    if (!released) {
+      try {
+        await deps.discardTokens(agentName, deploymentSha, recordedEarly ? recordedId : undefined)
+      } catch (cleanupError) {
+        const message = cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+        host.warn(`Failed to remove the auth token from the failed deploy: ${message}`)
+      }
     }
     if (recordedEarly) {
       host.log(`Recorded the Fly deployment so cast shutdown ${agentName} can remove the app.`)

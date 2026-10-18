@@ -1049,7 +1049,7 @@ describe('shutdown token removal message', () => {
       'Removed auth token for deployment bb7590 from token file.',
     )
     expect(shutdownTokenRemovalMessage('deployment', [], 'bb7590')).to.equal(
-      'Removed auth token for deployment bb7590 from keychain.',
+      'Removed auth token for deployment bb7590.',
     )
   })
 })

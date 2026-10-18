@@ -121,24 +121,29 @@ the tag and token in place.
 Fly shutdown deletes the memory volume before it destroys the app. The
 volume name is the one deploy created (`cast_<agent>_memory`, or another
 valid name stored on the deployment). Cast lists the app's volumes with
-`flyctl volumes list --json`, finds the id for that name, and deletes
-`vol_...`. `flyctl volumes delete` does not accept the name. Cast says
-the volume was removed only when that id delete exits 0. It says the
-volume was not present only when the list has no volume of that name, or
-the app is already gone so the list cannot be read. A list or delete that
-fails for another reason is reported and is not described as success.
+`flyctl volumes list --json` and deletes every `vol_...` id with that
+name. Fly allows more than one volume to share a name, and a deploy
+creates one only when the list has none. `flyctl volumes delete` does not
+accept the name. Cast says the volume was removed only when an id delete
+exits 0. It says the volume was not present only when the list has no
+volume of that name, or the app is already gone so the list cannot be
+read. A list or delete that fails for another reason is reported and is
+not described as success.
 It says the app was destroyed only when `flyctl apps destroy` exits 0.
 "Not found" or "does not exist" on stdout or stderr means the app is
 already gone. A Fly deploy that
 fails after the app exists records that deployment immediately, so
 `cast shutdown` can delete the app, the volume, and the secrets on it.
+Secrets are staged with `flyctl secrets import --stage` and applied by
+`flyctl deploy`. A failed build leaves the running machine on its previous
+token, and Cast deletes only the token file for the failed attempt.
 The Fly image includes the Cast runtime. Deploy waits until a machine is
 started and `https://cast-<agent>.fly.dev/.well-known/agent.json` responds.
 A machine that exits, including `No module named 'cast'`, fails the deploy
-and Cast does not print a success banner.
-The token file for the failed attempt is deleted. A later successful
-deploy of an agent that already has a Fly row still writes a new
-deployment row only after the agent card responds.
+and Cast does not print a success banner. If `flyctl deploy` already
+exited 0, the new token stays recorded because that release is live.
+A later successful deploy of an agent that already has a Fly row still
+writes a new deployment row only after the agent card responds.
 
 In the TUI, `{% ref "slash:shutdown" %}` lists every active deployment
 (including DigitalOcean MicroVM and local) and shuts one down after a

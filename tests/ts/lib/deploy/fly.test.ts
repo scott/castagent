@@ -6,7 +6,7 @@ import sinon from 'sinon'
 import {db} from '../../../../typescript/cast-cli/src/lib/sqlite'
 import {keychain} from '../../../../typescript/cast-cli/src/lib/keychain'
 import {flyProvider} from '../../../../typescript/cast-cli/src/lib/deploy/providers/fly'
-import {stageCastRuntime} from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
+import {generateAuthToken, stageCastRuntime} from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 import FlyDeploy, {
   deployFlyAgent,
   destroyFlyDeployment,
@@ -19,6 +19,7 @@ import FlyDeploy, {
   flyVolumeCreateArgs,
   flyVolumeDeleteArgs,
   flyVolumeIdByName,
+  flyVolumeIdsByName,
   flyVolumeName,
   flyVolumeNamesForDestroy,
   flyVolumesListArgs,
@@ -263,8 +264,9 @@ describe('Fly deploy flow', () => {
     expect(calls.some(args => args[0] === 'launch')).to.equal(false)
     expect(calls[0]).to.deep.equal(['status', '--app', 'cast-mail'])
     expect(calls[1]).to.deep.equal(flyAppsCreateArgs('cast-mail'))
-    expect(calls[2]).to.deep.equal(flyVolumeCreateArgs(volume, 'cast-mail'))
-    expect(calls[2]).to.include('--yes')
+    expect(calls[2]).to.deep.equal(flyVolumesListArgs('cast-mail'))
+    expect(calls[3]).to.deep.equal(flyVolumeCreateArgs(volume, 'cast-mail'))
+    expect(calls[3]).to.include('--yes')
     expect(calls.some(args => args[0] === 'secrets')).to.equal(false)
     expect(calls.some(args => args.join('\0').includes('AUTH_TOKEN'))).to.equal(false)
     expect(calls.some(args => args.join('\0').includes('inference-key'))).to.equal(false)
@@ -274,7 +276,7 @@ describe('Fly deploy flow', () => {
     expect(harness.imported[0].secrets.AUTH_TOKEN).to.equal('token')
     expect(harness.imported[0].secrets.OPENROUTER_API_KEY).to.equal('inference-key')
     expect(harness.imported[0].secrets.OPENAI_API_KEY).to.equal(undefined)
-    expect(calls[3]).to.deep.equal(['deploy', '--app', 'cast-mail'])
+    expect(calls[4]).to.deep.equal(['deploy', '--app', 'cast-mail'])
     expect(readFlyMountSource(fs.readFileSync(path.join(dir, 'fly.toml'), 'utf8'))).to.equal(volume)
     expect(harness.saved).to.have.length(1)
     expect(harness.saved[0][1]).to.equal('fly')
@@ -342,7 +344,10 @@ describe('Fly deploy flow', () => {
     const harness = deps(async (args) => {
       calls.push(args)
       if (args[0] === 'status') return flyResult(0, 'app\n')
-      if (args[0] === 'volumes') return flyResult(1, '', 'Error: yes flag must be specified when not running interactively')
+      if (args[0] === 'volumes' && args[1] === 'list') return flyResult(0, '[]')
+      if (args[0] === 'volumes' && args[1] === 'create') {
+        return flyResult(1, '', 'Error: yes flag must be specified when not running interactively')
+      }
       return flyResult(1, '', 'unexpected')
     })
 
@@ -364,7 +369,9 @@ describe('Fly deploy flow', () => {
     const harness = deps(async (args) => {
       calls.push(args)
       if (args[0] === 'status') return flyResult(0, 'running\n')
-      if (args[0] === 'volumes') return flyResult(1, '', 'Error: volume name is taken')
+      if (args[0] === 'volumes' && args[1] === 'list') {
+        return flyResult(0, JSON.stringify([{id: 'vol_taken', name: flyVolumeName('again')}]))
+      }
       if (args[0] === 'deploy') return flyResult(0)
       return flyResult(1, '', 'unexpected')
     }, {
@@ -380,6 +387,7 @@ describe('Fly deploy flow', () => {
 
     expect(calls.some(args => args[0] === 'apps')).to.equal(false)
     expect(calls.some(args => args[0] === 'launch')).to.equal(false)
+    expect(calls.some(args => args[1] === 'create')).to.equal(false)
     expect(calls.filter(args => args[0] === 'deploy')[0]).to.deep.equal([
       'deploy', '--app', 'cast-again', '--local-only',
     ])
@@ -409,10 +417,113 @@ describe('Fly deploy flow', () => {
 
     await deployFlyAgent({agentName: 'region', agentPath: dir, host: flyHost()}, harness.deps)
 
-    const volume = calls.find(args => args[0] === 'volumes')
+    const volume = calls.find(args => args[0] === 'volumes' && args[1] === 'create')
     expect(volume).to.include('lhr')
     expect(volume).to.include('custom_volume')
     expect(volume).to.include('--yes')
+  })
+
+  it('reuses an existing memory volume and does not create a second one', async () => {
+    const dir = agentDir('reuse')
+    const calls: string[][] = []
+    const host = flyHost()
+    const volume = flyVolumeName('reuse')
+    const harness = deps(async (args) => {
+      calls.push(args)
+      if (args[0] === 'status') return flyResult(0, 'running\n')
+      if (args[0] === 'volumes' && args[1] === 'list') {
+        return flyResult(0, JSON.stringify([{id: 'vol_existing', name: volume, state: 'created'}]))
+      }
+      if (args[0] === 'deploy') return flyResult(0)
+      return flyResult(1, '', `unexpected ${args.join(' ')}`)
+    }, {
+      listDeployments: () => [{id: 'old123', provider: 'fly', volume_id: volume}],
+    })
+
+    await deployFlyAgent({agentName: 'reuse', agentPath: dir, host}, harness.deps)
+
+    expect(calls.filter(args => args[0] === 'volumes').map(args => args[1])).to.deep.equal(['list'])
+    expect(host.logs).to.include(`Reusing memory volume: ${volume}`)
+    expect(host.logs.some(line => line.startsWith('Creating memory volume'))).to.equal(false)
+    expect(harness.discarded).to.deep.equal([])
+  })
+
+  it('fails the deploy when secrets cannot be staged and does not deploy', async () => {
+    process.env.CAST_DEPLOYMENT_SHA = 'sec123'
+    const dir = agentDir('nosecret')
+    const calls: string[][] = []
+    const harness = deps(async (args) => {
+      calls.push(args)
+      if (args[0] === 'status') return flyResult(0, 'running\n')
+      if (args[0] === 'volumes' && args[1] === 'list') return flyResult(0, '[]')
+      if (args[0] === 'volumes' && args[1] === 'create') return flyResult(0)
+      if (args[0] === 'deploy') return flyResult(0)
+      return flyResult(1, '', 'unexpected')
+    })
+    harness.deps.importSecrets = async () => flyResult(1, '', 'Error: not authorized')
+
+    try {
+      await deployFlyAgent({agentName: 'nosecret', agentPath: dir, host: flyHost()}, harness.deps)
+      expect.fail('secrets import should fail')
+    } catch (error) {
+      expect((error as Error).message).to.include('Failed to set secrets')
+      expect((error as Error).message).to.include('not authorized')
+    }
+
+    expect(calls.some(args => args[0] === 'deploy')).to.equal(false)
+    expect(harness.discarded).to.deep.equal([['nosecret', 'sec123', 'abc123']])
+  })
+
+  it('keeps the previous token when a redeploy fails before the release', async () => {
+    process.env.CAST_DEPLOYMENT_SHA = 'bb7590'
+    const dir = agentDir('relock')
+    const volume = flyVolumeName('relock')
+    const sandbox = sinon.createSandbox()
+    const tokens = new Map<string, string>([['old123', 'previous-token']])
+    let machineToken = 'previous-token'
+    sandbox.stub(db, 'listDeployments').returns([{id: 'old123', provider: 'fly', volume_id: volume}])
+    sandbox.stub(keychain, 'setDeploymentToken').callsFake(async (id: string, token: string) => {
+      tokens.set(id, token)
+    })
+    sandbox.stub(keychain, 'setToken').resolves()
+    sandbox.stub(keychain, 'deleteDeploymentToken').callsFake(async (id: string) => {
+      const had = tokens.delete(id)
+      return {removed: had, stores: had ? ['file'] : []}
+    })
+    const deleteAgent = sandbox.stub(keychain, 'deleteToken').resolves({removed: false, stores: []})
+    const harness = deps(async (args) => {
+      if (args[0] === 'status') return flyResult(0, 'running\n')
+      if (args[0] === 'volumes' && args[1] === 'list') {
+        return flyResult(0, JSON.stringify([{id: 'vol_existing', name: volume}]))
+      }
+      if (args[0] === 'deploy') return flyResult(1, '', 'Error: build failed')
+      return flyResult(1, '', 'unexpected')
+    })
+
+    try {
+      await deployFlyAgent({agentName: 'relock', agentPath: dir, host: flyHost()}, {
+        ...harness.deps,
+        generateAuthToken: agentName => generateAuthToken(agentName),
+        listDeployments: () => [{id: 'old123', provider: 'fly', volume_id: volume}],
+        discardTokens: discardFailedFlyTokens,
+        importSecrets: async (_cwd, _app, secrets) => {
+          expect(secrets.AUTH_TOKEN).to.equal(tokens.get('bb7590'))
+          expect(secrets.AUTH_TOKEN).to.not.equal(machineToken)
+          return flyResult(0)
+        },
+      })
+      expect.fail('redeploy should fail')
+    } catch (error) {
+      expect((error as Error).message).to.include('Fly.io deployment failed')
+      expect((error as Error).message).to.include('build failed')
+    } finally {
+      sandbox.restore()
+    }
+
+    expect(machineToken).to.equal('previous-token')
+    expect(tokens.get('old123')).to.equal('previous-token')
+    expect(tokens.has('bb7590')).to.equal(false)
+    expect(deleteAgent.called).to.equal(false)
   })
 
   it('keeps a valid mount source already in fly.toml', () => {
@@ -575,8 +686,33 @@ describe('Fly destroy', () => {
       {id: 'vol_abc123', name: volumeName},
     ])
     expect(flyVolumeIdByName(stdout, volumeName)).to.equal('vol_abc123')
+    expect(flyVolumeIdsByName(stdout, volumeName)).to.deep.equal(['vol_abc123'])
     expect(flyVolumeIdByName('[]', volumeName)).to.equal(undefined)
     expect(() => flyVolumeIdByName('not-json', volumeName)).to.throw(/JSON/)
+  })
+
+  it('deletes every volume id that shares the name', async () => {
+    const harness = recording([
+      flyResult(0, JSON.stringify([
+        {id: 'vol_abc123', name: volumeName},
+        {id: 'vol_def456', name: volumeName},
+        {id: 'vol_other', name: 'cast_other_memory'},
+      ])),
+      flyResult(0),
+      flyResult(0),
+      flyResult(0),
+    ])
+    await destroyFlyDeployment('mail', {
+      volumeNames: [volumeName],
+      exec: harness.exec,
+      log: harness.log,
+    })
+    expect(harness.calls[0]).to.deep.equal(flyVolumesListArgs('cast-mail'))
+    expect(harness.calls[1]).to.deep.equal(flyVolumeDeleteArgs('vol_abc123', 'cast-mail'))
+    expect(harness.calls[2]).to.deep.equal(flyVolumeDeleteArgs('vol_def456', 'cast-mail'))
+    expect(harness.calls.some(args => args.includes('vol_other'))).to.equal(false)
+    expect(harness.calls[3]).to.deep.equal(['apps', 'destroy', 'cast-mail', '--yes'])
+    expect(harness.logs.join('\n')).to.include('has been removed')
   })
 })
 
@@ -666,6 +802,7 @@ describe('Fly runtime image and health', () => {
     let probes = 0
     const exec: FlyDeployDeps['exec'] = async (args) => {
       if (args[0] === 'status') return flyResult(0, 'running\n')
+      if (args[0] === 'volumes' && args[1] === 'list') return flyResult(0, '[]')
       if (args[0] === 'volumes' && args[1] === 'create') return flyResult(0)
       if (args[0] === 'deploy') return flyResult(0)
       if (args[0] === 'machines') {
@@ -675,12 +812,15 @@ describe('Fly runtime image and health', () => {
       if (args[0] === 'logs') return flyResult(0, crash, '')
       return flyResult(1, '', `unexpected ${args.join(' ')}`)
     }
+    const discarded: unknown[][] = []
     const harness = {
       exec,
       generateAuthToken: async () => ({authToken: 'token', tokenHash: 'hash'}),
       saveDeployment: () => 'abc123',
       listDeployments: () => [],
-      discardTokens: async () => {},
+      discardTokens: async (...args: unknown[]) => {
+        discarded.push(args)
+      },
       inferenceEnv: () => ({}),
       importSecrets: async () => flyResult(0),
       stageRuntime: () => {},
@@ -700,6 +840,57 @@ describe('Fly runtime image and health', () => {
 
     expect(probes).to.equal(1)
     expect(host.logs.join('\n')).to.not.include('Deployment Successful')
+    expect(discarded).to.deep.equal([])
+  })
+
+  it('records the new token when a redeploy is released and the health check fails', async () => {
+    const dir = path.join(root, 'released')
+    fs.mkdirSync(dir, {recursive: true})
+    const host = flyHost()
+    const saved: unknown[][] = []
+    const discarded: unknown[][] = []
+    const exec: FlyDeployDeps['exec'] = async (args) => {
+      if (args[0] === 'status') return flyResult(0, 'running\n')
+      if (args[0] === 'volumes' && args[1] === 'list') {
+        return flyResult(0, JSON.stringify([{id: 'vol_existing', name: flyVolumeName('released')}]))
+      }
+      if (args[0] === 'deploy') return flyResult(0)
+      if (args[0] === 'machines') return flyResult(0, JSON.stringify([{id: 'machine1', state: 'stopped'}]))
+      if (args[0] === 'logs') return flyResult(0, 'exited\n')
+      return flyResult(1, '', `unexpected ${args.join(' ')}`)
+    }
+    try {
+      await deployFlyAgent({agentName: 'released', agentPath: dir, host}, {
+        exec,
+        generateAuthToken: async () => ({authToken: 'new-token', tokenHash: 'new-hash'}),
+        saveDeployment: (...args) => {
+          saved.push(args)
+          return 'new123'
+        },
+        listDeployments: () => [{id: 'old123', provider: 'fly', volume_id: flyVolumeName('released')}],
+        discardTokens: async (...args: unknown[]) => {
+          discarded.push(args)
+        },
+        inferenceEnv: () => ({}),
+        importSecrets: async () => flyResult(0),
+        stageRuntime: () => {},
+        checkCli: async () => {},
+        confirmReady: input => waitForFlyHealth({
+          ...input,
+          timeoutMs: 0,
+          intervalMs: 0,
+          sleep: async () => {},
+          probeUrl: async () => false,
+        }),
+      })
+      expect.fail('health check should fail')
+    } catch (error) {
+      expect((error as Error).message).to.include('exited before the runtime was ready')
+    }
+    expect(saved).to.have.length(1)
+    expect(saved[0][3]).to.equal('new-hash')
+    expect(discarded).to.deep.equal([])
+    expect(host.logs.join('\n')).to.not.include('Deployment Successful')
   })
 
   it('reports success only after the agent card responds', async () => {
@@ -708,6 +899,7 @@ describe('Fly runtime image and health', () => {
     const host = flyHost()
     const exec: FlyDeployDeps['exec'] = async (args) => {
       if (args[0] === 'status') return flyResult(0, 'running\n')
+      if (args[0] === 'volumes' && args[1] === 'list') return flyResult(0, '[]')
       if (args[0] === 'volumes' && args[1] === 'create') return flyResult(0)
       if (args[0] === 'deploy') return flyResult(0)
       if (args[0] === 'machines') return flyResult(0, JSON.stringify([{id: 'machine1', state: 'started'}]))
