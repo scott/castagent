@@ -118,17 +118,21 @@ registry tag it pushed, when the MicroVM itself was deleted. If that
 MicroVM is still on the account, Cast records the deployment and leaves
 the tag and token in place.
 
-Fly shutdown deletes the memory volume before it destroys the app. The
+Fly shutdown destroys every machine, then the app, then any volumes that
+are still there. A stopped machine still binds its volume, so Cast uses
+`flyctl machine destroy --force` rather than `flyctl machine stop`. The
 volume name is the one deploy created (`cast_<agent>_memory`, or another
-valid name stored on the deployment). Cast lists the app's volumes with
-`flyctl volumes list --json` and deletes every `vol_...` id with that
-name. Fly allows more than one volume to share a name, and a deploy
-creates one only when the list has none. `flyctl volumes delete` does not
-accept the name. Cast says the volume was removed only when an id delete
-exits 0. It says the volume was not present only when the list has no
-volume of that name, or the app is already gone so the list cannot be
-read. A list or delete that fails for another reason is reported and is
-not described as success.
+valid name stored on the deployment). After the app is gone, Cast lists
+volumes with `flyctl volumes list --json` and deletes every remaining
+`vol_...` id with that name. Fly allows more than one volume to share a
+name, and a deploy creates one only when the list has none.
+`flyctl volumes delete` does not accept the name, and it refuses a volume
+that is still bound to a machine. Cast says the volume was removed only
+when an id delete exits 0. It says the volume was not present only when
+the list has no volume of that name, or the app is already gone so the
+list cannot be read. A list, machine destroy, or app destroy that fails
+for another reason exits non-zero and leaves the deployment and its token
+recorded, so `cast shutdown` can be run again.
 It says the app was destroyed only when `flyctl apps destroy` exits 0.
 "Not found" or "does not exist" on stdout or stderr means the app is
 already gone. A Fly deploy that

@@ -68,7 +68,7 @@ destroy handler:
   a volume as removed only when Docker deletes it, and reports the image
   as removed only when Docker deletes it.
 - Railway runs `railway down` and leaves the Railway volume in place.
-- Fly deletes every `cast_<name>_memory` volume (and any other valid Fly volume name stored on the deployment), then destroys the app. Cast looks each name up with `flyctl volumes list --json` and deletes every matching `vol_...` id. A deploy creates that volume only when the list has none of that name. The volume is reported as removed only when a delete exits 0, and as not present only when the list has no volume of that name. The app is reported as destroyed only when `flyctl apps destroy` exits 0.
+- Fly destroys the app's machines and the app, then deletes every remaining `cast_<name>_memory` volume (and any other valid Fly volume name stored on the deployment). Cast looks each name up with `flyctl volumes list --json` and deletes every matching `vol_...` id. A volume that is still bound to a machine cannot be deleted. A deploy creates that volume only when the list has none of that name. The volume is reported as removed only when a delete exits 0, and as not present only when the list has no volume of that name. The app is reported as destroyed only when `flyctl apps destroy` exits 0. A failed remote step leaves the deployment and its token recorded.
 - DigitalOcean Droplet shutdown deletes the droplet and then deletes the
   `cast-<name>` memory volume. Older volumes named
   `cast-<name>-<uuid>-memory` are removed as well.   Cast looks each volume

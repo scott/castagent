@@ -35,6 +35,16 @@ function createCommandInstance(CommandClass: any, args: string[], flags: any = {
   return instance
 }
 
+/** These cases check local shutdown bookkeeping. Fly's remote destroy is covered separately. */
+function stubFlyDestroySuccess(): () => void {
+  const shutdownModule = require('../../../typescript/cast-cli/src/commands/shutdown')
+  const original = shutdownModule.PROVIDER_DESTROYERS.fly
+  shutdownModule.PROVIDER_DESTROYERS.fly = async () => {}
+  return () => {
+    shutdownModule.PROVIDER_DESTROYERS.fly = original
+  }
+}
+
 function stubDeploymentTokenDelete(sandbox?: sinon.SinonSandbox): void {
   const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
   if (typeof keychainModule.keychain.deleteDeploymentToken !== 'function') {
@@ -152,6 +162,7 @@ describe('shutdown command', () => {
 
       // Mock db operations
       sandbox.stub(sqliteModule.db, 'removeAllDeployments').callsFake(() => {})
+      const restoreFly = stubFlyDestroySuccess()
 
       try {
         await instance.run()
@@ -159,6 +170,7 @@ describe('shutdown command', () => {
         expect(loggedMessage).to.include('deployed to')
         expect(loggedMessage).to.include('fly')
       } finally {
+        restoreFly()
         sandbox.restore()
       }
     })
@@ -224,6 +236,7 @@ describe('shutdown command', () => {
       // Mock keychain
       const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
       sandbox.stub(keychainModule.keychain, 'deleteToken').resolves()
+      const restoreFly = stubFlyDestroySuccess()
 
       try {
         await instance.run()
@@ -231,6 +244,7 @@ describe('shutdown command', () => {
         expect(removeAllStub.calledWith(testAgentName)).to.be.true
         expect(dbMessage).to.include('Marked all deployments as deleted')
       } finally {
+        restoreFly()
         sandbox.restore()
       }
     })
@@ -265,12 +279,14 @@ describe('shutdown command', () => {
 
       // Mock db operations
       sandbox.stub(sqliteModule.db, 'removeAllDeployments').callsFake(() => {})
+      const restoreFly = stubFlyDestroySuccess()
 
       try {
         await instance.run()
         expect(deleteTokenStub.calledOnce).to.be.true
         expect(keychainMessage).to.equal('Removed auth token from keychain.')
       } finally {
+        restoreFly()
         sandbox.restore()
       }
     })
@@ -706,6 +722,7 @@ describe('shutdown command - force flag behavior', () => {
 
     // Mock db operations
     sqliteModule.db.removeAllDeployments = () => {}
+    const restoreFly = stubFlyDestroySuccess()
 
     // Track log messages
     let loggedMessages: string[] = []
@@ -713,7 +730,11 @@ describe('shutdown command - force flag behavior', () => {
       loggedMessages.push(msg)
     }
 
-    await instance.run()
+    try {
+      await instance.run()
+    } finally {
+      restoreFly()
+    }
 
     // With --force, confirm should not be called
     expect(confirmCalled).to.be.false
@@ -750,11 +771,16 @@ describe('shutdown command - force flag behavior', () => {
 
     // Mock db operations
     sqliteModule.db.removeAllDeployments = () => {}
+    const restoreFly = stubFlyDestroySuccess()
 
     // Track log messages
     instance.log = () => {}
 
-    await instance.run()
+    try {
+      await instance.run()
+    } finally {
+      restoreFly()
+    }
 
     expect(confirmCalled).to.be.true
 
@@ -841,8 +867,13 @@ describe('shutdown command - error handling', () => {
     sqliteModule.db.removeAllDeployments = () => {
       throw new Error('Database error')
     }
+    const restoreFly = stubFlyDestroySuccess()
 
-    await instance.run()
+    try {
+      await instance.run()
+    } finally {
+      restoreFly()
+    }
 
     expect(warningMessage).to.include('Failed to update deployment records')
 
@@ -880,8 +911,13 @@ describe('shutdown command - error handling', () => {
 
     // Mock db operations
     sqliteModule.db.removeAllDeployments = () => {}
+    const restoreFly = stubFlyDestroySuccess()
 
-    await instance.run()
+    try {
+      await instance.run()
+    } finally {
+      restoreFly()
+    }
 
     expect(warningMessage).to.include('Failed to remove auth token')
 
@@ -996,6 +1032,101 @@ describe('shutdown command - error handling', () => {
     expect(removed).to.equal(false)
     expect(logs.some(line => line.includes('Remote resources destroyed'))).to.equal(false)
     expect(logs.some(line => line.includes('Marked'))).to.equal(false)
+    expect(logs.some(line => line.includes('has been shut down'))).to.equal(false)
+  })
+
+  it('keeps the Fly deployment and token when a remote destroy step fails', async () => {
+    const instance = createCommandInstance(Shutdown, ['mail'], {force: true})
+    const logs: string[] = []
+    instance.log = (message: string) => {
+      logs.push(message)
+    }
+    instance.error = (message: string) => {
+      throw new Error(String(message))
+    }
+
+    const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
+    const originalListDeployments = sqliteModule.db.listDeployments
+    const originalGetDeploymentBySha = sqliteModule.db.getDeploymentBySha
+    const originalRemoveAll = sqliteModule.db.removeAllDeployments
+    const originalRemoveSha = sqliteModule.db.removeDeploymentBySha
+    let removed = false
+    sqliteModule.db.listDeployments = () => [{
+      id: 'abc123',
+      agent_name: 'mail',
+      deployment_url: 'https://cast-mail.fly.dev',
+      provider: 'fly',
+      volume_id: 'cast_mail_memory',
+    }]
+    sqliteModule.db.getDeploymentBySha = () => null
+    sqliteModule.db.removeAllDeployments = () => {
+      removed = true
+    }
+    sqliteModule.db.removeDeploymentBySha = () => {
+      removed = true
+    }
+
+    const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
+    let tokenDeleted = false
+    keychainModule.keychain.deleteToken = async () => {
+      tokenDeleted = true
+      return {removed: true, stores: ['file']}
+    }
+    keychainModule.keychain.deleteDeploymentToken = async () => {
+      tokenDeleted = true
+      return {removed: true, stores: ['file']}
+    }
+
+    const fly = require('../../../typescript/cast-cli/src/lib/deploy/fly')
+    const shutdownModule = require('../../../typescript/cast-cli/src/commands/shutdown')
+    const originalDestroyer = shutdownModule.PROVIDER_DESTROYERS.fly
+    shutdownModule.PROVIDER_DESTROYERS.fly = async (agentName: string) => {
+      await fly.destroyFlyDeployment(agentName, {
+        volumeNames: ['cast_mail_memory'],
+        exec: async (args: string[]) => {
+          if (args[0] === 'machines') return {stdout: '[]', stderr: '', exitCode: 0}
+          if (args[0] === 'apps') {
+            return {stdout: '', stderr: 'Error: rate limited', exitCode: 1}
+          }
+          if (args[0] === 'volumes' && args[1] === 'list') {
+            return {
+              stdout: JSON.stringify([{id: 'vol_abc123', name: 'cast_mail_memory'}]),
+              stderr: '',
+              exitCode: 0,
+            }
+          }
+          if (args[0] === 'volumes' && args[1] === 'delete') {
+            return {
+              stdout: '',
+              stderr: 'Error: failed destroying volume: failed_precondition: volume is currently bound to machine: 148ed123',
+              exitCode: 1,
+            }
+          }
+          return {stdout: '', stderr: `unexpected ${args.join(' ')}`, exitCode: 1}
+        },
+      })
+    }
+
+    try {
+      await instance.run()
+      expect.fail('shutdown should keep the deployment when Fly destroy fails')
+    } catch (error: any) {
+      expect(error.message).to.include('still recorded')
+      expect(error.message).to.include('bound to machine')
+      expect(error.message).to.include('cast shutdown mail')
+    } finally {
+      sqliteModule.db.listDeployments = originalListDeployments
+      sqliteModule.db.getDeploymentBySha = originalGetDeploymentBySha
+      sqliteModule.db.removeAllDeployments = originalRemoveAll
+      sqliteModule.db.removeDeploymentBySha = originalRemoveSha
+      shutdownModule.PROVIDER_DESTROYERS.fly = originalDestroyer
+    }
+
+    expect(removed).to.equal(false)
+    expect(tokenDeleted).to.equal(false)
+    expect(logs.some(line => line.includes('Remote resources destroyed'))).to.equal(false)
+    expect(logs.some(line => line.includes('Marked'))).to.equal(false)
+    expect(logs.some(line => line.includes('Removed auth token'))).to.equal(false)
     expect(logs.some(line => line.includes('has been shut down'))).to.equal(false)
   })
 })

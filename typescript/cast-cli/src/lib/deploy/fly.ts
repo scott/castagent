@@ -152,6 +152,11 @@ export function flyMachineStopArgs(machineId: string, appName: string, force: bo
   return args
 }
 
+/** Destroy the machine. Stop is not enough: a stopped machine still binds its volume. */
+export function flyMachineDestroyArgs(machineId: string, appName: string): string[] {
+  return ['machine', 'destroy', machineId, '--app', appName, '--force']
+}
+
 export function flyVolumeCreateArgs(volumeName: string, appName: string, region = FLY_REGION): string[] {
   return ['volumes', 'create', volumeName, '--size', '1', '--region', region, '--app', appName, '--yes']
 }
@@ -293,6 +298,50 @@ export function flyResourceGone(stdout: string, stderr: string): boolean {
 }
 
 const RUNNING_MACHINE_STATES = new Set(['started', 'starting', 'replacing'])
+
+/**
+ * The app, machines, or volumes are still on Fly.
+ * Shutdown must not mark the row deleted or drop the token when this is thrown.
+ */
+export class FlyResourcesRemainError extends Error {
+  readonly keepDeployment = true
+  constructor(message: string) {
+    super(message)
+    this.name = 'FlyResourcesRemainError'
+  }
+}
+
+export function flyShutdownFailure(agentName: string, detail: string): FlyResourcesRemainError {
+  return new FlyResourcesRemainError(
+    `${detail} The deployment is still recorded. Run cast shutdown ${agentName} again to retry.`,
+  )
+}
+
+/** Every machine still on the app. A stopped machine still holds its volume. */
+export function flyMachineIds(stdout: string): string[] {
+  const trimmed = stdout.trim()
+  if (!trimmed) return []
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(trimmed)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`flyctl machines list did not return JSON: ${message}`)
+  }
+  if (!Array.isArray(parsed)) throw new Error('flyctl machines list did not return a JSON array')
+  const ids: string[] = []
+  for (const item of parsed) {
+    if (!item || typeof item !== 'object') continue
+    const id = typeof (item as {id?: unknown}).id === 'string' ? (item as {id: string}).id : ''
+    const state = typeof (item as {state?: unknown}).state === 'string'
+      ? (item as {state: string}).state.toLowerCase()
+      : ''
+    if (state === 'destroyed') continue
+    if (!/^[a-zA-Z0-9]+$/.test(id)) continue
+    if (!ids.includes(id)) ids.push(id)
+  }
+  return ids
+}
 
 export function runningFlyMachineIds(stdout: string): string[] {
   const trimmed = stdout.trim()
@@ -731,6 +780,42 @@ export async function deployFlyAgent(input: {
   }
 }
 
+function machineAlreadyDestroyed(stdout: string, stderr: string): boolean {
+  const text = `${stdout}\n${stderr}`.toLowerCase()
+  return text.includes('already been destroyed') || text.includes('already destroyed')
+}
+
+/** A stopped machine still binds its volume, so destroy every machine before the app. */
+async function destroyFlyMachines(
+  agentName: string,
+  appName: string,
+  exec: FlyDeployDeps['exec'],
+): Promise<void> {
+  const listed = await exec(flyMachinesListArgs(appName), {silent: true, shell: false})
+  if (listed.exitCode !== 0) {
+    if (flyResourceGone(listed.stdout, listed.stderr)) return
+    throw flyShutdownFailure(agentName, `Failed to list Fly machines for '${appName}': ${commandDetail(listed)}`)
+  }
+  let ids: string[]
+  try {
+    ids = flyMachineIds(listed.stdout)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw flyShutdownFailure(agentName, message)
+  }
+  for (const id of ids) {
+    const destroyed = await exec(flyMachineDestroyArgs(id, appName), {silent: true, shell: false})
+    if (destroyed.exitCode === 0) continue
+    if (flyResourceGone(destroyed.stdout, destroyed.stderr) || machineAlreadyDestroyed(destroyed.stdout, destroyed.stderr)) {
+      continue
+    }
+    throw flyShutdownFailure(
+      agentName,
+      `Failed to destroy Fly machine '${id}' for '${appName}': ${commandDetail(destroyed)}`,
+    )
+  }
+}
+
 export async function destroyFlyDeployment(
   agentName: string,
   options: {
@@ -743,25 +828,35 @@ export async function destroyFlyDeployment(
   const log = options.log ?? ((message: string) => console.log(message))
   const appName = flyAppName(agentName)
 
+  // Machines first. Fly refuses to delete a volume that is bound to a
+  // machine, and stopping the machine does not release that bind.
+  await destroyFlyMachines(agentName, appName, exec)
+
+  const result = await exec(flyAppsDestroyArgs(appName), {silent: true})
+  let appError: string | undefined
+  if (result.exitCode === 0) {
+    log(`Fly app '${appName}' has been destroyed.`)
+  } else if (flyResourceGone(result.stdout, result.stderr)) {
+    log(`App '${appName}' does not exist (already deleted or never created).`)
+  } else {
+    appError = `Failed to destroy Fly app '${appName}': ${commandDetail(result)}`
+  }
+
   for (const volumeName of options.volumeNames) {
-    const outcome = await deleteFlyVolumeByName(volumeName, appName, exec)
-    if (outcome === 'removed') {
-      log(`Memory volume '${volumeName}' for '${appName}' has been removed.`)
-    } else {
-      log(`Memory volume '${volumeName}' for '${appName}' was not present.`)
+    try {
+      const outcome = await deleteFlyVolumeByName(volumeName, appName, exec)
+      if (outcome === 'removed') {
+        log(`Memory volume '${volumeName}' for '${appName}' has been removed.`)
+      } else {
+        log(`Memory volume '${volumeName}' for '${appName}' was not present.`)
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      throw flyShutdownFailure(agentName, appError ? `${appError} ${message}` : message)
     }
   }
 
-  const result = await exec(flyAppsDestroyArgs(appName), {silent: true})
-  if (result.exitCode === 0) {
-    log(`Fly app '${appName}' has been destroyed.`)
-    return
-  }
-  if (flyResourceGone(result.stdout, result.stderr)) {
-    log(`App '${appName}' does not exist (already deleted or never created).`)
-    return
-  }
-  throw new Error(`Failed to destroy Fly app '${appName}': ${commandDetail(result)}`)
+  if (appError) throw flyShutdownFailure(agentName, appError)
 }
 
 export default class FlyDeploy extends Command {
