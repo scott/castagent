@@ -17,6 +17,7 @@ import {
   secretValues,
   assertSecretsNotInArgv,
   generateDeploymentId,
+  copyCastPackage,
   deploymentShaFromEnv,
   isShaPattern,
   type InferenceCatalogEntry,
@@ -97,16 +98,7 @@ export interface SpriteDestroyOptions {
 /** Write requirements.txt and copy python/cast into the agent directory before the tar. */
 export function stageSpriteAgent(agentPath: string, projectRoot = findSpriteProjectRoot()): void {
   writeRequirementsTxt(projectRoot, agentPath)
-  const source = path.join(projectRoot, 'python', 'cast')
-  if (!fs.existsSync(source)) {
-    throw new Error(
-      `Cast Python package not found at ${source}. The sprite service imports cast.runtime from this package.`,
-    )
-  }
-  const destination = path.join(agentPath, '.cast-runtime', 'cast')
-  fs.mkdirSync(path.dirname(destination), {recursive: true})
-  if (fs.existsSync(destination)) fs.rmSync(destination, {recursive: true, force: true})
-  fs.cpSync(source, destination, {recursive: true})
+  copyCastPackage(agentPath, projectRoot)
 }
 
 export function findSpriteProjectRoot(): string {

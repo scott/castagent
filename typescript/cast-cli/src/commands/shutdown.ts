@@ -10,13 +10,12 @@ import {
 import type {DeploymentRow} from '../lib/deploy/types'
 import type {TokenStore} from '../lib/keychain'
 
-/** Empty stores keep the historical keychain line when a delete result named no place. */
+/** Name only the stores that actually held the token. An empty list names none. */
 export function shutdownTokenPlace(stores: ReadonlyArray<TokenStore>): string {
   const names = new Set(stores)
   const parts: string[] = []
   if (names.has('keychain')) parts.push('keychain')
   if (names.has('file')) parts.push('token file')
-  if (parts.length === 0) parts.push('keychain')
   return parts.join(' and ')
 }
 
@@ -26,10 +25,11 @@ export function shutdownTokenRemovalMessage(
   deploymentSha: string,
 ): string {
   const place = shutdownTokenPlace(stores)
+  const where = place ? ` from ${place}` : ''
   if (scope === 'deployment') {
-    return `Removed auth token for deployment ${deploymentSha} from ${place}.`
+    return `Removed auth token for deployment ${deploymentSha}${where}.`
   }
-  return `Removed auth token from ${place}.`
+  return `Removed auth token${where}.`
 }
 
 export const PROVIDER_DESTROYERS: Record<string, (agentName: string, deployment?: DeploymentRow) => Promise<void>> = {}

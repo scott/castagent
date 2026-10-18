@@ -97,11 +97,16 @@ failure.
 
 A live local process is stopped on its own. When that process is gone,
 a running local Docker container is stopped next. The droplet container
-is stopped when neither of those is running.
+is stopped when neither of those is running. A Fly app is stopped when
+none of those is running. `cast stop` lists machines for `cast-<name>`
+and stops each one that is started, starting, or replacing. `--force`
+sends `SIGKILL`. The app and its memory volume stay. `{% ref "cli:shutdown" %}`
+deletes both. Machines that are already stopped are left as they are, and
+`cast stop` then reports that the agent is not running.
 
 If the recorded local PID is already gone, `cast stop` still stops a
-running Docker container on this machine, or the `cast-agent` container
-on the droplet.
+running Docker container on this machine, the `cast-agent` container
+on the droplet, or running Fly machines.
 
 ## Logs
 
@@ -120,9 +125,17 @@ For a Sprites deployment, `cast logs` prints
 `/.sprite/logs/services/cast-agent.log` from the sprite. The same path
 is the one deploy prints after a successful Sprites deploy.
 
+For a Fly deployment, `cast logs` prints `flyctl logs --app cast-<name> --no-tail`.
+`cast status` prints `flyctl status` for that app. For any other provider,
+`cast status` prints the registry row (provider, URL, and deployment SHA)
+and does not claim a live machine status.
+
 ```bash
 cast logs email-assistant
+cast status email-assistant
 ```
+
+Railway and other providers besides Docker, Sprites, and Fly are not read by `cast logs`.
 
 ## The TUI lifecycle
 

@@ -84,7 +84,7 @@
     {
       "id": "logs",
       "full": "cast logs",
-      "description": "Print local runtime logs, Docker container logs, or Sprites service logs"
+      "description": "Print local runtime logs, Docker container logs, Sprites service logs, or Fly.io logs"
     },
     {
       "id": "test",
@@ -202,9 +202,14 @@
       "description": "List, add, or remove skills on a user agent"
     },
     {
+      "id": "status",
+      "full": "cast status",
+      "description": "Show Fly.io machine status, or the registry row for another provider"
+    },
+    {
       "id": "stop",
       "full": "cast stop",
-      "description": "Stop a running local agent, Docker deployment, or DigitalOcean droplet"
+      "description": "Stop a running local agent, Docker deployment, DigitalOcean droplet, or Fly.io machine"
     },
     {
       "id": "undo",

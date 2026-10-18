@@ -567,6 +567,33 @@ export function prepareCastImageContext(agentPath: string, projectRoot: string):
   writeRequirementsTxt(projectRoot, agentPath)
 }
 
+/**
+ * Copy `python/cast` to `<agent>/.cast-runtime/cast`.
+ * Fly images COPY that tree to `/app/cast`. Sprites put `.cast-runtime` on `PYTHONPATH`.
+ * Throws when this checkout has no `python/cast` tree.
+ */
+export function copyCastPackage(agentPath: string, projectRoot: string): void {
+  const source = path.join(projectRoot, 'python', 'cast')
+  if (!fs.existsSync(source)) {
+    throw new Error(
+      `Cast Python package not found at ${source}. Run cast deploy from a Cast Agent checkout so the image includes the runtime.`,
+    )
+  }
+  const destination = path.join(agentPath, '.cast-runtime', 'cast')
+  fs.mkdirSync(path.dirname(destination), {recursive: true})
+  if (fs.existsSync(destination)) fs.rmSync(destination, {recursive: true, force: true})
+  fs.cpSync(source, destination, {recursive: true})
+}
+
+/**
+ * Write the Dockerfile that copies `.cast-runtime/cast` to `/app/cast`, then
+ * copy the package into that context. `cast` is not a requirements.txt package.
+ */
+export function stageCastRuntime(agentPath: string, projectRoot = findCastRoot()): void {
+  prepareCastImageContext(agentPath, projectRoot)
+  copyCastPackage(agentPath, projectRoot)
+}
+
 // Budget for the total .cast-tui/ build context (dist + node_modules +
 // launcher scripts). 100MB accommodates the full @opentui/core tree
 // including its transitive deps (jimp, zod, web-tree-sitter, etc.).
@@ -1283,8 +1310,9 @@ export function formatFlySecretsImport(env: Record<string, string>): string {
   return `${lines.join('\n')}\n`
 }
 
+/** `--stage` keeps the new secrets off the running machine until `flyctl deploy` succeeds. */
 export function flySecretsImportArgs(appName: string): string[] {
-  return ['secrets', 'import', '--app', appName]
+  return ['secrets', 'import', '--app', appName, '--stage']
 }
 
 export function railwaySecretSetArgs(key: string): string[] {

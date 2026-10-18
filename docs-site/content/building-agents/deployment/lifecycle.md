@@ -118,6 +118,39 @@ registry tag it pushed, when the MicroVM itself was deleted. If that
 MicroVM is still on the account, Cast records the deployment and leaves
 the tag and token in place.
 
+Fly shutdown destroys every machine, then the app, then any volumes that
+are still there. A stopped machine still binds its volume, so Cast uses
+`flyctl machine destroy --force` rather than `flyctl machine stop`. The
+volume name is the one deploy created (`cast_<agent>_memory`, or another
+valid name stored on the deployment). After the app is gone, Cast lists
+volumes with `flyctl volumes list --json` and deletes every remaining
+`vol_...` id with that name. Fly allows more than one volume to share a
+name, and a deploy creates one only when the list has none.
+`flyctl volumes delete` does not accept the name, and it refuses a volume
+that is still bound to a machine. Cast says the volume was removed only
+when an id delete exits 0. It says the volume was not present only when
+the list has no volume of that name, or the app is already gone so the
+list cannot be read. A list, machine destroy, or app destroy that fails
+for another reason exits non-zero and leaves the deployment and its token
+recorded, so `cast shutdown` can be run again.
+It says the app was destroyed only when `flyctl apps destroy` exits 0.
+"Not found" or "does not exist" on stdout or stderr means the app is
+already gone. A Fly deploy that
+fails after the app exists records that deployment immediately, so
+`cast shutdown` can delete the app, the volume, and the secrets on it.
+Secrets are staged with `flyctl secrets import --stage` and applied by
+`flyctl deploy`. A failed build leaves the running machine on its previous
+token, and Cast deletes only the token file for the failed attempt.
+The Fly image includes the Cast runtime. Deploy waits until a machine is
+started and `https://cast-<agent>.fly.dev/.well-known/agent.json` responds.
+A machine that exits, including `No module named 'cast'`, fails the deploy
+and Cast does not print a success banner. A current log line
+`Error loading agent config` fails that check while the machine is still
+started or starting. If `flyctl deploy` already
+exited 0, the new token stays recorded because that release is live.
+A later successful deploy of an agent that already has a Fly row still
+writes a new deployment row only after the agent card responds.
+
 In the TUI, `{% ref "slash:shutdown" %}` lists every active deployment
 (including DigitalOcean MicroVM and local) and shuts one down after a
 Y/N confirmation. It runs in dev and production, not in the
@@ -158,7 +191,7 @@ The version is a positional argument, not a flag.
   old container, starts a new one with the same volume. The new container
   must stay running and print `Agent ready`. If it exits, the upgrade fails.
 - **Railway** — re-extracts, runs `railway up --detach` to redeploy.
-- **Fly** — re-extracts, runs `flyctl deploy --detach`.
+- **Fly** — re-extracts, copies the Cast runtime into the image context, runs `flyctl deploy --detach`.
 - **DigitalOcean** — re-extracts, rebuilds, re-streams the image, and
   updates the SSH login MOTD so it shows the new version (and the
   on-host TUI hint if `--with-tui` is in the image). The SSH session

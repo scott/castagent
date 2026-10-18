@@ -536,56 +536,62 @@ class A2AServer:
             keepalive=keepalive,
         )
 
+    def build_starlette_app(self):
+        """HTTP app. The agent card is public. JSON-RPC stays authenticated."""
+        from starlette.applications import Starlette
+        from starlette.requests import Request
+        from starlette.responses import JSONResponse, StreamingResponse
+        from starlette.routing import Route
+
+        async def handle_http(request: Request):
+            auth_error = self.authorize_request(request.headers)
+            if auth_error:
+                return JSONResponse({
+                    "jsonrpc": "2.0",
+                    "error": {"code": JSONRPC_SERVER_ERROR, "message": auth_error},
+                }, status_code=401)
+
+            body = await request.body()
+            try:
+                data = json.loads(body)
+            except json.JSONDecodeError as e:
+                print(f"Invalid JSON request: {e}", file=sys.stderr)
+                return JSONResponse({
+                    "jsonrpc": "2.0",
+                    "error": {"code": JSONRPC_PARSE_ERROR, "message": f"Parse error: {e}"},
+                }, status_code=400)
+
+            accept = request.headers.get("accept", "")
+
+            # Check if client requests streaming
+            if "text/event-stream" in accept:
+                return StreamingResponse(
+                    self.iter_chat_stream(data),
+                    media_type="text/event-stream",
+                    headers={
+                        "Cache-Control": "no-cache",
+                        "X-Accel-Buffering": "no",
+                    },
+                )
+
+            response = await self.handle_request(data)
+            # Return error status codes for JSON-RPC errors
+            if "error" in response:
+                status_code = 400 if response["error"]["code"] >= -32603 else 200
+                return JSONResponse(response, status_code=status_code)
+            return JSONResponse(response)
+
+        async def handle_agent_card(_request: Request):
+            return JSONResponse(self.agent.get_agent_card())
+
+        return Starlette(routes=[
+            Route("/", handle_http, methods=["POST"]),
+            Route("/.well-known/agent.json", handle_agent_card, methods=["GET"]),
+        ])
+
     async def run(self):
         try:
-            from starlette.applications import Starlette
-            from starlette.requests import Request
-            from starlette.responses import JSONResponse, StreamingResponse
-            from starlette.routing import Route
-
-            async def handle_http(request: Request):
-                auth_error = self.authorize_request(request.headers)
-                if auth_error:
-                    return JSONResponse({
-                        "jsonrpc": "2.0",
-                        "error": {"code": JSONRPC_SERVER_ERROR, "message": auth_error},
-                    }, status_code=401)
-
-                body = await request.body()
-                try:
-                    data = json.loads(body)
-                except json.JSONDecodeError as e:
-                    print(f"Invalid JSON request: {e}", file=sys.stderr)
-                    return JSONResponse({
-                        "jsonrpc": "2.0",
-                        "error": {"code": JSONRPC_PARSE_ERROR, "message": f"Parse error: {e}"},
-                    }, status_code=400)
-
-                accept = request.headers.get("accept", "")
-
-                # Check if client requests streaming
-                if "text/event-stream" in accept:
-                    return StreamingResponse(
-                        self.iter_chat_stream(data),
-                        media_type="text/event-stream",
-                        headers={
-                            "Cache-Control": "no-cache",
-                            "X-Accel-Buffering": "no",
-                        },
-                    )
-
-                response = await self.handle_request(data)
-                # Return error status codes for JSON-RPC errors
-                if "error" in response:
-                    status_code = 400 if response["error"]["code"] >= -32603 else 200
-                    return JSONResponse(response, status_code=status_code)
-                return JSONResponse(response)
-
-            routes = [
-                Route("/", handle_http, methods=["POST"]),
-            ]
-
-            app = Starlette(routes=routes)
+            app = self.build_starlette_app()
 
             import uvicorn
             config = uvicorn.Config(app, host=self.host, port=self.port, log_level="warning", access_log=False)
@@ -605,6 +611,23 @@ class A2AServer:
         class Handler(BaseHTTPRequestHandler):
             # Store reference to server for auth checking
             server_ref = None
+
+            def do_GET(self):
+                if self.path.split("?", 1)[0] != "/.well-known/agent.json":
+                    self.send_response(404)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"error":"not found"}')
+                    return
+                card = {}
+                if self.server_ref is not None:
+                    card = self.server_ref.agent.get_agent_card()
+                body = json.dumps(card).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                self.wfile.write(body)
 
             def do_POST(self):
                 if self.server_ref:

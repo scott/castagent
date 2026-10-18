@@ -190,6 +190,45 @@ running. The droplet and its `cast-<name>` memory volume stay.
 `cast shutdown` deletes the droplet and that volume. SSH checks the
 pinned host key. A missing pin is reported as a stop failure.
 
+A Fly app is named `cast-<agent>`. The first deploy creates it with
+`flyctl apps create` after writing `fly.toml`. It does not use
+`flyctl launch`, which refuses to run when that file is already there.
+The memory volume is created once the app exists, with `--yes`, in region
+`iad`, and only when the app has no volume of that name. A later deploy
+reuses the existing volume. The volume name is `cast_<agent>_memory` (lowercase letters,
+numbers, and underscores, at most 30 characters). The image copies the
+Cast package to `/app/cast` and sets `PYTHONPATH=/app`, the same layout
+Droplet and MicroVM images use. Secrets are sent with
+`flyctl secrets import --stage`, so they reach the machine only when
+`flyctl deploy` succeeds. A failed build leaves the previous `AUTH_TOKEN`
+on the running machine, and Cast keeps that token. After `flyctl deploy` exits 0, Cast waits
+until a machine is started and
+`https://cast-<agent>.fly.dev/.well-known/agent.json` responds. A stopped machine, a
+log line `No module named 'cast'`, or a card that never responds fails
+the deploy. A current log line `Error loading agent config` fails it too,
+including while the machine is still started or starting. An older copy
+of that line, followed later by `Agent ready`, does not. Cast does not
+print the success banner in that case. The new
+token stays, because that release is already live.
+`cast shutdown` destroys the machines and the app first, then lists
+volumes with `flyctl volumes list --json` and deletes every remaining
+volume of that name by its `vol_...` id. A volume bound to a machine
+cannot be deleted, and stopping the machine does not release it. It reports
+the volume removed only when a delete exits 0. It says the volume was not
+present only when the list has no volume of that name, or the app is
+already gone. It reports the app destroyed only when `flyctl apps destroy`
+exits 0. If a remote step fails, shutdown exits non-zero and keeps the
+deployment record and token.
+A failed deploy records the deployment as soon as the app exists, so
+`cast shutdown <agent>` can remove the partial app, and deletes the
+token file written for that attempt (`~/.cast/tokens/deployments/<sha>.token`)
+when the new release did not go out.
+The agent token file is deleted only when no other deployment is still live.
+`cast logs` prints `flyctl logs --no-tail`. `cast stop` stops machines that
+are started, starting, or replacing. `cast status` prints `flyctl status`.
+Pass `--local-only`, `--remote-only`, `--depot`, or `--no-depot` on
+`cast deploy` to choose the builder.
+
 ## What gets shipped
 
 The deployment is a single Docker image that contains:
@@ -231,9 +270,16 @@ imports at startup) and every package in the agent's `runtime.requirements`.
 The `cast` package itself is omitted because the image copies that source
 tree in directly.
 
-Droplet and MicroVM images copy that same package to `/app/cast` and set
+Droplet, MicroVM, and Fly images copy that same package to `/app/cast` and set
 `PYTHONPATH=/app`. Their `requirements.txt` is written the same way and
-also omits `cast`. The runtime stage installs git with
+also omits `cast`. Fly deploy then waits until
+`https://cast-<agent>.fly.dev/.well-known/agent.json` returns the agent
+card. A machine that exits before that, including `No module named 'cast'`,
+fails the deploy and Cast does not print a success banner. A current
+log line `Error loading agent config` fails that check while the machine
+is still started or starting.
+
+The runtime stage installs git with
 `--no-install-recommends` and removes the apt lists. gcc stays in the
 builder stage. A generated Dockerfile that still points `PYTHONPATH` at
 `/usr/local`, or whose runtime stage omits

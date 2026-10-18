@@ -169,7 +169,7 @@ describe('deployment secret handling', () => {
       expect(exec.calledOnce).to.equal(true)
       const [command, args, options] = exec.firstCall.args
       expect(command).to.equal('flyctl')
-      expect(args).to.deep.equal(['secrets', 'import', '--app', 'cast-demo'])
+      expect(args).to.deep.equal(['secrets', 'import', '--app', 'cast-demo', '--stage'])
       const input = (options as {input?: string}).input || ''
       expectSecretsOffArgv(args as string[], input, [TOKEN, OPENROUTER])
       expect(input).to.include('CAST_AGENT_NAME=demo')
