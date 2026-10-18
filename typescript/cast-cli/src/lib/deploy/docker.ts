@@ -8,20 +8,39 @@ import * as path from 'path'
 import {ensureDockerDeployArtifactsIgnored} from '../cast-ignore'
 import {db} from '../sqlite'
 import {containerHealthFailureMessage, probeDockerContainer, waitForContainerHealth} from './container-health'
-import {execCommand, inferenceEnv, generateDeploymentId, createDockerignore, storeAuthToken, saveDeployment} from './deploy-utils'
+import {
+  execCommand,
+  inferenceEnv,
+  filterInferenceEnv,
+  readAgentModel,
+  formatEnvAssignments,
+  secretValues,
+  assertSecretsNotInArgv,
+  generateDeploymentId,
+  createDockerignore,
+  storeAuthToken,
+  saveDeployment,
+} from './deploy-utils'
 import {writeRequirementsTxt} from './requirements'
 
 // Helper to run a shell command and return its exit code
-function runCommand(command: string, args: string[], options?: {stdio?: any; cwd?: string; silent?: boolean}): Promise<number> {
+function runCommand(command: string, args: string[], options?: {stdio?: any; cwd?: string; silent?: boolean; input?: string}): Promise<number> {
   return new Promise((resolve, reject) => {
     // If not silent and stdout is a TTY, use inherit to show output in real-time
     // Otherwise use pipe so output can be captured (e.g., by TUI)
-    const useInherit = !options?.silent && process.stdout.isTTY
+    // An env file on stdin needs a pipe, so inherit is only for commands without input.
+    const useInherit = !options?.silent && !options?.input && !options?.stdio && process.stdout.isTTY
 
     const proc = spawn(command, args, {
-      stdio: options?.stdio ?? (useInherit ? 'inherit' : 'pipe'),
+      stdio: options?.stdio ?? (options?.input ? ['pipe', 'pipe', 'pipe'] : (useInherit ? 'inherit' : 'pipe')),
       cwd: options?.cwd,
     })
+
+    if (options?.input && proc.stdin) {
+      proc.stdin.on('error', () => {})
+      proc.stdin.write(options.input)
+      proc.stdin.end()
+    }
 
     // If using pipe, also output to console for visibility
     if (!useInherit && proc.stdout) {
@@ -47,6 +66,52 @@ export interface DockerCommandResult {
 }
 
 export type DockerRunner = (args: string[]) => Promise<DockerCommandResult>
+
+/** docker run argv. Secret values are not arguments; they arrive on stdin. */
+export function dockerContainerRunArgs(input: {
+  containerName: string
+  publish: string
+  image: string
+  volumeId?: string
+}): string[] {
+  const args = [
+    'run',
+    '-d',
+    '--name', input.containerName,
+    '-p', input.publish,
+    '--env-file', '/dev/stdin',
+  ]
+  if (input.volumeId) {
+    args.push('-v', `${input.volumeId}:/app/agent/memory`)
+  }
+  args.push(input.image)
+  return args
+}
+
+export function dockerContainerEnv(input: {
+  agentName: string
+  authToken?: string | null
+  inference?: Record<string, string>
+}): Record<string, string> {
+  const env: Record<string, string> = {
+    CAST_AGENT_NAME: input.agentName,
+    CAST_AGENT_PATH: '/app/agent',
+    PYTHONPATH: '/app',
+  }
+  if (input.authToken) env.AUTH_TOKEN = input.authToken
+  if (input.inference) Object.assign(env, input.inference)
+  return env
+}
+
+/** Start a detached container. The env file is stdin of the docker CLI. */
+export async function startDockerAgentContainer(
+  args: string[],
+  env: Record<string, string>,
+): Promise<number> {
+  const envFile = formatEnvAssignments(env)
+  assertSecretsNotInArgv('docker run', args, secretValues(env))
+  return runCommand('docker', args, {input: envFile})
+}
 
 const LEGACY_DOCKER_VOLUME_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -382,27 +447,20 @@ export default class DockerDeploy extends Command {
     const volumeId = memory.volumeId
     writeDockerCompose(agentPath, {agentName, port: flags.port, volumeId})
 
-    // Run container
+    // Run container. The env file is the docker CLI's stdin.
     this.log('Starting Docker container...')
-    const dockerRunArgs = [
-      'run',
-      '-d',
-      '--name', containerName,
-      '-p', `${flags.port}:8080`,
-      '-e', `CAST_AGENT_NAME=${agentName}`,
-      '-e', `CAST_AGENT_PATH=/app/agent`,
-      '-e', `AUTH_TOKEN=${authToken}`,
-      '-e', `PYTHONPATH=/app`,
-      '-v', `${volumeId}:/app/agent/memory`,
-    ]
-
-    for (const [key, value] of Object.entries(inferenceEnv())) {
-      dockerRunArgs.push('-e', `${key}=${value}`)
-    }
-
-    dockerRunArgs.push(imageName)
-
-    const runCode = await runCommand('docker', dockerRunArgs)
+    const containerEnv = dockerContainerEnv({
+      agentName,
+      authToken,
+      inference: filterInferenceEnv(readAgentModel(agentPath), inferenceEnv()),
+    })
+    const dockerRunArgs = dockerContainerRunArgs({
+      containerName,
+      publish: `${flags.port}:8080`,
+      image: imageName,
+      volumeId,
+    })
+    const runCode = await startDockerAgentContainer(dockerRunArgs, containerEnv)
     if (runCode !== 0) {
       this.error(`Docker run failed with code ${runCode}`)
     }

@@ -9,9 +9,32 @@ import {
   execCommand,
   saveDeployment,
   inferenceEnv,
+  filterInferenceEnv,
+  readAgentModel,
+  formatFlySecretsImport,
+  flySecretsImportArgs,
+  secretValues,
+  assertSecretsNotInArgv,
   generateDeploymentId,
   getVolumeName,
 } from './deploy-utils'
+
+/** `flyctl secrets import` reads NAME=VALUE lines from stdin. */
+export async function importFlySecrets(
+  cwd: string,
+  appName: string,
+  secrets: Record<string, string>,
+): Promise<{stdout: string; stderr: string; exitCode: number}> {
+  const args = flySecretsImportArgs(appName)
+  const input = formatFlySecretsImport(secrets)
+  assertSecretsNotInArgv('flyctl secrets import', args, secretValues(secrets))
+  return execCommand('flyctl', args, {
+    cwd,
+    silent: true,
+    shell: false,
+    input,
+  })
+}
 
 export default class FlyDeploy extends Command {
   static description = 'Deploy agent to Fly.io'
@@ -82,20 +105,14 @@ export default class FlyDeploy extends Command {
       }
     }
 
-    // Set secrets
+    // Set secrets. Values go to `flyctl secrets import` on stdin.
     this.log('Setting secrets...')
     const secrets: Record<string, string> = {
       CAST_AGENT_NAME: agentName,
       AUTH_TOKEN: authToken,
-      ...inferenceEnv(),
+      ...filterInferenceEnv(readAgentModel(agentPath), inferenceEnv()),
     }
-
-    const secretPairs = Object.entries(secrets).map(([k, v]) => `${k}=${v}`)
-    const secretResult = await execCommand('flyctl', ['secrets', 'set', '--app', `cast-${agentName}`, ...secretPairs], {
-      cwd: agentPath,
-      silent: true,
-      shell: false,
-    })
+    const secretResult = await importFlySecrets(agentPath, `cast-${agentName}`, secrets)
     if (secretResult.exitCode !== 0) {
       this.warn(`Failed to set secrets: ${secretResult.stderr}`)
     }

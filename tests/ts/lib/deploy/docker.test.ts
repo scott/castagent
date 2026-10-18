@@ -180,12 +180,13 @@ describe('Docker Deploy Provider', () => {
       git(dir, ['config', 'user.name', 'Cast Test'])
     }
 
-    it('passes the bearer token to docker run and not to the compose file', () => {
+    it('passes the bearer token to docker run on stdin and not to the compose file', () => {
       const source = fs.readFileSync(
         path.join(__dirname, '../../../../typescript/cast-cli/src/lib/deploy/docker.ts'),
         'utf8',
       )
-      expect(source).to.include("'-e', `AUTH_TOKEN=${authToken}`")
+      expect(source).to.include("'--env-file', '/dev/stdin'")
+      expect(source).to.not.include("'-e', `AUTH_TOKEN=${authToken}`")
       const composeFn = source.slice(source.indexOf('export function renderDockerCompose'))
       expect(composeFn).to.not.include('AUTH_TOKEN')
       expect(composeFn).to.not.include('inferenceEnv')

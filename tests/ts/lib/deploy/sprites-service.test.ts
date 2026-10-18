@@ -1,6 +1,7 @@
 import {expect} from 'chai'
 import {
   spriteAgentLaunchScript,
+  spriteInstallExecArgs,
   spriteInstallServiceCommand,
   spriteStartServiceArgs,
 } from '../../../../typescript/cast-cli/src/lib/deploy/sprites-service'
@@ -36,6 +37,17 @@ describe('sprite agent service', () => {
     expect(command).to.include('(/.sprite/bin/sprite-env services delete cast-agent >/dev/null 2>&1 || true)')
     expect(command).to.include('services create cast-agent --cmd /opt/cast-agent/start.sh --http-port 8080 --dir /opt/cast-agent --no-stream')
     expect(command).to.not.include('bash -c')
+    expect(command).to.not.include(token)
+    expect(command).to.not.include('sk-or-v1-example')
+  })
+
+  it('keeps secrets out of the local sprite exec argv', () => {
+    const args = spriteInstallExecArgs('cast-demo-agent')
+    const joined = args.join(' ')
+    expect(joined).to.not.include(token)
+    expect(joined).to.not.include('sk-or-v1-example')
+    expect(joined).to.not.include('AUTH_TOKEN=')
+    expect(args[0]).to.equal('exec')
   })
 
   it('starts the service with separate argv so a shell cannot drop the name', () => {

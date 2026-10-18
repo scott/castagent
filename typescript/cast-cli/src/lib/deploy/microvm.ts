@@ -12,6 +12,8 @@ import {
   generateDeploymentId,
   getAgentPath,
   inferenceEnv,
+  filterInferenceEnv,
+  readAgentModel,
   isShaPattern,
   prepareCastImageContext,
   prepareHostTuiBuildContext,
@@ -157,7 +159,13 @@ export function deploymentEnv(opts: {
   return env
 }
 
-export function buildCreateArgs(opts: {
+export const MICROVM_CREATE_URL = 'https://api.digitalocean.com/v2/microvms'
+
+/**
+ * Create body for POST /v2/microvms. Environment values travel in this
+ * JSON body. doctl --env would place them on the local process argv.
+ */
+export function microvmCreatePayload(opts: {
   name: string
   ociRef: string
   cpu: number
@@ -165,24 +173,18 @@ export function buildCreateArgs(opts: {
   idleTimeout: string
   env: Record<string, string>
   agentName: string
-}): string[] {
-  const args = [
-    'compute', 'microvm', 'create', opts.name,
-    '--oci-ref', opts.ociRef,
-    '--region', REGION,
-    '--cpu', String(opts.cpu),
-    '--memory', String(opts.memory),
-    '--http-port', '8080',
-    '--http-protocol', 'http',
-    '--auto-pause-idle-timeout', opts.idleTimeout,
-    '--output', 'json',
-    '--tag', 'cast',
-    '--tag', `agent:${opts.agentName}`,
-  ]
-  for (const [key, value] of Object.entries(opts.env)) {
-    args.push('--env', `${key}=${value}`)
+}): Record<string, unknown> {
+  return {
+    name: opts.name,
+    region: REGION,
+    size: {cpu: opts.cpu, memory: opts.memory},
+    source: {oci_ref: opts.ociRef},
+    http_port: 8080,
+    http_protocol: 'http',
+    auto_pause: {idle_timeout: opts.idleTimeout},
+    tags: ['cast', `agent:${opts.agentName}`],
+    environment: opts.env,
   }
-  return args
 }
 
 export function parseRegistryName(raw: string): string | undefined {
@@ -747,7 +749,7 @@ export default class MicrovmDeploy extends Command {
     const env = deploymentEnv({
       agentName,
       authToken,
-      inference: inferenceEnv(),
+      inference: filterInferenceEnv(readAgentModel(agentPath), inferenceEnv()),
       edgeAuthOnly: config.authMode === 'edge-only',
     })
 
@@ -847,7 +849,7 @@ export default class MicrovmDeploy extends Command {
       const env = deploymentEnv({
         agentName,
         authToken,
-        inference: inferenceEnv(),
+        inference: filterInferenceEnv(readAgentModel(agentPath), inferenceEnv()),
         edgeAuthOnly,
       })
       created = await createAndWait(token, {
@@ -1094,6 +1096,55 @@ async function buildAndPushImage(agentName: string, tag: string, log: (message: 
   return remote
 }
 
+async function postMicrovmCreate(
+  token: string,
+  opts: {
+    name: string
+    ociRef: string
+    cpu: number
+    memory: number
+    idleTimeout: string
+    env: Record<string, string>
+    agentName: string
+  },
+): Promise<string> {
+  const payload = microvmCreatePayload(opts)
+  let lastBody = ''
+  for (let attempt = 0; attempt < 5; attempt++) {
+    let response: {status: number; data: unknown}
+    try {
+      response = await axios.post(MICROVM_CREATE_URL, payload, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+          Accept: 'application/json',
+        },
+        timeout: 180000,
+        validateStatus: () => true,
+      })
+    } catch (error) {
+      lastBody = error instanceof Error ? error.message : String(error)
+      if (attempt < 4) {
+        await delay(1000 * (attempt + 1))
+        continue
+      }
+      throw new Error(`MicroVM create failed: ${lastBody}`)
+    }
+    const body = typeof response.data === 'string' ? response.data : JSON.stringify(response.data)
+    if (response.status >= 200 && response.status < 300) return body
+    lastBody = body
+    if ((response.status === 429 || response.status >= 500) && attempt < 4) {
+      await delay(1000 * (attempt + 1))
+      continue
+    }
+    if (isScopeDenied(body) || isScopeDenied(String(response.status))) {
+      throw new Error(`DigitalOcean rejected MicroVM create. ${SCOPE_HINT}\n${body}`)
+    }
+    throw new Error(`MicroVM create failed: ${body}`)
+  }
+  throw new Error(`MicroVM create failed: ${lastBody}`)
+}
+
 async function createAndWait(
   token: string,
   opts: {
@@ -1107,15 +1158,10 @@ async function createAndWait(
   },
   log: (message: string) => void,
 ): Promise<MicrovmRecord> {
-  const created = await doctl(token, buildCreateArgs(opts), {timeoutMs: 180000})
-  if (created.exitCode !== 0) {
-    const text = `${created.stderr}\n${created.stdout}`
-    if (isScopeDenied(text)) throw new Error(`DigitalOcean rejected MicroVM create. ${SCOPE_HINT}\n${text}`)
-    throw new Error(`MicroVM create failed: ${text}`)
-  }
+  const created = await postMicrovmCreate(token, opts)
   const remove = (id: string) =>
     doctl(token, ['compute', 'microvm', 'delete', id, '--force']).catch(() => undefined)
-  let record = parseMicrovmPayload(created.stdout)
+  let record = parseMicrovmPayload(created)
   try {
     for (let attempt = 0; attempt < POLL_ATTEMPTS; attempt++) {
       const readiness = microvmReady(record)

@@ -83,8 +83,10 @@ changes show up as files on disk.
   Python dependencies from `python/pyproject.toml` and any packages in
   `runtime.requirements`. The compose file records the service name,
   published port, and memory volume. It does not contain the deployment
-  bearer token or provider API keys. Deploy passes those to the container
-  as environment variables and stores the bearer token in the keychain.
+  bearer token or provider API keys. Deploy passes the bearer token and
+  the API key for `brain.model` to the container as environment variables
+  and stores the bearer token in the keychain. The values are handed to
+  the provider on stdin or in the create request body.
   With no Secret Service, the token is written under `~/.cast/tokens/`
   instead, outside this directory.
   The default ignore file excludes these three paths and `.cast-runtime/`,

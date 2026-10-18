@@ -6,11 +6,13 @@ import {containerHealthFailureMessage, probeDockerContainer, waitForContainerHea
 import {
   createDockerignore,
   execCommand,
+  filterInferenceEnv,
   getProviderToken,
   inferenceEnv,
+  readAgentModel,
   resolveDeploymentAuthToken,
 } from './deploy-utils'
-import {writeDockerCompose} from './docker'
+import {dockerContainerEnv, dockerContainerRunArgs, startDockerAgentContainer, writeDockerCompose} from './docker'
 import {writeHostMotdOverSsh} from './motd'
 import {writeRequirementsTxt} from './requirements'
 import {execDigitalOceanSsh} from './ssh-hostkey'
@@ -195,39 +197,21 @@ export async function upgradeDockerDeployment(
   host.log('Starting Docker container...')
 
   const authToken = deployment ? await resolveDeploymentAuthToken(deployment) : null
-
-  const dockerRunArgs = [
-    'run',
-    '-d',
-    '--name', containerName,
-    '-p', '8080:8080',
-    '-e', `CAST_AGENT_NAME=${agentName}`,
-    '-e', `CAST_AGENT_PATH=/app/agent`,
-    '-e', `AUTH_TOKEN=${authToken}`,
-    '-e', `PYTHONPATH=/app`,
-  ]
-
-  if (existingVolumeId) {
-    dockerRunArgs.push('-v', `${existingVolumeId}:/app/agent/memory`)
-  }
-
-  for (const [key, value] of Object.entries(inferenceEnv())) {
-    dockerRunArgs.push('-e', `${key}=${value}`)
-  }
-
-  dockerRunArgs.push(`cast-${agentName}:latest`)
-
-  const runProc = spawn('docker', dockerRunArgs)
-  runProc.stdout?.pipe(process.stdout)
-  runProc.stderr?.pipe(process.stderr)
-
-  await new Promise<void>((resolve, reject) => {
-    runProc.on('error', reject)
-    runProc.on('exit', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(`Docker run failed with code ${code}`))
-    })
+  const containerEnv = dockerContainerEnv({
+    agentName,
+    authToken,
+    inference: filterInferenceEnv(readAgentModel(agentPath), inferenceEnv()),
   })
+  const dockerRunArgs = dockerContainerRunArgs({
+    containerName,
+    publish: '8080:8080',
+    image: `cast-${agentName}:latest`,
+    volumeId: existingVolumeId || undefined,
+  })
+  const runCode = await startDockerAgentContainer(dockerRunArgs, containerEnv)
+  if (runCode !== 0) {
+    throw new Error(`Docker run failed with code ${runCode}`)
+  }
 
   host.log('Waiting for the container to become ready...')
   const health = await waitForContainerHealth(() => probeDockerContainer(containerName))

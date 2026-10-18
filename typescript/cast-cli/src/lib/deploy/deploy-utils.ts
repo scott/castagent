@@ -1144,6 +1144,154 @@ export function inferenceEnv(config: any = loadConfig()): Record<string, string>
   return out
 }
 
+/** Same fallback as python cast.agent.base.AgentConfig.model. */
+export const DEFAULT_AGENT_MODEL = 'openrouter/anthropic/claude-3-7-sonnet'
+
+const RUNTIME_ENV_KEYS = new Set([
+  'CAST_AGENT_NAME',
+  'CAST_AGENT_PATH',
+  'CAST_MEMORY_PATH',
+  'CAST_MOTD',
+  'PYTHONPATH',
+])
+
+export function readAgentModel(agentPath: string): string {
+  const yamlPath = path.join(agentPath, 'agent.yaml')
+  if (!fs.existsSync(yamlPath)) return DEFAULT_AGENT_MODEL
+  let parsed: unknown
+  try {
+    parsed = YAML.parse(fs.readFileSync(yamlPath, 'utf8'))
+  } catch {
+    return DEFAULT_AGENT_MODEL
+  }
+  if (!parsed || typeof parsed !== 'object') return DEFAULT_AGENT_MODEL
+  const brain = (parsed as {brain?: unknown}).brain
+  if (!brain || typeof brain !== 'object') return DEFAULT_AGENT_MODEL
+  const model = (brain as {model?: unknown}).model
+  if (typeof model !== 'string' || model.length === 0) return DEFAULT_AGENT_MODEL
+  return model
+}
+
+/**
+ * Longest matching catalog prefix wins. Otherwise the default provider.
+ * Same rule as python cast.providers.registry.get_provider.
+ */
+export function inferenceProviderForModel(
+  model: string,
+  catalog: InferenceCatalogEntry[],
+): InferenceCatalogEntry | undefined {
+  let best: InferenceCatalogEntry | undefined
+  let bestLen = -1
+  for (const entry of catalog) {
+    const prefixes = Array.isArray(entry.prefixes) ? entry.prefixes : []
+    for (const prefix of prefixes) {
+      if (typeof prefix !== 'string' || prefix.length === 0) continue
+      if (model.startsWith(prefix) && prefix.length > bestLen) {
+        best = entry
+        bestLen = prefix.length
+      }
+    }
+  }
+  if (best) return best
+  return catalog.find(entry => entry.default)
+}
+
+/**
+ * Keep the env var for the provider that serves `model`.
+ * `resolved` is the output of inferenceEnv(), so callers that stub that
+ * helper still control which values are available.
+ */
+export function filterInferenceEnv(
+  model: string,
+  resolved: Record<string, string>,
+  catalog?: InferenceCatalogEntry[],
+): Record<string, string> {
+  if (Object.keys(resolved).length === 0) return {}
+  const entries = catalog ?? loadInferenceCatalog()
+  const provider = inferenceProviderForModel(model, entries)
+  if (!provider?.envVar) return {}
+  const value = resolved[provider.envVar]
+  if (!value) return {}
+  return {[provider.envVar]: value}
+}
+
+export function inferenceEnvForAgent(agentPath: string, config: any = loadConfig()): Record<string, string> {
+  return filterInferenceEnv(readAgentModel(agentPath), inferenceEnv(config))
+}
+
+/** Credential values. Runtime names such as CAST_AGENT_NAME are omitted. */
+export function secretValues(env: Record<string, string>): string[] {
+  const values: string[] = []
+  for (const [key, value] of Object.entries(env)) {
+    if (!value || RUNTIME_ENV_KEYS.has(key)) continue
+    values.push(value)
+  }
+  return values
+}
+
+export function assertSecretsNotInArgv(label: string, args: readonly string[], secrets: readonly string[]): void {
+  const joined = args.join('\0')
+  for (const secret of secrets) {
+    if (!secret) continue
+    const leaked = secret.length >= 8
+      ? joined.includes(secret)
+      : args.some(arg => arg === secret || arg.includes(`=${secret}`))
+    if (leaked) {
+      throw new Error(`Refusing to pass a secret to ${label} on the command line`)
+    }
+  }
+}
+
+function assertEnvName(key: string): void {
+  if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) {
+    throw new Error(`Refusing to write an env var named ${key}`)
+  }
+}
+
+function assertSingleLineSecret(key: string, value: string): void {
+  if (/[\n\r\0]/.test(value)) {
+    throw new Error(`Refusing to write ${key} because the value contains a newline`)
+  }
+}
+
+/** KEY=VALUE lines. Values are literal; a newline is rejected. */
+export function formatEnvAssignments(env: Record<string, string>): string {
+  const lines: string[] = []
+  for (const [key, value] of Object.entries(env)) {
+    assertEnvName(key)
+    assertSingleLineSecret(key, value)
+    lines.push(`${key}=${value}`)
+  }
+  return `${lines.join('\n')}\n`
+}
+
+/**
+ * stdin for `flyctl secrets import`. Values that contain quotes or `#`
+ * use triple quotes, which flyctl's parser accepts on one line.
+ */
+export function formatFlySecretsImport(env: Record<string, string>): string {
+  const lines: string[] = []
+  for (const [key, value] of Object.entries(env)) {
+    assertEnvName(key)
+    assertSingleLineSecret(key, value)
+    if (value.includes('"""')) {
+      throw new Error(`Refusing to import ${key} because the value contains a triple quote`)
+    }
+    const needsQuote = /["#]/.test(value) || value.startsWith(' ') || value.endsWith(' ')
+    lines.push(needsQuote ? `${key}="""${value}"""` : `${key}=${value}`)
+  }
+  return `${lines.join('\n')}\n`
+}
+
+export function flySecretsImportArgs(appName: string): string[] {
+  return ['secrets', 'import', '--app', appName]
+}
+
+export function railwaySecretSetArgs(key: string): string[] {
+  assertEnvName(key)
+  return ['variables', 'set', key, '--stdin']
+}
+
 export function inferenceModelStatus(model: string): {
   valid: boolean
   warning?: string
