@@ -115,7 +115,10 @@ exited.
 For a Docker deployment, `cast logs` prints the output of
 `docker logs cast-<name>`, including a container that has already exited.
 When the agent has more than one live deployment, pass the deployment SHA.
-Other providers are not read by this command.
+
+For a Sprites deployment, `cast logs` prints
+`/.sprite/logs/services/cast-agent.log` from the sprite. The same path
+is the one deploy prints after a successful Sprites deploy.
 
 ```bash
 cast logs email-assistant

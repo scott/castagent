@@ -73,6 +73,28 @@ resets the socket. Cast registers the agent as a sprite service on port
 it before opening the proxy. Deploy the sprite again if it was created
 before that service existed.
 
+`sprite login` or `SPRITES_TOKEN` authenticates a Sprites deploy. The
+sprite CLI reads `SPRITE_TOKEN` and ignores `SPRITES_TOKEN`, so Cast
+copies `SPRITES_TOKEN` into the environment of each `sprite` process
+when `SPRITE_TOKEN` is unset. The token is not passed as an argument.
+The launch script goes to `sprite exec` on stdin and contains the
+deployment token plus the API key for `brain.model`. Other inference
+keys stay on the machine running `cast deploy`.
+Before the agent directory is packed, Cast writes `requirements.txt`
+and copies the `cast` package to `.cast-runtime/cast`. The package
+install on the sprite includes git, which GitPython imports before the
+server binds. The service log is
+`/.sprite/logs/services/cast-agent.log`. `cast logs` prints that file.
+Deploy waits until the log contains `Agent ready`. If the service does
+not become ready, deploy exits non-zero and does not print a deployment
+SHA. A sprite this attempt created is destroyed. If that destroy fails,
+Cast records the deployment so `cast shutdown` can remove it, and keeps
+the token for that attempt. Otherwise the token file written for the
+attempt is removed, including
+`~/.cast/tokens/deployments/<sha>.token` when the machine has no Secret
+Service. Memory stays at `/opt/cast-agent/memory` on the sprite. Cast
+does not create a local directory under `/mnt/cast-memory`.
+
 Docker starts a container named `cast-<name>`. After it is ready, Cast
 writes the deployment to `~/.cast/cast.db` under the SHA that `cast deploy`
 prints. That write needs an `agents` row for the same name. Creating an

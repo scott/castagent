@@ -5,7 +5,7 @@ import * as path from 'path'
 import {A2AClient, A2AClientError} from '../../a2a/client'
 import {execCommand} from '../deploy-utils'
 import SpritesDeploy from '../sprites'
-import {spriteStartServiceArgs} from '../sprites-service'
+import {ensureSpriteCliToken, spriteCliEnv, spriteStartServiceArgs} from '../sprites-service'
 import type {DeploymentProvider} from '../types'
 import {upgradeSpritesDeployment} from '../upgrades'
 
@@ -76,9 +76,11 @@ export async function startSpriteProxy(
 
   log(`Starting sprite proxy for ${spriteName} on port ${localPort}...`)
 
+  ensureSpriteCliToken()
   const spritePath = resolveSprite()
   const proxyProcess = spawn(spritePath, ['proxy', `${localPort}:8080`, '-s', spriteName], {
     stdio: 'pipe',
+    env: spriteCliEnv(),
   })
 
   let proxyError = ''
@@ -124,7 +126,8 @@ export const spritesProvider: DeploymentProvider = {
       '',
       'Then authenticate:',
       '  sprite login',
-      '  # or set SPRITES_TOKEN environment variable',
+      '  # or set SPRITES_TOKEN. Cast passes it to the sprite CLI as SPRITE_TOKEN.',
+      '  # The token is not placed on the command line.',
       '',
     ],
   },
@@ -137,14 +140,14 @@ export const spritesProvider: DeploymentProvider = {
   toolChecks: [],
   memory: {
     mountPath: '/opt/cast-agent/memory',
-    // Host directory creation happens at deploy time.
+    // The directory lives on the sprite. Cast does not create a local host path.
     async create() {},
   },
   async deploy(ctx) {
     await SpritesDeploy.run([ctx.agentName])
   },
   async destroy(ctx) {
-    await SpritesDeploy.destroy(ctx.agentName)
+    await SpritesDeploy.destroy(ctx.agentName, ctx.deployment)
   },
   async upgrade(ctx) {
     await upgradeSpritesDeployment(ctx, ctx.agentName, ctx.version, ctx.versionTarballPath)
@@ -152,9 +155,14 @@ export const spritesProvider: DeploymentProvider = {
   async connect(ctx) {
     // The TCP proxy does not start a stopped service. Start it before the
     // first chat POST, or the proxy accepts the socket and then resets it.
+    ensureSpriteCliToken()
     const spriteName = `cast-${ctx.agentName}`
     try {
-      const started = await execCommand('sprite', spriteStartServiceArgs(spriteName), {silent: true, shell: false})
+      const started = await execCommand('sprite', spriteStartServiceArgs(spriteName), {
+        silent: true,
+        shell: false,
+        env: spriteCliEnv(),
+      })
       if (started.exitCode !== 0) {
         const detail = (started.stderr || started.stdout).trim()
         ctx.warn(`Could not start the sprite agent service${detail ? `: ${detail}` : ''}`)

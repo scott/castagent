@@ -142,6 +142,41 @@ describe('runtime logs', () => {
     })
   })
 
+  it('prints a Sprites service log', async () => {
+    const calls: string[][] = []
+    const result = await collectRuntimeLogs('bb2-chat', deps({
+      listDeployments: () => [deployment({
+        provider: 'sprites',
+        deployment_url: 'https://cast-bb2-chat.sprites.app',
+      })],
+      spriteLogs: async (spriteName) => {
+        calls.push([spriteName])
+        return {stdout: 'Agent ready on port 8080\n', stderr: '', exitCode: 0}
+      },
+    }))
+
+    expect(result).to.deep.equal({status: 'ok', text: 'Agent ready on port 8080\n'})
+    expect(calls).to.deep.equal([['cast-bb2-chat']])
+  })
+
+  it('names the sprite service log when cat fails', async () => {
+    const result = await collectRuntimeLogs('bb2-chat', deps({
+      listDeployments: () => [deployment({
+        provider: 'sprites',
+        deployment_url: 'https://cast-bb2-chat.sprites.app',
+      })],
+      spriteLogs: async () => ({
+        stdout: '',
+        stderr: 'cat: /.sprite/logs/services/cast-agent.log: No such file or directory\n',
+        exitCode: 1,
+      }),
+    }))
+
+    expect(result.status).to.equal('error')
+    expect(result.text).to.include('/.sprite/logs/services/cast-agent.log')
+    expect(result.text).to.not.include('/opt/cast-agent/agent.log')
+  })
+
   it('refuses providers it cannot read', async () => {
     let dockerCalled = false
     const result = await collectRuntimeLogs('bb2-chat', deps({

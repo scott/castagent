@@ -77,3 +77,75 @@ export function spriteStartServiceArgs(spriteName: string): string[] {
 export function spriteServiceStatusArgs(spriteName: string): string[] {
   return ['exec', '-s', spriteName, '--', SPRITE_ENV, 'services', 'get', SPRITE_SERVICE_NAME]
 }
+
+/** Service log on the sprite. `/opt/cast-agent/agent.log` is not written. */
+export const SPRITE_SERVICE_LOG = `/.sprite/logs/services/${SPRITE_SERVICE_NAME}.log`
+
+export const SPRITE_HEALTH_LOG_MARKER = '---CAST-LOG---'
+
+/**
+ * Environment for a `sprite` child process.
+ * Cast documents `SPRITES_TOKEN`. The CLI reads `SPRITE_TOKEN` and does not
+ * read `SPRITES_TOKEN`. The value stays in the environment; it is not an
+ * argument.
+ */
+export function spriteCliEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  const env = {...base}
+  ensureSpriteCliToken(env)
+  return env
+}
+
+/** Copy `SPRITES_TOKEN` onto `SPRITE_TOKEN` when the CLI variable is unset. */
+export function ensureSpriteCliToken(env: NodeJS.ProcessEnv = process.env): void {
+  const fromCast = env.SPRITES_TOKEN?.trim()
+  if (fromCast && !env.SPRITE_TOKEN) {
+    env.SPRITE_TOKEN = fromCast
+  }
+}
+
+/** Replace known secret values so a CLI error can be shown. */
+export function redactSecrets(text: string, secrets: Array<string | undefined>): string {
+  let out = text
+  for (const secret of secrets) {
+    if (!secret || secret.length < 8) continue
+    if (!out.includes(secret)) continue
+    out = out.split(secret).join('[redacted]')
+  }
+  return out
+}
+
+export function redactSpriteSecrets(text: string, env: NodeJS.ProcessEnv = process.env): string {
+  return redactSecrets(text, [env.SPRITES_TOKEN, env.SPRITE_TOKEN])
+}
+
+export function spriteServiceLogArgs(spriteName: string): string[] {
+  return ['exec', '-s', spriteName, '--', 'cat', SPRITE_SERVICE_LOG]
+}
+
+/**
+ * One remote command. stdout is the service JSON, then the log marker, then
+ * the service log. The marker is literal text, not a secret.
+ */
+export function spriteHealthProbeCommand(): string {
+  return [
+    `status=$(${SPRITE_ENV} services get ${SPRITE_SERVICE_NAME} 2>/dev/null || printf '%s' '{"status":"missing"}')`,
+    `printf '%s\\n' "$status"`,
+    `printf '%s\\n' '${SPRITE_HEALTH_LOG_MARKER}'`,
+    `cat ${SPRITE_SERVICE_LOG} 2>/dev/null || true`,
+  ].join('; ')
+}
+
+/** Map `sprite-env services get` plus the service log onto a container probe. */
+export function parseSpriteServiceProbe(output: string): {status: string; logs: string} {
+  const index = output.indexOf(SPRITE_HEALTH_LOG_MARKER)
+  const statusText = (index === -1 ? output : output.slice(0, index)).trim()
+  const logs = index === -1 ? '' : output.slice(index + SPRITE_HEALTH_LOG_MARKER.length).replace(/^\r?\n/, '')
+  const match = statusText.match(/"status"\s*:\s*"([^"]+)"/)
+  const raw = (match?.[1] || '').trim().toLowerCase()
+  let status = 'missing'
+  if (raw === 'running') status = 'running'
+  else if (raw === 'restarting' || raw === 'crashed' || raw === 'backoff') status = 'restarting'
+  else if (raw === 'stopped' || raw === 'exited' || raw === 'dead' || raw === 'failed' || raw === 'error') status = 'exited'
+  else if (raw) status = raw
+  return {status, logs}
+}

@@ -2,6 +2,13 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import {execCommand, isShaPattern} from './deploy/deploy-utils'
+import {
+  ensureSpriteCliToken,
+  redactSpriteSecrets,
+  spriteCliEnv,
+  spriteServiceLogArgs,
+  SPRITE_SERVICE_LOG,
+} from './deploy/sprites-service'
 import {db} from './sqlite'
 
 const AGENT_NAME = /^[a-zA-Z0-9-]+$/
@@ -15,6 +22,10 @@ export function localRuntimeLogPath(agentName: string, logsDir = defaultLogsDir(
 }
 
 export function dockerContainerName(agentName: string): string {
+  return `cast-${agentName}`
+}
+
+export function spriteServiceName(agentName: string): string {
   return `cast-${agentName}`
 }
 
@@ -100,6 +111,7 @@ export interface RuntimeLogDeps {
   listDeployments: (agentName: string) => RuntimeDeployment[]
   readLocalLog: (agentName: string) => string | null
   dockerLogs: (containerName: string) => Promise<DockerLogResult>
+  spriteLogs?: (spriteName: string) => Promise<DockerLogResult>
 }
 
 export function defaultRuntimeLogDeps(): RuntimeLogDeps {
@@ -112,7 +124,18 @@ export function defaultRuntimeLogDeps(): RuntimeLogDeps {
       shell: false,
       timeoutMs: 30_000,
     }),
+    spriteLogs: (spriteName) => readSpriteServiceLog(spriteName),
   }
+}
+
+export async function readSpriteServiceLog(spriteName: string): Promise<DockerLogResult> {
+  ensureSpriteCliToken()
+  return execCommand('sprite', spriteServiceLogArgs(spriteName), {
+    silent: true,
+    shell: false,
+    timeoutMs: 30_000,
+    env: spriteCliEnv(),
+  })
 }
 
 function chooseDeployment(
@@ -152,6 +175,34 @@ async function readDockerLogs(container: string, deps: RuntimeLogDeps): Promise<
   const body = joinProcessOutput(result.stdout, result.stderr)
   if (!body.trim()) {
     return {status: 'ok', text: `No log output for Docker container '${container}'.`}
+  }
+  return {status: 'ok', text: body}
+}
+
+async function readSpriteLogs(spriteName: string, deps: RuntimeLogDeps): Promise<RuntimeLogResult> {
+  const read = deps.spriteLogs ?? readSpriteServiceLog
+  let result: DockerLogResult
+  try {
+    result = await read(spriteName)
+  } catch (error) {
+    const message = redactSpriteSecrets(error instanceof Error ? error.message : String(error))
+    return {
+      status: 'error',
+      text: `Could not read Sprites logs for '${spriteName}'.\n${message}`,
+    }
+  }
+  if (result.exitCode !== 0) {
+    const detail = redactSpriteSecrets([result.stderr, result.stdout].map(part => part.trim()).filter(Boolean).join('\n'))
+    return {
+      status: 'error',
+      text: detail
+        ? `Could not read Sprites logs for '${spriteName}'.\n${detail}\nLog path: ${SPRITE_SERVICE_LOG}`
+        : `Could not read Sprites logs for '${spriteName}'.\nLog path: ${SPRITE_SERVICE_LOG}`,
+    }
+  }
+  const body = joinProcessOutput(result.stdout, result.stderr)
+  if (!body.trim()) {
+    return {status: 'ok', text: `No log output for sprite '${spriteName}'.`}
   }
   return {status: 'ok', text: body}
 }
@@ -197,8 +248,11 @@ export async function collectRuntimeLogs(
   if (deployment.provider === 'docker') {
     return readDockerLogs(dockerContainerName(deployment.agent_name), deps)
   }
+  if (deployment.provider === 'sprites') {
+    return readSpriteLogs(spriteServiceName(deployment.agent_name), deps)
+  }
   return {
     status: 'error',
-    text: `cast logs cannot read ${deployment.provider} logs for '${deployment.agent_name}'. It reads local runtime output and Docker container logs.`,
+    text: `cast logs cannot read ${deployment.provider} logs for '${deployment.agent_name}'. It reads local runtime output, Docker container logs, and Sprites service logs.`,
   }
 }

@@ -3,6 +3,8 @@ import {execFileSync, spawn} from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
+import {keychain} from '../keychain'
+import {db} from '../sqlite'
 import {
   checkCli,
   generateAuthToken,
@@ -15,17 +17,29 @@ import {
   secretValues,
   assertSecretsNotInArgv,
   generateDeploymentId,
-  getVolumeName,
+  deploymentShaFromEnv,
+  isShaPattern,
+  type InferenceCatalogEntry,
 } from './deploy-utils'
+import {waitForContainerHealth} from './container-health'
+import {writeRequirementsTxt} from './requirements'
 import {
+  SPRITE_SERVICE_LOG,
   SPRITE_SERVICE_NAME,
+  ensureSpriteCliToken,
+  parseSpriteServiceProbe,
+  redactSecrets,
+  redactSpriteSecrets,
   spriteAgentLaunchScript,
+  spriteCliEnv,
+  spriteHealthProbeCommand,
   spriteInstallExecArgs,
-  spriteServiceStatusArgs,
 } from './sprites-service'
 
 const AGENT_DIR = '/opt/cast-agent'
-const HOST_MOUNT_BASE = '/mnt/cast-memory'
+const SPRITE_MEMORY_PATH = `${AGENT_DIR}/memory`
+/** Local directories created by deploys before memory stayed on the sprite. */
+export const HOST_MOUNT_BASE = '/mnt/cast-memory'
 
 /** argv for `sprite exec` with no local shell. The remote command is one argument. */
 export function spriteExecArgv(spriteName: string, command: string): string[] {
@@ -37,198 +51,416 @@ export function spriteReadyArgv(spriteName: string): string[] {
 }
 
 export function runSpriteExec(spriteName: string, command: string, timeout = 120000): string {
+  ensureSpriteCliToken()
   try {
     return execFileSync('sprite', spriteExecArgv(spriteName, command), {
       encoding: 'utf8',
       stdio: ['pipe', 'pipe', 'pipe'],
       timeout,
+      env: spriteCliEnv(),
     })
   } catch (e: any) {
     const errorMsg = e?.message || ''
     const stderr = typeof e?.stderr === 'string' ? e.stderr : e?.stderr?.toString?.() || ''
+    const detail = redactSpriteSecrets(stderr || errorMsg)
     if (errorMsg.includes('ETIMEDOUT') || errorMsg.includes('timed out')) {
       throw new Error(`Sprite command timed out after ${timeout / 1000}s: ${command.substring(0, 50)}...`)
     }
-    throw new Error(`Sprite command failed: ${stderr || errorMsg}`)
+    throw new Error(`Sprite command failed: ${detail}`)
   }
 }
 
-export default class SpritesDeploy extends Command {
-  static description = 'Deploy agent to Sprites (Fly.io Firecracker VM)'
+export interface SpriteLog {
+  log(message: string): void
+  warn(message: string): void
+}
 
-  static args = {
-    agent: Args.string({description: 'Agent name', required: true}),
+export interface SpriteDeployOptions {
+  healthTimeoutMs?: number
+  healthIntervalMs?: number
+  sleep?: (ms: number) => Promise<void>
+  now?: () => number
+  /**
+   * Resolved inference env before it is narrowed to the model's key.
+   * Tests pass a stub so the catalog import is not required.
+   */
+  serviceEnv?: () => Record<string, string>
+  /** Used with serviceEnv so tests do not load the Python catalog. */
+  inferenceCatalog?: InferenceCatalogEntry[]
+}
+
+export interface SpriteDestroyOptions {
+  /** Root of host paths recorded by older deploys. Tests pass a temporary directory. */
+  hostMemoryRoot?: string
+}
+
+/** Write requirements.txt and copy python/cast into the agent directory before the tar. */
+export function stageSpriteAgent(agentPath: string, projectRoot = findSpriteProjectRoot()): void {
+  writeRequirementsTxt(projectRoot, agentPath)
+  const source = path.join(projectRoot, 'python', 'cast')
+  if (!fs.existsSync(source)) {
+    throw new Error(
+      `Cast Python package not found at ${source}. The sprite service imports cast.runtime from this package.`,
+    )
   }
+  const destination = path.join(agentPath, '.cast-runtime', 'cast')
+  fs.mkdirSync(path.dirname(destination), {recursive: true})
+  if (fs.existsSync(destination)) fs.rmSync(destination, {recursive: true, force: true})
+  fs.cpSync(source, destination, {recursive: true})
+}
 
-  static async destroy(agentName: string): Promise<void> {
-    const spriteName = `cast-${agentName}`
-    const result = await execCommand('sprite', ['destroy', spriteName, '--force'])
-    if (result.exitCode !== 0) {
-      // Check if it's a "not found" error - that's actually okay, the sprite is already gone
-      if (result.stderr.includes('not found') || result.stderr.includes('does not exist') || result.stderr.includes('No such sprite')) {
-        console.log(`Sprite '${spriteName}' does not exist (already deleted or never created).`)
-        return
-      }
-      throw new Error(`Failed to destroy sprite '${spriteName}': ${result.stderr || result.stdout}`)
-    }
-    console.log(`Sprite '${spriteName}' has been destroyed.`)
+export function findSpriteProjectRoot(): string {
+  const marker = 'python/cast'
+  const candidates = [
+    process.cwd(),
+    path.resolve(__dirname, '../../..'),
+    path.resolve(__dirname, '../../../..'),
+    path.resolve(__dirname, '../../../../..'),
+    path.resolve(__dirname, '../../../../../..'),
+  ]
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, marker))) return candidate
+  }
+  return process.cwd()
+}
 
-    // Clean up host memory directory
-    const volumeId = getVolumeName(agentName, generateDeploymentId())
-    const hostMemoryPath = `${HOST_MOUNT_BASE}/${volumeId}`
+export function spriteMemoryConfig(deploymentId: string): string {
+  return JSON.stringify({deploymentId, mountPath: SPRITE_MEMORY_PATH})
+}
+
+export function recordedHostMemoryPaths(
+  agentName: string,
+  configs: Array<string | null | undefined>,
+  root = HOST_MOUNT_BASE,
+): string[] {
+  const paths: string[] = []
+  const prefix = `cast-${agentName}-`
+  for (const config of configs) {
+    let hostPath: unknown
     try {
-      // Try to remove the specific path (will only work if directory is empty)
-      await execCommand('sudo', ['rmdir', hostMemoryPath], {silent: true})
-      console.log(`Host memory directory '${hostMemoryPath}' has been removed.`)
+      hostPath = JSON.parse(config || '{}').hostPath
     } catch {
-      // Directory may not exist or not be empty (other deployments using it)
+      continue
+    }
+    if (typeof hostPath !== 'string' || hostPath.length === 0) continue
+    if (hostPath.includes('\0') || hostPath.includes('..')) continue
+    if (path.posix.dirname(hostPath) !== root) continue
+    const base = path.posix.basename(hostPath)
+    if (!base.startsWith(prefix) || !base.endsWith('-memory')) continue
+    if (!paths.includes(hostPath)) paths.push(hostPath)
+  }
+  return paths
+}
+
+export function removeHostMemoryDir(hostPath: string): 'removed' | 'missing' | 'failed' {
+  if (!fs.existsSync(hostPath)) return 'missing'
+  try {
+    fs.rmdirSync(hostPath)
+    return 'removed'
+  } catch {
+    return 'failed'
+  }
+}
+
+/**
+ * Remove host directories recorded on earlier deploys.
+ * A missing directory is left unmentioned. A directory that is still there
+ * is reported as not removed.
+ */
+export function cleanupRecordedSpriteMemory(
+  agentName: string,
+  configs: Array<string | null | undefined>,
+  log: (message: string) => void = console.log,
+  root = HOST_MOUNT_BASE,
+): void {
+  for (const hostPath of recordedHostMemoryPaths(agentName, configs, root)) {
+    const result = removeHostMemoryDir(hostPath)
+    if (result === 'removed') {
+      log(`Host memory directory '${hostPath}' has been removed.`)
+    } else if (result === 'failed') {
+      log(`Host memory directory '${hostPath}' could not be removed.`)
     }
   }
+}
 
-  async run(): Promise<void> {
-    const { args } = await this.parse(SpritesDeploy)
-    const agentName = args.agent as string
-    const agentPath = getAgentPath(agentName)
+export async function discardFailedSpriteTokens(agentName: string, deploymentSha: string | undefined): Promise<void> {
+  if (deploymentSha && isShaPattern(deploymentSha)) {
+    await keychain.deleteDeploymentToken(deploymentSha)
+  }
+  if (db.listDeployments(agentName).length === 0) {
+    await keychain.deleteToken(agentName)
+  }
+}
 
-    if (!fs.existsSync(agentPath)) {
-      this.error(`Agent '${agentName}' not found at ${agentPath}`)
+function spriteAlreadyExists(result: {exitCode: number; stderr: string; stdout: string}): boolean {
+  const text = `${result.stderr}\n${result.stdout}`.toLowerCase()
+  return text.includes('already exists')
+}
+
+function spriteIsGone(result: {stderr: string; stdout: string}): boolean {
+  const text = `${result.stderr}\n${result.stdout}`.toLowerCase()
+  return text.includes('not found') || text.includes('does not exist') || text.includes('no such sprite')
+}
+
+async function destroyCreatedSprite(spriteName: string): Promise<'destroyed' | 'missing' | 'failed'> {
+  const result = await execCommand('sprite', ['destroy', spriteName, '--force'], {
+    silent: true,
+    shell: false,
+    env: spriteCliEnv(),
+  })
+  if (result.exitCode === 0) return 'destroyed'
+  if (spriteIsGone(result)) return 'missing'
+  return 'failed'
+}
+
+export async function rollbackFailedSpriteDeploy(input: {
+  agentName: string
+  spriteName: string
+  createdSprite: boolean
+  deploymentSha?: string
+  tokenHash: string
+  deploymentId: string
+  log: (message: string) => void
+}): Promise<void> {
+  let recorded = false
+  if (input.createdSprite) {
+    const destroyed = await destroyCreatedSprite(input.spriteName)
+    if (destroyed === 'failed') {
+      saveDeployment(
+        input.agentName,
+        'sprites',
+        `https://${input.spriteName}.sprites.app`,
+        input.tokenHash,
+        `cast-${input.agentName}-memory`,
+        spriteMemoryConfig(input.deploymentId),
+      )
+      input.log(
+        `Could not delete sprite '${input.spriteName}'. Recorded the deployment so cast shutdown ${input.agentName} can clean it up.`,
+      )
+      recorded = true
+    } else {
+      input.log(`Removed sprite '${input.spriteName}' after the deploy failed.`)
     }
+  }
+  if (!recorded) {
+    await discardFailedSpriteTokens(input.agentName, input.deploymentSha)
+  }
+}
 
-    this.log(`Deploying ${agentName} to Sprites...`)
+function tailText(text: string, maxLines = 80): string {
+  const lines = text.trim().split('\n')
+  if (lines.length <= maxLines) return text.trim()
+  return lines.slice(-maxLines).join('\n').trim()
+}
 
-    // Check CLI
-    try {
-      await checkCli('sprite', 'https://sprites.dev/install.sh')
-    } catch (error: any) {
-      this.error(error.message)
+export function spriteHealthFailureMessage(
+  spriteName: string,
+  result: {status: string; logs: string; reason: 'exited' | 'timeout'},
+): string {
+  const status = result.status || 'unknown'
+  const summary = result.reason === 'timeout'
+    ? `Sprite service '${SPRITE_SERVICE_NAME}' on '${spriteName}' did not become ready (status: ${status}).`
+    : `Sprite service '${SPRITE_SERVICE_NAME}' on '${spriteName}' failed before the runtime was ready.`
+  const logs = tailText(result.logs)
+  const parts = [summary, `Status: ${status}`]
+  if (logs) parts.push(logs)
+  parts.push(`Logs: sprite exec -s ${spriteName} -- cat ${SPRITE_SERVICE_LOG}`)
+  return parts.join('\n')
+}
+
+export async function deployToSprites(
+  agentName: string,
+  hooks: SpriteLog,
+  options: SpriteDeployOptions = {},
+): Promise<void> {
+  ensureSpriteCliToken()
+  const agentPath = getAgentPath(agentName)
+  if (!fs.existsSync(agentPath)) {
+    throw new Error(`Agent '${agentName}' not found at ${agentPath}`)
+  }
+
+  hooks.log(`Deploying ${agentName} to Sprites...`)
+
+  try {
+    await checkCli('sprite', 'https://sprites.dev/install.sh')
+  } catch (error: any) {
+    throw new Error(redactSpriteSecrets(error?.message || String(error)))
+  }
+
+  const authCheck = await execCommand('sprite', ['list'], {silent: true, shell: false, env: spriteCliEnv()})
+  if (authCheck.exitCode !== 0) {
+    const detail = redactSpriteSecrets((authCheck.stderr || authCheck.stdout).trim())
+    throw new Error(
+      'Not authenticated with Sprites. Run "sprite login" or set SPRITES_TOKEN.'
+      + (detail ? `\n${detail}` : ''),
+    )
+  }
+
+  stageSpriteAgent(agentPath)
+
+  const deploymentSha = deploymentShaFromEnv()
+  const spriteName = `cast-${agentName}`
+  let createdSprite = false
+  let tokenHash = ''
+  const deploymentId = generateDeploymentId()
+
+  try {
+    const generated = await generateAuthToken(agentName)
+    tokenHash = generated.tokenHash
+    const authToken = generated.authToken
+
+    hooks.log(`Ensuring sprite '${spriteName}' exists...`)
+    const createResult = await execCommand('sprite', ['create', spriteName], {
+      silent: true,
+      shell: false,
+      env: spriteCliEnv(),
+    })
+    if (createResult.exitCode !== 0 && !spriteAlreadyExists(createResult)) {
+      throw new Error(`Failed to create sprite: ${redactSpriteSecrets(createResult.stderr || createResult.stdout)}`)
     }
+    createdSprite = createResult.exitCode === 0 && !spriteAlreadyExists(createResult)
 
-    // Check auth
-    const authCheck = await execCommand('sprite', ['list'], {silent: true})
-    if (authCheck.exitCode !== 0 && !process.env.SPRITES_TOKEN) {
-      this.error('Not authenticated with Sprites. Run "sprite login" or set SPRITES_TOKEN environment variable.')
-    }
-
-    // Generate auth token and deployment ID
-    const { authToken, tokenHash } = await generateAuthToken(agentName)
-    const deploymentId = generateDeploymentId()
-    const volumeId = getVolumeName(agentName, deploymentId)
-    const hostMemoryPath = `${HOST_MOUNT_BASE}/${volumeId}`
-
-    const spriteName = `cast-${agentName}`
-
-    // Ensure sprite exists
-    this.log(`Ensuring sprite '${spriteName}' exists...`)
-    const createResult = await execCommand('sprite', ['create', spriteName], {silent: true})
-    if (createResult.exitCode !== 0 && !createResult.stderr.includes('already exists')) {
-      this.error(`Failed to create sprite: ${createResult.stderr}`)
-    }
-
-    // Wait for sprite to be ready (check up to 30 seconds)
-    this.log('Waiting for sprite to be ready...')
+    hooks.log('Waiting for sprite to be ready...')
     let spriteReady = false
     for (let i = 0; i < 10; i++) {
-      if (await this.checkSpriteReady(spriteName)) {
+      if (await checkSpriteReady(spriteName)) {
         spriteReady = true
         break
       }
       await new Promise((resolve) => setTimeout(resolve, 3000))
     }
     if (!spriteReady) {
-      this.warn('Sprite may not be fully ready, trying anyway...')
+      hooks.warn('Sprite may not be fully ready, trying anyway...')
     }
 
-    // Create host directory for memory volume
-    this.log(`Creating host memory directory: ${hostMemoryPath}`)
-    await execCommand('sudo', ['mkdir', '-p', hostMemoryPath], {silent: true})
-    await execCommand('sudo', ['chmod', '777', hostMemoryPath], {silent: true})
+    hooks.log('Ensuring Python is installed...')
+    await execOnSprite(spriteName, 'apt-get update && apt-get install -y python3 python3-pip python3-venv git', 300000)
 
-    // Ensure Python and venv are installed (use longer timeout for apt)
-    this.log('Ensuring Python is installed...')
-    await this.execOnSprite(spriteName, 'apt-get update && apt-get install -y python3 python3-pip python3-venv', 300000)
+    hooks.log('Transferring agent files...')
+    await transferAgentFiles(agentPath, spriteName, hooks)
 
-    // Package and transfer agent files
-    this.log('Transferring agent files...')
-    await this.transferAgentFiles(agentPath, spriteName)
+    hooks.log('Creating memory directory inside sprite...')
+    await execOnSprite(spriteName, `mkdir -p ${SPRITE_MEMORY_PATH} && chmod 700 ${SPRITE_MEMORY_PATH}`)
 
-    // Create memory directory inside sprite
-    this.log('Creating memory directory inside sprite...')
-    await this.execOnSprite(spriteName, `mkdir -p ${AGENT_DIR}/memory`)
-
-    // Create virtual environment and install dependencies
-    // Use longer timeout for venv creation and pip install (5 minutes)
     const longTimeout = 300000
+    hooks.log('Setting up Python environment...')
+    await execOnSprite(spriteName, `python3 -m venv ${AGENT_DIR}/venv`, longTimeout)
+    hooks.log('Installing dependencies...')
+    await execOnSprite(spriteName, `${AGENT_DIR}/venv/bin/pip install -r ${AGENT_DIR}/requirements.txt`, longTimeout)
 
-    this.log('Setting up Python environment...')
-    await this.execOnSprite(spriteName, `python3 -m venv ${AGENT_DIR}/venv`, longTimeout)
-    this.log('Installing dependencies...')
-    await this.execOnSprite(spriteName, `${AGENT_DIR}/venv/bin/pip install -r ${AGENT_DIR}/requirements.txt`, longTimeout)
+    hooks.log('Starting agent service...')
+    const resolvedEnv = options.serviceEnv ? options.serviceEnv() : inferenceEnv()
+    const inference = filterInferenceEnv(readAgentModel(agentPath), resolvedEnv, options.inferenceCatalog)
+    await setupBackgroundService(spriteName, agentName, authToken, inference)
 
-    // Register a supervised service. A one-shot nohup dies with the exec
-    // session, and the sprite proxy then resets every chat connection.
-    this.log('Starting agent service...')
-    await this.setupBackgroundService(spriteName, agentName, authToken)
-
-    const status = await execCommand('sprite', spriteServiceStatusArgs(spriteName), {silent: true, shell: false})
-    if (status.exitCode !== 0 || !status.stdout.includes('"status":"running"')) {
-      this.warn(
-        'Agent service may not be running. Check logs with: sprite exec -s ' +
-        spriteName + ` -- cat /.sprite/logs/services/${SPRITE_SERVICE_NAME}.log`,
-      )
+    hooks.log('Waiting for the agent service to become ready...')
+    const health = await waitForContainerHealth(async () => {
+      try {
+        return parseSpriteServiceProbe(runSpriteExec(spriteName, spriteHealthProbeCommand(), 20000))
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        return {status: 'missing', logs: message}
+      }
+    }, {
+      timeoutMs: options.healthTimeoutMs,
+      intervalMs: options.healthIntervalMs ?? 2_000,
+      sleep: options.sleep,
+      now: options.now,
+    })
+    if (!health.ok) {
+      throw new Error(spriteHealthFailureMessage(spriteName, {
+        ...health,
+        logs: redactSecrets(health.logs, [authToken, process.env.SPRITES_TOKEN, process.env.SPRITE_TOKEN]),
+      }))
     }
 
-    // Get URL
-    const urlResult = await execCommand('sprite', ['url', '-s', spriteName], {silent: true})
-    // sprite url may output multiple lines (URL + Auth info); extract only the first line
+    const urlResult = await execCommand('sprite', ['url', '-s', spriteName], {
+      silent: true,
+      shell: false,
+      env: spriteCliEnv(),
+    })
     const firstLine = urlResult.stdout.split(/\r?\n/)[0] || ''
-    const deploymentUrl = firstLine
-      .replace(/^URL:\s*/i, '')
-      .trim()
+    const deploymentUrl = firstLine.replace(/^URL:\s*/i, '').trim()
 
-    // Save deployment
-    const volumeConfig = JSON.stringify({ deploymentId, mountPath: '/opt/cast-agent/memory', hostPath: hostMemoryPath })
-    saveDeployment(agentName, 'sprites', deploymentUrl, tokenHash, volumeId, volumeConfig)
+    saveDeployment(
+      agentName,
+      'sprites',
+      deploymentUrl,
+      tokenHash,
+      `cast-${agentName}-memory`,
+      spriteMemoryConfig(deploymentId),
+    )
 
-    this.log('')
-    this.log('╔══════════════════════════════════════════════════════════════╗')
-    this.log('║              Sprites Deployment Successful!                  ║')
-    this.log('╚══════════════════════════════════════════════════════════════╝')
-    this.log('')
-    this.log(`Agent: ${agentName}`)
-    this.log(`URL: ${deploymentUrl}`)
-    this.log(`Sprite: ${spriteName}`)
-    this.log(`Provider: sprites`)
-    this.log('')
-    this.log('To view logs:')
-    this.log(`  sprite exec -s ${spriteName} -- cat ${AGENT_DIR}/agent.log`)
-    this.log('')
-    this.log('To connect:')
-    this.log(`  cast connect ${agentName}`)
-    this.log('')
-    this.log('To destroy:')
-    this.log(`  cast shutdown ${agentName}`)
-  }
-
-  private async execOnSprite(spriteName: string, command: string, timeout?: number): Promise<string> {
-    // sprite exec runs as the sprite user, so the remote command uses sudo.
-    // Name and command are argv. A local shell would treat quotes in either as syntax.
-    return runSpriteExec(spriteName, command, timeout || 120000)
-  }
-
-  private async checkSpriteReady(spriteName: string): Promise<boolean> {
+    hooks.log('')
+    hooks.log('╔══════════════════════════════════════════════════════════════╗')
+    hooks.log('║              Sprites Deployment Successful!                  ║')
+    hooks.log('╚══════════════════════════════════════════════════════════════╝')
+    hooks.log('')
+    hooks.log(`Agent: ${agentName}`)
+    hooks.log(`URL: ${deploymentUrl}`)
+    hooks.log(`Sprite: ${spriteName}`)
+    hooks.log('Provider: sprites')
+    hooks.log('')
+    hooks.log('To view logs:')
+    hooks.log(`  cast logs ${agentName}`)
+    hooks.log(`  sprite exec -s ${spriteName} -- cat ${SPRITE_SERVICE_LOG}`)
+    hooks.log('')
+    hooks.log('To connect:')
+    hooks.log(`  cast connect ${agentName}`)
+    hooks.log('')
+    hooks.log('To destroy:')
+    hooks.log(`  cast shutdown ${agentName}`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
     try {
-      const result = execFileSync('sprite', spriteReadyArgv(spriteName), {
-        encoding: 'utf8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: 30000,
+      await rollbackFailedSpriteDeploy({
+        agentName,
+        spriteName,
+        createdSprite,
+        deploymentSha,
+        tokenHash,
+        deploymentId,
+        log: (line) => hooks.log(line),
       })
-      return result.trim() === 'ready'
-    } catch {
-      return false
+    } catch (rollbackError) {
+      const extra = rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+      throw new Error(`${redactSpriteSecrets(message)}\nCleanup failed: ${redactSpriteSecrets(extra)}`)
     }
+    throw new Error(redactSpriteSecrets(message))
   }
+}
 
-  private async transferAgentFiles(agentPath: string, spriteName: string): Promise<void> {
+async function checkSpriteReady(spriteName: string): Promise<boolean> {
+  try {
+    const result = execFileSync('sprite', spriteReadyArgv(spriteName), {
+      encoding: 'utf8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+      timeout: 30000,
+      env: spriteCliEnv(),
+    })
+    return result.trim() === 'ready'
+  } catch {
+    return false
+  }
+}
+
+async function execOnSprite(spriteName: string, command: string, timeout?: number): Promise<string> {
+  return runSpriteExec(spriteName, command, timeout || 120000)
+}
+
+function spriteVolumeConfigs(
+  agentName: string,
+  deployment?: {volume_config?: string | null},
+): Array<string | null | undefined> {
+  const configs: Array<string | null | undefined> = []
+  if (deployment?.volume_config) configs.push(deployment.volume_config)
+  for (const row of db.listDeployments(agentName)) {
+    if (row?.provider === 'sprites') configs.push(row.volume_config)
+  }
+  return configs
+}
+
+async function transferAgentFiles(agentPath: string, spriteName: string, hooks: SpriteLog): Promise<void> {
     // Create local tar
     const tarPath = path.join(os.tmpdir(), `cast-${path.basename(agentPath)}.tar.gz`)
 
@@ -250,34 +482,36 @@ export default class SpritesDeploy extends Command {
       // Get file size to check if it's too large
       const tarStats = fs.statSync(tarPath)
       const fileSizeMB = (tarStats.size / (1024 * 1024)).toFixed(2)
-      this.log(`  Tar file size: ${fileSizeMB}MB`)
+      hooks.log(`  Tar file size: ${fileSizeMB}MB`)
 
       // Use streaming transfer to avoid Node.js string length limit (~512MB)
       // The base64 encoding increases size by ~33%, so we need to stream to avoid hitting the limit
-      this.log('  Transferring tar to sprite (streaming)...')
-      await this.streamFileToSprite(tarPath, spriteName, tarStats.size)
+      hooks.log('  Transferring tar to sprite (streaming)...')
+      await streamFileToSprite(tarPath, spriteName, tarStats.size)
 
       // Extract on sprite (use longer timeout for extraction)
-      this.log('  Extracting files...')
-      await this.execOnSprite(spriteName, `tar xzf /tmp/agent.tar.gz -C ${AGENT_DIR} && rm /tmp/agent.tar.gz`, 300000)
+      hooks.log('  Extracting files...')
+      await execOnSprite(spriteName, `tar xzf /tmp/agent.tar.gz -C ${AGENT_DIR} && rm /tmp/agent.tar.gz`, 300000)
     } finally {
       // Clean up local tar
       if (fs.existsSync(tarPath)) {
         fs.unlinkSync(tarPath)
       }
     }
-  }
+}
 
-  private streamFileToSprite(localPath: string, spriteName: string, originalSize: number): Promise<void> {
-    return new Promise((resolve, reject) => {
-      // Spawn the sprite exec command - truncate to original size after decode
-      const child = spawn(
-        'sprite',
-        ['exec', '-s', spriteName, '--', 'bash', '-c', `sudo mkdir -p ${AGENT_DIR} && base64 -d > /tmp/agent.tar.gz && truncate -s ${originalSize} /tmp/agent.tar.gz`],
-        {
-          stdio: ['pipe', 'pipe', 'pipe'],
-        },
-      )
+function streamFileToSprite(localPath: string, spriteName: string, originalSize: number): Promise<void> {
+  ensureSpriteCliToken()
+  return new Promise((resolve, reject) => {
+    // Spawn the sprite exec command - truncate to original size after decode
+    const child = spawn(
+      'sprite',
+      ['exec', '-s', spriteName, '--', 'bash', '-c', `sudo mkdir -p ${AGENT_DIR} && base64 -d > /tmp/agent.tar.gz && truncate -s ${originalSize} /tmp/agent.tar.gz`],
+      {
+        stdio: ['pipe', 'pipe', 'pipe'],
+        env: spriteCliEnv(),
+      },
+    )
 
       let stderr = ''
 
@@ -338,30 +572,94 @@ export default class SpritesDeploy extends Command {
         child.stdin?.end()
       })
 
-      readStream.on('error', (err) => {
-        reject(new Error(`Failed to read tar file: ${err.message}`))
-      })
+    readStream.on('error', (err) => {
+      reject(new Error(`Failed to read tar file: ${err.message}`))
     })
+  })
+}
+
+async function setupBackgroundService(
+  spriteName: string,
+  agentName: string,
+  authToken: string,
+  env: Record<string, string>,
+): Promise<void> {
+  await execOnSprite(spriteName, `if [ -f ${AGENT_DIR}/agent.pid ]; then kill $(cat ${AGENT_DIR}/agent.pid) 2>/dev/null; rm -f ${AGENT_DIR}/agent.pid; fi`)
+
+  // stdin is the script. The remote bash -c string must stay one argument.
+  // env is already narrowed to the model's inference key.
+  const args = spriteInstallExecArgs(spriteName)
+  const script = spriteAgentLaunchScript(agentName, authToken, env)
+  assertSecretsNotInArgv('sprite exec', args, secretValues({AUTH_TOKEN: authToken, ...env}))
+  const startResult = await execCommand(
+    'sprite',
+    args,
+    {
+      silent: true,
+      shell: false,
+      env: spriteCliEnv(),
+      input: script,
+    },
+  )
+  if (startResult.exitCode !== 0) {
+    const detail = redactSecrets((startResult.stderr || startResult.stdout).trim(), [
+      authToken,
+      process.env.SPRITES_TOKEN,
+      process.env.SPRITE_TOKEN,
+    ])
+    throw new Error(`Failed to start the sprite agent service${detail ? `: ${detail}` : ''}`)
+  }
+}
+
+export default class SpritesDeploy extends Command {
+  static description = 'Deploy agent to Sprites (Fly.io Firecracker VM)'
+
+  static args = {
+    agent: Args.string({description: 'Agent name', required: true}),
   }
 
-  private async setupBackgroundService(spriteName: string, agentName: string, authToken: string): Promise<void> {
-    this.log('  Stopping any existing agent process...')
-    await this.execOnSprite(spriteName, `if [ -f ${AGENT_DIR}/agent.pid ]; then kill $(cat ${AGENT_DIR}/agent.pid) 2>/dev/null; rm -f ${AGENT_DIR}/agent.pid; fi`)
+  static async destroy(
+    agentName: string,
+    deployment?: {volume_config?: string | null},
+    options: SpriteDestroyOptions = {},
+  ): Promise<void> {
+    ensureSpriteCliToken()
+    const spriteName = `cast-${agentName}`
+    const result = await execCommand('sprite', ['destroy', spriteName, '--force'], {
+      silent: true,
+      shell: false,
+      env: spriteCliEnv(),
+    })
+    const missing = result.exitCode !== 0 && spriteIsGone(result)
+    const failed = result.exitCode !== 0 && !missing
+    if (missing) {
+      console.log(`Sprite '${spriteName}' does not exist (already deleted or never created).`)
+    } else if (!failed) {
+      console.log(`Sprite '${spriteName}' has been destroyed.`)
+    }
 
-    // stdin is the script. The remote bash -c string must stay one argument.
-    this.log('  Creating startup script...')
-    const inference = filterInferenceEnv(readAgentModel(getAgentPath(agentName)), inferenceEnv())
-    const args = spriteInstallExecArgs(spriteName)
-    const script = spriteAgentLaunchScript(agentName, authToken, inference)
-    assertSecretsNotInArgv('sprite exec', args, secretValues({AUTH_TOKEN: authToken, ...inference}))
-    const startResult = await execCommand(
-      'sprite',
-      args,
-      {silent: true, shell: false, input: script},
+    cleanupRecordedSpriteMemory(
+      agentName,
+      spriteVolumeConfigs(agentName, deployment),
+      console.log,
+      options.hostMemoryRoot,
     )
-    if (startResult.exitCode !== 0) {
-      const detail = (startResult.stderr || startResult.stdout).trim()
-      this.warn(`Agent service returned exit code ${startResult.exitCode}${detail ? `: ${detail}` : ''}`)
+
+    if (failed) {
+      throw new Error(`Failed to destroy sprite '${spriteName}': ${redactSpriteSecrets(result.stderr || result.stdout)}`)
+    }
+  }
+
+  async run(): Promise<void> {
+    const {args} = await this.parse(SpritesDeploy)
+    try {
+      await deployToSprites(args.agent as string, {
+        log: (message) => this.log(message),
+        warn: (message) => this.warn(message),
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.error(message)
     }
   }
 }
