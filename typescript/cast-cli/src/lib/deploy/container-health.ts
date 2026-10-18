@@ -14,13 +14,29 @@ export type ContainerHealthResult =
   | {ok: true}
   | {ok: false; status: string; logs: string; reason: 'exited' | 'timeout'}
 
+const RUNTIME_CONFIG_ERROR = 'Error loading agent config'
+
+/**
+ * A config error is the latest word from the runtime when it appears after
+ * `Agent ready`, or when `Agent ready` was never printed. An older error
+ * left in a log that later prints `Agent ready` is a previous attempt.
+ */
+export function runtimeConfigErrorIsCurrent(logs: string): boolean {
+  const errorAt = logs.lastIndexOf(RUNTIME_CONFIG_ERROR)
+  if (errorAt === -1) return false
+  return logs.lastIndexOf('Agent ready') < errorAt
+}
+
 /**
  * `docker run -d` returns as soon as the container is created. The runtime
  * is ready only after it is still running and has printed `Agent ready`.
  * An exited container (for example a missing import) is a failed deploy.
+ * `Error loading agent config` is the runtime refusing agent.yaml. That
+ * is a failed deploy even while the service is still reported as running.
  */
 export function classifyContainerHealth(probe: ContainerProbe): ContainerHealthKind {
   const status = probe.status.trim().toLowerCase()
+  if (runtimeConfigErrorIsCurrent(probe.logs)) return 'failed'
   if (status === 'running' && probe.logs.includes('Agent ready')) return 'ready'
   if (
     status === 'exited' || status === 'dead' || status === 'removing' ||

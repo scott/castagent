@@ -90,7 +90,9 @@ and copies the `cast` package to `.cast-runtime/cast`. The package
 install on the sprite includes git, which GitPython imports before the
 server binds. The service log is
 `/.sprite/logs/services/cast-agent.log`. `cast logs` prints that file.
-Deploy waits until the log contains `Agent ready`. If the service does
+Deploy waits until the log contains `Agent ready`. A log line
+`Error loading agent config` is a failure, including while the service
+is still reported as running. If the service does
 not become ready, deploy exits non-zero and does not print a deployment
 SHA. A sprite this attempt created is destroyed. If that destroy fails,
 Cast records the deployment so `cast shutdown` can remove it, and keeps
@@ -99,6 +101,76 @@ attempt is removed, including
 `~/.cast/tokens/deployments/<sha>.token` when the machine has no Secret
 Service. Memory stays at `/opt/cast-agent/memory` on the sprite. Cast
 does not create a local directory under `/mnt/cast-memory`.
+
+## Reaching a Sprites agent
+
+`cast connect <agent>` is how you reach a Sprites agent. The sprites.app
+address recorded for the deployment, `https://cast-<agent>.sprites.app`,
+sits behind Sprites org auth. A request that is not logged in, including
+`GET /`, `GET /health`, and `GET /.well-known/agent.json`, returns 302 to
+`https://sprites.dev/auth/sprite`. That redirect is expected. The address
+is not a direct agent URL, and the deploy banner points at `cast connect`
+instead of presenting it as one.
+
+`cast connect` treats that 302 as Sprites auth. It starts the sprite
+service, then opens a local proxy. Cast copies `SPRITES_TOKEN` onto
+`SPRITE_TOKEN` only for the `sprite` processes it starts. A proxy you
+start yourself does not get that copy. Run `sprite login` first, or set
+`SPRITE_TOKEN="$SPRITES_TOKEN"` on the command. Without one of those,
+`sprite` exits with "no organizations configured". The value stays in
+the environment. It is not a command argument.
+
+`sprite proxy` runs in the foreground until you stop it. Use a second
+terminal for the HTTP call, or end the proxy command with `&`.
+
+```bash
+SPRITE_TOKEN="$SPRITES_TOKEN" sprite proxy <port>:8080 -s cast-<agent>
+```
+
+The TUI talks to `http://127.0.0.1:<port>`. The proxy forwards to port
+8080 on the sprite. Plain GETs through the proxy still return 404. The
+agent answers JSON-RPC 2.0 on `POST /` only.
+
+To call the agent over HTTP, start that proxy and POST JSON-RPC with the
+deployment bearer token. That token is the one `cast connect` sends. It
+lives in the system keychain, or in
+`~/.cast/tokens/deployments/<sha>.token` (mode 0600) when the machine
+has no Secret Service. Put it in the environment and send it as a
+header. Do not pass it as an argument to `sprite` or `curl`.
+
+```bash
+# Foreground. Second terminal for curl, or append &.
+SPRITE_TOKEN="$SPRITES_TOKEN" sprite proxy 8080:8080 -s cast-<agent>
+# CAST_TOKEN is the deployment bearer token, not SPRITES_TOKEN.
+curl --silent --show-error --config - http://127.0.0.1:8080/ <<EOF
+header = "Authorization: Bearer ${CAST_TOKEN}"
+header = "Content-Type: application/json"
+data = "{\"jsonrpc\":\"2.0\",\"id\":\"1\",\"method\":\"agent/card\",\"params\":{}}"
+EOF
+```
+
+`message/send` needs `params.message` with `role` and `parts`. An empty
+`params` object returns JSON-RPC `-32602`, "No text content found in
+message".
+
+```bash
+curl --silent --show-error --config - http://127.0.0.1:8080/ <<EOF
+header = "Authorization: Bearer ${CAST_TOKEN}"
+header = "Content-Type: application/json"
+data = "{\"jsonrpc\":\"2.0\",\"id\":\"2\",\"method\":\"message/send\",\"params\":{\"message\":{\"role\":\"user\",\"parts\":[{\"kind\":\"text\",\"text\":\"Hello\"}]}}}"
+EOF
+```
+
+A GET of `/health` or `/.well-known/agent.json` through the proxy
+returns 404.
+
+`sprite url update --auth public -s cast-<agent>` turns off Sprites org
+auth for that address. Anyone with the URL can open a connection to the
+agent's HTTP service. It does not grant a shell or access to the Sprites
+API. JSON-RPC still requires the deployment bearer token, and GET still
+returns 404. Public mode puts that endpoint on the internet. Leave the
+default (`sprite url update --auth sprite -s cast-<agent>`) unless you
+intend that exposure.
 
 Docker starts a container named `cast-<name>`. After it is ready, Cast
 writes the deployment to `~/.cast/cast.db` under the SHA that `cast deploy`
@@ -170,7 +242,8 @@ is replaced on the next deploy.
 
 `cast deploy --provider docker` and `cast deploy --provider digitalocean`
 wait until the container is still running and the runtime has printed
-`Agent ready`. If the container exits or keeps restarting, deploy fails
+`Agent ready`. A log line `Error loading agent config` fails that check.
+If the container exits or keeps restarting, deploy fails
 with a non-zero status and does not print a deployment SHA. The same
 readiness check applies to `cast upgrade` of a Docker deployment. A
 MicroVM that fails before the endpoint answers is deleted. If that
@@ -240,6 +313,11 @@ rebuilt, and the new container starts with the same volume. The
 
 ## Pre-flight checklist
 
+`cast deploy` reads `agent.yaml` before it talks to a provider. A file
+that cannot be parsed, or whose top level is not a mapping, exits
+non-zero and prints the error. The runtime exits the same way and does
+not start on defaults.
+
 Before `cast deploy`:
 
 - [ ] The agent has a release at the version you want to ship
@@ -248,6 +326,8 @@ Before `cast deploy`:
       (`railway login`, `flyctl auth login`, etc.).
 - [ ] For DigitalOcean Droplets or MicroVMs, you've set `DIGITALOCEAN_ACCESS_TOKEN`.
       MicroVMs also need `doctl` 1.173.0 or newer.
+- [ ] The agent's `agent.yaml` parses, and its top level is a mapping.
+      A broken file fails `cast deploy` before any provider work.
 - [ ] The agent's `agent.yaml` has a description — the deploy banner
       uses it.
 - [ ] You're not on a metered connection with a giant image; the on-host

@@ -3,6 +3,11 @@ import re
 import yaml
 from typing import List, Optional
 
+
+class AgentConfigError(Exception):
+    """agent.yaml could not be parsed or validated."""
+
+
 class AgentConfig:
     """Agent configuration loaded from agent.yaml."""
     
@@ -15,10 +20,20 @@ class AgentConfig:
         if not os.path.exists(config_path):
             return {}
         try:
-            with open(config_path, "r") as f:
-                return yaml.safe_load(f) or {}
-        except yaml.YAMLError:
+            with open(config_path, "r", encoding="utf-8") as handle:
+                text = handle.read()
+            # Parse the string so the error still has the source line after
+            # the file is closed.
+            loaded = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise AgentConfigError(_format_yaml_error(config_path, text, exc)) from exc
+        if loaded is None:
             return {}
+        if not isinstance(loaded, dict):
+            raise AgentConfigError(
+                f"agent.yaml could not be validated ({config_path}): expected a mapping"
+            )
+        return loaded
     
     @property
     def name(self) -> str:
@@ -178,6 +193,35 @@ class AgentConfig:
 
 _SKILL_FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\Z", re.DOTALL)
 _SKILL_MARKDOWN_NAMES = ("SKILL.md", "skill.md")
+
+
+def _yaml_error_line(text: str, mark: object) -> Optional[int]:
+    """1-based line of the token the error quotes.
+
+    PyYAML's problem mark is column 0 of the next line when a token is left
+    open. That empty line is one past the source the message quotes.
+    """
+    index = getattr(mark, "line", None)
+    if not isinstance(index, int) or index < 0:
+        return None
+    lines = text.splitlines()
+    column = getattr(mark, "column", None)
+    if isinstance(column, int) and column == 0 and index > 0:
+        pointed = lines[index] if index < len(lines) else ""
+        previous = index - 1
+        if pointed.strip() == "" and previous < len(lines) and lines[previous].strip() != "":
+            return previous + 1
+    if index < len(lines):
+        return index + 1
+    return len(lines) if lines else index + 1
+
+
+def _format_yaml_error(config_path: str, text: str, exc: yaml.YAMLError) -> str:
+    """Include the file and the line the error quotes."""
+    detail = str(exc).strip().replace("<unicode string>", config_path)
+    line = _yaml_error_line(text, getattr(exc, "problem_mark", None))
+    location = f"{config_path}:{line}" if isinstance(line, int) else config_path
+    return f"agent.yaml could not be parsed ({location}): {detail}"
 
 
 def _collapse_skill_description(description: str) -> str:

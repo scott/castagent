@@ -2,7 +2,7 @@ import pytest
 import tempfile
 import os
 import yaml
-from cast.agent.base import AgentConfig
+from cast.agent.base import AgentConfig, AgentConfigError
 
 
 class TestAgentConfig:
@@ -86,16 +86,63 @@ class TestAgentConfig:
             assert config.description == ""
 
     def test_from_path_with_invalid_yaml(self, temp_agent_dir):
-        """Test AgentConfig.from_path handles invalid YAML gracefully."""
-        # Create a file with invalid YAML
+        """A file that will not parse fails instead of starting with defaults."""
         invalid_yaml_path = os.path.join(temp_agent_dir, "agent.yaml")
         with open(invalid_yaml_path, "w") as f:
-            f.write("invalid: yaml: content: [}")
+            f.write("name: demo\nbrain: [unclosed\n")
 
-        # AgentConfig should handle this gracefully (safe_load returns None for invalid YAML)
-        # The implementation uses yaml.safe_load which may raise an error
-        with pytest.raises(yaml.YAMLError):
-            config = AgentConfig.from_path(temp_agent_dir)
+        with pytest.raises(AgentConfigError) as exc_info:
+            AgentConfig.from_path(temp_agent_dir)
+
+        message = str(exc_info.value)
+        assert "agent.yaml could not be parsed" in message
+        assert invalid_yaml_path in message
+        assert f"{invalid_yaml_path}:2)" in message
+        assert f"{invalid_yaml_path}:3)" not in message
+        assert "brain: [unclosed" in message
+
+    def test_parse_error_uses_the_quoted_line(self, temp_agent_dir):
+        """The location is the bad line, not the blank line after it."""
+        yaml_path = os.path.join(temp_agent_dir, "agent.yaml")
+        lines = ["name: demo"]
+        lines.extend(f"key{i}: value" for i in range(20))
+        lines.append("brain: [unclosed")
+        assert len(lines) == 22
+        with open(yaml_path, "w") as handle:
+            handle.write("\n".join(lines) + "\n")
+
+        with pytest.raises(AgentConfigError) as exc_info:
+            AgentConfig.from_path(temp_agent_dir)
+
+        message = str(exc_info.value)
+        assert f"{yaml_path}:22)" in message
+        assert f"{yaml_path}:23)" not in message
+        assert "brain: [unclosed" in message
+
+    def test_from_path_with_non_mapping_yaml(self, temp_agent_dir):
+        """A document that parses but is not a mapping is a validation error."""
+        yaml_path = os.path.join(temp_agent_dir, "agent.yaml")
+        with open(yaml_path, "w") as f:
+            f.write("- just\n- a\n- list\n")
+
+        with pytest.raises(AgentConfigError) as exc_info:
+            AgentConfig.from_path(temp_agent_dir)
+
+        message = str(exc_info.value)
+        assert "agent.yaml could not be validated" in message
+        assert yaml_path in message
+        assert "expected a mapping" in message
+
+    def test_from_path_with_blank_yaml_uses_defaults(self, temp_agent_dir):
+        """An empty document is valid and uses defaults."""
+        yaml_path = os.path.join(temp_agent_dir, "agent.yaml")
+        with open(yaml_path, "w") as f:
+            f.write("")
+
+        config = AgentConfig.from_path(temp_agent_dir)
+
+        assert config.name == "unknown"
+        assert config.model == "openrouter/anthropic/claude-3-7-sonnet"
 
     def test_config_attributes_name(self, full_agent_yaml):
         """Test name attribute parsing."""

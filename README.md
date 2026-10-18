@@ -221,6 +221,10 @@ Cast Agent supports deploying agents to multiple platforms:
 
 Sprites needs the `sprite` CLI. Set `SPRITES_TOKEN` to a token created at [sprites.dev/account](https://sprites.dev/account) in the `org-slug/org-id/token-id/token-value` format. `sprite login` is an alternative. `FLY_API_TOKEN` is not a Sprites token. Cast copies `SPRITES_TOKEN` to `SPRITE_TOKEN` for the sprite CLI.
 
+`cast connect <agent>` is how you reach a Sprites agent. `https://cast-<agent>.sprites.app` needs Sprites org auth and returns 302 to the Sprites login page, so it is not a direct agent URL. `cast connect` starts `sprite proxy` on localhost and sends the deployment bearer token. A proxy you start yourself runs in the foreground and needs `sprite login` or `SPRITE_TOKEN="$SPRITES_TOKEN"`, because Cast copies that variable only for sprite processes it starts. The agent answers JSON-RPC POST. `message/send` needs `params.message` with `role` and `parts`. A plain GET through the proxy returns 404. The deployment overview has the commands, including a curl example that keeps the token in a header.
+
+`cast deploy` reads `agent.yaml` before any provider work. If the file cannot be parsed, or its top level is not a mapping, the command exits non-zero and prints the error. The runtime exits the same way and does not start on defaults.
+
 `--provider local` is not implemented. `cast deploy <agent> --provider local` exits with an error and does not record a deployment. Use `--provider docker` to run on this machine. That command prints a deployment SHA and stores the same id. `cast registry` lists it, and `cast connect <sha>` finds that deployment.
 
 Each provider handles the complete deployment lifecycle including building, provisioning, and configuration. The deployment bearer token is stored in the system keychain. On a machine with no Secret Service, Cast writes it under `~/.cast/tokens/` (directory mode 0700, file mode 0600), outside the agent directory, and `cast connect` reads it back. After deployment, connect to your running agent with:
