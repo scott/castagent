@@ -4,6 +4,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import * as readline from 'readline'
+import {loadAgentYaml} from '../lib/agent-yaml'
 import {checkCli, generateAuthToken, generateDeploymentSha} from '../lib/deploy/deploy-utils'
 import {
   deploymentProviderKeys,
@@ -420,6 +421,14 @@ export default class Deploy extends Command {
 
     // Prepare version for deploy (extract specific release tarball if needed)
     await this.prepareVersionForDeploy(agentName, agentPath, version)
+
+    // Reject a broken agent.yaml before git, provider CLIs, or uploads.
+    try {
+      loadAgentYaml(agentPath)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.error(message)
+    }
 
     // Check if agent is a git repo and prompt for commit
     const gitDir = path.join(agentPath, '.git')

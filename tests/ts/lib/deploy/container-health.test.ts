@@ -21,6 +21,44 @@ describe('Docker container readiness', () => {
     })).to.equal('ready')
   })
 
+  it('treats a runtime config error as a failure even while the service is running', () => {
+    expect(classifyContainerHealth({
+      status: 'running',
+      logs: 'Error loading agent config: agent.yaml could not be parsed (/opt/cast-agent/agent.yaml:2): brain: [unclosed',
+    })).to.equal('failed')
+    expect(classifyContainerHealth({
+      status: 'running',
+      logs: 'Agent ready on port 8080\nError loading agent config: agent.yaml could not be parsed',
+    })).to.equal('failed')
+    expect(classifyContainerHealth({
+      status: 'running',
+      logs: 'Error loading agent config: agent.yaml could not be parsed\nAgent ready on port 8080',
+    })).to.equal('ready')
+  })
+
+  it('fails immediately when the runtime rejects agent.yaml', async () => {
+    let slept = 0
+    const result = await waitForContainerHealth(
+      async () => ({
+        status: 'running',
+        logs: 'Error loading agent config: agent.yaml could not be parsed (/opt/cast-agent/agent.yaml:2)',
+      }),
+      {
+        timeoutMs: 30_000,
+        now: () => 0,
+        sleep: async () => {
+          slept += 1
+        },
+      },
+    )
+    expect(result.ok).to.equal(false)
+    if (!result.ok) {
+      expect(result.reason).to.equal('exited')
+      expect(result.logs).to.include('Error loading agent config')
+    }
+    expect(slept).to.equal(0)
+  })
+
   it('treats a restart loop and a missing cast import as failed', () => {
     expect(classifyContainerHealth({
       status: 'restarting',

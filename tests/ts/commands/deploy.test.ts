@@ -612,6 +612,92 @@ describe('Deploy Command - Run Method', () => {
   })
 })
 
+describe('Deploy Command - agent.yaml', () => {
+  function oclifError(message: string): never {
+    const error = new Error(message) as Error & {oclif: {exit: number}}
+    error.oclif = {exit: 1}
+    throw error
+  }
+
+  async function deployBroken(agentName: string, yamlText: string): Promise<{logs: string[]; error: Error & {oclif?: {exit: number}}}> {
+    const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
+    fs.mkdirSync(agentDir, {recursive: true})
+    fs.writeFileSync(path.join(agentDir, 'agent.yaml'), yamlText)
+
+    const instance = new DeployCommand(['deploy', agentName, '--provider', 'local', '--force'], {} as any)
+    ;(instance as any).config = {
+      runHook: async () => ({successes: [], failures: []}),
+      name: 'deploy',
+      bin: 'cast',
+    }
+    ;(instance as any).parse = async () => ({
+      args: {agent: agentName},
+      flags: {provider: 'local', version: 'latest', force: true, port: 8080, 'with-tui': false},
+      argv: [],
+      raw: [],
+      metadata: {},
+      nonExistentFlags: [],
+    })
+    const logs: string[] = []
+    instance.log = (message?: string) => {
+      logs.push(message ?? '')
+    }
+    instance.error = ((message: string) => oclifError(message)) as typeof instance.error
+
+    let error: Error & {oclif?: {exit: number}} | undefined
+    try {
+      await instance.run()
+    } catch (caught) {
+      error = caught as Error & {oclif?: {exit: number}}
+    }
+    if (!error) throw new Error('deploy resolved')
+    return {logs, error}
+  }
+
+  async function withCleanup(agentName: string, run: () => Promise<void>): Promise<void> {
+    const previousSha = process.env.CAST_DEPLOYMENT_SHA
+    delete process.env.CAST_DEPLOYMENT_SHA
+    try {
+      await run()
+    } finally {
+      if (previousSha === undefined) delete process.env.CAST_DEPLOYMENT_SHA
+      else process.env.CAST_DEPLOYMENT_SHA = previousSha
+      db.deleteAgent(agentName)
+      fs.rmSync(path.join(os.homedir(), '.cast', 'agents', agentName), {recursive: true, force: true})
+    }
+  }
+
+  it('exits non-zero with the parse error before any provider work', async () => {
+    const agentName = `deploy-bad-yaml-${Date.now()}`
+    await withCleanup(agentName, async () => {
+      const {logs, error} = await deployBroken(agentName, 'name: demo\nbrain: [unclosed\n')
+      const output = logs.join('\n')
+      expect(error.oclif?.exit).to.equal(1)
+      expect(error.message).to.include('agent.yaml could not be parsed')
+      expect(error.message).to.include('brain: [unclosed')
+      expect(error.message).to.include(`${path.join(os.homedir(), '.cast', 'agents', agentName, 'agent.yaml')}:3`)
+      expect(error.message).to.not.include('Not yet implemented')
+      expect(error.message).to.not.include('Deployment to local failed')
+      expect(output).to.not.include('Deploying ')
+      expect(output).to.not.include('deployment SHA')
+      expect(process.env.CAST_DEPLOYMENT_SHA).to.equal(undefined)
+      expect(db.listDeployments(agentName)).to.deep.equal([])
+    })
+  })
+
+  it('exits non-zero when agent.yaml is not a mapping', async () => {
+    const agentName = `deploy-bad-shape-${Date.now()}`
+    await withCleanup(agentName, async () => {
+      const {logs, error} = await deployBroken(agentName, '- just\n- a\n- list\n')
+      expect(error.oclif?.exit).to.equal(1)
+      expect(error.message).to.include('agent.yaml could not be validated')
+      expect(error.message).to.include('expected a mapping')
+      expect(logs.join('\n')).to.not.include('Deploying ')
+      expect(db.listDeployments(agentName)).to.deep.equal([])
+    })
+  })
+})
+
 describe('Deploy Command - local provider', () => {
   const NOT_IMPLEMENTED = 'Not yet implemented. Use --provider docker for now.'
 

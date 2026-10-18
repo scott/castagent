@@ -3,6 +3,11 @@ import re
 import yaml
 from typing import List, Optional
 
+
+class AgentConfigError(Exception):
+    """agent.yaml could not be parsed or validated."""
+
+
 class AgentConfig:
     """Agent configuration loaded from agent.yaml."""
     
@@ -15,10 +20,20 @@ class AgentConfig:
         if not os.path.exists(config_path):
             return {}
         try:
-            with open(config_path, "r") as f:
-                return yaml.safe_load(f) or {}
-        except yaml.YAMLError:
+            with open(config_path, "r", encoding="utf-8") as handle:
+                text = handle.read()
+            # Parse the string so the error still has the source line after
+            # the file is closed.
+            loaded = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise AgentConfigError(_format_yaml_error(config_path, exc)) from exc
+        if loaded is None:
             return {}
+        if not isinstance(loaded, dict):
+            raise AgentConfigError(
+                f"agent.yaml could not be validated ({config_path}): expected a mapping"
+            )
+        return loaded
     
     @property
     def name(self) -> str:
@@ -178,6 +193,15 @@ class AgentConfig:
 
 _SKILL_FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\Z", re.DOTALL)
 _SKILL_MARKDOWN_NAMES = ("SKILL.md", "skill.md")
+
+
+def _format_yaml_error(config_path: str, exc: yaml.YAMLError) -> str:
+    """Include the file and the line PyYAML reports."""
+    detail = str(exc).strip().replace("<unicode string>", config_path)
+    mark = getattr(exc, "problem_mark", None)
+    line = getattr(mark, "line", None) if mark is not None else None
+    location = f"{config_path}:{line + 1}" if isinstance(line, int) else config_path
+    return f"agent.yaml could not be parsed ({location}): {detail}"
 
 
 def _collapse_skill_description(description: str) -> str:
