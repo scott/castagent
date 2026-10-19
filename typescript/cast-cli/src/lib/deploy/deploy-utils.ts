@@ -30,6 +30,93 @@ export interface DeploymentResolution {
   message?: string
 }
 
+export interface DeploymentRowIdentity {
+  id: string
+  provider?: string | null
+  deployment_url?: string | null
+  volume_id?: string | null
+}
+
+function identityText(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+/**
+ * Droplet identity from a registry URL.
+ * `https://<ip>` and an older `http://<ip>:8080` row name the same droplet.
+ */
+function digitalOceanResourceUrl(url: string): string {
+  const trimmed = url.trim().replace(/\/+$/, '')
+  try {
+    const parsed = new URL(trimmed)
+    if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return trimmed
+    const host = parsed.hostname.toLowerCase()
+    return host ? `droplet:${host}` : trimmed
+  } catch {
+    return trimmed
+  }
+}
+
+function canonicalDeploymentUrl(provider: string, url: string): string {
+  const trimmed = url.trim().replace(/\/+$/, '')
+  if (provider === 'digitalocean') return digitalOceanResourceUrl(trimmed)
+  return trimmed
+}
+
+/** True when both rows point at one remote: the same volume, or the same URL. */
+export function sharesDeploymentResource(a: DeploymentRowIdentity, b: DeploymentRowIdentity): boolean {
+  const providerA = identityText(a.provider)
+  const providerB = identityText(b.provider)
+  if (!providerA || providerA !== providerB) return false
+  const volumeA = identityText(a.volume_id)
+  const volumeB = identityText(b.volume_id)
+  if (volumeA && volumeB && volumeA === volumeB) return true
+  const urlA = canonicalDeploymentUrl(providerA, identityText(a.deployment_url))
+  const urlB = canonicalDeploymentUrl(providerB, identityText(b.deployment_url))
+  return urlA.length > 0 && urlA === urlB
+}
+
+/**
+ * Live rows a newer deployment of the same remote replaces.
+ * `rows` is newest first. The newest row of each resource stays.
+ * When `keeperId` is set, only rows that share that row's resource are returned.
+ */
+export function deploymentIdsSupersededBy(rows: DeploymentRowIdentity[], keeperId?: string): string[] {
+  if (keeperId) {
+    const keeper = rows.find(row => row.id === keeperId)
+    if (!keeper) return []
+    return rows
+      .filter(row => row.id !== keeperId && sharesDeploymentResource(keeper, row))
+      .map(row => row.id)
+  }
+  const kept: DeploymentRowIdentity[] = []
+  const stale: string[] = []
+  for (const row of rows) {
+    if (kept.some(existing => sharesDeploymentResource(existing, row))) stale.push(row.id)
+    else kept.push(row)
+  }
+  return stale
+}
+
+function forgetSupersededDeploymentTokens(ids: string[]): void {
+  for (const id of ids) {
+    void keychain.deleteDeploymentToken(id).catch(() => {})
+  }
+}
+
+/**
+ * Mark older live rows for the same remote deleted and remove their token files.
+ * The remote itself stays up. A second provider, and each MicroVM, stay registered.
+ * Pass `keeperId` after inserting a new row so only that remote is folded.
+ */
+export function supersedeStaleDeployments(agentName: string, keeperId?: string): string[] {
+  const rows = db.listDeployments(agentName)
+  const stale = deploymentIdsSupersededBy(rows, keeperId)
+  for (const id of stale) db.removeDeploymentBySha(id)
+  forgetSupersededDeploymentTokens(stale)
+  return stale
+}
+
 // Check if input matches SHA pattern (6 lowercase alphanumeric chars)
 export function isShaPattern(input: string): boolean {
   return /^[a-z0-9]{6}$/.test(input)
@@ -45,6 +132,11 @@ export function resolveDeploymentTarget(input: string): DeploymentResolution {
     }
     return { type: 'not_found', message: `No deployment found for '${input}'. Use 'cast deploy' to deploy.` }
   }
+
+  // A redeploy used to leave the previous row active. Retire those leftovers
+  // before the name is treated as ambiguous, including rows written before
+  // saveDeployment started superseding them. The remote is left running.
+  supersedeStaleDeployments(input)
 
   // Try agent name lookup
   const deployments = db.listDeployments(input)
@@ -1026,6 +1118,15 @@ export async function execCommand(
   })
 }
 
+export interface SaveDeploymentOptions {
+  /**
+   * When false, keep older live rows. A failed deploy records a leftover
+   * remote this way so shutdown can delete it without retiring the
+   * previous successful deployment.
+   */
+  supersede?: boolean
+}
+
 export function saveDeployment(
   agentName: string,
   provider: string,
@@ -1034,18 +1135,15 @@ export function saveDeployment(
   volumeId?: string,
   volumeConfig?: string,
   deployedVersion?: string,
+  options?: SaveDeploymentOptions,
 ): string {
   // Check if SHA was passed via environment variable (from deploy.ts)
-  const envSha = deploymentShaFromEnv()
-  if (envSha) {
-    db.createDeployment(envSha, agentName, provider, url, tokenHash, volumeId, volumeConfig, deployedVersion)
-    return envSha
-  }
-  // Otherwise, let db.setDeployment auto-generate SHA
-  db.setDeployment(agentName, provider, url, tokenHash, volumeId, volumeConfig)
-  // Return the SHA that was generated (query the most recent deployment)
-  const deployment = db.getActiveDeployment(agentName)
-  return deployment?.id || ''
+  const id = deploymentShaFromEnv() || generateDeploymentSha(agentName)
+  db.createDeployment(id, agentName, provider, url, tokenHash, volumeId, volumeConfig, deployedVersion)
+  // This row is the live remote. Earlier rows for the same provider and
+  // resource are history, and the bearer token files they stored are stale.
+  if (options?.supersede !== false) supersedeStaleDeployments(agentName, id)
+  return id
 }
 
 export interface InferenceCatalogEntry {

@@ -322,6 +322,14 @@ cast connect def456     # the fly one
 cast shutdown ghi789    # tear down only the digitalocean one
 ```
 
+Deploying that agent again on a provider it already uses replaces the
+previous row for that remote. The older SHA is marked deleted and its
+token file is removed, so `cast connect email-assistant` reaches the new
+deployment when that provider is the only live one. Rows left over from
+a redeploy before this repair are retired the same way when
+`cast connect` or `cast shutdown` resolves the agent name. The host stays
+up. Two providers, or two MicroVMs, still need a SHA.
+
 The database keeps a soft-delete history, so you can audit what was
 deployed where and when.
 

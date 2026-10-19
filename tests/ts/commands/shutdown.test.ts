@@ -59,13 +59,41 @@ function stubDeploymentTokenDelete(sandbox?: sinon.SinonSandbox): void {
   keychainModule.keychain.deleteDeploymentToken = async () => false
 }
 
-/** Put the real method back. A leftover replacement skips file cleanup in later files. */
-function swapKeychainMethod(name: 'deleteToken' | 'deleteDeploymentToken', impl: (...args: any[]) => any): () => void {
+/**
+ * Several cases assign sqlite and keychain methods directly. A failed
+ * assertion used to leave those assignments in place for later files,
+ * so token files survived shutdown and redeployed rows were never removed.
+ * Snapshot the real methods before any of those assignments and put them
+ * back after every test, including after sinon restores its own stubs.
+ */
+function snapshotShutdownGlobals(): () => void {
+  const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
   const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
-  const original = keychainModule.keychain[name]
-  keychainModule.keychain[name] = impl
+  const shutdownModule = require('../../../typescript/cast-cli/src/commands/shutdown')
+  const database = sqliteModule.db
+  const tokens = keychainModule.keychain
+  const destroyers = shutdownModule.PROVIDER_DESTROYERS
+  const saved = {
+    listDeployments: database.listDeployments,
+    getDeploymentBySha: database.getDeploymentBySha,
+    removeAllDeployments: database.removeAllDeployments,
+    removeDeploymentBySha: database.removeDeploymentBySha,
+    deleteToken: tokens.deleteToken,
+    deleteDeploymentToken: tokens.deleteDeploymentToken,
+    fly: destroyers.fly,
+    digitalocean: destroyers.digitalocean,
+    sprites: destroyers.sprites,
+  }
   return () => {
-    keychainModule.keychain[name] = original
+    database.listDeployments = saved.listDeployments
+    database.getDeploymentBySha = saved.getDeploymentBySha
+    database.removeAllDeployments = saved.removeAllDeployments
+    database.removeDeploymentBySha = saved.removeDeploymentBySha
+    tokens.deleteToken = saved.deleteToken
+    tokens.deleteDeploymentToken = saved.deleteDeploymentToken
+    destroyers.fly = saved.fly
+    destroyers.digitalocean = saved.digitalocean
+    destroyers.sprites = saved.sprites
   }
 }
 
@@ -694,9 +722,11 @@ describe('shutdown command - confirm method', () => {
 describe('shutdown command - force flag behavior', () => {
   let Shutdown: any
   let sandbox: sinon.SinonSandbox
+  let restoreGlobals: () => void
 
   before(async () => {
     Shutdown = await loadTestCommand('shutdown')
+    restoreGlobals = snapshotShutdownGlobals()
   })
 
   beforeEach(() => {
@@ -706,6 +736,7 @@ describe('shutdown command - force flag behavior', () => {
 
   afterEach(() => {
     sandbox.restore()
+    restoreGlobals()
   })
 
   it('should skip confirmation when --force flag is set', async () => {
@@ -731,7 +762,8 @@ describe('shutdown command - force flag behavior', () => {
     sqliteModule.db.getDeploymentBySha = () => null
 
     // Mock keychain
-    const restoreDeleteToken = swapKeychainMethod('deleteToken', async () => {})
+    const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
+    keychainModule.keychain.deleteToken = async () => {}
 
     // Mock db operations
     sqliteModule.db.removeAllDeployments = () => {}
@@ -747,7 +779,6 @@ describe('shutdown command - force flag behavior', () => {
       await instance.run()
     } finally {
       restoreFly()
-      restoreDeleteToken()
     }
 
     // With --force, confirm should not be called
@@ -780,7 +811,8 @@ describe('shutdown command - force flag behavior', () => {
     sqliteModule.db.getDeploymentBySha = () => null
 
     // Mock keychain
-    const restoreDeleteToken = swapKeychainMethod('deleteToken', async () => {})
+    const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
+    keychainModule.keychain.deleteToken = async () => {}
 
     // Mock db operations
     sqliteModule.db.removeAllDeployments = () => {}
@@ -793,7 +825,6 @@ describe('shutdown command - force flag behavior', () => {
       await instance.run()
     } finally {
       restoreFly()
-      restoreDeleteToken()
     }
 
     expect(confirmCalled).to.be.true
@@ -839,9 +870,11 @@ describe('shutdown command - force flag behavior', () => {
 describe('shutdown command - error handling', () => {
   let Shutdown: any
   let sandbox: sinon.SinonSandbox
+  let restoreGlobals: () => void
 
   before(async () => {
     Shutdown = await loadTestCommand('shutdown')
+    restoreGlobals = snapshotShutdownGlobals()
   })
 
   beforeEach(() => {
@@ -851,6 +884,7 @@ describe('shutdown command - error handling', () => {
 
   afterEach(() => {
     sandbox.restore()
+    restoreGlobals()
   })
 
   it('should warn when database removal fails', async () => {
@@ -874,7 +908,8 @@ describe('shutdown command - error handling', () => {
     sqliteModule.db.getDeploymentBySha = () => null
 
     // Mock keychain
-    const restoreDeleteToken = swapKeychainMethod('deleteToken', async () => {})
+    const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
+    keychainModule.keychain.deleteToken = async () => {}
 
     // Mock db removal to throw
     sqliteModule.db.removeAllDeployments = () => {
@@ -886,7 +921,6 @@ describe('shutdown command - error handling', () => {
       await instance.run()
     } finally {
       restoreFly()
-      restoreDeleteToken()
     }
 
     expect(warningMessage).to.include('Failed to update deployment records')
@@ -917,9 +951,11 @@ describe('shutdown command - error handling', () => {
     sqliteModule.db.getDeploymentBySha = () => null
 
     // Mock keychain to throw
-    const restoreDeleteToken = swapKeychainMethod('deleteToken', async () => {
+    const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
+    const originalDeleteToken = keychainModule.keychain.deleteToken
+    keychainModule.keychain.deleteToken = async () => {
       throw new Error('Keychain error')
-    })
+    }
 
     // Mock db operations
     sqliteModule.db.removeAllDeployments = () => {}
@@ -929,7 +965,6 @@ describe('shutdown command - error handling', () => {
       await instance.run()
     } finally {
       restoreFly()
-      restoreDeleteToken()
     }
 
     expect(warningMessage).to.include('Failed to remove auth token')
@@ -937,6 +972,7 @@ describe('shutdown command - error handling', () => {
     // Cleanup
     sqliteModule.db.listDeployments = originalListDeployments
     sqliteModule.db.getDeploymentBySha = originalGetDeploymentBySha
+    keychainModule.keychain.deleteToken = originalDeleteToken
   })
 
   it('should warn when destroyer fails but continue cleanup', async () => {
@@ -962,7 +998,8 @@ describe('shutdown command - error handling', () => {
     sqliteModule.db.getDeploymentBySha = () => null
 
     // Mock keychain
-    const restoreDeleteToken = swapKeychainMethod('deleteToken', async () => {})
+    const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
+    keychainModule.keychain.deleteToken = async () => {}
 
     // Mock db operations
     sqliteModule.db.removeAllDeployments = () => {}
@@ -974,15 +1011,14 @@ describe('shutdown command - error handling', () => {
       throw new Error('Destroyer failed')
     }
 
-    try {
-      await instance.run()
-      expect(warningMessage).to.include('Failed to destroy')
-    } finally {
-      sqliteModule.db.listDeployments = originalListDeployments
-      sqliteModule.db.getDeploymentBySha = originalGetDeploymentBySha
-      deployModule.PROVIDER_DESTROYERS['fly'] = originalDestroyer
-      restoreDeleteToken()
-    }
+    await instance.run()
+
+    expect(warningMessage).to.include('Failed to destroy')
+
+    // Cleanup
+    sqliteModule.db.listDeployments = originalListDeployments
+    sqliteModule.db.getDeploymentBySha = originalGetDeploymentBySha
+    deployModule.PROVIDER_DESTROYERS['fly'] = originalDestroyer
   })
 
   it('keeps the deployment when a DigitalOcean volume is still attached', async () => {
@@ -1078,15 +1114,16 @@ describe('shutdown command - error handling', () => {
       removed = true
     }
 
+    const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
     let tokenDeleted = false
-    const restoreDeleteToken = swapKeychainMethod('deleteToken', async () => {
+    keychainModule.keychain.deleteToken = async () => {
       tokenDeleted = true
       return {removed: true, stores: ['file']}
-    })
-    const restoreDeleteDeploymentToken = swapKeychainMethod('deleteDeploymentToken', async () => {
+    }
+    keychainModule.keychain.deleteDeploymentToken = async () => {
       tokenDeleted = true
       return {removed: true, stores: ['file']}
-    })
+    }
 
     const fly = require('../../../typescript/cast-cli/src/lib/deploy/fly')
     const shutdownModule = require('../../../typescript/cast-cli/src/commands/shutdown')
@@ -1132,8 +1169,6 @@ describe('shutdown command - error handling', () => {
       sqliteModule.db.removeAllDeployments = originalRemoveAll
       sqliteModule.db.removeDeploymentBySha = originalRemoveSha
       shutdownModule.PROVIDER_DESTROYERS.fly = originalDestroyer
-      restoreDeleteToken()
-      restoreDeleteDeploymentToken()
     }
 
     expect(removed).to.equal(false)

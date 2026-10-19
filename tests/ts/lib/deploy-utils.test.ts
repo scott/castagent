@@ -209,13 +209,17 @@ describe('resolveDeploymentTarget', () => {
     const agentName = `collapse-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     db.createAgent(agentName, '/tmp/agent.yaml')
     // Two deployments with identical provider and URL — historical re-deploys
-    db.createDeployment(`col1${Math.random().toString(16).slice(2, 4)}`, agentName, 'digitalocean', 'http://142.93.75.156:8080', 'h')
-    db.createDeployment(`col2${Math.random().toString(16).slice(2, 4)}`, agentName, 'digitalocean', 'http://142.93.75.156:8080', 'h')
+    const older = `col1${Math.random().toString(16).slice(2, 4)}`
+    const newer = `col2${Math.random().toString(16).slice(2, 4)}`
+    db.createDeployment(older, agentName, 'digitalocean', 'http://142.93.75.156:8080', 'h')
+    db.createDeployment(newer, agentName, 'digitalocean', 'http://142.93.75.156:8080', 'h')
 
     const result = resolveDeploymentTarget(agentName)
     expect(result.type).to.equal('single')
     expect(result.deployment).to.exist
+    expect(result.deployment.id).to.equal(newer)
     expect(result.deployment.agent_name).to.equal(agentName)
+    expect(db.getDeploymentBySha(older)).to.not.exist
 
     db.deleteAgent(agentName)
   })
@@ -238,15 +242,19 @@ describe('resolveDeploymentTarget', () => {
     const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
     const agentName = `mix-ambig-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     db.createAgent(agentName, '/tmp/agent.yaml')
-    // Two re-deploys to the same target
-    db.createDeployment(`mix1${Math.random().toString(16).slice(2, 4)}`, agentName, 'digitalocean', 'http://142.93.75.156:8080', 'h')
-    db.createDeployment(`mix2${Math.random().toString(16).slice(2, 4)}`, agentName, 'digitalocean', 'http://142.93.75.156:8080', 'h')
+    // Two re-deploys to the same target. Resolving the name retires the older one.
+    const older = `mix1${Math.random().toString(16).slice(2, 4)}`
+    const newer = `mix2${Math.random().toString(16).slice(2, 4)}`
+    const fly = `mix3${Math.random().toString(16).slice(2, 4)}`
+    db.createDeployment(older, agentName, 'digitalocean', 'http://142.93.75.156:8080', 'h')
+    db.createDeployment(newer, agentName, 'digitalocean', 'http://142.93.75.156:8080', 'h')
     // One deployment to a distinct target
-    db.createDeployment(`mix3${Math.random().toString(16).slice(2, 4)}`, agentName, 'fly', 'http://app.fly.dev', 'h')
+    db.createDeployment(fly, agentName, 'fly', 'http://app.fly.dev', 'h')
 
     const result = resolveDeploymentTarget(agentName)
     expect(result.type).to.equal('ambiguous')
-    expect(result.deployments).to.have.length(3)
+    expect((result.deployments || []).map((row: {id: string}) => row.id)).to.have.members([newer, fly])
+    expect(db.getDeploymentBySha(older)).to.not.exist
 
     db.deleteAgent(agentName)
   })

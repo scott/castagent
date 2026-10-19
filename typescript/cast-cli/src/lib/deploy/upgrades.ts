@@ -13,6 +13,7 @@ import {
   resolveDeploymentAuthToken,
   stageCastRuntime,
 } from './deploy-utils'
+import {deployToSprites, type SpriteDeployOptions} from './sprites'
 import {dockerContainerEnv, dockerContainerRunArgs, startDockerAgentContainer, writeDockerCompose} from './docker'
 import {writeHostMotdOverSsh} from './motd'
 import {writeRequirementsTxt} from './requirements'
@@ -454,54 +455,107 @@ export async function upgradeDigitalOceanDeployment(
   host.log('')
 }
 
+interface SpriteUpgradeOptions extends SpriteDeployOptions {
+  deployment?: {
+    id?: string | null
+    agent_name: string
+    auth_token_hash?: string | null
+    volume_id?: string | null
+  } | null
+}
+
+/** Copy the agent directory aside so a failed redeploy can put it back. */
+function snapshotAgentDirectory(agentPath: string): string {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-sprites-upgrade-'))
+  fs.cpSync(agentPath, path.join(root, 'agent'), {recursive: true})
+  return root
+}
+
+function restoreAgentDirectory(agentPath: string, snapshotRoot: string): void {
+  const snapshot = path.join(snapshotRoot, 'agent')
+  const current = new Set(fs.readdirSync(agentPath))
+  const saved = new Set(fs.readdirSync(snapshot))
+  for (const name of current) {
+    if (!saved.has(name)) {
+      fs.rmSync(path.join(agentPath, name), {recursive: true, force: true})
+    }
+  }
+  for (const name of saved) {
+    const target = path.join(agentPath, name)
+    fs.rmSync(target, {recursive: true, force: true})
+    fs.cpSync(path.join(snapshot, name), target, {recursive: true})
+  }
+}
+
+/**
+ * Redeploy an existing sprite with the same install path as `deployToSprites`.
+ * The sprite name is `cast-<agent>`. The recorded deployment row is left in
+ * place; `cast upgrade` writes the version after this returns. A failed
+ * remote step restores the local agent directory to its pre-upgrade files.
+ */
 export async function upgradeSpritesDeployment(
   host: UpgradeHost,
   agentName: string,
   version: string,
   versionTarballPath: string | null,
+  options: SpriteUpgradeOptions = {},
 ): Promise<void> {
   const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
-  const deployment = db.getDeployment(agentName)
+  const {deployment: deploymentOverride, ...spriteOptions} = options
+  const deployment = deploymentOverride === undefined ? db.getDeployment(agentName) : deploymentOverride
   const existingVolumeId = deployment?.volume_id
-
-  if (versionTarballPath && fs.existsSync(versionTarballPath)) {
-    host.log(`Extracting version ${version} tarball...`)
-    const tar = await import('tar')
-    const agentFiles = fs.readdirSync(agentPath).filter(file =>
-      !file.startsWith('.cast') && !file.startsWith('.git') && file !== 'Dockerfile' && file !== 'sprite.toml'
+  const authToken = deployment ? await resolveDeploymentAuthToken(deployment) : null
+  if (!authToken) {
+    host.error(
+      `No auth token found for the Sprites deployment of '${agentName}'. Redeploy with: cast deploy ${agentName} --provider sprites`,
     )
-    for (const file of agentFiles) {
-      const filePath = path.join(agentPath, file)
-      if (fs.statSync(filePath).isDirectory()) {
-        fs.rmSync(filePath, {recursive: true})
-      } else {
-        fs.unlinkSync(filePath)
-      }
-    }
-    await tar.extract({file: versionTarballPath, cwd: agentPath})
   }
 
-  host.log('Triggering Sprites deploy...')
-  const {spawn} = await import('child_process')
-  const {ensureSpriteCliToken, spriteCliEnv} = await import('./sprites-service')
-  ensureSpriteCliToken()
+  const spriteName = `cast-${agentName}`
+  const snapshotRoot = snapshotAgentDirectory(agentPath)
+  try {
+    if (versionTarballPath && fs.existsSync(versionTarballPath)) {
+      host.log(`Extracting version ${version} tarball...`)
+      const tar = await import('tar')
+      const agentFiles = fs.readdirSync(agentPath).filter(file =>
+        !file.startsWith('.cast') && !file.startsWith('.git') && file !== 'Dockerfile' && file !== 'sprite.toml'
+      )
+      for (const file of agentFiles) {
+        const filePath = path.join(agentPath, file)
+        if (fs.statSync(filePath).isDirectory()) {
+          fs.rmSync(filePath, {recursive: true})
+        } else {
+          fs.unlinkSync(filePath)
+        }
+      }
+      await tar.extract({file: versionTarballPath, cwd: agentPath})
+    }
 
-  const deployProc = spawn('sprite', ['deploy', agentName], {
-    cwd: agentPath,
-    stdio: 'inherit',
-    env: spriteCliEnv(),
-  })
-
-  await new Promise<void>((resolve, reject) => {
-    deployProc.on('error', reject)
-    deployProc.on('exit', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(`Sprites deploy failed with code ${code}`))
+    host.log(`Redeploying ${agentName} to sprite ${spriteName}...`)
+    await deployToSprites(agentName, {
+      log: (message) => host.log(message),
+      warn: (message) => host.warn(message),
+    }, {
+      ...spriteOptions,
+      authToken,
+      recordDeployment: false,
     })
-  })
 
-  host.log('')
-  host.log(`Upgraded to version ${version} on Sprites.`)
-  host.log(`Volume ${existingVolumeId || 'preserved'}.`)
-  host.log('')
+    host.log('')
+    host.log(`Upgraded to version ${version} on Sprites.`)
+    host.log(`Sprite: ${spriteName}`)
+    host.log(`Volume ${existingVolumeId || 'preserved'}.`)
+    host.log('')
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    try {
+      restoreAgentDirectory(agentPath, snapshotRoot)
+    } catch (restoreError) {
+      const extra = restoreError instanceof Error ? restoreError.message : String(restoreError)
+      throw new Error(`${message}\nFailed to restore local agent files: ${extra}`)
+    }
+    throw error
+  } finally {
+    fs.rmSync(snapshotRoot, {recursive: true, force: true})
+  }
 }

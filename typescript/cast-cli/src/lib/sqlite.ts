@@ -440,17 +440,17 @@ export class CastDatabase {
   }
 
   public getActiveDeployment(agentName: string): any {
-    const stmt = this.db.prepare('SELECT * FROM deployments WHERE agent_name = ? AND deleted_at IS NULL ORDER BY deployed_at DESC LIMIT 1')
+    const stmt = this.db.prepare('SELECT * FROM deployments WHERE agent_name = ? AND deleted_at IS NULL ORDER BY deployed_at DESC, rowid DESC LIMIT 1')
     return stmt.get(agentName)
   }
 
   public listDeployments(agentName: string): any[] {
-    const stmt = this.db.prepare('SELECT * FROM deployments WHERE agent_name = ? AND deleted_at IS NULL ORDER BY deployed_at DESC')
+    const stmt = this.db.prepare('SELECT * FROM deployments WHERE agent_name = ? AND deleted_at IS NULL ORDER BY deployed_at DESC, rowid DESC')
     return stmt.all(agentName)
   }
 
   public listActiveDeployments(): any[] {
-    const stmt = this.db.prepare('SELECT * FROM deployments WHERE deleted_at IS NULL ORDER BY agent_name, deployed_at DESC')
+    const stmt = this.db.prepare('SELECT * FROM deployments WHERE deleted_at IS NULL ORDER BY agent_name, deployed_at DESC, rowid DESC')
     return stmt.all()
   }
 
@@ -634,7 +634,7 @@ export class CastDatabase {
       SELECT id as deployment_sha, provider, deployed_version, deployed_at, deployment_url
       FROM deployments
       WHERE agent_name = ? AND deleted_at IS NULL
-      ORDER BY deployed_at DESC
+      ORDER BY deployed_at DESC, rowid DESC
     `)
     return stmt.all(agentName)
   }

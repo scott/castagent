@@ -88,6 +88,18 @@ export interface SpriteDeployOptions {
   serviceEnv?: () => Record<string, string>
   /** Used with serviceEnv so tests do not load the Python catalog. */
   inferenceCatalog?: InferenceCatalogEntry[]
+  /**
+   * Bearer token to install. When set, the deploy reuses it and does not
+   * mint a replacement. Upgrade passes the token already stored for the
+   * deployment.
+   */
+  authToken?: string
+  /**
+   * When false, the sprite is installed and no deployment row is written.
+   * Upgrade leaves the existing row in place and records the version only
+   * after this call returns.
+   */
+  recordDeployment?: boolean
 }
 
 export interface SpriteDestroyOptions {
@@ -213,6 +225,8 @@ export async function rollbackFailedSpriteDeploy(input: {
   tokenHash: string
   deploymentId: string
   log: (message: string) => void
+  /** Upgrade reuses the live deployment token, so a failed redeploy must leave it stored. */
+  discardTokens?: boolean
 }): Promise<void> {
   let recorded = false
   if (input.createdSprite) {
@@ -225,6 +239,8 @@ export async function rollbackFailedSpriteDeploy(input: {
         input.tokenHash,
         `cast-${input.agentName}-memory`,
         spriteMemoryConfig(input.deploymentId),
+        undefined,
+        {supersede: false},
       )
       input.log(
         `Could not delete sprite '${input.spriteName}'. Recorded the deployment so cast shutdown ${input.agentName} can clean it up.`,
@@ -234,7 +250,7 @@ export async function rollbackFailedSpriteDeploy(input: {
       input.log(`Removed sprite '${input.spriteName}' after the deploy failed.`)
     }
   }
-  if (!recorded) {
+  if (!recorded && input.discardTokens !== false) {
     await discardFailedSpriteTokens(input.agentName, input.deploymentSha)
   }
 }
@@ -295,11 +311,17 @@ export async function deployToSprites(
   let createdSprite = false
   let tokenHash = ''
   const deploymentId = generateDeploymentId()
+  const recordDeployment = options.recordDeployment !== false
 
   try {
-    const generated = await generateAuthToken(agentName)
-    tokenHash = generated.tokenHash
-    const authToken = generated.authToken
+    let authToken = options.authToken || ''
+    if (!authToken) {
+      const generated = await generateAuthToken(agentName)
+      tokenHash = generated.tokenHash
+      authToken = generated.authToken
+    } else if (recordDeployment) {
+      tokenHash = keychain.hashToken(authToken)
+    }
 
     hooks.log(`Ensuring sprite '${spriteName}' exists...`)
     const createResult = await execCommand('sprite', ['create', spriteName], {
@@ -374,14 +396,16 @@ export async function deployToSprites(
     const firstLine = urlResult.stdout.split(/\r?\n/)[0] || ''
     const deploymentUrl = firstLine.replace(/^URL:\s*/i, '').trim()
 
-    saveDeployment(
-      agentName,
-      'sprites',
-      deploymentUrl,
-      tokenHash,
-      `cast-${agentName}-memory`,
-      spriteMemoryConfig(deploymentId),
-    )
+    if (recordDeployment) {
+      saveDeployment(
+        agentName,
+        'sprites',
+        deploymentUrl,
+        tokenHash,
+        `cast-${agentName}-memory`,
+        spriteMemoryConfig(deploymentId),
+      )
+    }
 
     hooks.log('')
     hooks.log('╔══════════════════════════════════════════════════════════════╗')
@@ -418,6 +442,7 @@ export async function deployToSprites(
         tokenHash,
         deploymentId,
         log: (line) => hooks.log(line),
+        discardTokens: options.authToken ? false : undefined,
       })
     } catch (rollbackError) {
       const extra = rollbackError instanceof Error ? rollbackError.message : String(rollbackError)

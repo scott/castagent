@@ -41,10 +41,33 @@ deployments — pick by SHA or by name.
 
 1. If `<input>` is a 6-character SHA, look up the deployment directly.
 2. If `<input>` is an agent name and only one deployment exists, use it.
-3. If `<input>` is an agent name and multiple deployments exist, the
-   CLI prints a SHA list and exits with a clear error.
+3. If `<input>` is an agent name and more than one live deployment
+   remains, the CLI prints a SHA list and exits with a clear error.
 4. If no match: "No deployment found for 'X'. Use 'cast deploy' to
    deploy."
+
+A successful deploy records the new row and marks earlier rows for that
+same provider and resource deleted. A failed deploy that records a leftover
+remote, so `cast shutdown` can delete it, does not itself retire the
+previous successful row. Resolving the agent name still keeps the newest
+row for that resource. The resource is the recorded volume
+when both rows have one, and it is the deployment URL when that is what
+the rows share. For a DigitalOcean droplet, `https://<ip>` and an older
+`http://<ip>:8080` row are the same droplet. Cast removes the superseded
+row's token file, `~/.cast/tokens/deployments/<sha>.token`. The agent
+name then resolves to the one live deployment, so `cast connect <agent>`
+and `cast shutdown <agent>` work after a redeploy on Fly, DigitalOcean,
+and Sprites.
+
+An agent that already has several active rows for one resource, left by
+a redeploy from before this repair, is cleaned up the next time
+`cast connect` or `cast shutdown` resolves the name. Cast keeps the
+newest row, marks the older rows deleted, and removes their token files.
+The remote host stays up. `cast registry` keeps listing those extra rows
+until that resolution or the next successful deploy. A different provider
+stays registered, and each DigitalOcean MicroVM stays registered. When
+the remaining rows name different resources, the command prints the SHA
+list and exits.
 
 ## shutdown
 
@@ -77,9 +100,9 @@ shutdown reports the error and leaves the deployment recorded so a later
 
 A SHA shuts down only that deployment. Another provider for the same
 agent stays in the registry and keeps its auth token. An agent name is
-accepted when every live row is the same target, and then every row of
-that target is removed, including older re-deploys. Distinct targets
-still require a SHA. `--force` skips the confirmation prompt only.
+accepted when one live target remains. A redeploy marks older rows for
+that resource deleted, so shutdown removes the live row and its token.
+Distinct targets still require a SHA. `--force` skips the confirmation prompt only.
 
 Sprites, Fly, Railway, Docker, and Droplets name one remote after the
 agent. Shutting down any SHA of that provider removes the other rows for
@@ -150,7 +173,9 @@ and Cast does not print a success banner. A current log line
 started or starting. If `flyctl deploy` already
 exited 0, the new token stays recorded because that release is live.
 A later successful deploy of an agent that already has a Fly row still
-writes a new deployment row only after the agent card responds.
+writes a new deployment row only after the agent card responds. That
+new row supersedes the previous Fly row for the same app. The older row
+is marked deleted and its token file is removed.
 
 In the TUI, `{% ref "slash:shutdown" %}` lists every active deployment
 (including DigitalOcean MicroVM and local) and shuts one down after a
@@ -198,7 +223,13 @@ The version is a positional argument, not a flag.
   on-host TUI hint if `--with-tui` is in the image). The SSH session
   reuses the host key in `~/.cast/ssh/known_hosts` and does not connect
   when that pin is missing.
-- **Sprites** — re-extracts, runs `sprite deploy`.
+- **Sprites** — re-extracts the release, then redeploys it to the existing
+  `cast-<agent>` sprite with the same steps as a Sprites deploy: pack the
+  agent, `sprite exec` to install dependencies and re-register the
+  `cast-agent` service, and wait until the service log contains `Agent ready`.
+  If that redeploy fails, the local agent directory is restored and the
+  recorded version stays unchanged. The version is stored only after the
+  redeploy succeeds.
 - **DigitalOcean MicroVM** — exports memory (8 MiB cap), builds a new linux/amd64 image, creates a replacement MicroVM, restores memory, then deletes the previous one. Image, size, and env cannot be changed in place.
 
 `cast upgrade` is the right command for routine version bumps. For
