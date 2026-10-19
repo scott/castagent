@@ -527,7 +527,8 @@ function moveSpriteLogsHintLast(message: string): string {
     body.push(line)
   }
   if (!hint) return message
-  return [...body, hint].join('\n')
+  while (body.length > 0 && body[body.length - 1] === '') body.pop()
+  return `${body.join('\n')}\n\n${hint}`
 }
 
 export function upgradeRolledBackMessage(agent: string, oldVersion: string, target: string, upgradeError: string): string {
