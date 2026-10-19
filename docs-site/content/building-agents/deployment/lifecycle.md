@@ -223,7 +223,13 @@ The version is a positional argument, not a flag.
   on-host TUI hint if `--with-tui` is in the image). The SSH session
   reuses the host key in `~/.cast/ssh/known_hosts` and does not connect
   when that pin is missing.
-- **Sprites** — re-extracts, runs `sprite deploy`.
+- **Sprites** — re-extracts the release, then redeploys it to the existing
+  `cast-<agent>` sprite with the same steps as a Sprites deploy: pack the
+  agent, `sprite exec` to install dependencies and re-register the
+  `cast-agent` service, and wait until the service log contains `Agent ready`.
+  If that redeploy fails, the local agent directory is restored and the
+  recorded version stays unchanged. The version is stored only after the
+  redeploy succeeds.
 - **DigitalOcean MicroVM** — exports memory (8 MiB cap), builds a new linux/amd64 image, creates a replacement MicroVM, restores memory, then deletes the previous one. Image, size, and env cannot be changed in place.
 
 `cast upgrade` is the right command for routine version bumps. For
