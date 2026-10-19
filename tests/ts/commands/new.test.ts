@@ -619,7 +619,10 @@ process.stdin.on('end', () => {
 
   it('surfaces a builder failure from the piped path', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-fail-'))
+    // Drain stdin before exiting. spawnSync reports EPIPE (and the CLI
+    // never surfaces the builder stderr) if the child closes stdin unread.
     const bin = plantPythonShim(root, `#!/bin/sh
+cat >/dev/null
 echo 'Could not derive an agent name from the description.' >&2
 exit 2
 `)
