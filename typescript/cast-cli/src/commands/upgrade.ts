@@ -19,9 +19,10 @@ import {
   upgradeDockerDeployment,
   upgradeFlyDeployment,
   upgradeRailwayDeployment,
+  REMOTE_STATE_UNKNOWN,
   upgradeRefusedAsCurrent,
   upgradeSpritesDeployment,
-  UPGRADE_FAILED_STATE,
+  UPGRADE_ROLLED_BACK_COPY,
 } from '../lib/deploy/upgrades'
 import type {UpgradeContext} from '../lib/deploy/types'
 
@@ -217,8 +218,9 @@ export default class Upgrade extends Command {
       }
 
       const recorded = db.getDeploymentBySha(deploymentSha)
-      if (recorded?.remote_version_state === UPGRADE_FAILED_STATE) {
-        this.error(error instanceof Error ? error.message : String(error))
+      const text = error instanceof Error ? error.message : String(error)
+      if (recorded?.remote_version_state === REMOTE_STATE_UNKNOWN || text.includes(UPGRADE_ROLLED_BACK_COPY)) {
+        this.error(text)
       }
 
       this.error(

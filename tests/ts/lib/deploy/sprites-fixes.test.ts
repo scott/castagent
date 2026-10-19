@@ -22,7 +22,7 @@ import {
   spriteCliEnv,
   SPRITE_SERVICE_LOG,
 } from '../../../../typescript/cast-cli/src/lib/deploy/sprites-service'
-import {upgradeRefusedAsCurrent, upgradeSpritesDeployment, UPGRADE_FAILED_STATE} from '../../../../typescript/cast-cli/src/lib/deploy/upgrades'
+import {REMOTE_STATE_UNKNOWN, upgradeRefusedAsCurrent, upgradeSpritesDeployment, UPGRADE_ROLLED_BACK_COPY} from '../../../../typescript/cast-cli/src/lib/deploy/upgrades'
 
 const TOKEN = 'org-slug/org-id/token-id/not-a-real-sprites-token'
 const MODEL_KEY = 'sk-test-openrouter'
@@ -60,6 +60,11 @@ function respond(stdin) {
   const joined = args.join(' ')
   if (stdin && command.includes('base64 -d') && process.env.SPRITE_MOCK_TAR) {
     fs.writeFileSync(process.env.SPRITE_MOCK_TAR, stdin)
+    const countFile = process.env.SPRITE_MOCK_TAR + '.n'
+    let n = 1
+    try { n = (Number(fs.readFileSync(countFile, 'utf8')) || 0) + 1 } catch (e) { n = 1 }
+    fs.writeFileSync(countFile, String(n))
+    fs.writeFileSync(process.env.SPRITE_MOCK_TAR + '.' + n, stdin)
   }
   if (stdin && command.includes('tee ') && process.env.SPRITE_MOCK_SCRIPT) {
     fs.writeFileSync(process.env.SPRITE_MOCK_SCRIPT, stdin)
@@ -110,7 +115,12 @@ function respond(stdin) {
       process.exit(1)
     }
     if (command.includes('---CAST-LOG---') || command.includes('services get cast-agent')) {
-      const mode = process.env.SPRITE_MOCK_HEALTH || 'ready'
+      const modes = String(process.env.SPRITE_MOCK_HEALTH || 'ready').split(',').map(item => item.trim()).filter(Boolean)
+      const countFile = (process.env.SPRITE_MOCK_LOG || '/tmp/sprite-mock') + '.health-n'
+      let seen = 0
+      try { seen = Number(fs.readFileSync(countFile, 'utf8')) || 0 } catch (e) { seen = 0 }
+      const mode = modes[Math.min(seen, Math.max(modes.length - 1, 0))] || 'ready'
+      try { fs.writeFileSync(countFile, String(seen + 1)) } catch (e) {}
       if (mode === 'crash') {
         process.stdout.write('{"status":"running"}\\n---CAST-LOG---\\nModuleNotFoundError: No module named \\'cast\\'\\n')
       } else if (mode === 'down') {
@@ -538,7 +548,7 @@ describe('Sprites deploy fixes', () => {
     const env = setup('upok')
     try {
       const {tarball, agentDir} = await prepareUpgrade(env)
-      db.setRemoteVersionState(env.sha, UPGRADE_FAILED_STATE)
+      db.setRemoteVersionState(env.sha, REMOTE_STATE_UNKNOWN)
       const result = await runUpgrade(env, tarball)
       expect(result.error, result.logs.join('\n')).to.equal(undefined)
       assertKnownSpriteCommands(env.log, env.agentName)
@@ -588,21 +598,67 @@ describe('Sprites deploy fixes', () => {
       expect(fs.existsSync(path.join(agentDir, 'extra.txt'))).to.equal(false)
       expect(fs.existsSync(path.join(agentDir, 'requirements.txt'))).to.equal(false)
       expect(fs.existsSync(path.join(agentDir, '.cast-runtime'))).to.equal(false)
-      const uploaded = gunzipSync(Buffer.from(fs.readFileSync(env.tar, 'utf8'), 'base64'))
-      expect(uploaded.includes(Buffer.from('name: upgraded'))).to.equal(true)
+      const first = gunzipSync(Buffer.from(fs.readFileSync(`${env.tar}.1`, 'utf8'), 'base64'))
+      const second = gunzipSync(Buffer.from(fs.readFileSync(`${env.tar}.2`, 'utf8'), 'base64'))
+      expect(first.includes(Buffer.from('name: upgraded'))).to.equal(true)
+      expect(second.includes(Buffer.from('name: original'))).to.equal(true)
+      expect(second.includes(Buffer.from('keep me'))).to.equal(true)
+      expect(fs.existsSync(`${env.tar}.3`)).to.equal(false)
       const row = db.getDeploymentBySha(env.sha)
       expect(row.deployed_version).to.equal('1.0.0')
-      expect(row.remote_version_state).to.equal(UPGRADE_FAILED_STATE)
+      expect(row.remote_version_state).to.equal(REMOTE_STATE_UNKNOWN)
       expect(upgradeRefusedAsCurrent(row, '1.0.0')).to.equal(false)
       expect(upgradeRefusedAsCurrent({deployed_version: '1.0.0', remote_version_state: null}, '1.0.0')).to.equal(true)
       expect(result.error || '').to.include(`cast upgrade ${env.agentName} 1.0.0`)
       expect(result.error || '').to.include('PLACEHOLDER: the remote may be on the broken release.')
+      expect(result.error || '').to.not.include(UPGRADE_ROLLED_BACK_COPY)
       expect(db.listDeployments(env.agentName)).to.have.length(1)
       expect(await keychain.getDeploymentToken(env.sha)).to.equal(BEARER)
       const script = fs.readFileSync(env.script, 'utf8')
       expect(script).to.include(`export AUTH_TOKEN='${BEARER}'`)
       const joined = readCalls(env.log).map(call => call.argv.join('\n')).join('\n')
       expect(joined).to.not.include(BEARER)
+    } finally {
+      await cleanupUpgrade(env)
+    }
+  })
+
+  it('rolls the sprite back to the previous release when the upgrade deploy fails', async () => {
+    const env = setup('upback')
+    process.env.SPRITE_MOCK_HEALTH = 'crash,ready'
+    try {
+      const {tarball, agentDir} = await prepareUpgrade(env)
+      const result = await runUpgrade(env, tarball)
+      expect(result.error || '').to.include('failed before the runtime was ready')
+      expect(result.error || '').to.include(UPGRADE_ROLLED_BACK_COPY)
+      expect(result.error || '').to.not.include(`cast upgrade ${env.agentName} 1.0.0`)
+      expect(result.logs.join('\n')).to.include(`Redeploying the previous release of ${env.agentName}`)
+      expect(result.logs.join('\n')).to.not.include('Upgraded to version 1.2 on Sprites.')
+      assertKnownSpriteCommands(env.log, env.agentName)
+      expect(fs.readFileSync(path.join(agentDir, 'agent.yaml'), 'utf8')).to.equal('name: original\n')
+      expect(fs.readFileSync(path.join(agentDir, 'notes.txt'), 'utf8')).to.equal('keep me\n')
+      expect(fs.readFileSync(path.join(agentDir, 'skills', 'hello.txt'), 'utf8')).to.equal('skill\n')
+      expect(fs.readFileSync(path.join(agentDir, '.cast', 'keep.txt'), 'utf8')).to.equal('metadata\n')
+      expect(fs.existsSync(path.join(agentDir, 'extra.txt'))).to.equal(false)
+      expect(fs.existsSync(path.join(agentDir, 'requirements.txt'))).to.equal(false)
+      expect(fs.existsSync(path.join(agentDir, '.cast-runtime'))).to.equal(false)
+      const first = gunzipSync(Buffer.from(fs.readFileSync(`${env.tar}.1`, 'utf8'), 'base64'))
+      const second = gunzipSync(Buffer.from(fs.readFileSync(`${env.tar}.2`, 'utf8'), 'base64'))
+      expect(first.includes(Buffer.from('name: upgraded'))).to.equal(true)
+      expect(second.includes(Buffer.from('name: original'))).to.equal(true)
+      expect(second.includes(Buffer.from('keep me'))).to.equal(true)
+      expect(fs.existsSync(`${env.tar}.3`)).to.equal(false)
+      const row = db.getDeploymentBySha(env.sha)
+      expect(row.deployed_version).to.equal('1.0.0')
+      expect(row.remote_version_state).to.equal(null)
+      expect(upgradeRefusedAsCurrent(row, '1.0.0')).to.equal(true)
+      expect(db.listDeployments(env.agentName)).to.have.length(1)
+      expect(await keychain.getDeploymentToken(env.sha)).to.equal(BEARER)
+      const script = fs.readFileSync(env.script, 'utf8')
+      expect(script).to.include(`export AUTH_TOKEN='${BEARER}'`)
+      const joined = readCalls(env.log).map(call => call.argv.join('\n')).join('\n')
+      expect(joined).to.not.include(BEARER)
+      expect(joined).to.not.include(TOKEN)
     } finally {
       await cleanupUpgrade(env)
     }

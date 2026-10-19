@@ -100,7 +100,7 @@ export interface DeploymentRow {
   volume_id?: string | null
   volume_config?: string | null
   deployed_version?: string | null
-  /** `upgrade-failed` means the remote may not match `deployed_version`. */
+  /** `remote-state-unknown` means the remote may not match `deployed_version`. */
   remote_version_state?: string | null
 }
 
