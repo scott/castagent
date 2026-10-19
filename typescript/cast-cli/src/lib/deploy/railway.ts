@@ -138,7 +138,7 @@ export default class RailwayDeploy extends Command {
 
     // Save deployment
     const volumeConfig = JSON.stringify({ deploymentId, mountPath: `/var/runtime/data/${volumeId}` })
-    saveDeployment(agentName, 'railway', deploymentUrl, tokenHash, volumeId, volumeConfig)
+    await saveDeployment(agentName, 'railway', deploymentUrl, tokenHash, volumeId, volumeConfig)
 
     this.log('')
     this.log('╔══════════════════════════════════════════════════════════════╗')

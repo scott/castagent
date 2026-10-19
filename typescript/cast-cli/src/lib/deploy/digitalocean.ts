@@ -1129,7 +1129,7 @@ export async function releaseFailedDroplet(input: FailedDropletRelease): Promise
   }
 
   const recorded = (!dropletDeleted || !volumeDeleted)
-    ? recordFailedDroplet(input, {
+    ? await recordFailedDroplet(input, {
       dropletName,
       dropletId,
       dropletIp,
@@ -1150,7 +1150,7 @@ export async function releaseFailedDroplet(input: FailedDropletRelease): Promise
   }
 }
 
-function recordFailedDroplet(
+async function recordFailedDroplet(
   input: FailedDropletRelease,
   state: {
     dropletName: string
@@ -1161,7 +1161,7 @@ function recordFailedDroplet(
     volumeError: string
     log: (message: string) => void
   },
-): boolean {
+): Promise<boolean> {
   let url = input.deploymentUrl
   if (!url && state.dropletIp) {
     try {
@@ -1172,7 +1172,7 @@ function recordFailedDroplet(
   }
   if (!url && state.dropletId) url = `https://${state.dropletId}.droplet.invalid`
   if (!url) url = `https://${state.dropletName}.droplet.invalid`
-  saveDeployment(
+  await saveDeployment(
     input.agentName,
     'digitalocean',
     url,
@@ -2219,7 +2219,7 @@ export default class DigitalOceanDeploy extends Command {
 
       // Save deployment
       const volumeConfig = JSON.stringify({ deploymentId, mountPath: '/app/agent/memory', region: droplet.region })
-      saveDeployment(agentName, 'digitalocean', deploymentUrl, tokenHash, volumeId, volumeConfig)
+      await saveDeployment(agentName, 'digitalocean', deploymentUrl, tokenHash, volumeId, volumeConfig)
 
       this.log('')
       this.log('╔══════════════════════════════════════════════════════════════╗')

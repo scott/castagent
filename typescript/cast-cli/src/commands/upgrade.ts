@@ -67,7 +67,7 @@ export default class Upgrade extends Command {
     const target = args.agent
     const targetVersion = args.version
 
-    const resolution = resolveDeploymentTarget(target)
+    const resolution = await resolveDeploymentTarget(target)
 
     if (resolution.type === 'not_found') {
       this.error(

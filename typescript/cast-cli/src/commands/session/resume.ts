@@ -141,7 +141,7 @@ export default class SessionResume extends Command {
       }
     }
 
-    const resolution = resolveDeploymentTarget(agentName)
+    const resolution = await resolveDeploymentTarget(agentName)
     if (resolution.type !== 'sha' && resolution.type !== 'single') {
       // On-host resume without CAST_A2A_URL explains the missing URL itself.
       // An ambiguous deployment still has to be reported here.

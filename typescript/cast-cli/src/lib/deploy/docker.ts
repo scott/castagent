@@ -628,7 +628,7 @@ export interface DockerDeploymentRecord {
 // stop and remove the container and volume that docker run already started.
 export async function recordDockerDeployment(input: DockerDeploymentRecord): Promise<string> {
   try {
-    return saveDeployment(
+    return await saveDeployment(
       input.agentName,
       'docker',
       input.deploymentUrl,

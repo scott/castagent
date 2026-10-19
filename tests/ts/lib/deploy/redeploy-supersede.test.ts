@@ -39,11 +39,11 @@ function uniqueSha(used: Set<string>): string {
   return sha
 }
 
-function withDeploymentSha(id: string, run: () => void): void {
+async function withDeploymentSha(id: string, run: () => Promise<void>): Promise<void> {
   const previous = process.env.CAST_DEPLOYMENT_SHA
   process.env.CAST_DEPLOYMENT_SHA = id
   try {
-    run()
+    await run()
   } finally {
     if (previous === undefined) delete process.env.CAST_DEPLOYMENT_SHA
     else process.env.CAST_DEPLOYMENT_SHA = previous
@@ -125,29 +125,27 @@ describe('redeploy supersedes the previous deployment', () => {
     delete process.env.CAST_DEPLOYMENT_SHA
   })
 
-  function record(
+  async function record(
     agentName: string,
     sha: string,
     provider: string,
     url: string,
     volumeId: string,
     secret: string,
-  ): void {
+  ): Promise<void> {
     tokenIds.push(sha)
     plantToken(sha, secret)
-    withDeploymentSha(sha, () => {
-      saveDeployment(agentName, provider, url, tokenHash(secret), volumeId, '{}')
-    })
+    await withDeploymentSha(sha, () => saveDeployment(agentName, provider, url, tokenHash(secret), volumeId, '{}'))
   }
 
-  it('marks the previous row deleted for Fly, DigitalOcean, and Sprites', () => {
+  it('marks the previous row deleted for Fly, DigitalOcean, and Sprites', async () => {
     for (const spec of cases) {
       const agentName = `redeploy-test-${spec.provider}-${Date.now()}-${uniqueSha(usedShas)}`
       agents.push(agentName)
       const previous = uniqueSha(usedShas)
       const current = uniqueSha(usedShas)
-      record(agentName, previous, spec.provider, spec.firstUrl, spec.volumeId, `old-${previous}`)
-      record(agentName, current, spec.provider, spec.secondUrl, spec.volumeId, `new-${current}`)
+      await record(agentName, previous, spec.provider, spec.firstUrl, spec.volumeId, `old-${previous}`)
+      await record(agentName, current, spec.provider, spec.secondUrl, spec.volumeId, `new-${current}`)
 
       const live = db.listDeployments(agentName)
       expect(live.map((row: {id: string}) => row.id)).to.deep.equal([current])
@@ -155,20 +153,21 @@ describe('redeploy supersedes the previous deployment', () => {
       expect(deletedAt(previous)).to.be.a('string').and.not.empty
       expect(fs.existsSync(tokenPath(previous))).to.equal(false)
       expect(fs.readFileSync(tokenPath(current), 'utf8')).to.equal(`new-${current}`)
-      expect(resolveDeploymentTarget(agentName)).to.include({type: 'single'})
-      expect(resolveDeploymentTarget(agentName).deployment.id).to.equal(current)
-      expect(resolveDeploymentTarget(previous).type).to.equal('not_found')
+      const byName = await resolveDeploymentTarget(agentName)
+      expect(byName).to.include({type: 'single'})
+      expect(byName.deployment.id).to.equal(current)
+      expect((await resolveDeploymentTarget(previous)).type).to.equal('not_found')
       removeToken(current)
     }
   })
 
-  it('treats an older droplet URL and the current https URL as one droplet', () => {
+  it('treats an older droplet URL and the current https URL as one droplet', async () => {
     const agentName = `redeploy-test-do-url-${Date.now()}-${uniqueSha(usedShas)}`
     agents.push(agentName)
     const previous = uniqueSha(usedShas)
     const current = uniqueSha(usedShas)
-    record(agentName, previous, 'digitalocean', 'http://203.0.113.20:8080', 'cast-agent-uuid-memory', `old-${previous}`)
-    record(agentName, current, 'digitalocean', 'https://203.0.113.20', 'cast-agent', `new-${current}`)
+    await record(agentName, previous, 'digitalocean', 'http://203.0.113.20:8080', 'cast-agent-uuid-memory', `old-${previous}`)
+    await record(agentName, current, 'digitalocean', 'https://203.0.113.20', 'cast-agent', `new-${current}`)
 
     expect(db.listDeployments(agentName).map((row: {id: string}) => row.id)).to.deep.equal([current])
     expect(fs.existsSync(tokenPath(previous))).to.equal(false)
@@ -176,26 +175,24 @@ describe('redeploy supersedes the previous deployment', () => {
     removeToken(current)
   })
 
-  it('leaves the live row in place when a failed deploy records a leftover', () => {
+  it('leaves the live row in place when a failed deploy records a leftover', async () => {
     const agentName = `redeploy-test-leftover-${Date.now()}-${uniqueSha(usedShas)}`
     agents.push(agentName)
     const live = uniqueSha(usedShas)
     const leftover = uniqueSha(usedShas)
-    record(agentName, live, 'digitalocean', 'https://203.0.113.40', 'cast-leftover', `live-${live}`)
+    await record(agentName, live, 'digitalocean', 'https://203.0.113.40', 'cast-leftover', `live-${live}`)
     tokenIds.push(leftover)
     plantToken(leftover, `left-${leftover}`)
-    withDeploymentSha(leftover, () => {
-      saveDeployment(
-        agentName,
-        'digitalocean',
-        'https://203.0.113.40',
-        tokenHash(`left-${leftover}`),
-        'cast-leftover',
-        '{}',
-        undefined,
-        {supersede: false},
-      )
-    })
+    await withDeploymentSha(leftover, () => saveDeployment(
+      agentName,
+      'digitalocean',
+      'https://203.0.113.40',
+      tokenHash(`left-${leftover}`),
+      'cast-leftover',
+      '{}',
+      undefined,
+      {supersede: false},
+    ))
 
     expect(db.listDeployments(agentName).map((row: {id: string}) => row.id)).to.have.members([live, leftover])
     expect(fs.readFileSync(tokenPath(live), 'utf8')).to.equal(`live-${live}`)
@@ -204,17 +201,17 @@ describe('redeploy supersedes the previous deployment', () => {
     removeToken(leftover)
   })
 
-  it('keeps a second provider and a second MicroVM', () => {
+  it('keeps a second provider and a second MicroVM', async () => {
     const agentName = `redeploy-test-distinct-${Date.now()}-${uniqueSha(usedShas)}`
     agents.push(agentName)
     const fly = uniqueSha(usedShas)
     const droplet = uniqueSha(usedShas)
     const microA = uniqueSha(usedShas)
     const microB = uniqueSha(usedShas)
-    record(agentName, fly, 'fly', 'https://cast-distinct.fly.dev', 'cast_distinct_memory', `fly-${fly}`)
-    record(agentName, droplet, 'digitalocean', 'https://203.0.113.30', 'cast-distinct', `do-${droplet}`)
-    record(agentName, microA, 'microvm', 'https://vm-a.example', 'vm-a', `vm-${microA}`)
-    record(agentName, microB, 'microvm', 'https://vm-b.example', 'vm-b', `vm-${microB}`)
+    await record(agentName, fly, 'fly', 'https://cast-distinct.fly.dev', 'cast_distinct_memory', `fly-${fly}`)
+    await record(agentName, droplet, 'digitalocean', 'https://203.0.113.30', 'cast-distinct', `do-${droplet}`)
+    await record(agentName, microA, 'microvm', 'https://vm-a.example', 'vm-a', `vm-${microA}`)
+    await record(agentName, microB, 'microvm', 'https://vm-b.example', 'vm-b', `vm-${microB}`)
 
     expect(db.listDeployments(agentName).map((row: {id: string}) => row.id)).to.have.members([
       fly, droplet, microA, microB,
@@ -223,10 +220,10 @@ describe('redeploy supersedes the previous deployment', () => {
       expect(fs.existsSync(tokenPath(id))).to.equal(true)
       removeToken(id)
     }
-    expect(resolveDeploymentTarget(agentName).type).to.equal('ambiguous')
+    expect((await resolveDeploymentTarget(agentName)).type).to.equal('ambiguous')
   })
 
-  it('retires rows already active from before the fix and removes the old token file', () => {
+  it('retires rows already active from before the fix and removes the old token file', async () => {
     const agentName = `redeploy-test-legacy-${Date.now()}-${uniqueSha(usedShas)}`
     agents.push(agentName)
     const previous = uniqueSha(usedShas)
@@ -240,7 +237,7 @@ describe('redeploy supersedes the previous deployment', () => {
     plantToken(previous, `old-${previous}`)
     plantToken(current, `new-${current}`)
 
-    const resolution = resolveDeploymentTarget(agentName)
+    const resolution = await resolveDeploymentTarget(agentName)
     expect(resolution.type).to.equal('single')
     expect(resolution.deployment.id).to.equal(current)
     expect(db.getDeploymentBySha(previous)).to.not.exist
@@ -332,8 +329,8 @@ describe('redeploy supersedes the previous deployment', () => {
       const previous = uniqueSha(usedShas)
       const current = uniqueSha(usedShas)
       const secret = `new-${current}`
-      record(agentName, previous, spec.provider, spec.firstUrl, spec.volumeId, `old-${previous}`)
-      record(agentName, current, spec.provider, spec.secondUrl, spec.volumeId, secret)
+      await record(agentName, previous, spec.provider, spec.firstUrl, spec.volumeId, `old-${previous}`)
+      await record(agentName, current, spec.provider, spec.secondUrl, spec.volumeId, secret)
       expect(fs.existsSync(tokenPath(previous))).to.equal(false)
       return {agentName, current, secret}
     }

@@ -133,14 +133,14 @@ describe('Deployment SHA helpers', () => {
 })
 
 describe('saveDeployment', () => {
-  it('stores CAST_DEPLOYMENT_SHA and records the agent row', () => {
+  it('stores CAST_DEPLOYMENT_SHA and records the agent row', async () => {
     const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
     const agentName = `fk-test-sha-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     const sha = Math.random().toString(16).slice(2, 8)
     const previous = process.env.CAST_DEPLOYMENT_SHA
     process.env.CAST_DEPLOYMENT_SHA = sha
     try {
-      const id = saveDeployment(agentName, 'docker', 'http://localhost:8080', 'hash', 'vol', '{}')
+      const id = await saveDeployment(agentName, 'docker', 'http://localhost:8080', 'hash', 'vol', '{}')
       expect(id).to.equal(sha)
       expect(db.getAgent(agentName)).to.exist
       const deployment = db.getDeploymentBySha(sha)
@@ -156,47 +156,47 @@ describe('saveDeployment', () => {
 })
 
 describe('resolveDeploymentTarget', () => {
-  it('returns sha resolution for valid SHA pattern that exists', () => {
+  it('returns sha resolution for valid SHA pattern that exists', async () => {
     const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
     const agentName = `resolve-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     const sha = `sha${Math.random().toString(16).slice(2, 5)}`
     db.createAgent(agentName, '/tmp/agent.yaml')
     db.createDeployment(sha, agentName, 'docker', 'http://localhost', 'h')
 
-    const result = resolveDeploymentTarget(sha)
+    const result = await resolveDeploymentTarget(sha)
     expect(result.type).to.equal('sha')
     expect(result.deployment.id).to.equal(sha)
 
     db.deleteAgent(agentName)
   })
 
-  it('returns not_found for SHA pattern that does not exist', () => {
-    const result = resolveDeploymentTarget('xxxxxx')
+  it('returns not_found for SHA pattern that does not exist', async () => {
+    const result = await resolveDeploymentTarget('xxxxxx')
     expect(result.type).to.equal('not_found')
     expect(result.message).to.exist
   })
 
-  it('returns single resolution when agent name matches one deployment', () => {
+  it('returns single resolution when agent name matches one deployment', async () => {
     const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
     const agentName = `single-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     db.createAgent(agentName, '/tmp/agent.yaml')
     db.setDeployment(agentName, 'docker', 'http://localhost', 'h')
 
-    const result = resolveDeploymentTarget(agentName)
+    const result = await resolveDeploymentTarget(agentName)
     expect(result.type).to.equal('single')
     expect(result.deployment.agent_name).to.equal(agentName)
 
     db.deleteAgent(agentName)
   })
 
-  it('returns ambiguous when agent name matches multiple deployments', () => {
+  it('returns ambiguous when agent name matches multiple deployments', async () => {
     const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
     const agentName = `ambig-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     db.createAgent(agentName, '/tmp/agent.yaml')
     db.createDeployment(`amb1${Math.random().toString(16).slice(2, 4)}`, agentName, 'docker', 'http://a', 'h')
     db.createDeployment(`amb2${Math.random().toString(16).slice(2, 4)}`, agentName, 'fly', 'http://b', 'h')
 
-    const result = resolveDeploymentTarget(agentName)
+    const result = await resolveDeploymentTarget(agentName)
     expect(result.type).to.equal('ambiguous')
     expect(result.deployments).to.have.length(2)
     expect(result.message).to.include('Multiple deployments')
@@ -204,7 +204,7 @@ describe('resolveDeploymentTarget', () => {
     db.deleteAgent(agentName)
   })
 
-  it('returns single when same agent has multiple deployments to same target', () => {
+  it('returns single when same agent has multiple deployments to same target', async () => {
     const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
     const agentName = `collapse-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     db.createAgent(agentName, '/tmp/agent.yaml')
@@ -214,7 +214,7 @@ describe('resolveDeploymentTarget', () => {
     db.createDeployment(older, agentName, 'digitalocean', 'http://142.93.75.156:8080', 'h')
     db.createDeployment(newer, agentName, 'digitalocean', 'http://142.93.75.156:8080', 'h')
 
-    const result = resolveDeploymentTarget(agentName)
+    const result = await resolveDeploymentTarget(agentName)
     expect(result.type).to.equal('single')
     expect(result.deployment).to.exist
     expect(result.deployment.id).to.equal(newer)
@@ -224,21 +224,21 @@ describe('resolveDeploymentTarget', () => {
     db.deleteAgent(agentName)
   })
 
-  it('returns ambiguous when deployments have same provider but different URLs', () => {
+  it('returns ambiguous when deployments have same provider but different URLs', async () => {
     const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
     const agentName = `url-ambig-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     db.createAgent(agentName, '/tmp/agent.yaml')
     db.createDeployment(`url1${Math.random().toString(16).slice(2, 4)}`, agentName, 'fly', 'http://app-a.fly.dev', 'h')
     db.createDeployment(`url2${Math.random().toString(16).slice(2, 4)}`, agentName, 'fly', 'http://app-b.fly.dev', 'h')
 
-    const result = resolveDeploymentTarget(agentName)
+    const result = await resolveDeploymentTarget(agentName)
     expect(result.type).to.equal('ambiguous')
     expect(result.deployments).to.have.length(2)
 
     db.deleteAgent(agentName)
   })
 
-  it('returns ambiguous with mix of same-target and distinct deployments', () => {
+  it('returns ambiguous with mix of same-target and distinct deployments', async () => {
     const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
     const agentName = `mix-ambig-test-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
     db.createAgent(agentName, '/tmp/agent.yaml')
@@ -251,7 +251,7 @@ describe('resolveDeploymentTarget', () => {
     // One deployment to a distinct target
     db.createDeployment(fly, agentName, 'fly', 'http://app.fly.dev', 'h')
 
-    const result = resolveDeploymentTarget(agentName)
+    const result = await resolveDeploymentTarget(agentName)
     expect(result.type).to.equal('ambiguous')
     expect((result.deployments || []).map((row: {id: string}) => row.id)).to.have.members([newer, fly])
     expect(db.getDeploymentBySha(older)).to.not.exist
@@ -259,16 +259,16 @@ describe('resolveDeploymentTarget', () => {
     db.deleteAgent(agentName)
   })
 
-  it('returns not_found for nonexistent agent name', () => {
-    const result = resolveDeploymentTarget(`nonexistent-agent-${Date.now()}`)
+  it('returns not_found for nonexistent agent name', async () => {
+    const result = await resolveDeploymentTarget(`nonexistent-agent-${Date.now()}`)
     expect(result.type).to.equal('not_found')
   })
 
-  it('detects 6-char SHA pattern even if it could be an agent name', () => {
+  it('detects 6-char SHA pattern even if it could be an agent name', async () => {
     const {db} = require('../../../typescript/cast-cli/src/lib/sqlite')
     const sha = `zzz${Math.random().toString(16).slice(2, 5)}`
     // Don't create a deployment for this SHA - should return not_found
-    const result = resolveDeploymentTarget(sha)
+    const result = await resolveDeploymentTarget(sha)
     expect(result.type).to.equal('not_found')
   })
 })

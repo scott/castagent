@@ -98,22 +98,21 @@ export function deploymentIdsSupersededBy(rows: DeploymentRowIdentity[], keeperI
   return stale
 }
 
-function forgetSupersededDeploymentTokens(ids: string[]): void {
-  for (const id of ids) {
-    void keychain.deleteDeploymentToken(id).catch(() => {})
-  }
+async function forgetSupersededDeploymentTokens(ids: string[]): Promise<void> {
+  await Promise.all(ids.map(id => keychain.deleteDeploymentToken(id).catch(() => {})))
 }
 
 /**
  * Mark older live rows for the same remote deleted and remove their token files.
  * The remote itself stays up. A second provider, and each MicroVM, stay registered.
  * Pass `keeperId` after inserting a new row so only that remote is folded.
+ * Token deletion is awaited. A keychain failure is ignored, same as before.
  */
-export function supersedeStaleDeployments(agentName: string, keeperId?: string): string[] {
+export async function supersedeStaleDeployments(agentName: string, keeperId?: string): Promise<string[]> {
   const rows = db.listDeployments(agentName)
   const stale = deploymentIdsSupersededBy(rows, keeperId)
   for (const id of stale) db.removeDeploymentBySha(id)
-  forgetSupersededDeploymentTokens(stale)
+  await forgetSupersededDeploymentTokens(stale)
   return stale
 }
 
@@ -123,7 +122,7 @@ export function isShaPattern(input: string): boolean {
 }
 
 // Resolve deployment target - tries SHA first, then agent name
-export function resolveDeploymentTarget(input: string): DeploymentResolution {
+export async function resolveDeploymentTarget(input: string): Promise<DeploymentResolution> {
   // Try SHA lookup first
   if (isShaPattern(input)) {
     const deployment = db.getDeploymentBySha(input)
@@ -136,7 +135,7 @@ export function resolveDeploymentTarget(input: string): DeploymentResolution {
   // A redeploy used to leave the previous row active. Retire those leftovers
   // before the name is treated as ambiguous, including rows written before
   // saveDeployment started superseding them. The remote is left running.
-  supersedeStaleDeployments(input)
+  await supersedeStaleDeployments(input)
 
   // Try agent name lookup
   const deployments = db.listDeployments(input)
@@ -1127,7 +1126,7 @@ export interface SaveDeploymentOptions {
   supersede?: boolean
 }
 
-export function saveDeployment(
+export async function saveDeployment(
   agentName: string,
   provider: string,
   url: string,
@@ -1136,13 +1135,13 @@ export function saveDeployment(
   volumeConfig?: string,
   deployedVersion?: string,
   options?: SaveDeploymentOptions,
-): string {
+): Promise<string> {
   // Check if SHA was passed via environment variable (from deploy.ts)
   const id = deploymentShaFromEnv() || generateDeploymentSha(agentName)
   db.createDeployment(id, agentName, provider, url, tokenHash, volumeId, volumeConfig, deployedVersion)
   // This row is the live remote. Earlier rows for the same provider and
   // resource are history, and the bearer token files they stored are stale.
-  if (options?.supersede !== false) supersedeStaleDeployments(agentName, id)
+  if (options?.supersede !== false) await supersedeStaleDeployments(agentName, id)
   return id
 }
 
