@@ -235,6 +235,8 @@ The version is a positional argument, not a flag.
   deployment row is marked `remote-state-unknown` with the failed target,
   and the next `cast upgrade` is not refused as already on the recorded
   version. `cast upgrade <agent> <recorded version>` restores that release.
+  When no version was recorded, the failure says to run
+  `cast upgrade <agent> --list-versions` instead of naming a version.
   The version is stored only after a redeploy succeeds.
 - **DigitalOcean MicroVM** — exports memory (8 MiB cap), builds a new linux/amd64 image, creates a replacement MicroVM, restores memory, then deletes the previous one. Image, size, and env cannot be changed in place.
 

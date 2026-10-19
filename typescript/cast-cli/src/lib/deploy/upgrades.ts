@@ -515,10 +515,17 @@ export function upgradeRestoreFailedMessage(
   upgradeError: string,
   restoreError: string,
   localFilesRestored = true,
+  versionRecorded = true,
 ): string {
   const localFiles = localFilesRestored
     ? `Your local files are back on ${oldVersion}.`
     : `Your local files could not be restored to ${oldVersion}. See Restore error above.`
+  const recovery = versionRecorded
+    ? [`To restore ${oldVersion} on the remote, run:`, `  cast upgrade ${agent} ${oldVersion}`]
+    : [
+      'To restore it, find the last good release and upgrade to it:',
+      `  cast upgrade ${agent} --list-versions`,
+    ]
   return [
     `Upgrade to ${target} failed, and restoring ${oldVersion} on the remote also failed.`,
     '',
@@ -526,8 +533,7 @@ export function upgradeRestoreFailedMessage(
     `Restore error: ${restoreError}`,
     '',
     `${agent} may be running the broken ${target} release. ${localFiles}`,
-    `To restore ${oldVersion} on the remote, run:`,
-    `  cast upgrade ${agent} ${oldVersion}`,
+    ...recovery,
   ].join('\n')
 }
 
@@ -701,6 +707,7 @@ export async function upgradeSpritesDeployment(
           upgradeError,
           restoreError,
           restoreFailure.length === 0,
+          Boolean(recordedVersion),
         ),
         'remote-state-unknown',
       )

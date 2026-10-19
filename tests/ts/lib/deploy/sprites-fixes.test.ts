@@ -17,9 +17,11 @@ import SpritesDeploy, {
   deployToSprites,
   formatAttemptLogTail,
   recordedHostMemoryPaths,
+  spriteHealthFailureMessage,
   spriteMemoryConfig,
 } from '../../../../typescript/cast-cli/src/lib/deploy/sprites'
 import {
+  logsSinceAttempt,
   parseSpriteServiceProbe,
   redactSpriteSecrets,
   spriteCliEnv,
@@ -886,6 +888,30 @@ describe('Sprites deploy fixes', () => {
     expect(formatted.split('\n').slice(1)).to.have.length(20)
   })
 
+  it('shows no service-log lines when the attempt marker is missing', () => {
+    const stale = [
+      'Agent ready on port 8080',
+      'previous attempt',
+      "ModuleNotFoundError: No module named 'cast'",
+    ].join('\n')
+    expect(logsSinceAttempt(stale, '---CAST-ATTEMPT-missing---')).to.equal('')
+    expect(logsSinceAttempt(stale, '')).to.equal('')
+    const message = spriteHealthFailureMessage('cast-email-agent', {
+      status: 'running',
+      logs: logsSinceAttempt(stale, '---CAST-ATTEMPT-missing---'),
+      reason: 'exited',
+    })
+    expect(message).to.equal([
+      "Sprite service 'cast-agent' on 'cast-email-agent' failed before the runtime was ready.",
+      'Status: running',
+      `Logs: sprite exec -s cast-email-agent -- cat ${SPRITE_SERVICE_LOG}`,
+    ].join('\n'))
+    expect(message).to.not.include('Last lines from the cast-agent service log:')
+    expect(message).to.not.include('Agent ready')
+    expect(message).to.not.include('previous attempt')
+    expect(message).to.not.include('ModuleNotFoundError')
+  })
+
   it('drops service-log lines from before this attempt when the health check fails', async () => {
     const env = setup('stale')
     process.env.SPRITE_MOCK_HEALTH = 'crash'
@@ -970,6 +996,34 @@ describe('Sprites deploy fixes', () => {
       const row = db.getDeploymentBySha(env.sha)
       expect(row.deployed_version).to.equal(null)
       expect(row.remote_version_state).to.equal(null)
+    } finally {
+      await cleanupUpgrade(env)
+    }
+  })
+
+  it('points at --list-versions when a failed restore has no recorded version', async () => {
+    const env = setup('upnoneb')
+    process.env.SPRITE_MOCK_HEALTH = 'crash'
+    try {
+      const {tarball} = await prepareUpgrade(env)
+      db.updateDeployedVersionById(env.sha, null as unknown as string)
+      const result = await runCli(env, '1.2', tarball)
+      expectNonZeroExit(result.error)
+      expectExactFailure(result.error, result.stderr)
+      const text = result.error?.message || ''
+      expect(text.startsWith('Upgrade to 1.2 failed, and restoring the previous release on the remote also failed.\n\nUpgrade error: ')).to.equal(true)
+      expect(text).to.include('\nRestore error: ')
+      expect(text).to.include(`Your local files are back on the previous release.`)
+      expect(text.endsWith(`\nTo restore it, find the last good release and upgrade to it:\n  cast upgrade ${env.agentName} --list-versions`)).to.equal(true)
+      expect(text).to.not.include(`cast upgrade ${env.agentName} the previous release`)
+      expect(text).to.not.match(/^Error:/)
+      expect(lastFilledLog(result.logs)).to.equal('Restoring the previous release on the remote...')
+      expect(text).to.not.include('cast deploy')
+      expect(text).to.not.include(TOKEN)
+      expect(text).to.not.include(BEARER)
+      const row = db.getDeploymentBySha(env.sha)
+      expect(row.deployed_version).to.equal(null)
+      expect(row.remote_version_state).to.equal(remoteStateUnknownValue('1.2'))
     } finally {
       await cleanupUpgrade(env)
     }

@@ -49,11 +49,11 @@ export function spriteAttemptMarker(now = Date.now(), nonce = Math.random().toSt
   return `---CAST-ATTEMPT-${now}-${nonce}---`
 }
 
-/** Log text written after `marker`. The whole log is kept when the marker is absent. */
+/** Log text written after `marker`. No lines when the marker is absent. */
 export function logsSinceAttempt(logs: string, marker: string): string {
-  if (!marker) return logs
+  if (!marker) return ''
   const at = logs.lastIndexOf(marker)
-  if (at === -1) return logs
+  if (at === -1) return ''
   return logs.slice(at + marker.length).replace(/^\r?\n/, '')
 }
 

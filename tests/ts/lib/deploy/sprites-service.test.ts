@@ -64,7 +64,8 @@ describe('sprite agent service', () => {
     expect(current).to.equal("ModuleNotFoundError: No module named 'cast'")
     expect(current).to.not.include('Agent ready')
     expect(current).to.not.include('previous attempt')
-    expect(logsSinceAttempt(logs, '---CAST-ATTEMPT-missing---')).to.equal(logs)
+    expect(logsSinceAttempt(logs, '---CAST-ATTEMPT-missing---')).to.equal('')
+    expect(logsSinceAttempt(logs, '')).to.equal('')
   })
 
   it('starts the service with separate argv so a shell cannot drop the name', () => {
