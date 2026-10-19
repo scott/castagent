@@ -229,7 +229,10 @@ The version is a positional argument, not a flag.
   agent, `sprite exec` to install dependencies and re-register the
   `cast-agent` service, and wait until the service log contains `Agent ready`.
   If that redeploy fails, the local agent directory is restored and the
-  recorded version stays unchanged. The version is stored only after the
+  recorded version stays the last known-good release. When the remote step
+  may have changed the sprite, the deployment row is marked `upgrade-failed`.
+  `cast upgrade <agent> <recorded version>` is then allowed, so that release
+  can be installed again. The version is stored only after the
   redeploy succeeds.
 - **DigitalOcean MicroVM** — exports memory (8 MiB cap), builds a new linux/amd64 image, creates a replacement MicroVM, restores memory, then deletes the previous one. Image, size, and env cannot be changed in place.
 

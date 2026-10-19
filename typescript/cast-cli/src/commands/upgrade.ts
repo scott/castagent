@@ -19,7 +19,9 @@ import {
   upgradeDockerDeployment,
   upgradeFlyDeployment,
   upgradeRailwayDeployment,
+  upgradeRefusedAsCurrent,
   upgradeSpritesDeployment,
+  UPGRADE_FAILED_STATE,
 } from '../lib/deploy/upgrades'
 import type {UpgradeContext} from '../lib/deploy/types'
 
@@ -139,7 +141,7 @@ export default class Upgrade extends Command {
 
     const currentVersion = deployment.deployed_version
 
-    if (currentVersion === version || (version === 'latest' && currentVersion === 'latest')) {
+    if (upgradeRefusedAsCurrent(deployment, version)) {
       this.log(`Agent '${agentName}' is already at version ${version || currentVersion}.`)
       this.log(`Use 'cast upgrade ${agentName} <version>' to upgrade to a different version.`)
       return
@@ -206,11 +208,17 @@ export default class Upgrade extends Command {
       } else {
         db.updateDeployedVersion(agentName, versionToStore)
       }
+      db.setRemoteVersionState(deploymentSha, null)
       this.log(`Upgraded to version ${versionToStore} successfully.`)
 
     } catch (error: any) {
       if (error.oclif && error.oclif.exit !== undefined) {
         throw error
+      }
+
+      const recorded = db.getDeploymentBySha(deploymentSha)
+      if (recorded?.remote_version_state === UPGRADE_FAILED_STATE) {
+        this.error(error instanceof Error ? error.message : String(error))
       }
 
       this.error(

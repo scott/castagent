@@ -488,10 +488,39 @@ function restoreAgentDirectory(agentPath: string, snapshotRoot: string): void {
 }
 
 /**
+ * PLACEHOLDER. Sol will replace this string. It is not final wording.
+ * The remote may be on the broken release. The recovery command is
+ * `cast upgrade <agent> <version>`, where `<version>` is the last known-good release.
+ */
+export const UPGRADE_FAILED_COPY =
+  'PLACEHOLDER: the remote may be on the broken release. Recovery command: cast upgrade <agent> <version>'
+
+/** Recorded on the deployment row when the remote version is no longer known. */
+export const UPGRADE_FAILED_STATE = 'upgrade-failed'
+
+export function formatUpgradeFailedCopy(agentName: string, knownGoodVersion: string | null | undefined): string {
+  const version = knownGoodVersion && knownGoodVersion.length > 0 ? knownGoodVersion : '<version>'
+  return UPGRADE_FAILED_COPY.replaceAll('<agent>', agentName).replaceAll('<version>', version)
+}
+
+/** True when `cast upgrade` should refuse because the remote is already on `version`. */
+export function upgradeRefusedAsCurrent(
+  deployment: {deployed_version?: string | null; remote_version_state?: string | null},
+  version: string,
+): boolean {
+  if (deployment.remote_version_state === UPGRADE_FAILED_STATE) return false
+  const currentVersion = deployment.deployed_version ?? null
+  if (currentVersion === version) return true
+  return version === 'latest' && currentVersion === 'latest'
+}
+
+/**
  * Redeploy an existing sprite with the same install path as `deployToSprites`.
  * The sprite name is `cast-<agent>`. The recorded deployment row is left in
  * place; `cast upgrade` writes the version after this returns. A failed
  * remote step restores the local agent directory to its pre-upgrade files.
+ * If that step may have changed the sprite, the row is marked upgrade-failed
+ * and `deployed_version` stays the last known-good release.
  */
 export async function upgradeSpritesDeployment(
   host: UpgradeHost,
@@ -513,6 +542,7 @@ export async function upgradeSpritesDeployment(
 
   const spriteName = `cast-${agentName}`
   const snapshotRoot = snapshotAgentDirectory(agentPath)
+  let remoteAttempted = false
   try {
     if (versionTarballPath && fs.existsSync(versionTarballPath)) {
       host.log(`Extracting version ${version} tarball...`)
@@ -532,6 +562,7 @@ export async function upgradeSpritesDeployment(
     }
 
     host.log(`Redeploying ${agentName} to sprite ${spriteName}...`)
+    remoteAttempted = true
     await deployToSprites(agentName, {
       log: (message) => host.log(message),
       warn: (message) => host.warn(message),
@@ -540,6 +571,7 @@ export async function upgradeSpritesDeployment(
       authToken,
       recordDeployment: false,
     })
+    if (deployment?.id) db.setRemoteVersionState(deployment.id, null)
 
     host.log('')
     host.log(`Upgraded to version ${version} on Sprites.`)
@@ -548,13 +580,21 @@ export async function upgradeSpritesDeployment(
     host.log('')
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    let restoreFailure = ''
     try {
       restoreAgentDirectory(agentPath, snapshotRoot)
     } catch (restoreError) {
       const extra = restoreError instanceof Error ? restoreError.message : String(restoreError)
-      throw new Error(`${message}\nFailed to restore local agent files: ${extra}`)
+      restoreFailure = `\nFailed to restore local agent files: ${extra}`
     }
-    throw error
+    if (remoteAttempted && deployment?.id) {
+      db.setRemoteVersionState(deployment.id, UPGRADE_FAILED_STATE)
+    }
+    const copy = remoteAttempted
+      ? `\n${formatUpgradeFailedCopy(agentName, deployment?.deployed_version)}`
+      : ''
+    if (!remoteAttempted && !restoreFailure) throw error
+    throw new Error(`${message}${restoreFailure}${copy}`)
   } finally {
     fs.rmSync(snapshotRoot, {recursive: true, force: true})
   }

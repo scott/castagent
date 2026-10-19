@@ -22,7 +22,7 @@ import {
   spriteCliEnv,
   SPRITE_SERVICE_LOG,
 } from '../../../../typescript/cast-cli/src/lib/deploy/sprites-service'
-import {upgradeSpritesDeployment} from '../../../../typescript/cast-cli/src/lib/deploy/upgrades'
+import {upgradeRefusedAsCurrent, upgradeSpritesDeployment, UPGRADE_FAILED_STATE} from '../../../../typescript/cast-cli/src/lib/deploy/upgrades'
 
 const TOKEN = 'org-slug/org-id/token-id/not-a-real-sprites-token'
 const MODEL_KEY = 'sk-test-openrouter'
@@ -538,6 +538,7 @@ describe('Sprites deploy fixes', () => {
     const env = setup('upok')
     try {
       const {tarball, agentDir} = await prepareUpgrade(env)
+      db.setRemoteVersionState(env.sha, UPGRADE_FAILED_STATE)
       const result = await runUpgrade(env, tarball)
       expect(result.error, result.logs.join('\n')).to.equal(undefined)
       assertKnownSpriteCommands(env.log, env.agentName)
@@ -561,6 +562,7 @@ describe('Sprites deploy fixes', () => {
       expect(uploaded.includes(Buffer.from('name: upgraded'))).to.equal(true)
       const row = db.getDeploymentBySha(env.sha)
       expect(row.deployed_version).to.equal('1.0.0')
+      expect(row.remote_version_state).to.equal(null)
       expect(row.provider).to.equal('sprites')
       expect(db.listDeployments(env.agentName)).to.have.length(1)
       expect(await keychain.getDeploymentToken(env.sha)).to.equal(BEARER)
@@ -590,6 +592,11 @@ describe('Sprites deploy fixes', () => {
       expect(uploaded.includes(Buffer.from('name: upgraded'))).to.equal(true)
       const row = db.getDeploymentBySha(env.sha)
       expect(row.deployed_version).to.equal('1.0.0')
+      expect(row.remote_version_state).to.equal(UPGRADE_FAILED_STATE)
+      expect(upgradeRefusedAsCurrent(row, '1.0.0')).to.equal(false)
+      expect(upgradeRefusedAsCurrent({deployed_version: '1.0.0', remote_version_state: null}, '1.0.0')).to.equal(true)
+      expect(result.error || '').to.include(`cast upgrade ${env.agentName} 1.0.0`)
+      expect(result.error || '').to.include('PLACEHOLDER: the remote may be on the broken release.')
       expect(db.listDeployments(env.agentName)).to.have.length(1)
       expect(await keychain.getDeploymentToken(env.sha)).to.equal(BEARER)
       const script = fs.readFileSync(env.script, 'utf8')
