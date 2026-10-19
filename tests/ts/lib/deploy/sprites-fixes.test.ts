@@ -904,6 +904,7 @@ describe('Sprites deploy fixes', () => {
     expect(message).to.equal([
       "Sprite service 'cast-agent' on 'cast-email-agent' failed before the runtime was ready.",
       'Status: running',
+      'No service log lines from this attempt.',
       `Logs: sprite exec -s cast-email-agent -- cat ${SPRITE_SERVICE_LOG}`,
     ].join('\n'))
     expect(message).to.not.include('Last lines from the cast-agent service log:')

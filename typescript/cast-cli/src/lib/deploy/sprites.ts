@@ -279,9 +279,8 @@ export function spriteHealthFailureMessage(
   const summary = result.reason === 'timeout'
     ? `Sprite service '${SPRITE_SERVICE_NAME}' on '${spriteName}' did not become ready (status: ${status}).`
     : `Sprite service '${SPRITE_SERVICE_NAME}' on '${spriteName}' failed before the runtime was ready.`
-  const logs = formatAttemptLogTail(result.logs)
-  const parts = [summary, `Status: ${status}`]
-  if (logs) parts.push(logs)
+  const logs = formatAttemptLogTail(result.logs) || 'No service log lines from this attempt.'
+  const parts = [summary, `Status: ${status}`, logs]
   parts.push(`Logs: sprite exec -s ${spriteName} -- cat ${SPRITE_SERVICE_LOG}`)
   return parts.join('\n')
 }
