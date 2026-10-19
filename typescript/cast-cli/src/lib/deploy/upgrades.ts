@@ -487,11 +487,127 @@ function restoreAgentDirectory(agentPath: string, snapshotRoot: string): void {
   }
 }
 
+/** Recorded on the deployment row when the remote version is no longer known. */
+export const REMOTE_STATE_UNKNOWN = 'remote-state-unknown'
+
+export function remoteStateUnknownValue(target: string): string {
+  return `${REMOTE_STATE_UNKNOWN}:${target}`
+}
+
+export function isRemoteStateUnknown(state: string | null | undefined): boolean {
+  return !!state && (state === REMOTE_STATE_UNKNOWN || state.startsWith(`${REMOTE_STATE_UNKNOWN}:`))
+}
+
+export function failedUpgradeTarget(state: string | null | undefined): string | null {
+  if (!state?.startsWith(`${REMOTE_STATE_UNKNOWN}:`)) return null
+  const target = state.slice(REMOTE_STATE_UNKNOWN.length + 1)
+  return target.length > 0 ? target : null
+}
+
+/** Drop a trailing newline so the following blank line stays a single gap. */
+function failureText(text: string): string {
+  return text.replace(/[ \t\r\n]+$/g, '')
+}
+
+export function upgradeRolledBackMessage(agent: string, oldVersion: string, target: string, upgradeError: string): string {
+  return `Upgrade to ${target} failed. ${agent} is back on ${oldVersion}.\n\nReason: ${failureText(upgradeError)}\n\nTo try again: cast upgrade ${agent} ${target}`
+}
+
+export function upgradeRestoreFailedMessage(
+  agent: string,
+  oldVersion: string,
+  target: string,
+  upgradeError: string,
+  restoreError: string,
+  localFilesRestored = true,
+  versionRecorded = true,
+): string {
+  const localFiles = localFilesRestored
+    ? `Your local files are back on ${oldVersion}.`
+    : `Your local files could not be restored to ${oldVersion}. See Restore error above.`
+  const recovery = versionRecorded
+    ? [`To restore ${oldVersion} on the remote, run:`, `  cast upgrade ${agent} ${oldVersion}`]
+    : [
+      'To restore it, find the last good release and upgrade to it:',
+      `  cast upgrade ${agent} --list-versions`,
+    ]
+  return [
+    `Upgrade to ${target} failed, and restoring ${oldVersion} on the remote also failed.`,
+    '',
+    `Upgrade error: ${failureText(upgradeError)}`,
+    `Restore error: ${failureText(restoreError)}`,
+    '',
+    `${agent} may be running the broken ${target} release. ${localFiles}`,
+    ...recovery,
+  ].join('\n')
+}
+
+/** State C: restoring the recorded version failed again, and the failed target stays put. */
+export function restoreFailedAgainMessage(
+  agent: string,
+  oldVersion: string,
+  brokenTarget: string,
+  error: string,
+): string {
+  return [
+    `Restoring ${oldVersion} on the remote failed again.`,
+    '',
+    `Error: ${failureText(error)}`,
+    '',
+    `${agent} may still be running the broken ${brokenTarget} release. Your local files are on ${oldVersion}.`,
+    `To try again: cast upgrade ${agent} ${oldVersion}`,
+  ].join('\n')
+}
+
+export function unfinishedUpgradeLine(agent: string, target: string): string {
+  return `The last upgrade of ${agent} to ${target} did not finish. The remote may be on ${target}.`
+}
+
+export function restoringLine(oldVersion: string): string {
+  return `Restoring ${oldVersion}...`
+}
+
+export function restoredLine(agent: string, oldVersion: string): string {
+  return `Restored ${agent} to ${oldVersion}.`
+}
+
+export class SpritesUpgradeFailure extends Error {
+  readonly outcome: 'rolled-back' | 'remote-state-unknown'
+
+  constructor(message: string, outcome: 'rolled-back' | 'remote-state-unknown') {
+    super(message)
+    this.name = 'SpritesUpgradeFailure'
+    this.outcome = outcome
+  }
+}
+
+function withoutSecrets(message: string, secrets: Array<string | null | undefined>): string {
+  let text = message
+  for (const secret of secrets) {
+    if (secret) text = text.split(secret).join('[redacted]')
+  }
+  return text
+}
+
+/** True when `cast upgrade` should refuse because the remote is already on `version`. */
+export function upgradeRefusedAsCurrent(
+  deployment: {deployed_version?: string | null; remote_version_state?: string | null},
+  version: string,
+): boolean {
+  if (isRemoteStateUnknown(deployment.remote_version_state)) return false
+  const currentVersion = deployment.deployed_version ?? null
+  if (currentVersion === version) return true
+  return version === 'latest' && currentVersion === 'latest'
+}
+
 /**
  * Redeploy an existing sprite with the same install path as `deployToSprites`.
  * The sprite name is `cast-<agent>`. The recorded deployment row is left in
  * place; `cast upgrade` writes the version after this returns. A failed
- * remote step restores the local agent directory to its pre-upgrade files.
+ * remote step restores the local agent directory, then redeploys that
+ * previous release through the same path. If the rollback succeeds, the
+ * recorded version stays put. If it fails, the row is marked
+ * `remote-state-unknown` and `deployed_version` stays the last known-good release.
  */
 export async function upgradeSpritesDeployment(
   host: UpgradeHost,
@@ -512,7 +628,13 @@ export async function upgradeSpritesDeployment(
   }
 
   const spriteName = `cast-${agentName}`
+  const recordedVersion = typeof deployment?.deployed_version === 'string' && deployment.deployed_version.length > 0
+    ? deployment.deployed_version
+    : null
+  const priorFailedTarget = failedUpgradeTarget(deployment?.remote_version_state)
+  const restoring = priorFailedTarget !== null && recordedVersion !== null && version === recordedVersion
   const snapshotRoot = snapshotAgentDirectory(agentPath)
+  let remoteAttempted = false
   try {
     if (versionTarballPath && fs.existsSync(versionTarballPath)) {
       host.log(`Extracting version ${version} tarball...`)
@@ -532,6 +654,7 @@ export async function upgradeSpritesDeployment(
     }
 
     host.log(`Redeploying ${agentName} to sprite ${spriteName}...`)
+    remoteAttempted = true
     await deployToSprites(agentName, {
       log: (message) => host.log(message),
       warn: (message) => host.warn(message),
@@ -539,22 +662,89 @@ export async function upgradeSpritesDeployment(
       ...spriteOptions,
       authToken,
       recordDeployment: false,
+      announceSuccess: !restoring,
     })
+    if (deployment?.id) db.setRemoteVersionState(deployment.id, null)
 
-    host.log('')
-    host.log(`Upgraded to version ${version} on Sprites.`)
-    host.log(`Sprite: ${spriteName}`)
-    host.log(`Volume ${existingVolumeId || 'preserved'}.`)
-    host.log('')
+    if (!restoring) {
+      host.log('')
+      host.log(`Upgraded to version ${version} on Sprites.`)
+      host.log(`Sprite: ${spriteName}`)
+      host.log(`Volume ${existingVolumeId || 'preserved'}.`)
+      host.log('')
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    try {
-      restoreAgentDirectory(agentPath, snapshotRoot)
-    } catch (restoreError) {
-      const extra = restoreError instanceof Error ? restoreError.message : String(restoreError)
-      throw new Error(`${message}\nFailed to restore local agent files: ${extra}`)
+    let restoreFailure = ''
+    const restoreLocal = (): void => {
+      try {
+        restoreAgentDirectory(agentPath, snapshotRoot)
+      } catch (restoreError) {
+        const extra = restoreError instanceof Error ? restoreError.message : String(restoreError)
+        restoreFailure += `\nFailed to restore local agent files: ${extra}`
+      }
     }
-    throw error
+    restoreLocal()
+    if (!remoteAttempted) {
+      if (restoreFailure) throw new Error(`${message}${restoreFailure}`)
+      throw error
+    }
+    const knownGood = recordedVersion || 'the previous release'
+    const secrets = [authToken, process.env.SPRITES_TOKEN, process.env.SPRITE_TOKEN]
+    const upgradeError = withoutSecrets(message, secrets)
+    const markUnknown = (): void => {
+      if (restoring) return
+      if (deployment?.id) db.setRemoteVersionState(deployment.id, remoteStateUnknownValue(version))
+    }
+    const throwRestoreFailure = (restoreError: string): never => {
+      if (restoring && priorFailedTarget) {
+        throw new SpritesUpgradeFailure(
+          restoreFailedAgainMessage(agentName, knownGood, priorFailedTarget, upgradeError),
+          'remote-state-unknown',
+        )
+      }
+      markUnknown()
+      throw new SpritesUpgradeFailure(
+        upgradeRestoreFailedMessage(
+          agentName,
+          knownGood,
+          version,
+          upgradeError,
+          restoreError,
+          restoreFailure.length === 0,
+          Boolean(recordedVersion),
+        ),
+        'remote-state-unknown',
+      )
+    }
+    if (restoreFailure) {
+      throwRestoreFailure(withoutSecrets(restoreFailure.trim(), secrets))
+    }
+
+    host.log(`Restoring ${knownGood} on the remote...`)
+    try {
+      await deployToSprites(agentName, {
+        log: () => {},
+        warn: () => {},
+      }, {
+        ...spriteOptions,
+        authToken,
+        recordDeployment: false,
+        announceSuccess: false,
+      })
+    } catch (rollbackError) {
+      const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
+      restoreLocal()
+      const restoreError = withoutSecrets(`${rollbackMessage}${restoreFailure}`.trim(), secrets)
+      throwRestoreFailure(restoreError)
+    }
+
+    restoreLocal()
+    if (deployment?.id) db.setRemoteVersionState(deployment.id, null)
+    throw new SpritesUpgradeFailure(
+      upgradeRolledBackMessage(agentName, knownGood, version, upgradeError),
+      'rolled-back',
+    )
   } finally {
     fs.rmSync(snapshotRoot, {recursive: true, force: true})
   }

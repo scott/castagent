@@ -7,6 +7,7 @@ import sinon from 'sinon'
 
 // Import the upgrade command to test its structure
 import UpgradeCommand from '../../../typescript/cast-cli/src/commands/upgrade'
+import * as registry from '../../../typescript/cast-cli/src/lib/deploy/registry'
 import {castKnownHostsPath, recordPinnedHostKey} from '../../../typescript/cast-cli/src/lib/deploy/ssh-hostkey'
 
 describe('Upgrade Command', () => {
@@ -293,8 +294,72 @@ describe('Upgrade Command', () => {
       await instance.run()
 
       const output = logs.join('\n')
-      expect(output).to.include(`Use 'cast upgrade ${agentName} <version>' to upgrade to a different version.`)
+      expect(output).to.equal([
+        `Agent '${agentName}' is already at version 1.6.`,
+        `Use 'cast upgrade ${agentName} <version>' to pick a different release.`,
+      ].join('\n'))
       expect(output).to.not.match(/upgrade[^\n]*--version/)
+    })
+
+    async function failedUpgrade(provider: string): Promise<{message: string; exit?: number}> {
+      const deployUtils = await import('../../../typescript/cast-cli/src/lib/deploy/deploy-utils')
+      sandbox.stub(deployUtils, 'resolveDeploymentTarget').resolves({
+        type: 'single',
+        deployment: {
+          id: 'abc123',
+          agent_name: agentName,
+          provider,
+          deployment_url: 'http://127.0.0.1:8080',
+          deployed_version: '1.0',
+        },
+      })
+      const releases = await import('../../../typescript/cast-cli/src/lib/releases')
+      sandbox.stub(releases, 'validateSemver').resolves(true)
+      const tarball = path.join(agentDir, '1.1.tar.gz')
+      fs.writeFileSync(tarball, '')
+      sandbox.stub(releases, 'getRelease').resolves({
+        version: '1.1',
+        change_number: 1,
+        message: '',
+        changelog: '',
+        created_at: '2026-05-12T17:08:33.000Z',
+        tarball_path: tarball,
+      })
+      sandbox.stub(registry, 'getDeploymentProvider').returns({
+        upgrade: async () => {
+          throw new Error('boom')
+        },
+      } as any)
+      const instance = new UpgradeCommand(['upgrade', agentName, '1.1'], {} as any) as any
+      instance.parse = async () => ({
+        args: {agent: agentName, version: '1.1'},
+        flags: {'list-versions': false},
+      })
+      instance.confirm = async () => true
+      instance.log = () => {}
+      try {
+        await instance.run()
+        expect.fail('upgrade should exit non-zero')
+      } catch (error: any) {
+        return {message: error.message || String(error), exit: error.oclif?.exit}
+      }
+      return {message: ''}
+    }
+
+    it('keeps the deploy rollback hint for a non-sprites provider', async () => {
+      const failed = await failedUpgrade('docker')
+      expect(failed.exit).to.not.equal(0)
+      expect(failed.message).to.include('You can try rolling back by deploying the previous version:')
+      expect(failed.message).to.include(`cast deploy ${agentName} --provider docker`)
+      expect(failed.message).to.include('boom')
+    })
+
+    it('does not use the deploy rollback hint when the provider is sprites', async () => {
+      const failed = await failedUpgrade('sprites')
+      expect(failed.exit).to.not.equal(0)
+      expect(failed.message).to.equal('boom')
+      expect(failed.message).to.not.include('cast deploy')
+      expect(failed.message).to.not.include('rolling back by deploying')
     })
   })
 })

@@ -1,4 +1,4 @@
-import {Args, Command, Flags} from '@oclif/core'
+import {Args, Command, Errors, Flags} from '@oclif/core'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -19,6 +19,12 @@ import {
   upgradeDockerDeployment,
   upgradeFlyDeployment,
   upgradeRailwayDeployment,
+  failedUpgradeTarget,
+  restoredLine,
+  restoringLine,
+  SpritesUpgradeFailure,
+  unfinishedUpgradeLine,
+  upgradeRefusedAsCurrent,
   upgradeSpritesDeployment,
 } from '../lib/deploy/upgrades'
 import type {UpgradeContext} from '../lib/deploy/types'
@@ -139,14 +145,23 @@ export default class Upgrade extends Command {
 
     const currentVersion = deployment.deployed_version
 
-    if (currentVersion === version || (version === 'latest' && currentVersion === 'latest')) {
+    if (upgradeRefusedAsCurrent(deployment, version)) {
       this.log(`Agent '${agentName}' is already at version ${version || currentVersion}.`)
-      this.log(`Use 'cast upgrade ${agentName} <version>' to upgrade to a different version.`)
+      this.log(`Use 'cast upgrade ${agentName} <version>' to pick a different release.`)
       return
     }
 
-    this.log(`Upgrading ${agentName} from version ${currentVersion || 'unknown'} to ${version}...`)
-    this.log(`Provider: ${provider}`)
+    const failedTarget = failedUpgradeTarget(deployment.remote_version_state)
+    const restoring = failedTarget !== null && version === currentVersion
+    if (failedTarget) {
+      this.log(unfinishedUpgradeLine(agentName, failedTarget))
+    }
+    if (restoring) {
+      this.log(restoringLine(String(currentVersion)))
+    } else {
+      this.log(`Upgrading ${agentName} from version ${currentVersion || 'unknown'} to ${version}...`)
+      this.log(`Provider: ${provider}`)
+    }
 
     const confirmed = await this.confirm(`Proceed with upgrade?`)
     if (!confirmed) {
@@ -206,11 +221,27 @@ export default class Upgrade extends Command {
       } else {
         db.updateDeployedVersion(agentName, versionToStore)
       }
-      this.log(`Upgraded to version ${versionToStore} successfully.`)
+      db.setRemoteVersionState(deploymentSha, null)
+      if (restoring) {
+        this.log(restoredLine(agentName, String(currentVersion)))
+      } else {
+        this.log(`Upgraded to version ${versionToStore} successfully.`)
+      }
 
     } catch (error: any) {
       if (error.oclif && error.oclif.exit !== undefined) {
         throw error
+      }
+
+      const text = error instanceof Error ? error.message : String(error)
+      if (provider === 'sprites' && error instanceof SpritesUpgradeFailure) {
+        process.stderr.write(`${text}\n`)
+        const failure = new Errors.CLIError(text, {exit: 2})
+        failure.skipOclifErrorHandling = true
+        throw failure
+      }
+      if (provider === 'sprites') {
+        this.error(text)
       }
 
       this.error(

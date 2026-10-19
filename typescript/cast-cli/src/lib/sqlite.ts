@@ -106,6 +106,7 @@ export class CastDatabase {
         volume_id TEXT,
         volume_config TEXT,
         deployed_version TEXT,
+        remote_version_state TEXT,
         deleted_at DATETIME,
         FOREIGN KEY (agent_name) REFERENCES agents(name)
       );
@@ -199,6 +200,12 @@ export class CastDatabase {
     // Migration: Add deployed_version column to deployments table (idempotent)
     if (!this.columnExists('deployments', 'deployed_version')) {
       this.db.exec('ALTER TABLE deployments ADD COLUMN deployed_version TEXT')
+    }
+
+    // Migration: remote version is unknown after a failed upgrade (idempotent).
+    // deployed_version stays the last known-good release.
+    if (!this.columnExists('deployments', 'remote_version_state')) {
+      this.db.exec('ALTER TABLE deployments ADD COLUMN remote_version_state TEXT')
     }
 
     // Migration: Add deleted_at column (idempotent)
@@ -515,6 +522,13 @@ export class CastDatabase {
     const versionStr = typeof version === 'number' ? `v${version}` : version
     const stmt = this.db.prepare('UPDATE deployments SET deployed_version = ? WHERE id = ? AND deleted_at IS NULL')
     stmt.run(versionStr, id)
+  }
+
+  public setRemoteVersionState(id: string, state: string | null): void {
+    const stmt = this.db.prepare(
+      'UPDATE deployments SET remote_version_state = ? WHERE id = ? AND deleted_at IS NULL',
+    )
+    stmt.run(state, id)
   }
 
   public updateDeploymentLastConnected(sha: string): void {
