@@ -19,6 +19,10 @@ import pytest
 # Add the cast package to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
+# cast.runtime imports langgraph through the agent runtime. langgraph is not
+# declared in pyproject.toml, so skip this module when it is missing.
+pytest.importorskip("langgraph")
+
 from cast.runtime import A2AServer
 from unittest.mock import MagicMock
 
