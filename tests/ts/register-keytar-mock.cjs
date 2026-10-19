@@ -7,11 +7,11 @@
  * libsecret would only move the failure: the runner also has no Secret
  * Service, and the prebuild is tied to a Node ABI and a soname.
  *
- * The suite never calls the real keychain. It stubs getPassword, setPassword,
- * deletePassword, and findCredentials. This hook returns one shared object
- * for every require('keytar'), which is what those stubs replace. TypeScript's
- * `import * as keytar` reads the methods through live getters, so a stub
- * installed on require('keytar') is the function production code calls.
+ * Tests that stub getPassword, setPassword, deletePassword, and findCredentials
+ * replace the methods on one shared object. TypeScript's `import * as keytar`
+ * reads those methods through live getters, so the stub is what production
+ * code calls. Tests that do not stub get a memory-backed keychain, because a
+ * method that resolves without storing a password drops tokens on the floor.
  *
  * Loaded from .mocharc.json after ts-node/register and before test files.
  */
@@ -23,20 +23,41 @@ const Module = require('module')
 const MARKER = Symbol.for('cast.testKeytar')
 const HOOK = Symbol.for('cast.testKeytarHook')
 
+const passwords = new Map()
+
+function accountKey(service, account) {
+  return `${service}\0${account}`
+}
+
 const keytarMock = {
-  async getPassword() {
+  async getPassword(service, account) {
+    return passwords.has(accountKey(service, account)) ? passwords.get(accountKey(service, account)) : null
+  },
+  async setPassword(service, account, password) {
+    passwords.set(accountKey(service, account), password)
+  },
+  async deletePassword(service, account) {
+    return passwords.delete(accountKey(service, account))
+  },
+  async findPassword(service) {
+    const prefix = `${service}\0`
+    for (const [key, password] of passwords) {
+      if (key.startsWith(prefix)) return password
+    }
     return null
   },
-  async setPassword() {},
-  async deletePassword() {
-    return false
+  async findCredentials(service) {
+    const prefix = `${service}\0`
+    const found = []
+    for (const [key, password] of passwords) {
+      if (key.startsWith(prefix)) found.push({account: key.slice(prefix.length), password})
+    }
+    return found
   },
-  async findPassword() {
-    return null
-  },
-  async findCredentials() {
-    return []
-  },
+}
+
+function resetKeytarMock() {
+  passwords.clear()
 }
 
 Object.defineProperty(keytarMock, MARKER, {value: true})
@@ -51,4 +72,13 @@ if (!Module.prototype.require[HOOK]) {
   Module.prototype.require = requireWithKeytarMock
 }
 
-module.exports = keytarMock
+// Drop stored passwords between tests. Sinon stubs replace the methods for
+// one test and are restored by that test's sandbox. mochaHooks has to be
+// this file's exports; the require('keytar') object stays the mock itself.
+module.exports = {
+  mochaHooks: {
+    beforeEach() {
+      resetKeytarMock()
+    },
+  },
+}

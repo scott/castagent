@@ -555,6 +555,26 @@ describe('dev command - /stop keeps the TUI open', () => {
   let sandbox: sinon.SinonSandbox
   let sigintListeners: NodeJS.SignalsListener[]
   const agentName = 'test-stop-tui-agent'
+  const tuiEntry = path.join(__dirname, '../../../typescript/cast-tui/dist/index.js')
+  // undefined until the first stand-in. null means there was no real bundle to put back.
+  let savedTuiEntry: Buffer | null | undefined
+
+  function installTuiStandIn(): void {
+    if (savedTuiEntry === undefined) {
+      savedTuiEntry = fs.existsSync(tuiEntry) ? fs.readFileSync(tuiEntry) : null
+      if (savedTuiEntry?.includes('test stand-in')) savedTuiEntry = null
+    }
+    fs.mkdirSync(path.dirname(tuiEntry), {recursive: true})
+    fs.writeFileSync(tuiEntry, '// test stand-in\n')
+  }
+
+  function restoreTuiEntry(): void {
+    if (savedTuiEntry === undefined) return
+    if (!fs.existsSync(tuiEntry) || fs.readFileSync(tuiEntry, 'utf8').includes('test stand-in')) {
+      if (savedTuiEntry) fs.writeFileSync(tuiEntry, savedTuiEntry)
+      else if (fs.existsSync(tuiEntry)) fs.rmSync(tuiEntry, {force: true})
+    }
+  }
 
   before(async () => {
     // Earlier tests swap fs in require.cache and reload this command.
@@ -581,13 +601,7 @@ describe('dev command - /stop keeps the TUI open', () => {
       process.on('SIGINT', listener)
     }
     fs.rmSync(path.join(os.homedir(), '.cast', 'logs', `${agentName}.log`), {force: true})
-    const tuiEntry = path.join(__dirname, '../../../typescript/cast-tui/dist/index.js')
-    if (fs.existsSync(tuiEntry)) {
-      const body = fs.readFileSync(tuiEntry, 'utf8')
-      if (body.includes('test stand-in')) {
-        fs.rmSync(tuiEntry, {force: true})
-      }
-    }
+    restoreTuiEntry()
   })
 
   function fakeChild() {
@@ -632,9 +646,8 @@ describe('dev command - /stop keeps the TUI open', () => {
     const exitStub = sandbox.stub(process, 'exit')
     // existsSync cannot be stubbed (non-configurable). Put a stand-in
     // bundle where cast dev looks for the TUI so connectToAgent spawns it.
-    const tuiDist = path.join(__dirname, '../../../typescript/cast-tui/dist')
-    fs.mkdirSync(tuiDist, {recursive: true})
-    fs.writeFileSync(path.join(tuiDist, 'index.js'), '// test stand-in\n')
+    // The real cast-tui dist is restored afterward; later files read it.
+    installTuiStandIn()
     const runtime = fakeChild()
     const tui = fakeChild()
     let spawnCount = 0

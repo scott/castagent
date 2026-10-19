@@ -8,7 +8,7 @@ ref: ['cli:describe']
 
 # Custom tools
 
-`tools.custom` in `agent.yaml` records custom tool entries. `{% ref "cli:describe" %}` prints them on the Custom line. The runtime loads built-in tools from `tools.builtin` and leaves `tools.custom` on the config.
+`tools.custom` in `agent.yaml` records custom tool entries. `{% ref "cli:describe" %}` prints them on the Custom line. The runtime loads only `tools.builtin` and leaves `tools.custom` on the config.
 
 ## Entry shape
 

@@ -75,6 +75,38 @@ jobs:
         run: npx tsc --noEmit
         working-directory: typescript
 
+      # registry.test.ts runs docs-site/node_modules/.bin/tsx. That package is
+      # not part of the root install. landing-page.test.ts also reads the
+      # gitignored providers.json this extractor writes; npm test generates
+      # the file, and this install is what lets the extractor test run.
+      - name: Install docs-site dependencies
+        run: npm --prefix docs-site ci
+
+      # TypeScript deploy tests shell out to python -m cast.providers.catalog
+      # and to cast.providers.registry. Those modules import langchain and
+      # PyYAML, which are not installed by the root npm install.
+      - name: Install Python packages the TypeScript suite shells out to
+        run: python -m pip install langchain-openai langchain-core pyyaml
+
+      # ssh-hostkey.test.ts starts sshd. The image does not always ship it.
+      - name: Install OpenSSH server
+        run: |
+          if [ ! -x /usr/sbin/sshd ]; then
+            sudo apt-get update
+            sudo apt-get install -y openssh-server
+          fi
+
+      # error-handling.test.ts imports typescript/cast-tui/dist and runs it
+      # under bun. @opentui/core uses bun:ffi, so Node cannot load that bundle.
+      # A prefix install stays on PATH without a writable global node_modules.
+      - name: Install Bun
+        run: |
+          npm install --prefix "$RUNNER_TEMP/bun" bun@1.4.3
+          echo "$RUNNER_TEMP/bun/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Build cast-tui
+        run: npm run build:tui
+
       - name: Run TypeScript tests with coverage
         run: npm test
         working-directory: typescript

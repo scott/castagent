@@ -31,6 +31,14 @@ describe('keytar test double', () => {
     expect(loadedNative).to.equal(false)
   })
 
+  it('remembers a password for tests that do not stub keytar', async () => {
+    const keytar = require('keytar')
+    await keytar.setPassword('cast', 'token:round', 'secret')
+    expect(await keytar.getPassword('cast', 'token:round')).to.equal('secret')
+    expect(await keytar.deletePassword('cast', 'token:round')).to.equal(true)
+    expect(await keytar.getPassword('cast', 'token:round')).to.equal(null)
+  })
+
   it('is the object KeychainManager calls, so existing stubs still apply', async () => {
     const keytar = require('keytar')
     const getPassword = sandbox.stub(keytar, 'getPassword').resolves('from-mock')
