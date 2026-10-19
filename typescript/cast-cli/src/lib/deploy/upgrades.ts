@@ -16,6 +16,10 @@ import {
 import {dockerContainerEnv, dockerContainerRunArgs, startDockerAgentContainer, writeDockerCompose} from './docker'
 import {writeHostMotdOverSsh} from './motd'
 import {writeRequirementsTxt} from './requirements'
+import {
+  digitalOceanMemoryVolumeName,
+  ensureDropletContainerMemory,
+} from './digitalocean'
 import {execDigitalOceanSsh} from './ssh-hostkey'
 
 export interface UpgradeHost {
@@ -331,6 +335,24 @@ export async function upgradeFlyDeployment(
   host.log('')
 }
 
+/**
+ * Mount the droplet volume during an upgrade and restart the container
+ * onto it. The API token, deployment auth token, and inference secret
+ * are the values the remote commands must not carry.
+ */
+export async function mountUpgradedDropletMemory(
+  dropletIp: string,
+  agentPath: string,
+  volumeName: string,
+  apiToken: string,
+  deployment: {agent_name: string; id?: string | null; auth_token_hash?: string | null} | null,
+): Promise<void> {
+  const authToken = deployment ? await resolveDeploymentAuthToken(deployment) : null
+  const inference = filterInferenceEnv(readAgentModel(agentPath), inferenceEnv())
+  const secrets = [apiToken, authToken ?? '', ...Object.values(inference)].filter(value => value.length > 0)
+  await ensureDropletContainerMemory(dropletIp, volumeName, secrets)
+}
+
 export async function upgradeDigitalOceanDeployment(
   host: UpgradeHost,
   agentName: string,
@@ -398,7 +420,11 @@ export async function upgradeDigitalOceanDeployment(
   const deploymentUrl = deployment?.deployment_url
   const dropletIp = deploymentUrl ? new URL(deploymentUrl).hostname : null
 
+  const volumeName = existingVolumeId || digitalOceanMemoryVolumeName(agentName)
   if (dropletIp) {
+    host.log(`Mounting memory volume at /mnt/${volumeName}...`)
+    await mountUpgradedDropletMemory(dropletIp, agentPath, volumeName, token, deployment ?? null)
+    host.log(`Volume attached at /mnt/${volumeName}`)
     host.log('Refreshing SSH login MOTD...')
     const onHostTui = await detectOnHostTui(dropletIp)
     const {motdStderr, profileStderr} = await writeHostMotdOverSsh(dropletIp, {
@@ -416,13 +442,15 @@ export async function upgradeDigitalOceanDeployment(
       host.warn(`Failed to refresh /etc/profile.d/cast.sh: ${profileStderr}`)
     }
   } else {
-    host.warn('Could not determine droplet IP; skipping MOTD refresh')
+    host.warn('Could not determine droplet IP; skipping memory volume mount and MOTD refresh')
   }
 
   host.log('')
   host.log(`Upgraded to version ${version} on DigitalOcean.`)
   host.log(`Deployment URL: ${deploymentUrl}`)
-  host.log(`Volume ${existingVolumeId || 'preserved'}.`)
+  if (!dropletIp) {
+    host.log(`Volume ${existingVolumeId || 'preserved'}.`)
+  }
   host.log('')
 }
 

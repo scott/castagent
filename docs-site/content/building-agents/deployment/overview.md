@@ -184,7 +184,12 @@ one live deployment exists. `cast stop <name>` stops the running
 container and leaves the deployment row and the `cast-<name>` memory
 volume in place. `cast shutdown` removes both.
 
-A DigitalOcean droplet runs the container `cast-agent`. `cast stop <name>`
+A DigitalOcean droplet runs the container `cast-agent`. The memory
+volume is attached before that container starts. Cast formats it only
+when it has no filesystem, mounts it at `/mnt/cast-<name>`, and records
+that mount in `/etc/fstab` by filesystem UUID with `nofail`. Deploy
+fails if the path is not mounted or the container's `/app/agent/memory`
+is not that mount. `cast stop <name>`
 SSHs to the stored droplet address and stops that container when it is
 running. The droplet and its `cast-<name>` memory volume stay.
 `cast shutdown` deletes the droplet and that volume. SSH checks the

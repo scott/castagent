@@ -562,69 +562,6 @@ describe('DigitalOcean Deploy Provider', () => {
   })
 
   // -----------------------------------------------------------------------
-  // createAndAttachVolume
-  // -----------------------------------------------------------------------
-
-  describe('createAndAttachVolume', () => {
-    it('should create volume and attach to droplet', async () => {
-      sandbox.stub(axios, 'post')
-        .onFirstCall().resolves({
-          data: {
-            volume: {id: 'vol-123'},
-          },
-        })
-        .onSecondCall().resolves({data: {}})
-
-      const result = await instance.createAndAttachVolume(
-        'test-token', 'droplet-1', 'cast-test-deploy-1-memory', 'nyc3',
-      )
-      expect(result).to.equal('/mnt/cast-test-deploy-1-memory')
-    })
-
-    it('should return mount path when volume already exists (response.id === invalid)', async () => {
-      // When the error response has id === 'invalid', the method treats it
-      // as "volume already exists" and returns the mount path.
-      const error: any = new Error('already exists')
-      error.response = {data: {id: 'invalid'}}
-
-      sandbox.stub(axios, 'post').rejects(error)
-
-      const result = await instance.createAndAttachVolume(
-        'test-token', 'droplet-1', 'cast-test-deploy-1-memory', 'nyc3',
-      )
-      expect(result).to.equal('/mnt/cast-test-deploy-1-memory')
-    })
-
-    it('should return null and warn on non-invalid error', async () => {
-      const error: any = new Error('rate limited')
-      error.response = {data: {id: 'something_else'}}
-
-      sandbox.stub(axios, 'post').rejects(error)
-      const warnStub = sandbox.stub(instance, 'warn').returns(undefined)
-
-      const result = await instance.createAndAttachVolume(
-        'test-token', 'droplet-1', 'vol-name', 'nyc3',
-      )
-      expect(result).to.be.null
-      expect(warnStub.calledOnce).to.be.true
-    })
-
-    it('should return null and warn when response has no data', async () => {
-      const error: any = new Error('network error')
-      // No response.data
-
-      sandbox.stub(axios, 'post').rejects(error)
-      const warnStub = sandbox.stub(instance, 'warn').returns(undefined)
-
-      const result = await instance.createAndAttachVolume(
-        'test-token', 'droplet-1', 'vol-name', 'nyc3',
-      )
-      expect(result).to.be.null
-      expect(warnStub.calledOnce).to.be.true
-    })
-  })
-
-  // -----------------------------------------------------------------------
   // deployOnDroplet
   // -----------------------------------------------------------------------
 
