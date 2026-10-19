@@ -518,11 +518,15 @@ describe('new command - stdin without a TTY', () => {
   const repoRoot = path.resolve(__dirname, '../../..')
 
   function runNew(input: string, extraEnv: NodeJS.ProcessEnv = {}, cwd = repoRoot) {
-    return spawnSync(process.execPath, ['-r', 'ts-node/register', worker], {
+    // Preload by absolute path. A temp cwd cannot resolve `ts-node/register`
+    // from its own directory, and that cwd is what getPythonExecutable reads.
+    const tsNodeRegister = require.resolve('ts-node/register')
+    return spawnSync(process.execPath, ['-r', tsNodeRegister, worker], {
       cwd,
       env: {
         ...process.env,
         TS_NODE_TRANSPILE_ONLY: '1',
+        TS_NODE_PROJECT: path.join(repoRoot, 'tsconfig.test.json'),
         ...extraEnv,
       },
       encoding: 'utf8',
