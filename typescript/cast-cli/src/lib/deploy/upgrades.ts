@@ -514,16 +514,37 @@ export function upgradeRestoreFailedMessage(
   target: string,
   upgradeError: string,
   restoreError: string,
+  localFilesRestored = true,
 ): string {
+  const localFiles = localFilesRestored
+    ? `Your local files are back on ${oldVersion}.`
+    : `Your local files could not be restored to ${oldVersion}. See Restore error above.`
   return [
     `Upgrade to ${target} failed, and restoring ${oldVersion} on the remote also failed.`,
     '',
     `Upgrade error: ${upgradeError}`,
     `Restore error: ${restoreError}`,
     '',
-    `${agent} may be running the broken ${target} release. Your local files are back on ${oldVersion}.`,
+    `${agent} may be running the broken ${target} release. ${localFiles}`,
     `To restore ${oldVersion} on the remote, run:`,
     `  cast upgrade ${agent} ${oldVersion}`,
+  ].join('\n')
+}
+
+/** State C: restoring the recorded version failed again, and the failed target stays put. */
+export function restoreFailedAgainMessage(
+  agent: string,
+  oldVersion: string,
+  brokenTarget: string,
+  error: string,
+): string {
+  return [
+    `Restoring ${oldVersion} on the remote failed again.`,
+    '',
+    `Error: ${error}`,
+    '',
+    `${agent} may still be running the broken ${brokenTarget} release. Your local files are on ${oldVersion}.`,
+    `To try again: cast upgrade ${agent} ${oldVersion}`,
   ].join('\n')
 }
 
@@ -649,18 +670,40 @@ export async function upgradeSpritesDeployment(
       if (restoreFailure) throw new Error(`${message}${restoreFailure}`)
       throw error
     }
-    const knownGood = deployment?.deployed_version || '<old>'
+    const recordedVersion = typeof deployment?.deployed_version === 'string' && deployment.deployed_version.length > 0
+      ? deployment.deployed_version
+      : null
+    const priorFailedTarget = failedUpgradeTarget(deployment?.remote_version_state)
+    const repeatedRestore = priorFailedTarget !== null && recordedVersion !== null && version === recordedVersion
+    const knownGood = recordedVersion || 'the previous release'
     const secrets = [authToken, process.env.SPRITES_TOKEN, process.env.SPRITE_TOKEN]
     const upgradeError = withoutSecrets(message, secrets)
     const markUnknown = (): void => {
+      if (repeatedRestore) return
       if (deployment?.id) db.setRemoteVersionState(deployment.id, remoteStateUnknownValue(version))
     }
-    if (restoreFailure) {
+    const throwRestoreFailure = (restoreError: string): never => {
+      if (repeatedRestore && priorFailedTarget) {
+        throw new SpritesUpgradeFailure(
+          restoreFailedAgainMessage(agentName, knownGood, priorFailedTarget, upgradeError),
+          'remote-state-unknown',
+        )
+      }
       markUnknown()
       throw new SpritesUpgradeFailure(
-        upgradeRestoreFailedMessage(agentName, knownGood, version, upgradeError, withoutSecrets(restoreFailure.trim(), secrets)),
+        upgradeRestoreFailedMessage(
+          agentName,
+          knownGood,
+          version,
+          upgradeError,
+          restoreError,
+          restoreFailure.length === 0,
+        ),
         'remote-state-unknown',
       )
+    }
+    if (restoreFailure) {
+      throwRestoreFailure(withoutSecrets(restoreFailure.trim(), secrets))
     }
 
     try {
@@ -675,12 +718,8 @@ export async function upgradeSpritesDeployment(
     } catch (rollbackError) {
       const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError)
       restoreLocal()
-      markUnknown()
       const restoreError = withoutSecrets(`${rollbackMessage}${restoreFailure}`.trim(), secrets)
-      throw new SpritesUpgradeFailure(
-        upgradeRestoreFailedMessage(agentName, knownGood, version, upgradeError, restoreError),
-        'remote-state-unknown',
-      )
+      throwRestoreFailure(restoreError)
     }
 
     restoreLocal()
