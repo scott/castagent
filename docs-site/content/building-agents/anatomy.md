@@ -56,7 +56,7 @@ changes show up as files on disk.
   agent card. Install and remove skills with `{% ref "slash:skills" %}` or
   `{% ref "cli:skills" %}`. See [Skills](configuration/skills).
 - **`tools/`** holds Python modules you can name from `tools.custom`.
-  The runtime loads `tools.builtin` and leaves these files unloaded.
+  The runtime loads only `tools.builtin` and leaves `tools.custom` unloaded.
   See [Custom tools](configuration/custom-tools).
 - **`mcp/`** — one YAML file per MCP server. The Builder Agent scaffolds
   these during `cast new`/`cast edit`.
