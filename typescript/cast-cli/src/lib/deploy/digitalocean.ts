@@ -255,6 +255,13 @@ export function parseDropletContainerProbe(stdout: string, stderr = ''): Contain
 export const DROPLET_STOP_CRASH_LOOP =
   'docker update --restart=no cast-agent >/dev/null 2>&1 || true; docker stop cast-agent >/dev/null 2>&1 || true'
 
+/**
+ * Stop and remove the agent container before the memory volume is mounted.
+ * A container that started against the bare directory keeps that view until
+ * it is recreated, so it must not be running across the mount.
+ */
+export const DROPLET_REMOVE_CONTAINER = 'docker rm -f cast-agent >/dev/null 2>&1 || true'
+
 const SHELL_TOKEN = /^[A-Za-z0-9_.:-]+$/
 
 function assertShellToken(value: string, label: string): void {
@@ -1201,6 +1208,790 @@ export async function discardFailedDigitalOceanTokens(
   }
 }
 
+const DIGITALOCEAN_API = 'https://api.digitalocean.com/v2'
+const VOLUME_ACTION_TIMEOUT_MS = 60_000
+const VOLUME_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
+
+/** Marker printed by the remote mount script after findmnt confirms the volume. */
+export const VOLUME_MOUNT_MARKER = '---CAST-VOLUME---'
+
+export interface DigitalOceanVolumeRecord {
+  id: string
+  name: string
+  region: string
+  dropletIds: number[]
+  filesystemType: string
+}
+
+export interface VolumeMountReport {
+  formatted: boolean
+  filesystem: string
+  uuid: string
+  mountPath: string
+  source: string
+}
+
+export type DropletMemoryBind = 'ok' | 'absent'
+
+/**
+ * Thrown when a create call finds the name already taken in the region.
+ * The caller looks the volume up and attaches it. It does not format it.
+ */
+export class DigitalOceanVolumeExistsError extends Error {
+  constructor(volumeName: string, region: string) {
+    super(`Memory volume '${volumeName}' already exists in ${region}.`)
+    this.name = 'DigitalOceanVolumeExistsError'
+  }
+}
+
+export function digitalOceanVolumeDevicePath(volumeName: string): string {
+  assertShellToken(volumeName, 'volume name')
+  return `/dev/disk/by-id/scsi-0DO_Volume_${volumeName}`
+}
+
+export function digitalOceanMemoryMountPath(volumeName: string): string {
+  assertShellToken(volumeName, 'volume name')
+  return `/mnt/${volumeName}`
+}
+
+/** True when a probe saw a filesystem type. An empty probe must not format. */
+export function volumeHasFilesystem(filesystemType: string | null | undefined): boolean {
+  return Boolean(filesystemType && filesystemType.trim().length > 0)
+}
+
+export function buildVolumeFstabEntry(uuid: string, mountPath: string, filesystem: string): string {
+  if (!VOLUME_UUID.test(uuid)) {
+    throw new Error('Refusing to write an fstab entry without a filesystem UUID')
+  }
+  if (!/^\/mnt\/[A-Za-z0-9_.:-]+$/.test(mountPath)) {
+    throw new Error('Refusing to write an fstab entry for an unexpected mount path')
+  }
+  if (!/^[A-Za-z0-9]+$/.test(filesystem)) {
+    throw new Error('Refusing to write an fstab entry for an unexpected filesystem')
+  }
+  return `UUID=${uuid} ${mountPath} ${filesystem} defaults,nofail,discard 0 2`
+}
+
+export function planVolumeAttachment(dropletIds: number[], dropletId: number): 'attached' | 'attach' | 'foreign' {
+  if (dropletIds.includes(dropletId)) return 'attached'
+  if (dropletIds.length === 0) return 'attach'
+  return 'foreign'
+}
+
+/**
+ * A 409, a conflict id, or the legacy invalid id mean the name is taken.
+ * Any other invalid response is a real create failure.
+ */
+export function isDigitalOceanVolumeConflict(status: number | undefined, body: unknown): boolean {
+  if (status === 409) return true
+  if (!body || typeof body !== 'object') return false
+  const record = body as {id?: unknown; message?: unknown}
+  if (record.id === 'conflict') return true
+  const message = typeof record.message === 'string' ? record.message : ''
+  if (record.id === 'invalid' && (message.length === 0 || /already|in use|exists/i.test(message))) return true
+  return false
+}
+
+export function parseDigitalOceanVolumeRecord(raw: unknown): DigitalOceanVolumeRecord | null {
+  if (!raw || typeof raw !== 'object') return null
+  const record = raw as {
+    id?: unknown
+    name?: unknown
+    region?: unknown
+    droplet_ids?: unknown
+    filesystem_type?: unknown
+  }
+  if (typeof record.id !== 'string' || !DIGITALOCEAN_VOLUME_ID.test(record.id)) return null
+  if (typeof record.name !== 'string' || record.name.length === 0) return null
+  let region = ''
+  if (typeof record.region === 'string') region = record.region
+  else if (record.region && typeof record.region === 'object' && typeof (record.region as {slug?: unknown}).slug === 'string') {
+    region = (record.region as {slug: string}).slug
+  }
+  if (!DIGITALOCEAN_VOLUME_REGION.test(region)) return null
+  const dropletIds: number[] = []
+  if (Array.isArray(record.droplet_ids)) {
+    for (const id of record.droplet_ids) {
+      if (typeof id === 'number' && Number.isInteger(id) && id > 0) dropletIds.push(id)
+      else if (typeof id === 'string' && /^[0-9]+$/.test(id)) dropletIds.push(Number(id))
+      else return null
+    }
+  } else if (record.droplet_ids != null) {
+    return null
+  }
+  const filesystemType = typeof record.filesystem_type === 'string' ? record.filesystem_type : ''
+  return {id: record.id, name: record.name, region, dropletIds, filesystemType}
+}
+
+export interface DigitalOceanVolumeClient {
+  listVolumes(name: string, region: string): Promise<DigitalOceanVolumeRecord[]>
+  createVolume(name: string, region: string): Promise<DigitalOceanVolumeRecord>
+  attachVolume(volumeId: string, dropletId: number, region: string): Promise<void>
+  readAction(volumeId: string, actionId: string): Promise<string>
+  readVolume(volumeId: string): Promise<DigitalOceanVolumeRecord>
+  dropletExists(dropletId: number): Promise<boolean>
+}
+
+interface VolumeActionRef {
+  actionId: string
+  status: string
+}
+
+function volumeApiMessage(error: unknown): {status?: number; body?: unknown; message: string} {
+  if (axios.isAxiosError(error)) {
+    return {
+      status: error.response?.status,
+      body: error.response?.data,
+      message: error.message,
+    }
+  }
+  return {message: error instanceof Error ? error.message : String(error)}
+}
+
+function volumeRequestError(prefix: string, error: unknown): Error {
+  const parsed = volumeApiMessage(error)
+  let detail = ''
+  if (parsed.body && typeof parsed.body === 'object' && typeof (parsed.body as {message?: unknown}).message === 'string') {
+    detail = (parsed.body as {message: string}).message.trim()
+  }
+  const status = parsed.status ? `${parsed.status} ` : ''
+  const message = detail || parsed.message
+  return new Error(message ? `${prefix}: ${status}${message}` : prefix)
+}
+
+function volumeHeaders(apiToken: string): {Authorization: string; 'Content-Type': string} {
+  return {
+    Authorization: `Bearer ${apiToken}`,
+    'Content-Type': 'application/json',
+  }
+}
+
+function parseVolumeAction(data: unknown): VolumeActionRef | null {
+  if (!data || typeof data !== 'object') return null
+  const action = (data as {action?: {id?: unknown; status?: unknown}}).action
+  if (!action) return null
+  const id = action.id
+  const actionId = typeof id === 'number' ? String(id) : typeof id === 'string' ? id : ''
+  if (!/^[0-9]+$/.test(actionId)) return null
+  const status = typeof action.status === 'string' ? action.status : ''
+  return {actionId, status}
+}
+
+export function digitalOceanVolumeClient(apiToken: string): DigitalOceanVolumeClient & {
+  attachVolumeAction(volumeId: string, dropletId: number, region: string): Promise<VolumeActionRef>
+} {
+  const headers = volumeHeaders(apiToken)
+  return {
+    async listVolumes(name, region) {
+      try {
+        const result = await axios.get(`${DIGITALOCEAN_API}/volumes`, {
+          headers,
+          params: {name, region},
+        })
+        const volumes = (result.data as {volumes?: unknown})?.volumes
+        if (!Array.isArray(volumes)) return []
+        return volumes
+          .map(item => parseDigitalOceanVolumeRecord(item))
+          .filter((item): item is DigitalOceanVolumeRecord => item !== null)
+      } catch (error) {
+        throw volumeRequestError(`Failed to list memory volume '${name}'`, error)
+      }
+    },
+    async createVolume(name, region) {
+      try {
+        const result = await axios.post(`${DIGITALOCEAN_API}/volumes`, {
+          name,
+          size_gigabytes: 1,
+          region,
+        }, {headers})
+        const volume = parseDigitalOceanVolumeRecord((result.data as {volume?: unknown})?.volume)
+        if (!volume) throw new Error(`DigitalOcean returned an unexpected volume for '${name}'`)
+        return volume
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('DigitalOcean returned')) throw error
+        const parsed = volumeApiMessage(error)
+        if (isDigitalOceanVolumeConflict(parsed.status, parsed.body)) {
+          throw new DigitalOceanVolumeExistsError(name, region)
+        }
+        throw volumeRequestError(`Failed to create memory volume '${name}'`, error)
+      }
+    },
+    async attachVolumeAction(volumeId, dropletId, region) {
+      try {
+        const result = await axios.post(`${DIGITALOCEAN_API}/volumes/${volumeId}/actions`, {
+          type: 'attach',
+          droplet_id: dropletId,
+          region,
+        }, {headers})
+        const action = parseVolumeAction(result.data)
+        if (!action) throw new Error(`DigitalOcean returned an unexpected attach action for volume ${volumeId}`)
+        return action
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('DigitalOcean returned')) throw error
+        throw volumeRequestError(`Failed to attach memory volume ${volumeId}`, error)
+      }
+    },
+    async attachVolume(volumeId, dropletId, region) {
+      await this.attachVolumeAction(volumeId, dropletId, region)
+    },
+    async readAction(volumeId, actionId) {
+      try {
+        const result = await axios.get(`${DIGITALOCEAN_API}/volumes/${volumeId}/actions/${actionId}`, {headers})
+        const action = parseVolumeAction(result.data)
+        if (!action) throw new Error(`DigitalOcean returned an unexpected action for volume ${volumeId}`)
+        return action.status
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('DigitalOcean returned')) throw error
+        throw volumeRequestError(`Failed to read memory volume action ${actionId}`, error)
+      }
+    },
+    async readVolume(volumeId) {
+      try {
+        const result = await axios.get(`${DIGITALOCEAN_API}/volumes/${volumeId}`, {headers})
+        const volume = parseDigitalOceanVolumeRecord((result.data as {volume?: unknown})?.volume)
+        if (!volume) throw new Error(`DigitalOcean returned an unexpected volume ${volumeId}`)
+        return volume
+      } catch (error) {
+        if (error instanceof Error && error.message.startsWith('DigitalOcean returned')) throw error
+        throw volumeRequestError(`Failed to read memory volume ${volumeId}`, error)
+      }
+    },
+    async dropletExists(dropletId) {
+      try {
+        await axios.get(`${DIGITALOCEAN_API}/droplets/${dropletId}`, {headers})
+        return true
+      } catch (error) {
+        const parsed = volumeApiMessage(error)
+        if (parsed.status === 404) return false
+        throw volumeRequestError(`Failed to look up droplet ${dropletId}`, error)
+      }
+    },
+  }
+}
+
+async function waitForVolumeAction(
+  client: DigitalOceanVolumeClient,
+  volume: DigitalOceanVolumeRecord,
+  actionId: string,
+  clock: {now(): number; sleep(ms: number): Promise<void>},
+): Promise<void> {
+  const deadline = clock.now() + VOLUME_ACTION_TIMEOUT_MS
+  while (true) {
+    const status = await client.readAction(volume.id, actionId)
+    if (status === 'completed') return
+    if (status === 'errored') {
+      throw new Error(`Memory volume '${volume.name}' failed to attach.`)
+    }
+    const now = clock.now()
+    if (now >= deadline) {
+      throw new Error(`Timed out waiting for memory volume '${volume.name}' to attach.`)
+    }
+    await clock.sleep(Math.min(2_000, deadline - now))
+  }
+}
+
+async function waitForVolumeDetached(
+  client: DigitalOceanVolumeClient,
+  volume: DigitalOceanVolumeRecord,
+  dropletId: number,
+  clock: {now(): number; sleep(ms: number): Promise<void>},
+  log: (message: string) => void,
+): Promise<DigitalOceanVolumeRecord> {
+  const deadline = clock.now() + VOLUME_DETACH_TIMEOUT_MS
+  let delay = 0
+  let announced = false
+  let current = volume
+  while (true) {
+    const plan = planVolumeAttachment(current.dropletIds, dropletId)
+    if (plan === 'attached' || plan === 'attach') return current
+    if (!announced) {
+      announced = true
+      log(`Waiting for memory volume '${volume.name}' to detach.`)
+    }
+    const now = clock.now()
+    if (now >= deadline) {
+      throw new Error(`Memory volume '${volume.name}' is still attached to droplet ${current.dropletIds.join(', ')}.`)
+    }
+    delay = nextDetachDelay(delay)
+    const wait = Math.min(delay, deadline - now)
+    if (wait <= 0) {
+      throw new Error(`Memory volume '${volume.name}' is still attached to droplet ${current.dropletIds.join(', ')}.`)
+    }
+    await clock.sleep(wait)
+    current = await client.readVolume(volume.id)
+  }
+}
+
+/**
+ * Create the named volume only when the region does not already have it,
+ * then attach it to this droplet. A volume that is already attached to a
+ * different live droplet is left there.
+ */
+export async function prepareDigitalOceanMemoryVolume(input: {
+  client: DigitalOceanVolumeClient
+  volumeName: string
+  region: string
+  dropletId: string
+  onCreated?: () => void
+  log?: (message: string) => void
+  clock?: {now(): number; sleep(ms: number): Promise<void>}
+}): Promise<{created: boolean; volume: DigitalOceanVolumeRecord}> {
+  assertShellToken(input.volumeName, 'volume name')
+  if (!DIGITALOCEAN_VOLUME_REGION.test(input.region)) {
+    throw new Error('Refusing to create a memory volume in an unexpected region')
+  }
+  if (!/^[0-9]+$/.test(input.dropletId)) {
+    throw new Error('Refusing to attach a memory volume to an unexpected droplet id')
+  }
+  const dropletId = Number(input.dropletId)
+  const clock = input.clock ?? volumeDetachClock
+  const log = input.log ?? (() => {})
+  const match = (volumes: DigitalOceanVolumeRecord[]) => volumes.find(volume =>
+    volume.name === input.volumeName && volume.region === input.region,
+  ) || null
+
+  let created = false
+  let volume = match(await input.client.listVolumes(input.volumeName, input.region))
+  if (!volume) {
+    try {
+      volume = await input.client.createVolume(input.volumeName, input.region)
+      created = true
+      input.onCreated?.()
+    } catch (error) {
+      if (!(error instanceof DigitalOceanVolumeExistsError)) throw error
+      volume = match(await input.client.listVolumes(input.volumeName, input.region))
+      if (!volume) {
+        throw new Error(`Memory volume '${input.volumeName}' could not be created and was not found in ${input.region}.`)
+      }
+    }
+  }
+
+  const attached = await attachPreparedVolume(input.client, volume, dropletId, input.region, clock, log)
+  return {created, volume: attached}
+}
+
+async function attachPreparedVolume(
+  client: DigitalOceanVolumeClient,
+  volume: DigitalOceanVolumeRecord,
+  dropletId: number,
+  region: string,
+  clock: {now(): number; sleep(ms: number): Promise<void>},
+  log: (message: string) => void,
+): Promise<DigitalOceanVolumeRecord> {
+  let current = volume
+  const plan = planVolumeAttachment(current.dropletIds, dropletId)
+  if (plan === 'foreign') {
+    for (const other of current.dropletIds) {
+      if (other === dropletId) continue
+      if (await client.dropletExists(other)) {
+        throw new Error(`Memory volume '${current.name}' is attached to droplet ${other}, not droplet ${dropletId}. Refusing to detach it.`)
+      }
+    }
+    current = await waitForVolumeDetached(client, current, dropletId, clock, log)
+  }
+  if (planVolumeAttachment(current.dropletIds, dropletId) === 'attached') return current
+
+  const clientWithAction = client as DigitalOceanVolumeClient & {
+    attachVolumeAction?(volumeId: string, dropletId: number, region: string): Promise<VolumeActionRef>
+  }
+  let actionId = ''
+  if (clientWithAction.attachVolumeAction) {
+    const action = await clientWithAction.attachVolumeAction(current.id, dropletId, region)
+    actionId = action.actionId
+    if (action.status === 'completed') {
+      const updated = await client.readVolume(current.id)
+      if (updated.dropletIds.includes(dropletId)) return updated
+    }
+  } else {
+    await client.attachVolume(current.id, dropletId, region)
+    const updated = await client.readVolume(current.id)
+    if (updated.dropletIds.includes(dropletId)) return updated
+    throw new Error(`Memory volume '${current.name}' did not attach to droplet ${dropletId}.`)
+  }
+  try {
+    await waitForVolumeAction(client, current, actionId, clock)
+  } catch (error) {
+    const updated = await client.readVolume(current.id).catch(() => null)
+    if (updated?.dropletIds.includes(dropletId)) return updated
+    throw error
+  }
+  const updated = await client.readVolume(current.id)
+  if (!updated.dropletIds.includes(dropletId)) {
+    throw new Error(`Memory volume '${current.name}' did not attach to droplet ${dropletId}.`)
+  }
+  return updated
+}
+
+export interface VolumeMountScriptPaths {
+  volumeName: string
+  devicePath?: string
+  mountPath?: string
+  fstabPath?: string
+}
+
+/**
+ * Format only after blkid reports no filesystem three times and wipefs
+ * shows no signature. An existing filesystem is mounted as it is.
+ * fstab uses the filesystem UUID and nofail so a reboot remounts it
+ * and a missing disk does not stop the droplet from booting.
+ */
+export function buildDigitalOceanVolumeMountScript(input: VolumeMountScriptPaths): string {
+  const devicePath = input.devicePath ?? digitalOceanVolumeDevicePath(input.volumeName)
+  const mountPath = input.mountPath ?? digitalOceanMemoryMountPath(input.volumeName)
+  const fstabPath = input.fstabPath ?? '/etc/fstab'
+  const dev = shellSingleQuote(devicePath)
+  const mnt = shellSingleQuote(mountPath)
+  const fstab = shellSingleQuote(fstabPath)
+  return [
+    '#!/bin/bash',
+    'set -u',
+    `dev=${dev}`,
+    `mnt=${mnt}`,
+    `fstab=${fstab}`,
+    'formatted=0',
+    'saved=""',
+    'for _try in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do',
+    '  if [ -e "$dev" ]; then',
+    '    break',
+    '  fi',
+    '  sleep 1',
+    'done',
+    'if [ ! -e "$dev" ]; then',
+    '  echo "Memory volume device $dev did not appear. It is not mounted at $mnt." >&2',
+    '  exit 1',
+    'fi',
+    'fstype=""',
+    'confirmed=""',
+    'empty=0',
+    'for _try in 1 2 3 4 5 6 7 8; do',
+    '  set +e',
+    '  fstype="$(blkid -p -s TYPE -o value "$dev" 2>/dev/null)"',
+    '  status=$?',
+    '  set -e',
+    '  if [ "$status" -eq 0 ] && [ -n "$fstype" ]; then',
+    '    confirmed=keep',
+    '    break',
+    '  fi',
+    '  if [ "$status" -eq 2 ]; then',
+    '    empty=$((empty + 1))',
+    '    if [ "$empty" -ge 3 ]; then',
+    '      confirmed=empty',
+    '      break',
+    '    fi',
+    '  else',
+    '    empty=0',
+    '    fstype=""',
+    '  fi',
+    '  sleep 1',
+    'done',
+    'if [ "$confirmed" = empty ]; then',
+    '  signatures="$(wipefs -n "$dev" 2>/dev/null || true)"',
+    '  if printf "%s\\n" "$signatures" | grep -q "[^[:space:]]"; then',
+    '    echo "Refusing to format $dev because it already has a disk signature. It is not mounted at $mnt." >&2',
+    '    exit 1',
+    '  fi',
+    '  if ! mkfs.ext4 -F "$dev"; then',
+    '    echo "Failed to format $dev. It is not mounted at $mnt." >&2',
+    '    exit 1',
+    '  fi',
+    '  formatted=1',
+    '  set +e',
+    '  fstype="$(blkid -p -s TYPE -o value "$dev" 2>/dev/null)"',
+    '  set -e',
+    'elif [ "$confirmed" != keep ]; then',
+    '  echo "Could not read the filesystem on $dev. Refusing to format it. It is not mounted at $mnt." >&2',
+    '  exit 1',
+    'fi',
+    'if [ -z "$fstype" ]; then',
+    '  echo "Memory volume $dev has no filesystem. It is not mounted at $mnt." >&2',
+    '  exit 1',
+    'fi',
+    'set +e',
+    'uuid="$(blkid -p -s UUID -o value "$dev" 2>/dev/null)"',
+    'set -e',
+    'if ! printf "%s" "$uuid" | grep -Eq "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"; then',
+    '  echo "Memory volume $dev has no filesystem UUID. It is not mounted at $mnt." >&2',
+    '  exit 1',
+    'fi',
+    'mkdir -p "$mnt"',
+    'if ! findmnt --target "$mnt" >/dev/null 2>&1; then',
+    '  if [ -d "$mnt" ] && [ -n "$(ls -A "$mnt" 2>/dev/null || true)" ]; then',
+    '    saved="$(mktemp -d)"',
+    '    cp -a "$mnt"/. "$saved"/',
+    '  fi',
+    'fi',
+    'entry="UUID=${uuid} ${mnt} ${fstype} defaults,nofail,discard 0 2"',
+    'tmp="$(mktemp)"',
+    'awk -v mnt="$mnt" -v uuid="$uuid" \'',
+    '  $0 ~ /^[[:space:]]*$/ { print; next }',
+    '  $0 ~ /^[[:space:]]*#/ { print; next }',
+    '  $1 == "UUID=" uuid { next }',
+    '  $2 == mnt { next }',
+    '  { print }',
+    '\' "$fstab" > "$tmp"',
+    'printf "%s\\n" "$entry" >> "$tmp"',
+    'if ! cmp -s "$tmp" "$fstab"; then',
+    '  cat "$tmp" > "$fstab"',
+    'fi',
+    'rm -f "$tmp"',
+    'mounted_uuid="$(findmnt -n -o UUID --target "$mnt" 2>/dev/null || true)"',
+    'if [ -n "$mounted_uuid" ] && [ "$mounted_uuid" != "$uuid" ]; then',
+    '  if ! umount "$mnt"; then',
+    '    echo "Could not unmount $mnt to mount the memory volume." >&2',
+    '    exit 1',
+    '  fi',
+    'fi',
+    'mounted_uuid="$(findmnt -n -o UUID --target "$mnt" 2>/dev/null || true)"',
+    'if [ "$mounted_uuid" != "$uuid" ]; then',
+    '  if ! mount "$mnt"; then',
+    '    echo "Failed to mount the memory volume at $mnt." >&2',
+    '    exit 1',
+    '  fi',
+    'fi',
+    'mounted_uuid="$(findmnt -n -o UUID --target "$mnt" 2>/dev/null || true)"',
+    'mounted_source="$(findmnt -n -o SOURCE --target "$mnt" 2>/dev/null || true)"',
+    'root_source="$(findmnt -n -o SOURCE --target / 2>/dev/null || true)"',
+    'if [ "$mounted_uuid" != "$uuid" ] || [ -z "$mounted_source" ] || [ "$mounted_source" = "$root_source" ]; then',
+    '  echo "Memory volume is not mounted at $mnt." >&2',
+    '  exit 1',
+    'fi',
+    'if [ -n "$saved" ]; then',
+    '  cp -a --update=none "$saved"/. "$mnt"/',
+    '  rm -rf "$saved"',
+    '  saved=""',
+    'fi',
+    `printf "%s\\n" ${shellSingleQuote(VOLUME_MOUNT_MARKER)}`,
+    'printf "formatted=%s\\n" "$formatted"',
+    'printf "filesystem=%s\\n" "$fstype"',
+    'printf "uuid=%s\\n" "$uuid"',
+    'printf "mount=%s\\n" "$mnt"',
+    'printf "source=%s\\n" "$mounted_source"',
+    '',
+  ].join('\n')
+}
+
+export function parseVolumeMountReport(stdout: string): VolumeMountReport {
+  const index = stdout.lastIndexOf(VOLUME_MOUNT_MARKER)
+  if (index === -1) {
+    throw new Error('Memory volume mount did not report a mount.')
+  }
+  const fields = new Map<string, string>()
+  for (const line of stdout.slice(index + VOLUME_MOUNT_MARKER.length).split(/\r?\n/)) {
+    const eq = line.indexOf('=')
+    if (eq === -1) continue
+    fields.set(line.slice(0, eq).trim(), line.slice(eq + 1).trim())
+  }
+  const uuid = fields.get('uuid') || ''
+  const mountPath = fields.get('mount') || ''
+  const source = fields.get('source') || ''
+  const filesystem = fields.get('filesystem') || ''
+  const formatted = fields.get('formatted')
+  if (!VOLUME_UUID.test(uuid) || !mountPath.startsWith('/mnt/') || !source || !filesystem || (formatted !== '0' && formatted !== '1')) {
+    throw new Error('Memory volume mount report was incomplete.')
+  }
+  return {
+    formatted: formatted === '1',
+    filesystem,
+    uuid,
+    mountPath,
+    source,
+  }
+}
+
+export function buildDropletContainerImageCommand(): string {
+  return "docker inspect --format '{{.Config.Image}}' cast-agent 2>/dev/null || true"
+}
+
+export function buildDropletRestartOnMemoryCommand(volumeName: string, image: string): string {
+  if (!image || /[\n\r\0']/.test(image) || image.startsWith('-')) {
+    throw new Error('Refusing to restart the agent container from an unexpected image name')
+  }
+  const mount = digitalOceanMemoryMountPath(volumeName)
+  const args = [
+    'docker', 'run', '-d',
+    '--name', 'cast-agent',
+    '--restart', 'unless-stopped',
+    '-p', '127.0.0.1:8080:8080',
+    '-v', `${mount}:/app/agent/memory`,
+    '--env-file', DROPLET_ENV_FILE,
+    image,
+  ]
+  return args.map(shellSingleQuote).join(' ')
+}
+
+/**
+ * Confirm the container's /app/agent/memory is the mounted volume.
+ * `docker inspect` only shows the path, which is also the root-disk
+ * directory the bug left behind, so this compares device ids.
+ */
+export function buildDropletMemoryVerifyScript(volumeName: string): string {
+  const mnt = shellSingleQuote(digitalOceanMemoryMountPath(volumeName))
+  return [
+    '#!/bin/bash',
+    'set -eu',
+    `mnt=${mnt}`,
+    'host="$(stat -c %d "$mnt")"',
+    'root="$(stat -c %d /)"',
+    'if [ "$host" = "$root" ]; then',
+    '  echo "Memory volume is not mounted at $mnt." >&2',
+    '  exit 1',
+    'fi',
+    'container=""',
+    'for _try in 1 2 3 4 5 6 7 8 9 10; do',
+    '  container="$(docker exec cast-agent stat -c %d /app/agent/memory 2>/dev/null || true)"',
+    '  if [ -n "$container" ] && [ "$container" = "$host" ]; then',
+    '    break',
+    '  fi',
+    '  sleep 1',
+    'done',
+    'if [ -z "$container" ] || [ "$container" != "$host" ]; then',
+    '  echo "Agent container is not writing memory at $mnt." >&2',
+    '  exit 1',
+    'fi',
+    'printf "container=ok\\n"',
+    '',
+  ].join('\n')
+}
+
+export function parseDropletMemoryBind(stdout: string): DropletMemoryBind {
+  if (/^container=absent$/m.test(stdout)) return 'absent'
+  if (/^container=ok$/m.test(stdout)) return 'ok'
+  throw new Error('Agent container is not writing memory on the mounted volume.')
+}
+
+async function runDropletMemoryCommand(
+  ip: string,
+  command: string,
+  secrets: string[],
+  label: string,
+  failure: string,
+): Promise<{stdout: string; stderr: string; exitCode: number}> {
+  assertCommandHasNoSecrets(label, command, secrets)
+  const result = await execDigitalOceanSsh(ip, command, {silent: true, timeoutMs: 180_000})
+  if (result.exitCode !== 0) {
+    const detail = `${result.stderr}\n${result.stdout}`.trim()
+    throw new Error(detail ? `${failure} ${detail}` : failure)
+  }
+  return result
+}
+
+async function runVolumeMountScript(
+  ip: string,
+  volumeName: string,
+  secrets: string[],
+): Promise<VolumeMountReport> {
+  const mountPath = digitalOceanMemoryMountPath(volumeName)
+  const script = buildDigitalOceanVolumeMountScript({volumeName})
+  const result = await runDropletMemoryCommand(
+    ip,
+    script,
+    secrets,
+    'volume mount',
+    `Memory volume is not mounted at ${mountPath}.`,
+  )
+  let report: VolumeMountReport
+  try {
+    report = parseVolumeMountReport(result.stdout)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Memory volume is not mounted at ${mountPath}. ${message}`)
+  }
+  if (report.mountPath !== mountPath) {
+    throw new Error(`Memory volume is not mounted at ${mountPath}.`)
+  }
+  return report
+}
+
+/**
+ * Mount the attached volume at /mnt/<name>. Stops the agent container
+ * first so files written on the root disk can be copied onto a new
+ * filesystem and the next container sees the mount.
+ */
+export async function mountDigitalOceanMemoryVolume(
+  ip: string,
+  volumeName: string,
+  secrets: string[] = [],
+): Promise<VolumeMountReport> {
+  const mountPath = digitalOceanMemoryMountPath(volumeName)
+  await runDropletMemoryCommand(
+    ip,
+    DROPLET_REMOVE_CONTAINER,
+    secrets,
+    'container remove',
+    `Failed to stop the agent container before mounting the memory volume at ${mountPath}.`,
+  )
+  return runVolumeMountScript(ip, volumeName, secrets)
+}
+
+export async function readDropletContainerImage(ip: string, secrets: string[] = []): Promise<string> {
+  const command = buildDropletContainerImageCommand()
+  const result = await runDropletMemoryCommand(
+    ip,
+    command,
+    secrets,
+    'container image',
+    'Failed to read the agent container image.',
+  )
+  const image = result.stdout.trim().split(/\r?\n/).filter(line => line.length > 0).pop() || ''
+  if (image && (/[\n\r\0']/.test(image) || image.startsWith('-'))) {
+    throw new Error('Refusing to restart the agent container from an unexpected image name')
+  }
+  return image
+}
+
+export async function verifyDropletContainerMemory(
+  ip: string,
+  volumeName: string,
+  secrets: string[] = [],
+): Promise<void> {
+  const mountPath = digitalOceanMemoryMountPath(volumeName)
+  const result = await runDropletMemoryCommand(
+    ip,
+    buildDropletMemoryVerifyScript(volumeName),
+    secrets,
+    'volume verify',
+    `Agent container is not writing memory at ${mountPath}.`,
+  )
+  if (parseDropletMemoryBind(result.stdout) !== 'ok') {
+    throw new Error(`Agent container is not writing memory at ${mountPath}.`)
+  }
+}
+
+/**
+ * After an upgrade, recreate the container when its memory directory is
+ * not the mounted volume. A missing container leaves the mount in place
+ * for the next deploy.
+ */
+export async function ensureDropletContainerMemory(
+  ip: string,
+  volumeName: string,
+  secrets: string[] = [],
+): Promise<DropletMemoryBind> {
+  const mountPath = digitalOceanMemoryMountPath(volumeName)
+  try {
+    await verifyDropletContainerMemory(ip, volumeName, secrets)
+    // The container already writes to the volume. Refresh fstab without
+    // stopping it. The script does not format a filesystem it can read.
+    await runVolumeMountScript(ip, volumeName, secrets)
+    return 'ok'
+  } catch (error) {
+    if (error instanceof SshHostKeyError) throw error
+  }
+  const image = await readDropletContainerImage(ip, secrets)
+  await mountDigitalOceanMemoryVolume(ip, volumeName, secrets)
+  if (!image) return 'absent'
+  const restart = buildDropletRestartOnMemoryCommand(volumeName, image)
+  await runDropletMemoryCommand(
+    ip,
+    restart,
+    secrets,
+    'container restart',
+    `Failed to restart the agent container on ${mountPath}.`,
+  )
+  await verifyDropletContainerMemory(ip, volumeName, secrets)
+  return 'ok'
+}
+
 export default class DigitalOceanDeploy extends Command {
   static description = 'Deploy agent to DigitalOcean Droplet with Docker'
 
@@ -1354,12 +2145,11 @@ export default class DigitalOceanDeploy extends Command {
       const generated = await generateAuthToken(agentName)
       authToken = generated.authToken
       tokenHash = generated.tokenHash
-      const memoryPlan = planDigitalOceanMemoryVolume(
+      const {volumeId} = planDigitalOceanMemoryVolume(
         agentName,
         latestDigitalOceanVolumeId(agentName),
         await listDigitalOceanVolumeNames(defaultDoctlRunner()),
       )
-      const volumeId = memoryPlan.volumeId
 
       // Reuse an account key with this machine's fingerprint, or upload
       // the public key under a new name. Existing account keys stay put.
@@ -1431,18 +2221,26 @@ export default class DigitalOceanDeploy extends Command {
         // DB unavailable. MOTD will fall back to a placeholder.
       }
 
-      await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, volumeId, deploymentUrl, deployedVersion, withTui)
+      // Attach and mount before the container starts. The bind mount is
+      // resolved when `docker run` executes, so a volume mounted afterwards
+      // stays invisible to the agent. The attach line is printed only
+      // after the mount check succeeds.
+      const volumeSecrets = [apiToken, authToken]
+      const mounted = await this.createAndAttachVolume(
+        apiToken,
+        droplet.id,
+        droplet.ip,
+        volumeId,
+        droplet.region,
+        volumeSecrets,
+        () => {
+          if (droplet.created) createdVolumeName = volumeId
+        },
+      )
+      this.log(`Volume attached at ${mounted.mountPath}`)
 
-      if (memoryPlan.action === 'create') {
-        this.log(`Creating memory volume: ${volumeId}`)
-        if (droplet.created) createdVolumeName = volumeId
-        const volumeResult = await this.createAndAttachVolume(apiToken, droplet.id, volumeId, droplet.region)
-        if (volumeResult) {
-          this.log(`Volume attached at ${volumeResult}`)
-        }
-      } else {
-        this.log(`Reusing memory volume: ${volumeId}`)
-      }
+      await this.deployOnDroplet(droplet.ip, agentName, authToken, imageTag, volumeId, deploymentUrl, deployedVersion, withTui)
+      await verifyDropletContainerMemory(droplet.ip, volumeId, volumeSecrets)
 
       // Save deployment
       const volumeConfig = JSON.stringify({ deploymentId, mountPath: '/app/agent/memory', region: droplet.region })
@@ -2238,44 +3036,26 @@ export default class DigitalOceanDeploy extends Command {
     })
   }
 
-  private async createAndAttachVolume(apiToken: string, dropletId: string, volumeName: string, region: string): Promise<string | null> {
-    try {
-      // Create volume
-      const createResult = await axios.post('https://api.digitalocean.com/v2/volumes', {
-        name: volumeName,
-        size_gigabytes: 1,
-        region: region,
-      }, {
-        headers: {
-          Authorization: `Bearer ${apiToken}`,
-          'Content-Type': 'application/json',
-        },
-      })
-
-      const volumeId = createResult.data.volume.id
-
-      // Attach volume to droplet
-      await axios.post(`https://api.digitalocean.com/v2/volumes/${volumeId}/actions`, {
-        type: 'attach',
-        droplet_id: parseInt(dropletId, 10),
-      }, {
-        headers: {
-          Authorization: `Bearer ${apiToken}`,
-          'Content-Type': 'application/json',
-        },
-      })
-
-      // Format and mount volume on droplet
-      const mountPath = `/mnt/${volumeName}`
-      return mountPath
-    } catch (error: any) {
-      if (error.response?.data?.id === 'invalid') {
-        // Volume might already exist
-        return `/mnt/${volumeName}`
-      }
-      this.warn(`Failed to create volume: ${error.message}`)
-      return null
-    }
+  private async createAndAttachVolume(
+    apiToken: string,
+    dropletId: string,
+    dropletIp: string,
+    volumeName: string,
+    region: string,
+    secrets: string[],
+    onCreated?: () => void,
+  ): Promise<{mountPath: string; created: boolean}> {
+    const prepared = await prepareDigitalOceanMemoryVolume({
+      client: digitalOceanVolumeClient(apiToken),
+      volumeName,
+      region,
+      dropletId,
+      onCreated,
+      log: message => this.log(message),
+    })
+    this.log(prepared.created ? `Creating memory volume: ${volumeName}` : `Reusing memory volume: ${volumeName}`)
+    const report = await mountDigitalOceanMemoryVolume(dropletIp, volumeName, secrets)
+    return {mountPath: report.mountPath, created: prepared.created}
   }
 
 }

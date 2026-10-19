@@ -16,6 +16,10 @@ import {
 import {dockerContainerEnv, dockerContainerRunArgs, startDockerAgentContainer, writeDockerCompose} from './docker'
 import {writeHostMotdOverSsh} from './motd'
 import {writeRequirementsTxt} from './requirements'
+import {
+  digitalOceanMemoryVolumeName,
+  ensureDropletContainerMemory,
+} from './digitalocean'
 import {execDigitalOceanSsh} from './ssh-hostkey'
 
 export interface UpgradeHost {
@@ -398,7 +402,14 @@ export async function upgradeDigitalOceanDeployment(
   const deploymentUrl = deployment?.deployment_url
   const dropletIp = deploymentUrl ? new URL(deploymentUrl).hostname : null
 
+  const volumeName = existingVolumeId || digitalOceanMemoryVolumeName(agentName)
   if (dropletIp) {
+    host.log(`Mounting memory volume at /mnt/${volumeName}...`)
+    const bound = await ensureDropletContainerMemory(dropletIp, volumeName)
+    if (bound === 'absent') {
+      host.warn(`Memory volume is mounted at /mnt/${volumeName}. The agent container was not on the droplet, so it was not restarted onto that mount.`)
+    }
+    host.log(`Volume attached at /mnt/${volumeName}`)
     host.log('Refreshing SSH login MOTD...')
     const onHostTui = await detectOnHostTui(dropletIp)
     const {motdStderr, profileStderr} = await writeHostMotdOverSsh(dropletIp, {
@@ -416,13 +427,15 @@ export async function upgradeDigitalOceanDeployment(
       host.warn(`Failed to refresh /etc/profile.d/cast.sh: ${profileStderr}`)
     }
   } else {
-    host.warn('Could not determine droplet IP; skipping MOTD refresh')
+    host.warn('Could not determine droplet IP; skipping memory volume mount and MOTD refresh')
   }
 
   host.log('')
   host.log(`Upgraded to version ${version} on DigitalOcean.`)
   host.log(`Deployment URL: ${deploymentUrl}`)
-  host.log(`Volume ${existingVolumeId || 'preserved'}.`)
+  if (!dropletIp) {
+    host.log(`Volume ${existingVolumeId || 'preserved'}.`)
+  }
   host.log('')
 }
 

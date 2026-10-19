@@ -32,7 +32,7 @@ file I/O. There's no special API.
 | Docker (local) | `cast-<name>` named volume | managed by `docker volume` |
 | Railway | persistent volume attached to the service | provisioned on first deploy |
 | Fly | `cast_<name>_memory` volume at `/app/agent/memory` | Created after the Fly app exists, and only when that name is not already listed. The name is lowercase letters, numbers, and underscores, at most 30 characters. |
-| DigitalOcean | `cast-<name>` block volume | keyed by the agent name and mounted into the container |
+| DigitalOcean | `cast-<name>` block volume at `/mnt/cast-<name>` | Formatted only when it has no filesystem. Mounted by UUID in fstab with `nofail`, then into the container at `/app/agent/memory` |
 | DigitalOcean MicroVM | MicroVM disk at `/app/agent/memory` | survives pause and resume. Upgrade copies it to the replacement MicroVM when it is 8 MiB or smaller |
 | Sprites | `/opt/cast-agent/memory` on the sprite | Cast does not create a local directory |
 
@@ -46,11 +46,20 @@ instead of creating another one. If the registry still points at an older
 `cast-<name>` and mounts that. The log says `Creating memory volume` only
 when a volume is created, and `Reusing memory volume` when it is not.
 
-A DigitalOcean Droplet deploy creates a block volume named `cast-<name>`.
-The next deploy reuses that volume. If the account still has an older
-`cast-<name>-<uuid>-memory` volume and no `cast-<name>` volume, Cast
-reuses the older volume. The log says `Creating memory volume` only when
-a volume is created, and `Reusing memory volume` when it is not.
+A DigitalOcean Droplet deploy creates a 1 GB block volume named
+`cast-<name>` and attaches it before the container starts. Cast formats
+that volume with ext4 only when it has no filesystem. A volume that
+already has a filesystem is never reformatted, including on redeploy,
+upgrade, and droplet replacement. The mount point is `/mnt/cast-<name>`.
+`/etc/fstab` addresses it by filesystem UUID with `nofail`, so a reboot
+mounts it again and a missing disk does not stop the droplet from
+booting. Deploy checks that this path is the volume and that the
+container's `/app/agent/memory` is that same mount. Deploy fails if it
+is not. `Volume attached at /mnt/cast-<name>` is printed only after that
+check. The next deploy reuses the volume. If the account still has an
+older `cast-<name>-<uuid>-memory` volume and no `cast-<name>` volume,
+Cast reuses the older volume. The log says `Creating memory volume` only
+when a volume is created, and `Reusing memory volume` when it is not.
 
 ## The volume_config field
 
