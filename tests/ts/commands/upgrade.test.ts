@@ -303,7 +303,7 @@ describe('Upgrade Command', () => {
 
     async function failedUpgrade(provider: string): Promise<{message: string; exit?: number}> {
       const deployUtils = await import('../../../typescript/cast-cli/src/lib/deploy/deploy-utils')
-      sandbox.stub(deployUtils, 'resolveDeploymentTarget').returns({
+      sandbox.stub(deployUtils, 'resolveDeploymentTarget').resolves({
         type: 'single',
         deployment: {
           id: 'abc123',
