@@ -1114,6 +1114,7 @@ describe('shutdown command - error handling', () => {
       expect(error.message).to.include('still recorded')
       expect(error.message).to.include('bound to machine')
       expect(error.message).to.include('cast shutdown mail')
+      expect(error.message).to.match(/148ed123\nThe deployment is still recorded\. Run cast shutdown mail again to retry\./)
     } finally {
       sqliteModule.db.listDeployments = originalListDeployments
       sqliteModule.db.getDeploymentBySha = originalGetDeploymentBySha

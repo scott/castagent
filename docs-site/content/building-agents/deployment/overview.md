@@ -210,15 +210,18 @@ including while the machine is still started or starting. An older copy
 of that line, followed later by `Agent ready`, does not. Cast does not
 print the success banner in that case. The new
 token stays, because that release is already live.
-`cast shutdown` destroys the machines and the app first, then lists
-volumes with `flyctl volumes list --json` and deletes every remaining
-volume of that name by its `vol_...` id. A volume bound to a machine
-cannot be deleted, and stopping the machine does not release it. It reports
-the volume removed only when a delete exits 0. It says the volume was not
-present only when the list has no volume of that name, or the app is
-already gone. It reports the app destroyed only when `flyctl apps destroy`
-exits 0. If a remote step fails, shutdown exits non-zero and keeps the
-deployment record and token.
+`cast shutdown` destroys each machine and prints a line for every machine
+removed, then destroys the app, then lists volumes with
+`flyctl volumes list --json` and deletes every remaining volume of that
+name by its `vol_...` id. A volume bound to a machine cannot be deleted,
+and stopping the machine does not release it. It reports the volume
+removed only when a delete exits 0. When the app destroy already removed
+the volume, it says the memory volume was removed with the app. It says
+the volume was not present when that destroy did not remove the app and
+the volume lookup finds nothing. It reports the app destroyed only when
+`flyctl apps destroy` exits 0. If a remote step fails, shutdown exits
+non-zero and keeps the deployment record and token. Fly's error text and
+the retry hint are separated by a newline.
 A failed deploy records the deployment as soon as the app exists, so
 `cast shutdown <agent>` can remove the partial app, and deletes the
 token file written for that attempt (`~/.cast/tokens/deployments/<sha>.token`)

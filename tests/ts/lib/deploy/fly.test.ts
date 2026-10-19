@@ -20,6 +20,7 @@ import FlyDeploy, {
   flyMachineState,
   flyMachinesListArgs,
   FlyResourcesRemainError,
+  flyShutdownFailure,
   flyVolumeCreateArgs,
   flyVolumeDeleteArgs,
   flyVolumeIdByName,
@@ -577,6 +578,8 @@ describe('Fly destroy', () => {
     expect(harness.logs.join('\n')).to.include("Fly app 'cast-mail' has been destroyed.")
     expect(harness.logs.join('\n')).to.include(`Memory volume '${volumeName}' for 'cast-mail' has been removed.`)
     expect(harness.logs.join('\n')).to.not.include('was not present')
+    expect(harness.logs.join('\n')).to.not.include('removed with the app')
+    expect(harness.logs.join('\n')).to.not.include('Destroyed Fly machine')
   })
 
   it('destroys an attached machine before deleting its volume', async () => {
@@ -620,12 +623,94 @@ describe('Fly destroy', () => {
     expect(destroyAt).to.be.greaterThan(-1)
     expect(appAt).to.be.greaterThan(destroyAt)
     expect(deleteAt).to.be.greaterThan(appAt)
+    expect(logs.join('\n')).to.include("Destroyed Fly machine '148ed123'.")
     expect(logs.join('\n')).to.include('has been destroyed')
     expect(logs.join('\n')).to.include('has been removed')
     expect(logs.join('\n')).to.not.include('bound to machine')
+    expect(logs.join('\n')).to.not.include('removed with the app')
   })
 
-  it('says the volume was not present when the list has no match', async () => {
+  it('prints a line for each destroyed Fly machine', async () => {
+    const harness = recording([
+      flyResult(0, JSON.stringify([
+        {id: '148ed123', state: 'started'},
+        {id: 'e2864f', state: 'stopped'},
+      ])),
+      flyResult(0),
+      flyResult(0),
+      flyResult(0),
+      flyResult(0, '[]'),
+    ])
+    await destroyFlyDeployment('mail', {
+      volumeNames: [volumeName],
+      exec: harness.exec,
+      log: harness.log,
+    })
+    expect(harness.calls[1]).to.deep.equal(flyMachineDestroyArgs('148ed123', 'cast-mail'))
+    expect(harness.calls[2]).to.deep.equal(flyMachineDestroyArgs('e2864f', 'cast-mail'))
+    expect(harness.logs.filter(line => line.startsWith('Destroyed Fly machine'))).to.deep.equal([
+      "Destroyed Fly machine '148ed123'.",
+      "Destroyed Fly machine 'e2864f'.",
+    ])
+    expect(harness.logs.join('\n')).to.include(`Memory volume '${volumeName}' for 'cast-mail' was removed with the app.`)
+  })
+
+  it('does not say a Fly machine was destroyed when destroy fails', async () => {
+    const detail = "Error: no access token available. Please login with 'flyctl auth login'"
+    const harness = recording([
+      flyResult(0, JSON.stringify([{id: '148ed123', state: 'started'}])),
+      flyResult(1, '', detail),
+    ])
+    try {
+      await destroyFlyDeployment('mail', {
+        volumeNames: [volumeName],
+        exec: harness.exec,
+        log: harness.log,
+      })
+      expect.fail('machine destroy should fail')
+    } catch (error) {
+      expect(error).to.be.instanceOf(FlyResourcesRemainError)
+      expect((error as FlyResourcesRemainError).keepDeployment).to.equal(true)
+      const message = (error as Error).message
+      expect(message).to.include("Failed to destroy Fly machine '148ed123'")
+      expect(message).to.include(detail)
+      expect(message).to.include("login'\nThe deployment is still recorded. Run cast shutdown mail again to retry.")
+      expect(message).to.not.include("login' The deployment")
+    }
+    expect(harness.logs.join('\n')).to.not.include('Destroyed Fly machine')
+    expect(harness.calls.some(args => args[0] === 'apps')).to.equal(false)
+  })
+
+  it('does not claim a Fly machine was destroyed when it was already gone', async () => {
+    const harness = recording([
+      flyResult(0, JSON.stringify([{id: '148ed123', state: 'stopped'}])),
+      flyResult(1, '', 'Error: machine 148ed123 has already been destroyed'),
+      flyResult(0),
+      flyResult(0, '[]'),
+    ])
+    await destroyFlyDeployment('mail', {
+      volumeNames: [volumeName],
+      exec: harness.exec,
+      log: harness.log,
+    })
+    expect(harness.calls[1]).to.deep.equal(flyMachineDestroyArgs('148ed123', 'cast-mail'))
+    expect(harness.logs.join('\n')).to.not.include('Destroyed Fly machine')
+    expect(harness.logs.join('\n')).to.include("Fly app 'cast-mail' has been destroyed.")
+    expect(harness.logs.join('\n')).to.include(
+      `Memory volume '${volumeName}' for 'cast-mail' was removed with the app.`,
+    )
+  })
+
+  it('separates Fly error text from the shutdown retry hint', () => {
+    const error = flyShutdownFailure('mail', "Error: please login with 'flyctl auth login'")
+    expect(error).to.be.instanceOf(FlyResourcesRemainError)
+    expect(error.keepDeployment).to.equal(true)
+    expect(error.message).to.equal(
+      "Error: please login with 'flyctl auth login'\nThe deployment is still recorded. Run cast shutdown mail again to retry.",
+    )
+  })
+
+  it('says the memory volume was removed with the app when destroy leaves none', async () => {
     const harness = recording([
       flyResult(0, '[]'),
       flyResult(0),
@@ -637,8 +722,30 @@ describe('Fly destroy', () => {
       log: harness.log,
     })
     expect(harness.calls.map(args => args[0])).to.deep.equal(['machines', 'apps', 'volumes'])
-    expect(harness.logs.join('\n')).to.include('was not present')
+    expect(harness.logs.join('\n')).to.include(
+      `Memory volume '${volumeName}' for 'cast-mail' was removed with the app.`,
+    )
+    expect(harness.logs.join('\n')).to.not.include('was not present')
     expect(harness.logs.join('\n')).to.not.include('has been removed')
+  })
+
+  it('says the memory volume was removed with the app when the volume list cannot see the destroyed app', async () => {
+    const harness = recording([
+      flyResult(0, '[]'),
+      flyResult(0),
+      flyResult(1, '', 'Error: Could not find App "cast-mail"'),
+    ])
+    await destroyFlyDeployment('mail', {
+      volumeNames: [volumeName],
+      exec: harness.exec,
+      log: harness.log,
+    })
+    expect(harness.logs.join('\n')).to.include("Fly app 'cast-mail' has been destroyed.")
+    expect(harness.logs.join('\n')).to.include(
+      `Memory volume '${volumeName}' for 'cast-mail' was removed with the app.`,
+    )
+    expect(harness.logs.join('\n')).to.not.include('was not present')
+    expect(harness.calls.some(args => args[1] === 'delete')).to.equal(false)
   })
 
   it('does not report success when destroy fails', async () => {
@@ -659,11 +766,14 @@ describe('Fly destroy', () => {
       expect((error as FlyResourcesRemainError).keepDeployment).to.equal(true)
       expect((error as Error).message).to.include('Failed to destroy Fly app')
       expect((error as Error).message).to.include('rate limited')
+      expect((error as Error).message).to.match(/rate limited\nThe deployment is still recorded\. Run cast shutdown mail again to retry\./)
       expect((error as Error).message).to.include('still recorded')
       expect((error as Error).message).to.include('cast shutdown mail')
     }
     expect(harness.logs.join('\n')).to.not.include('has been removed')
     expect(harness.logs.join('\n')).to.not.include('has been destroyed')
+    expect(harness.logs.join('\n')).to.include('was not present')
+    expect(harness.logs.join('\n')).to.not.include('removed with the app')
   })
 
   it('treats a missing app during list as an absent volume', async () => {
@@ -681,6 +791,7 @@ describe('Fly destroy', () => {
     expect(harness.calls.some(args => args[1] === 'delete')).to.equal(false)
     expect(harness.calls.some(args => args[0] === 'machine' && args[1] === 'destroy')).to.equal(false)
     expect(harness.logs.join('\n')).to.include('was not present')
+    expect(harness.logs.join('\n')).to.not.include('removed with the app')
     expect(harness.logs.join('\n')).to.not.include('has been removed')
     expect(harness.logs.join('\n')).to.include('does not exist')
     expect(harness.logs.join('\n')).to.not.include('has been destroyed')

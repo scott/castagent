@@ -314,9 +314,8 @@ export class FlyResourcesRemainError extends Error {
 }
 
 export function flyShutdownFailure(agentName: string, detail: string): FlyResourcesRemainError {
-  return new FlyResourcesRemainError(
-    `${detail} The deployment is still recorded. Run cast shutdown ${agentName} again to retry.`,
-  )
+  const hint = `The deployment is still recorded. Run cast shutdown ${agentName} again to retry.`
+  return new FlyResourcesRemainError(`${detail.trimEnd()}\n${hint}`)
 }
 
 /** Every machine still on the app. A stopped machine still holds its volume. */
@@ -797,6 +796,7 @@ async function destroyFlyMachines(
   agentName: string,
   appName: string,
   exec: FlyDeployDeps['exec'],
+  log: (message: string) => void,
 ): Promise<void> {
   const listed = await exec(flyMachinesListArgs(appName), {silent: true, shell: false})
   if (listed.exitCode !== 0) {
@@ -812,7 +812,10 @@ async function destroyFlyMachines(
   }
   for (const id of ids) {
     const destroyed = await exec(flyMachineDestroyArgs(id, appName), {silent: true, shell: false})
-    if (destroyed.exitCode === 0) continue
+    if (destroyed.exitCode === 0) {
+      log(`Destroyed Fly machine '${id}'.`)
+      continue
+    }
     if (flyResourceGone(destroyed.stdout, destroyed.stderr) || machineAlreadyDestroyed(destroyed.stdout, destroyed.stderr)) {
       continue
     }
@@ -837,11 +840,12 @@ export async function destroyFlyDeployment(
 
   // Machines first. Fly refuses to delete a volume that is bound to a
   // machine, and stopping the machine does not release that bind.
-  await destroyFlyMachines(agentName, appName, exec)
+  await destroyFlyMachines(agentName, appName, exec, log)
 
   const result = await exec(flyAppsDestroyArgs(appName), {silent: true})
   let appError: string | undefined
-  if (result.exitCode === 0) {
+  const appDestroyed = result.exitCode === 0
+  if (appDestroyed) {
     log(`Fly app '${appName}' has been destroyed.`)
   } else if (flyResourceGone(result.stdout, result.stderr)) {
     log(`App '${appName}' does not exist (already deleted or never created).`)
@@ -854,6 +858,9 @@ export async function destroyFlyDeployment(
       const outcome = await deleteFlyVolumeByName(volumeName, appName, exec)
       if (outcome === 'removed') {
         log(`Memory volume '${volumeName}' for '${appName}' has been removed.`)
+      } else if (appDestroyed) {
+        // apps destroy deletes the app's volumes, so a later miss is that removal.
+        log(`Memory volume '${volumeName}' for '${appName}' was removed with the app.`)
       } else {
         log(`Memory volume '${volumeName}' for '${appName}' was not present.`)
       }
