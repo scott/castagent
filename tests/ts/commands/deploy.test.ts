@@ -7,6 +7,8 @@ import {Command} from '@oclif/core'
 
 // Import the deploy command to test its structure
 import DeployCommand from '../../../typescript/cast-cli/src/commands/deploy'
+import {saveDeployment} from '../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
+import {localProvider} from '../../../typescript/cast-cli/src/lib/deploy/providers/local'
 import {resetDeploymentProviderRegistry} from '../../../typescript/cast-cli/src/lib/deploy/registry'
 import {_setExecPythonForTests} from '../../../typescript/cast-cli/src/lib/releases'
 import {db} from '../../../typescript/cast-cli/src/lib/sqlite'
@@ -789,4 +791,111 @@ describe('Deploy Command - local provider', () => {
       }
     })
   }
+})
+
+describe('Deploy Command - recorded release version', () => {
+  const originalDeploy = localProvider.deploy
+
+  function oclifError(message: string): never {
+    const error = new Error(message) as Error & {oclif: {exit: number}}
+    error.oclif = {exit: 1}
+    throw error
+  }
+
+  function stubReleasePython(current: string): void {
+    _setExecPythonForTests((_command, args) => {
+      const script = fs.readFileSync(String(args[0]), 'utf8')
+      if (script.includes('get_current_release')) return current
+      if (script.includes('get_release')) {
+        return JSON.stringify({
+          version: '1.2',
+          change_number: 2,
+          message: 'ship',
+          changelog: '',
+          created_at: '2026-06-01T00:00:00.000Z',
+          tarball_path: '/tmp/1.2.tar.gz',
+        })
+      }
+      if (script.includes('extract_release')) return ''
+      throw new Error(`unexpected release script: ${script.slice(0, 160)}`)
+    })
+  }
+
+  async function deployRecorded(agentName: string, yaml: string, version: string): Promise<string | null> {
+    const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
+    fs.mkdirSync(agentDir, {recursive: true})
+    fs.writeFileSync(path.join(agentDir, 'agent.yaml'), yaml)
+
+    localProvider.deploy = async (ctx) => {
+      await saveDeployment(ctx.agentName, 'local', 'http://127.0.0.1', 'hash')
+    }
+
+    const instance = new DeployCommand(['deploy', agentName, '--provider', 'local', '--force'], {} as any)
+    ;(instance as any).config = {
+      runHook: async () => ({successes: [], failures: []}),
+      name: 'deploy',
+      bin: 'cast',
+    }
+    ;(instance as any).parse = async () => ({
+      args: {agent: agentName},
+      flags: {provider: 'local', version, force: true, port: 8080, 'with-tui': false},
+      argv: [],
+      raw: [],
+      metadata: {},
+      nonExistentFlags: [],
+    })
+    instance.log = () => {}
+    instance.error = ((message: string) => oclifError(message)) as typeof instance.error
+    await instance.run()
+    return db.getDeployedVersion(agentName)
+  }
+
+  async function withAgent(agentName: string, run: () => Promise<void>): Promise<void> {
+    const previousSha = process.env.CAST_DEPLOYMENT_SHA
+    delete process.env.CAST_DEPLOYMENT_SHA
+    try {
+      await run()
+    } finally {
+      localProvider.deploy = originalDeploy
+      _setExecPythonForTests(null)
+      if (previousSha === undefined) delete process.env.CAST_DEPLOYMENT_SHA
+      else process.env.CAST_DEPLOYMENT_SHA = previousSha
+      db.deleteAgent(agentName)
+      fs.rmSync(path.join(os.homedir(), '.cast', 'agents', agentName), {recursive: true, force: true})
+    }
+  }
+
+  afterEach(() => {
+    localProvider.deploy = originalDeploy
+    _setExecPythonForTests(null)
+  })
+
+  it('records the older version held in the agent dir, not the newest release', async () => {
+    const agentName = `deploy-dir-version-${Date.now()}`
+    await withAgent(agentName, async () => {
+      stubReleasePython('1.2')
+      const recorded = await deployRecorded(agentName, 'name: older\nversion: "1.1"\n', 'latest')
+      expect(recorded).to.equal('1.1')
+    })
+  })
+
+  it('records the explicit --version instead of the agent dir', async () => {
+    const agentName = `deploy-flag-version-${Date.now()}`
+    await withAgent(agentName, async () => {
+      stubReleasePython('9.9')
+      const recorded = await deployRecorded(agentName, 'name: pinned\nversion: "1.1"\n', '1.2')
+      expect(recorded).to.equal('1.2')
+      const yaml = fs.readFileSync(path.join(os.homedir(), '.cast', 'agents', agentName, 'agent.yaml'), 'utf8')
+      expect(yaml).to.include('version: "1.1"')
+    })
+  })
+
+  it('records the newest release when the agent dir has no version', async () => {
+    const agentName = `deploy-no-dir-version-${Date.now()}`
+    await withAgent(agentName, async () => {
+      stubReleasePython('1.2')
+      const recorded = await deployRecorded(agentName, 'name: bare\ndescription: no release field\n', 'latest')
+      expect(recorded).to.equal('1.2')
+    })
+  })
 })

@@ -80,6 +80,49 @@ function buildDeployFlags(): Record<string, any> {
   return flags
 }
 
+/**
+ * Top-level `version` scalar in the agent directory's agent.yaml.
+ * `cast release` writes that field, and the tarball deploys it.
+ * releases.json `current` is the newest release, which can be newer
+ * than the files left in the directory after a failed upgrade.
+ * An empty or unreadable field returns null.
+ */
+function readAgentDirReleaseVersion(agentPath: string): string | null {
+  const yamlPath = path.join(agentPath, 'agent.yaml')
+  let text: string
+  try {
+    text = fs.readFileSync(yamlPath, 'utf8')
+  } catch {
+    return null
+  }
+  for (const line of text.split(/\r?\n/)) {
+    const value = topLevelVersionScalar(line)
+    if (value === undefined) continue
+    const trimmed = value.trim()
+    return trimmed.length > 0 ? trimmed : null
+  }
+  return null
+}
+
+function topLevelVersionScalar(line: string): string | undefined {
+  const match = /^(version)([ \t]*:)(.*)$/.exec(line)
+  if (!match) return undefined
+  const after = match[3]
+  const spaces = /^[ \t]*/.exec(after)?.[0] ?? ''
+  const rest = after.slice(spaces.length)
+  if (rest === '' || rest.startsWith('#')) return ''
+  if (rest[0] === '"' || rest[0] === "'") {
+    const quote = rest[0]
+    const end = rest.indexOf(quote, 1)
+    if (end < 0) return undefined
+    return rest.slice(1, end)
+  }
+  if (rest[0] === '|' || rest[0] === '>') return undefined
+  const comment = /[ \t]+#/.exec(rest)
+  const raw = comment ? rest.slice(0, comment.index) : rest.replace(/[ \t]+$/, '')
+  return raw
+}
+
 export default class Deploy extends Command {
   static description = 'Deploy agent to hosting provider'
 
@@ -523,11 +566,19 @@ export default class Deploy extends Command {
       }
       await registered.deploy(ctx)
 
-      // Store deployed version after successful deployment
+      // Store deployed version after successful deployment.
+      // An explicit --version is that release. Otherwise record the
+      // version in the agent directory. With no readable version there,
+      // keep the newest release, or "latest" when none exists.
       let versionToStore = version
       if (version === 'latest') {
-        const currentRelease = await getCurrentRelease(agentName)
-        versionToStore = currentRelease || 'latest'
+        const present = readAgentDirReleaseVersion(agentPath)
+        if (present) {
+          versionToStore = present
+        } else {
+          const currentRelease = await getCurrentRelease(agentName)
+          versionToStore = currentRelease || 'latest'
+        }
       }
       db.updateDeployedVersion(agentName, versionToStore)
 
