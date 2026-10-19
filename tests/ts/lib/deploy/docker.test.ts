@@ -86,7 +86,7 @@ describe('Docker Deploy Provider', () => {
     }
 
     it('records the deployment and leaves the container running', async () => {
-      const save = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const save = sandbox.stub(deployUtils, 'saveDeployment').resolves('abc123')
       const exec = sandbox.stub(deployUtils, 'execCommand').resolves({stdout: '', stderr: '', exitCode: 0})
 
       const id = await recordDockerDeployment(input)
@@ -651,7 +651,7 @@ describe('Docker deployment SHA', () => {
     expect(row.provider).to.equal('docker')
     expect(row.deployment_url).to.equal('http://localhost:8080')
 
-    const resolution = deployUtils.resolveDeploymentTarget(printedSha)
+    const resolution = await deployUtils.resolveDeploymentTarget(printedSha)
     expect(resolution.type).to.equal('sha')
     expect(resolution.deployment.id).to.equal(printedSha)
     expect(resolution.deployment.agent_name).to.equal(name)
@@ -672,9 +672,9 @@ describe('Docker deployment SHA', () => {
 
     const ids = db.listDeployments(name).map((row: {id: string}) => row.id)
     expect(ids).to.have.members([firstSha, secondSha])
-    expect(deployUtils.resolveDeploymentTarget(firstSha).type).to.equal('sha')
-    expect(deployUtils.resolveDeploymentTarget(secondSha).type).to.equal('sha')
-    expect(deployUtils.resolveDeploymentTarget(absentSha).type).to.equal('not_found')
+    expect((await deployUtils.resolveDeploymentTarget(firstSha)).type).to.equal('sha')
+    expect((await deployUtils.resolveDeploymentTarget(secondSha)).type).to.equal('sha')
+    expect((await deployUtils.resolveDeploymentTarget(absentSha)).type).to.equal('not_found')
   })
 
   it('still records a row when no deployment SHA was set', async () => {
@@ -685,7 +685,7 @@ describe('Docker deployment SHA', () => {
 
     expect(id).to.match(/^[a-z0-9]{6}$/)
     expect(db.getDeploymentBySha(id).agent_name).to.equal(name)
-    expect(deployUtils.resolveDeploymentTarget(id).type).to.equal('sha')
+    expect((await deployUtils.resolveDeploymentTarget(id)).type).to.equal('sha')
   })
 
   it('stores the auth token under the same SHA as the registry row', async () => {
@@ -702,7 +702,7 @@ describe('Docker deployment SHA', () => {
 
       expect(id).to.equal(printedSha)
       expect(setDeploymentToken.calledOnceWith(printedSha, 'secret-token')).to.equal(true)
-      expect(deployUtils.resolveDeploymentTarget(printedSha).type).to.equal('sha')
+      expect((await deployUtils.resolveDeploymentTarget(printedSha)).type).to.equal('sha')
     } finally {
       sandbox.restore()
     }

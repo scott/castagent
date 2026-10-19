@@ -63,6 +63,7 @@ An agent that already has several active rows for one resource, left by
 a redeploy from before this repair, is cleaned up the next time
 `cast connect` or `cast shutdown` resolves the name. Cast keeps the
 newest row, marks the older rows deleted, and removes their token files.
+`cast connect` and `cast shutdown` now write local rows when they fold duplicates.
 The remote host stays up. `cast registry` keeps listing those extra rows
 until that resolution or the next successful deploy. A different provider
 stays registered, and each DigitalOcean MicroVM stays registered. When

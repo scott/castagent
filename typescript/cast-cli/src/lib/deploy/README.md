@@ -37,7 +37,7 @@ module.exports = {
     ctx.log(`Deploying ${ctx.agentName} to My Host...`)
     // Create the host resource, then record it:
     const {saveDeployment} = require('cast-cli/dist/lib/deploy/deploy-utils.js')
-    saveDeployment(ctx.agentName, 'my-host', 'https://example.invalid', ctx.tokenHash)
+    await saveDeployment(ctx.agentName, 'my-host', 'https://example.invalid', ctx.tokenHash)
   },
   async destroy(ctx) {
     ctx.log(`Removing ${ctx.agentName} from My Host.`)

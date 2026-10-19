@@ -884,7 +884,7 @@ export default class MicrovmDeploy extends Command {
       })
       if (settled.id && ociRef) {
         const endpoint = settled.endpoint || `https://${settled.id}.${settled.region || REGION}.microvm.ondigitalocean.com`
-        saveDeployment(agentName, 'microvm', endpoint, tokenHash, settled.id, volumeConfigJson({
+        await saveDeployment(agentName, 'microvm', endpoint, tokenHash, settled.id, volumeConfigJson({
           microvmId: settled.id,
           region: settled.region || REGION,
           ociRef,
@@ -921,7 +921,7 @@ export default class MicrovmDeploy extends Command {
       memory: size.memory,
       idleTimeout,
     }
-    saveDeployment(agentName, 'microvm', created.endpoint!, tokenHash, created.id, volumeConfigJson(config))
+    await saveDeployment(agentName, 'microvm', created.endpoint!, tokenHash, created.id, volumeConfigJson(config))
 
     this.log('')
     this.log(`Agent: ${agentName}`)

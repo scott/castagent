@@ -1783,7 +1783,7 @@ describe('DigitalOcean Deploy Provider', () => {
           exitCode: 0,
         })
         .onCall(4).resolves({stdout: '', stderr: '', exitCode: 0})
-      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').resolves('abc123')
       sandbox.stub(instance, 'warn').returns(undefined)
       sandbox.stub(instance, 'log').returns(undefined)
       try {
@@ -2352,7 +2352,7 @@ describe('DigitalOcean Deploy Provider', () => {
         }
         return {stdout: '', stderr: '', exitCode: 0}
       })
-      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').resolves('abc123')
       const result = await releaseFailedDroplet({
         agentName: 'mail',
         dropletId: '4242',
@@ -2382,7 +2382,7 @@ describe('DigitalOcean Deploy Provider', () => {
       const exec = stubFn(sandbox.stub(deployUtils, 'execCommand') as any).resolves({
         stdout: '', stderr: 'rate limited', exitCode: 1,
       })
-      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').resolves('abc123')
       const logs: string[] = []
       const result = await releaseFailedDroplet({
         agentName: 'mail',
@@ -2425,7 +2425,7 @@ describe('DigitalOcean Deploy Provider', () => {
         }
         return {stdout: '', stderr: '', exitCode: 0}
       })
-      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').resolves('abc123')
       const result = await releaseFailedDroplet({
         agentName: 'mail',
         dropletId: '4444',
@@ -2456,7 +2456,7 @@ describe('DigitalOcean Deploy Provider', () => {
         }
         return {stdout: '', stderr: '', exitCode: 0}
       })
-      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').resolves('abc123')
       const result = await releaseFailedDroplet({
         agentName: 'mail',
         dropletId: '4747',
@@ -2485,7 +2485,7 @@ describe('DigitalOcean Deploy Provider', () => {
         }
         return {stdout: '', stderr: '', exitCode: 0}
       })
-      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').resolves('abc123')
       const result = await releaseFailedDroplet({
         agentName: 'mail',
         dropletId: '4848',
@@ -2514,7 +2514,7 @@ describe('DigitalOcean Deploy Provider', () => {
         }
         return {stdout: '', stderr: '', exitCode: 0}
       })
-      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').resolves('abc123')
       const result = await releaseFailedDroplet({
         agentName: 'mail',
         dropletId: '4949',
@@ -2539,7 +2539,7 @@ describe('DigitalOcean Deploy Provider', () => {
           exitCode: 0,
         })
         .onSecondCall().resolves({stdout: '', stderr: '', exitCode: 0})
-      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').resolves('abc123')
       const result = await releaseFailedDroplet({
         agentName: 'mail',
         tokenHash: 'hash',
@@ -2553,7 +2553,7 @@ describe('DigitalOcean Deploy Provider', () => {
     })
 
     it('records the deployment when the droplet list cannot be read', async () => {
-      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').resolves('abc123')
       stubFn(sandbox.stub(deployUtils, 'execCommand') as any).resolves({
         stdout: '', stderr: 'doctl unavailable', exitCode: 1,
       })
@@ -2630,7 +2630,7 @@ describe('DigitalOcean Deploy Provider', () => {
 
     it('deletes a new droplet when readiness fails and does not delete the shared SSH key', async () => {
       recordPinnedHostKey('203.0.113.44', pinnedPublicKey, '4646')
-      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').resolves('abc123')
       const result = await runUntilReadiness(true, 0)
       expect(result.error).to.include('Timed out waiting for SSH')
       expect(result.commands.some(line => line.includes('droplet') && line.includes('delete') && line.includes('4646'))).to.equal(true)
@@ -2641,7 +2641,7 @@ describe('DigitalOcean Deploy Provider', () => {
 
     it('leaves an existing droplet in place when a later step fails', async () => {
       recordPinnedHostKey('203.0.113.44', pinnedPublicKey, '4646')
-      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').resolves('abc123')
       const result = await runUntilReadiness(false, 0)
       expect(result.error).to.include('Timed out waiting for SSH')
       expect(result.commands.some(line => line.includes('droplet') && line.includes('delete'))).to.equal(false)
@@ -2651,7 +2651,7 @@ describe('DigitalOcean Deploy Provider', () => {
 
     it('records the new droplet when cleanup cannot delete it', async () => {
       recordPinnedHostKey('203.0.113.44', pinnedPublicKey, '4646')
-      const saved = sandbox.stub(deployUtils, 'saveDeployment').returns('abc123')
+      const saved = sandbox.stub(deployUtils, 'saveDeployment').resolves('abc123')
       const result = await runUntilReadiness(true, 1)
       expect(result.error).to.include('Timed out waiting for SSH')
       expect(saved.calledOnce).to.equal(true)

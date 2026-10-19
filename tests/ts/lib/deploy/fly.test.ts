@@ -203,7 +203,7 @@ describe('Fly deploy flow', () => {
       deps: {
         exec,
         generateAuthToken: async () => ({authToken: 'token', tokenHash: 'hash'}),
-        saveDeployment: (...args) => {
+        saveDeployment: async (...args) => {
           saved.push(args)
           return 'abc123'
         },
@@ -304,7 +304,7 @@ describe('Fly deploy flow', () => {
       if (args[0] === 'deploy') return flyResult(1, '', 'Error: authentication handshake failed: EOF')
       return flyResult(1, '', 'unexpected')
     })
-    harness.deps.saveDeployment = (...args) => {
+    harness.deps.saveDeployment = async (...args) => {
       order.push('save')
       harness.saved.push(args)
       return 'abc123'
@@ -1004,7 +1004,7 @@ describe('Fly runtime image and health', () => {
     const harness = {
       exec,
       generateAuthToken: async () => ({authToken: 'token', tokenHash: 'hash'}),
-      saveDeployment: () => 'abc123',
+      saveDeployment: async () => 'abc123',
       listDeployments: () => [],
       discardTokens: async (...args: unknown[]) => {
         discarded.push(args)
@@ -1058,7 +1058,7 @@ describe('Fly runtime image and health', () => {
       await deployFlyAgent({agentName: input.name, agentPath: dir, host}, {
         exec,
         generateAuthToken: async () => ({authToken: 'token', tokenHash: 'hash'}),
-        saveDeployment: () => 'abc123',
+        saveDeployment: async () => 'abc123',
         listDeployments: () => [],
         discardTokens: async (...args: unknown[]) => {
           discarded.push(args)
@@ -1157,7 +1157,7 @@ describe('Fly runtime image and health', () => {
       await deployFlyAgent({agentName: 'released', agentPath: dir, host}, {
         exec,
         generateAuthToken: async () => ({authToken: 'new-token', tokenHash: 'new-hash'}),
-        saveDeployment: (...args) => {
+        saveDeployment: async (...args) => {
           saved.push(args)
           return 'new123'
         },
@@ -1204,7 +1204,7 @@ describe('Fly runtime image and health', () => {
     await deployFlyAgent({agentName: 'ready', agentPath: dir, host}, {
       exec,
       generateAuthToken: async () => ({authToken: 'token', tokenHash: 'hash'}),
-      saveDeployment: () => 'abc123',
+      saveDeployment: async () => 'abc123',
       listDeployments: () => [{id: 'old', provider: 'fly', volume_id: 'cast_ready_memory'}],
       discardTokens: async () => {},
       inferenceEnv: () => ({}),

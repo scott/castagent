@@ -696,7 +696,7 @@ export async function deployFlyAgent(input: {
 
     const alreadyRecorded = deps.listDeployments(agentName).some(row => row.provider === 'fly')
     if (!alreadyRecorded) {
-      recordedId = deps.saveDeployment(agentName, 'fly', deploymentUrl, tokenHash, volumeName, volumeConfig)
+      recordedId = await deps.saveDeployment(agentName, 'fly', deploymentUrl, tokenHash, volumeName, volumeConfig)
       recordedEarly = true
     }
 
@@ -737,7 +737,7 @@ export async function deployFlyAgent(input: {
     })
 
     if (!recordedEarly) {
-      deps.saveDeployment(agentName, 'fly', deploymentUrl, tokenHash, volumeName, volumeConfig)
+      await deps.saveDeployment(agentName, 'fly', deploymentUrl, tokenHash, volumeName, volumeConfig)
     }
 
     host.log('')
@@ -764,7 +764,7 @@ export async function deployFlyAgent(input: {
     // and record the row when this was a redeploy.
     if (released && !recordedEarly && tokenHash) {
       try {
-        recordedId = deps.saveDeployment(agentName, 'fly', deploymentUrl, tokenHash, volumeName, volumeConfig)
+        recordedId = await deps.saveDeployment(agentName, 'fly', deploymentUrl, tokenHash, volumeName, volumeConfig)
         recordedEarly = true
       } catch (saveError) {
         const message = saveError instanceof Error ? saveError.message : String(saveError)

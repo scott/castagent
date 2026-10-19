@@ -255,7 +255,7 @@ describe('Upgrade Command', () => {
 
     it('tells the user to pass the next version as a positional argument', async () => {
       const deployUtils = await import('../../../typescript/cast-cli/src/lib/deploy/deploy-utils')
-      sandbox.stub(deployUtils, 'resolveDeploymentTarget').returns({
+      sandbox.stub(deployUtils, 'resolveDeploymentTarget').resolves({
         type: 'single',
         deployment: {
           id: 'abc123',

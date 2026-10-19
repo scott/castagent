@@ -42,7 +42,7 @@ export default class Connect extends Command {
     const target = args.agent
 
     // Resolve target (SHA or agent name)
-    const resolution = resolveDeploymentTarget(target)
+    const resolution = await resolveDeploymentTarget(target)
 
     if (resolution.type === 'not_found') {
       // Check if there's a local agent running

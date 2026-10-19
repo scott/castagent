@@ -100,7 +100,7 @@ export default class Shutdown extends Command {
     const target = args.agent
 
     // Resolve target (SHA or agent name)
-    const resolution = resolveDeploymentTarget(target)
+    const resolution = await resolveDeploymentTarget(target)
 
     if (resolution.type === 'not_found') {
       this.log(`No deployment found for '${target}'.`)

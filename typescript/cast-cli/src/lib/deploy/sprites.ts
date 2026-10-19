@@ -232,7 +232,7 @@ export async function rollbackFailedSpriteDeploy(input: {
   if (input.createdSprite) {
     const destroyed = await destroyCreatedSprite(input.spriteName)
     if (destroyed === 'failed') {
-      saveDeployment(
+      await saveDeployment(
         input.agentName,
         'sprites',
         `https://${input.spriteName}.sprites.app`,
@@ -397,7 +397,7 @@ export async function deployToSprites(
     const deploymentUrl = firstLine.replace(/^URL:\s*/i, '').trim()
 
     if (recordDeployment) {
-      saveDeployment(
+      await saveDeployment(
         agentName,
         'sprites',
         deploymentUrl,
