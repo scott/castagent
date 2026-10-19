@@ -9,13 +9,8 @@ import axios from 'axios'
 import DigitalOceanDeploy, {
   VOLUME_MOUNT_MARKER,
   buildDigitalOceanVolumeMountScript,
-  buildDropletContainerImageCommand,
-  buildDropletMemoryVerifyScript,
   buildDropletRestartOnMemoryCommand,
-  buildVolumeFstabEntry,
-  digitalOceanMemoryMountPath,
   digitalOceanVolumeClient,
-  digitalOceanVolumeDevicePath,
   DigitalOceanVolumeExistsError,
   ensureDropletContainerMemory,
   isDigitalOceanVolumeConflict,
@@ -25,15 +20,17 @@ import DigitalOceanDeploy, {
   parseVolumeMountReport,
   planVolumeAttachment,
   prepareDigitalOceanMemoryVolume,
+  remoteDockerRunCommand,
   volumeDetachClock,
-  volumeHasFilesystem,
   type DigitalOceanVolumeClient,
   type DigitalOceanVolumeRecord,
 } from '../../../../typescript/cast-cli/src/lib/deploy/digitalocean'
 import * as deployUtils from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
+import {mountUpgradedDropletMemory} from '../../../../typescript/cast-cli/src/lib/deploy/upgrades'
 import {recordPinnedHostKey} from '../../../../typescript/cast-cli/src/lib/deploy/ssh-hostkey'
 
 const VOLUME_ID = '506f78a4-e098-11e5-ad9f-000f53306ae1'
+const OTHER_UUID = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb'
 const VOLUME_NAME = 'cast-test-agent'
 const TOKEN = 'super-secret-token'
 const REPORT = [
@@ -52,21 +49,6 @@ function volume(dropletIds: number[], name = VOLUME_NAME): DigitalOceanVolumeRec
 
 describe('DigitalOcean memory volume mount', () => {
   describe('mount plan', () => {
-    it('formats only when the probe has no filesystem type', () => {
-      expect(volumeHasFilesystem('')).to.equal(false)
-      expect(volumeHasFilesystem('   ')).to.equal(false)
-      expect(volumeHasFilesystem(null)).to.equal(false)
-      expect(volumeHasFilesystem('ext4')).to.equal(true)
-      expect(volumeHasFilesystem('xfs')).to.equal(true)
-    })
-
-    it('addresses fstab by UUID with nofail', () => {
-      const entry = buildVolumeFstabEntry(VOLUME_ID, '/mnt/cast-test-agent', 'ext4')
-      expect(entry).to.equal(`UUID=${VOLUME_ID} /mnt/cast-test-agent ext4 defaults,nofail,discard 0 2`)
-      expect(() => buildVolumeFstabEntry('not-a-uuid', '/mnt/cast-test-agent', 'ext4')).to.throw(/UUID/)
-      expect(() => buildVolumeFstabEntry(VOLUME_ID, '/var/lib/cast', 'ext4')).to.throw(/mount path/)
-    })
-
     it('attaches only when this droplet does not already have the volume', () => {
       expect(planVolumeAttachment([42], 42)).to.equal('attached')
       expect(planVolumeAttachment([], 42)).to.equal('attach')
@@ -106,35 +88,22 @@ describe('DigitalOcean memory volume mount', () => {
       })
       expect(() => parseVolumeMountReport('mounted nowhere')).to.throw(/did not report a mount/)
       expect(parseDropletMemoryBind('container=ok\n')).to.equal('ok')
-      expect(parseDropletMemoryBind('container=absent\n')).to.equal('absent')
+      expect(() => parseDropletMemoryBind('container=absent\n')).to.throw(/not writing memory/)
       expect(() => parseDropletMemoryBind('container=missing\n')).to.throw(/not writing memory/)
     })
 
-    it('keeps the mount script from reformatting and off the account SSH keys', () => {
-      const script = buildDigitalOceanVolumeMountScript({volumeName: VOLUME_NAME})
-      const formatAt = script.indexOf('mkfs.ext4')
-      expect(formatAt).to.be.greaterThan(script.indexOf('confirmed=empty'))
-      expect(formatAt).to.be.greaterThan(script.indexOf('wipefs -n'))
-      expect(script.indexOf('mkfs.ext4', formatAt + 1)).to.equal(-1)
-      expect(script).to.include('defaults,nofail,discard 0 2')
-      expect(script).to.include('UUID=')
-      expect(script).to.include(digitalOceanVolumeDevicePath(VOLUME_NAME))
-      expect(script).to.include(digitalOceanMemoryMountPath(VOLUME_NAME))
-      expect(script).to.not.include('ssh-key')
-      expect(script).to.not.include(TOKEN)
-      expect(script).to.not.include('AUTH_TOKEN')
-      expect(buildDropletMemoryVerifyScript(VOLUME_NAME)).to.not.include('mkfs')
-      expect(buildDropletMemoryVerifyScript(VOLUME_NAME)).to.include('/app/agent/memory')
-      const restart = buildDropletRestartOnMemoryCommand(VOLUME_NAME, 'cast-test-agent:latest')
-      expect(restart).to.include("'/mnt/cast-test-agent:/app/agent/memory'")
-      expect(restart).to.include("'127.0.0.1:8080:8080'")
-      expect(restart).to.include("'/var/lib/cast/cast-agent.env'")
-      expect(restart).to.not.include(TOKEN)
-      expect(restart).to.not.include('AUTH_TOKEN')
+    it('restarts the container with the same docker run builder deploy uses', () => {
+      const image = 'registry.digitalocean.com/cast-test-agent/agent:1.2.3'
+      expect(buildDropletRestartOnMemoryCommand(VOLUME_NAME, image)).to.equal(
+        remoteDockerRunCommand({volumeId: VOLUME_NAME, imageTag: image}),
+      )
       expect(() => buildDropletRestartOnMemoryCommand(VOLUME_NAME, "cast'agent")).to.throw(/image name/)
-      expect(buildDropletContainerImageCommand()).to.not.include(TOKEN)
-      const checked = spawnSync('bash', ['-n'], {input: script, encoding: 'utf8'})
-      expect(checked.status, checked.stderr).to.equal(0)
+      const script = buildDigitalOceanVolumeMountScript({volumeName: VOLUME_NAME})
+      expect(script.startsWith('#!/bin/bash\nset -euo pipefail\n')).to.equal(true)
+      expect(script).to.not.include('--target')
+      expect(script).to.include('mkfs.ext4 -F ')
+      expect(script).to.not.include('mkfs.ext4 -FF')
+      expect(script).to.not.include('ssh-key')
     })
 
     it('mounts before the container starts and checks the container afterwards', () => {
@@ -165,7 +134,7 @@ describe('DigitalOcean memory volume mount', () => {
       fs.writeFileSync(path.join(bin, name), body, {mode: 0o755})
     }
 
-    function runScript(mode: 'empty' | 'ext4' | 'error' | 'signature', preexisting?: string): {
+    function runScript(mode: 'empty' | 'ext4' | 'mounted' | 'other' | 'error' | 'signature', preexisting?: string): {
       status: number | null
       stdout: string
       stderr: string
@@ -173,6 +142,7 @@ describe('DigitalOcean memory volume mount', () => {
       notes: string
       formats: string
       mounts: string
+      umounts: string
     } {
       if (root) fs.rmSync(root, {recursive: true, force: true})
       root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-vol-'))
@@ -181,20 +151,26 @@ describe('DigitalOcean memory volume mount', () => {
       const mnt = path.join(root, 'mnt')
       const device = path.join(root, 'disk')
       const fstabPath = path.join(root, 'fstab')
+      const hasFilesystem = mode === 'ext4' || mode === 'mounted' || mode === 'other'
+      const startsMounted = mode === 'mounted' || mode === 'other'
       fs.mkdirSync(bin)
       fs.mkdirSync(state)
       fs.mkdirSync(mnt)
       fs.writeFileSync(device, '')
       fs.writeFileSync(path.join(state, 'formats'), '0')
       fs.writeFileSync(path.join(state, 'mounts'), '0')
-      fs.writeFileSync(path.join(state, 'mounted'), '0')
-      fs.writeFileSync(path.join(state, 'type'), mode === 'ext4' ? 'ext4' : '')
-      fs.writeFileSync(path.join(state, 'uuid'), mode === 'ext4' ? VOLUME_ID : '')
+      fs.writeFileSync(path.join(state, 'umounts'), '0')
+      fs.writeFileSync(path.join(state, 'mounted'), startsMounted ? '1' : '0')
+      fs.writeFileSync(path.join(state, 'type'), hasFilesystem ? 'ext4' : '')
+      fs.writeFileSync(path.join(state, 'uuid'), hasFilesystem ? VOLUME_ID : '')
+      fs.writeFileSync(path.join(state, 'mounted_uuid'), mode === 'mounted' ? VOLUME_ID : mode === 'other' ? OTHER_UUID : '')
+      fs.writeFileSync(path.join(state, 'mounted_source'), mode === 'mounted' ? '/dev/sda' : mode === 'other' ? '/dev/sdz' : '')
       fs.writeFileSync(path.join(state, 'signature'), mode === 'signature' ? '1' : '0')
       fs.writeFileSync(path.join(state, 'probe'), mode === 'error' ? '1' : '0')
       fs.writeFileSync(fstabPath, '# keep me\nUUID=11111111-1111-1111-1111-111111111111 / ext4 defaults 0 1\n')
       if (preexisting !== undefined) fs.writeFileSync(path.join(mnt, 'notes.md'), preexisting)
 
+      writeTool(bin, 'sleep', '#!/bin/bash\nexit 0\n')
       writeTool(bin, 'blkid', `#!/bin/bash
 if [ "$(cat ${state}/probe)" = 1 ]; then exit 1; fi
 if [[ "$*" == *TYPE* ]]; then
@@ -225,37 +201,62 @@ printf '%s' "$(($(cat ${state}/formats) + 1))" > ${state}/formats
 exit 0
 `)
       writeTool(bin, 'findmnt', `#!/bin/bash
-target=""
+mode=""
 output=""
+path=""
 while [ $# -gt 0 ]; do
   case "$1" in
-    --target) target="$2"; shift 2 ;;
+    --target|--mountpoint) mode="$1"; path="$2"; shift 2 ;;
     -o) output="$2"; shift 2 ;;
     -n) shift ;;
     *) shift ;;
   esac
 done
-if [ "$target" = / ]; then
-  if [ "$output" = SOURCE ]; then printf '/dev/vda1'; fi
+root_uuid='aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'
+root_source='/dev/vda1'
+if [ "$path" = / ]; then
+  if [ "$output" = UUID ]; then printf '%s' "$root_uuid"; fi
+  if [ "$output" = SOURCE ]; then printf '%s' "$root_source"; fi
   exit 0
 fi
-if [ "$(cat ${state}/mounted)" != 1 ]; then exit 1; fi
-if [ "$output" = UUID ]; then printf '%s' "$(cat ${state}/uuid)"; exit 0; fi
-if [ "$output" = SOURCE ]; then printf '/dev/sda'; exit 0; fi
+mounted="$(cat ${state}/mounted)"
+if [ "$mode" = --target ]; then
+  if [ "$mounted" != 1 ] || [ "$path" != ${JSON.stringify(mnt)} ]; then
+    if [ "$output" = UUID ]; then printf '%s' "$root_uuid"; fi
+    if [ "$output" = SOURCE ]; then printf '%s' "$root_source"; fi
+    exit 0
+  fi
+elif [ "$mounted" != 1 ] || [ "$path" != ${JSON.stringify(mnt)} ]; then
+  exit 1
+fi
+if [ "$output" = UUID ]; then printf '%s' "$(cat ${state}/mounted_uuid)"; exit 0; fi
+if [ "$output" = SOURCE ]; then printf '%s' "$(cat ${state}/mounted_source)"; exit 0; fi
 exit 0
 `)
       writeTool(bin, 'mount', `#!/bin/bash
+if [ "$(cat ${state}/mounted)" = 1 ]; then
+  echo 'mount: already mounted' >&2
+  exit 1
+fi
 mkdir -p ${state}/hidden
 shopt -s dotglob nullglob
 for file in "$1"/*; do
   mv "$file" ${state}/hidden/
 done
 printf '1' > ${state}/mounted
+cat ${state}/uuid > ${state}/mounted_uuid
+printf '/dev/sda' > ${state}/mounted_source
 printf '%s' "$(($(cat ${state}/mounts) + 1))" > ${state}/mounts
 exit 0
 `)
       writeTool(bin, 'umount', `#!/bin/bash
+printf '%s' "$(($(cat ${state}/umounts) + 1))" > ${state}/umounts
+if [ "$(cat ${state}/mounted)" != 1 ]; then
+  echo "umount: $1: not mounted." >&2
+  exit 1
+fi
 printf '0' > ${state}/mounted
+printf '' > ${state}/mounted_uuid
 exit 0
 `)
 
@@ -279,42 +280,67 @@ exit 0
         notes: fs.existsSync(notesPath) ? fs.readFileSync(notesPath, 'utf8') : '',
         formats: fs.readFileSync(path.join(state, 'formats'), 'utf8'),
         mounts: fs.readFileSync(path.join(state, 'mounts'), 'utf8'),
+        umounts: fs.readFileSync(path.join(state, 'umounts'), 'utf8'),
       }
     }
 
-    it('formats an empty volume once, mounts it by UUID, and keeps files that were on the root disk', () => {
+    it('formats an empty mountpoint once and does not unmount the root filesystem', () => {
       const first = runScript('empty', 'remember this')
-      expect(first.status, first.stderr).to.equal(0)
+      expect(first.status, `${first.stderr}\n${first.stdout}`).to.equal(0)
       expect(first.formats).to.equal('1')
       expect(first.mounts).to.equal('1')
+      expect(first.umounts).to.equal('0')
       expect(first.notes).to.equal('remember this')
       expect(first.fstab).to.include('# keep me')
       expect(first.fstab).to.include('UUID=11111111-1111-1111-1111-111111111111 / ext4 defaults 0 1')
       expect(first.fstab).to.include(`UUID=${VOLUME_ID} `)
       expect(first.fstab).to.include('ext4 defaults,nofail,discard 0 2')
       expect(first.fstab.match(new RegExp(VOLUME_ID, 'g'))).to.have.length(1)
-      expect(first.stdout).to.include(VOLUME_MOUNT_MARKER)
       expect(first.stdout).to.include('formatted=1')
-      expect(first.stdout).to.include('filesystem=ext4')
       expect(first.stdout).to.include(`uuid=${VOLUME_ID}`)
-
-      const second = runScript('ext4', 'remember this')
-      expect(second.status, second.stderr).to.equal(0)
-      expect(second.formats).to.equal('0')
-      expect(second.stdout).to.include('formatted=0')
-      expect(second.fstab.match(new RegExp(VOLUME_ID, 'g'))).to.have.length(1)
+      expect(first.stderr).to.not.include('not mounted')
     })
 
-    it('does not format a volume that already has a filesystem or a disk signature', () => {
-      const existing = runScript('ext4')
+    it('leaves a mountpoint that already has the volume UUID alone', () => {
+      const mounted = runScript('mounted', 'already here')
+      expect(mounted.status, mounted.stderr).to.equal(0)
+      expect(mounted.formats).to.equal('0')
+      expect(mounted.mounts).to.equal('0')
+      expect(mounted.umounts).to.equal('0')
+      expect(mounted.notes).to.equal('already here')
+      expect(mounted.stdout).to.include('formatted=0')
+      expect(mounted.fstab).to.include(`UUID=${VOLUME_ID} `)
+      expect(mounted.fstab).to.include('defaults,nofail,discard 0 2')
+    })
+
+    it('mounts a volume that already has data without formatting it', () => {
+      const existing = runScript('ext4', 'keep me')
       expect(existing.status, existing.stderr).to.equal(0)
       expect(existing.formats).to.equal('0')
+      expect(existing.mounts).to.equal('1')
+      expect(existing.umounts).to.equal('0')
+      expect(existing.notes).to.equal('keep me')
+      expect(existing.stdout).to.include('formatted=0')
       expect(existing.fstab).to.include('defaults,nofail,discard 0 2')
+    })
 
+    it('unmounts a different filesystem and still does not format the volume', () => {
+      const other = runScript('other')
+      expect(other.status, other.stderr).to.equal(0)
+      expect(other.formats).to.equal('0')
+      expect(other.umounts).to.equal('1')
+      expect(other.mounts).to.equal('1')
+      expect(other.stdout).to.include('formatted=0')
+      expect(other.stdout).to.include(`uuid=${VOLUME_ID}`)
+    })
+
+    it('does not format a volume that already has a disk signature', () => {
       const signed = runScript('signature', 'keep me')
       expect(signed.status).to.not.equal(0)
       expect(signed.stderr).to.include('Refusing to format')
       expect(signed.formats).to.equal('0')
+      expect(signed.mounts).to.equal('0')
+      expect(signed.umounts).to.equal('0')
       expect(signed.notes).to.equal('keep me')
       expect(signed.fstab).to.not.include(VOLUME_ID)
     })
@@ -324,7 +350,8 @@ exit 0
       expect(failed.status).to.not.equal(0)
       expect(failed.stderr).to.include('Refusing to format')
       expect(failed.formats).to.equal('0')
-      expect(failed.stderr).to.include('not mounted')
+      expect(failed.mounts).to.equal('0')
+      expect(failed.umounts).to.equal('0')
     })
   })
 
@@ -344,9 +371,7 @@ exit 0
     it('creates a volume without a filesystem hint, then waits for the attach', async () => {
       const calls: string[] = []
       let created = false
-      const client: DigitalOceanVolumeClient & {
-        attachVolumeAction(volumeId: string, dropletId: number, region: string): Promise<{actionId: string; status: string}>
-      } = {
+      const client: DigitalOceanVolumeClient = {
         async listVolumes() {
           calls.push('list')
           return []
@@ -354,9 +379,6 @@ exit 0
         async createVolume(name, region) {
           calls.push(`create:${name}:${region}`)
           return volume([])
-        },
-        async attachVolume() {
-          calls.push('attach')
         },
         async attachVolumeAction(_volumeId, dropletId) {
           calls.push(`attach-action:${dropletId}`)
@@ -408,8 +430,9 @@ exit 0
           calls.push('create')
           return volume([])
         },
-        async attachVolume() {
+        async attachVolumeAction() {
           calls.push('attach')
+          return {actionId: '9', status: 'completed'}
         },
         async readAction() {
           return 'completed'
@@ -436,20 +459,19 @@ exit 0
       expect(calls).to.deep.equal(['list'])
     })
 
-    it('looks up a volume that already exists instead of treating the path as mounted', async () => {
-      let listed = false
+    it('lists the volume once when create reports the name is already taken', async () => {
+      let lists = 0
       const client: DigitalOceanVolumeClient = {
         async listVolumes() {
-          if (!listed) {
-            listed = true
-            return []
-          }
-          return [volume([])]
+          lists += 1
+          return []
         },
         async createVolume() {
           throw new DigitalOceanVolumeExistsError(VOLUME_NAME, 'nyc3')
         },
-        async attachVolume() {},
+        async attachVolumeAction() {
+          throw new Error('should not attach')
+        },
         async readAction() {
           return 'completed'
         },
@@ -460,14 +482,21 @@ exit 0
           return false
         },
       }
-      const prepared = await prepareDigitalOceanMemoryVolume({
-        client,
-        volumeName: VOLUME_NAME,
-        region: 'nyc3',
-        dropletId: '42',
-      })
-      expect(prepared.created).to.equal(false)
-      expect(prepared.volume.dropletIds).to.deep.equal([42])
+      try {
+        await prepareDigitalOceanMemoryVolume({
+          client,
+          volumeName: VOLUME_NAME,
+          region: 'nyc3',
+          dropletId: '42',
+        })
+        expect.fail('should have failed')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        expect(message).to.include('already exists')
+        expect(message).to.include('not in the volume list')
+        expect(message).to.not.include(TOKEN)
+      }
+      expect(lists).to.equal(1)
     })
 
     it('refuses to detach a volume from a different live droplet', async () => {
@@ -478,7 +507,7 @@ exit 0
         async createVolume() {
           throw new Error('should not create')
         },
-        async attachVolume() {
+        async attachVolumeAction() {
           throw new Error('should not attach')
         },
         async readAction() {
@@ -518,8 +547,9 @@ exit 0
         async createVolume() {
           throw new Error('should not create')
         },
-        async attachVolume() {
-          calls.push('attach')
+        async attachVolumeAction() {
+          calls.push('attach-action')
+          return {actionId: '9', status: 'completed'}
         },
         async readAction() {
           return 'completed'
@@ -544,23 +574,18 @@ exit 0
         log: message => logs.push(message),
       })
       expect(prepared.volume.dropletIds).to.deep.equal([42])
-      expect(calls).to.deep.equal(['attach'])
+      expect(calls).to.deep.equal(['attach-action'])
       expect(logs.some(line => line.includes('Waiting for memory volume'))).to.equal(true)
       expect(clock.elapsed()).to.be.greaterThan(0)
     })
 
     it('fails when the attach action errors', async () => {
-      const client: DigitalOceanVolumeClient & {
-        attachVolumeAction(): Promise<{actionId: string; status: string}>
-      } = {
+      const client: DigitalOceanVolumeClient = {
         async listVolumes() {
           return [volume([])]
         },
         async createVolume() {
           throw new Error('should not create')
-        },
-        async attachVolume() {
-          throw new Error('unused')
         },
         async attachVolumeAction() {
           return {actionId: '9', status: 'in-progress'}
@@ -591,17 +616,12 @@ exit 0
 
     it('times out a volume action without sleeping in real time', async () => {
       const clock = clockStub()
-      const client: DigitalOceanVolumeClient & {
-        attachVolumeAction(): Promise<{actionId: string; status: string}>
-      } = {
+      const client: DigitalOceanVolumeClient = {
         async listVolumes() {
           return [volume([])]
         },
         async createVolume() {
           throw new Error('should not create')
-        },
-        async attachVolume() {
-          throw new Error('unused')
         },
         async attachVolumeAction() {
           return {actionId: '9', status: 'in-progress'}
@@ -760,7 +780,7 @@ exit 0
       expect(commands.some(command => command.includes("docker' 'run'"))).to.equal(false)
     })
 
-    it('restarts an existing container onto the mounted volume and leaves a missing one unstarted', async () => {
+    it('restarts an existing container onto the mounted volume', async () => {
       const commands: string[] = []
       let verified = false
       stubSsh(remote => {
@@ -778,8 +798,7 @@ exit 0
         if (remote.includes("'docker'") && remote.includes("'run'")) return {stdout: 'cid\n', stderr: '', exitCode: 0}
         return {stdout: '', stderr: `unexpected ${remote}`, exitCode: 1}
       })
-      const bound = await ensureDropletContainerMemory('203.0.113.1', VOLUME_NAME, [TOKEN])
-      expect(bound).to.equal('ok')
+      await ensureDropletContainerMemory('203.0.113.1', VOLUME_NAME, [TOKEN])
       expect(commands[0]).to.include('stat -c %d')
       expect(commands[1]).to.include('docker inspect')
       expect(commands[2]).to.include('docker rm -f cast-agent')
@@ -800,14 +819,13 @@ exit 0
         if (remote.includes(VOLUME_MOUNT_MARKER)) return {stdout: REPORT, stderr: '', exitCode: 0}
         return {stdout: '', stderr: 'should not restart the container', exitCode: 1}
       })
-      const bound = await ensureDropletContainerMemory('203.0.113.1', VOLUME_NAME, [TOKEN])
-      expect(bound).to.equal('ok')
+      await ensureDropletContainerMemory('203.0.113.1', VOLUME_NAME, [TOKEN])
       expect(commands.some(command => command.includes('docker rm'))).to.equal(false)
       expect(commands.some(command => command.includes("'run'"))).to.equal(false)
       expect(commands.some(command => command.includes('nofail'))).to.equal(true)
     })
 
-    it('mounts the volume when the droplet has no agent container yet', async () => {
+    it('fails when the droplet has no agent container to restart', async () => {
       const commands: string[] = []
       stubSsh(remote => {
         commands.push(remote)
@@ -816,9 +834,58 @@ exit 0
         if (remote.includes(VOLUME_MOUNT_MARKER)) return {stdout: REPORT, stderr: '', exitCode: 0}
         return {stdout: '', stderr: 'should not start a container', exitCode: 1}
       })
-      const missing = await ensureDropletContainerMemory('203.0.113.1', VOLUME_NAME, [TOKEN])
-      expect(missing).to.equal('absent')
+      try {
+        await ensureDropletContainerMemory('203.0.113.1', VOLUME_NAME, [TOKEN])
+        expect.fail('should have failed')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        expect(message).to.include('not on the droplet')
+        expect(message).to.not.include(TOKEN)
+      }
       expect(commands.some(command => command.includes("'run'"))).to.equal(false)
+      expect(commands.some(command => command.includes('docker rm'))).to.equal(false)
+    })
+
+    it('checks upgrade SSH commands against the api token, auth token, and inference secret', async () => {
+      let apiToken = 'do-api-token-not-in-argv'
+      let authToken = 'auth-token-not-in-argv'
+      let inferenceValue = 'inference-token-not-in-argv'
+      sandbox.stub(deployUtils, 'resolveDeploymentAuthToken').callsFake(async () => authToken)
+      sandbox.stub(deployUtils, 'readAgentModel').returns('openrouter/test')
+      sandbox.stub(deployUtils, 'inferenceEnv').returns({OPENROUTER_API_KEY: inferenceValue})
+      sandbox.stub(deployUtils, 'filterInferenceEnv').callsFake(() => ({OPENROUTER_API_KEY: inferenceValue}))
+      const commands: string[] = []
+      stubSsh(remote => {
+        commands.push(remote)
+        expect(remote).to.not.include(apiToken)
+        expect(remote).to.not.include(authToken)
+        expect(remote).to.not.include(inferenceValue)
+        if (remote.includes('stat -c %d')) return {stdout: 'container=ok\n', stderr: '', exitCode: 0}
+        if (remote.includes(VOLUME_MOUNT_MARKER)) return {stdout: REPORT, stderr: '', exitCode: 0}
+        return {stdout: '', stderr: '', exitCode: 0}
+      })
+      const deployment = {agent_name: 'test-agent', id: 'abc123', auth_token_hash: 'hash'}
+      await mountUpgradedDropletMemory('203.0.113.1', '/tmp/cast-agent', VOLUME_NAME, apiToken, deployment)
+      expect(commands.some(command => command.includes('stat -c %d'))).to.equal(true)
+      expect(commands.join('\n')).to.not.include(apiToken)
+      expect(commands.join('\n')).to.not.include(authToken)
+      expect(commands.join('\n')).to.not.include(inferenceValue)
+
+      const leaks = [
+        () => { apiToken = 'cast-agent' },
+        () => { apiToken = 'do-api-token-not-in-argv'; authToken = 'cast-agent' },
+        () => { authToken = 'auth-token-not-in-argv'; inferenceValue = 'cast-agent' },
+      ]
+      for (const leak of leaks) {
+        leak()
+        try {
+          await mountUpgradedDropletMemory('203.0.113.1', '/tmp/cast-agent', VOLUME_NAME, apiToken, deployment)
+          expect.fail('secret was not checked')
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error)
+          expect(message).to.include('Refusing to place a secret')
+        }
+      }
     })
 
     it('mounts through the deploy helper and does not claim success when the mount fails', async () => {

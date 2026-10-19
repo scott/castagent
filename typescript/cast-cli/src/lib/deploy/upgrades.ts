@@ -335,6 +335,24 @@ export async function upgradeFlyDeployment(
   host.log('')
 }
 
+/**
+ * Mount the droplet volume during an upgrade and restart the container
+ * onto it. The API token, deployment auth token, and inference secret
+ * are the values the remote commands must not carry.
+ */
+export async function mountUpgradedDropletMemory(
+  dropletIp: string,
+  agentPath: string,
+  volumeName: string,
+  apiToken: string,
+  deployment: {agent_name: string; id?: string | null; auth_token_hash?: string | null} | null,
+): Promise<void> {
+  const authToken = deployment ? await resolveDeploymentAuthToken(deployment) : null
+  const inference = filterInferenceEnv(readAgentModel(agentPath), inferenceEnv())
+  const secrets = [apiToken, authToken ?? '', ...Object.values(inference)].filter(value => value.length > 0)
+  await ensureDropletContainerMemory(dropletIp, volumeName, secrets)
+}
+
 export async function upgradeDigitalOceanDeployment(
   host: UpgradeHost,
   agentName: string,
@@ -405,10 +423,7 @@ export async function upgradeDigitalOceanDeployment(
   const volumeName = existingVolumeId || digitalOceanMemoryVolumeName(agentName)
   if (dropletIp) {
     host.log(`Mounting memory volume at /mnt/${volumeName}...`)
-    const bound = await ensureDropletContainerMemory(dropletIp, volumeName)
-    if (bound === 'absent') {
-      host.warn(`Memory volume is mounted at /mnt/${volumeName}. The agent container was not on the droplet, so it was not restarted onto that mount.`)
-    }
+    await mountUpgradedDropletMemory(dropletIp, agentPath, volumeName, token, deployment ?? null)
     host.log(`Volume attached at /mnt/${volumeName}`)
     host.log('Refreshing SSH login MOTD...')
     const onHostTui = await detectOnHostTui(dropletIp)

@@ -1231,8 +1231,6 @@ export interface VolumeMountReport {
   source: string
 }
 
-export type DropletMemoryBind = 'ok' | 'absent'
-
 /**
  * Thrown when a create call finds the name already taken in the region.
  * The caller looks the volume up and attaches it. It does not format it.
@@ -1252,24 +1250,6 @@ export function digitalOceanVolumeDevicePath(volumeName: string): string {
 export function digitalOceanMemoryMountPath(volumeName: string): string {
   assertShellToken(volumeName, 'volume name')
   return `/mnt/${volumeName}`
-}
-
-/** True when a probe saw a filesystem type. An empty probe must not format. */
-export function volumeHasFilesystem(filesystemType: string | null | undefined): boolean {
-  return Boolean(filesystemType && filesystemType.trim().length > 0)
-}
-
-export function buildVolumeFstabEntry(uuid: string, mountPath: string, filesystem: string): string {
-  if (!VOLUME_UUID.test(uuid)) {
-    throw new Error('Refusing to write an fstab entry without a filesystem UUID')
-  }
-  if (!/^\/mnt\/[A-Za-z0-9_.:-]+$/.test(mountPath)) {
-    throw new Error('Refusing to write an fstab entry for an unexpected mount path')
-  }
-  if (!/^[A-Za-z0-9]+$/.test(filesystem)) {
-    throw new Error('Refusing to write an fstab entry for an unexpected filesystem')
-  }
-  return `UUID=${uuid} ${mountPath} ${filesystem} defaults,nofail,discard 0 2`
 }
 
 export function planVolumeAttachment(dropletIds: number[], dropletId: number): 'attached' | 'attach' | 'foreign' {
@@ -1323,18 +1303,18 @@ export function parseDigitalOceanVolumeRecord(raw: unknown): DigitalOceanVolumeR
   return {id: record.id, name: record.name, region, dropletIds, filesystemType}
 }
 
+export interface VolumeActionRef {
+  actionId: string
+  status: string
+}
+
 export interface DigitalOceanVolumeClient {
   listVolumes(name: string, region: string): Promise<DigitalOceanVolumeRecord[]>
   createVolume(name: string, region: string): Promise<DigitalOceanVolumeRecord>
-  attachVolume(volumeId: string, dropletId: number, region: string): Promise<void>
+  attachVolumeAction(volumeId: string, dropletId: number, region: string): Promise<VolumeActionRef>
   readAction(volumeId: string, actionId: string): Promise<string>
   readVolume(volumeId: string): Promise<DigitalOceanVolumeRecord>
   dropletExists(dropletId: number): Promise<boolean>
-}
-
-interface VolumeActionRef {
-  actionId: string
-  status: string
 }
 
 function volumeApiMessage(error: unknown): {status?: number; body?: unknown; message: string} {
@@ -1377,9 +1357,7 @@ function parseVolumeAction(data: unknown): VolumeActionRef | null {
   return {actionId, status}
 }
 
-export function digitalOceanVolumeClient(apiToken: string): DigitalOceanVolumeClient & {
-  attachVolumeAction(volumeId: string, dropletId: number, region: string): Promise<VolumeActionRef>
-} {
+export function digitalOceanVolumeClient(apiToken: string): DigitalOceanVolumeClient {
   const headers = volumeHeaders(apiToken)
   return {
     async listVolumes(name, region) {
@@ -1430,9 +1408,6 @@ export function digitalOceanVolumeClient(apiToken: string): DigitalOceanVolumeCl
         if (error instanceof Error && error.message.startsWith('DigitalOcean returned')) throw error
         throw volumeRequestError(`Failed to attach memory volume ${volumeId}`, error)
       }
-    },
-    async attachVolume(volumeId, dropletId, region) {
-      await this.attachVolumeAction(volumeId, dropletId, region)
     },
     async readAction(volumeId, actionId) {
       try {
@@ -1559,10 +1534,7 @@ export async function prepareDigitalOceanMemoryVolume(input: {
       input.onCreated?.()
     } catch (error) {
       if (!(error instanceof DigitalOceanVolumeExistsError)) throw error
-      volume = match(await input.client.listVolumes(input.volumeName, input.region))
-      if (!volume) {
-        throw new Error(`Memory volume '${input.volumeName}' could not be created and was not found in ${input.region}.`)
-      }
+      throw new Error(`Memory volume '${input.volumeName}' already exists in ${input.region} but was not in the volume list.`)
     }
   }
 
@@ -1591,25 +1563,13 @@ async function attachPreparedVolume(
   }
   if (planVolumeAttachment(current.dropletIds, dropletId) === 'attached') return current
 
-  const clientWithAction = client as DigitalOceanVolumeClient & {
-    attachVolumeAction?(volumeId: string, dropletId: number, region: string): Promise<VolumeActionRef>
-  }
-  let actionId = ''
-  if (clientWithAction.attachVolumeAction) {
-    const action = await clientWithAction.attachVolumeAction(current.id, dropletId, region)
-    actionId = action.actionId
-    if (action.status === 'completed') {
-      const updated = await client.readVolume(current.id)
-      if (updated.dropletIds.includes(dropletId)) return updated
-    }
-  } else {
-    await client.attachVolume(current.id, dropletId, region)
+  const action = await client.attachVolumeAction(current.id, dropletId, region)
+  if (action.status === 'completed') {
     const updated = await client.readVolume(current.id)
     if (updated.dropletIds.includes(dropletId)) return updated
-    throw new Error(`Memory volume '${current.name}' did not attach to droplet ${dropletId}.`)
   }
   try {
-    await waitForVolumeAction(client, current, actionId, clock)
+    await waitForVolumeAction(client, current, action.actionId, clock)
   } catch (error) {
     const updated = await client.readVolume(current.id).catch(() => null)
     if (updated?.dropletIds.includes(dropletId)) return updated
@@ -1644,7 +1604,7 @@ export function buildDigitalOceanVolumeMountScript(input: VolumeMountScriptPaths
   const fstab = shellSingleQuote(fstabPath)
   return [
     '#!/bin/bash',
-    'set -u',
+    'set -euo pipefail',
     `dev=${dev}`,
     `mnt=${mnt}`,
     `fstab=${fstab}`,
@@ -1664,10 +1624,8 @@ export function buildDigitalOceanVolumeMountScript(input: VolumeMountScriptPaths
     'confirmed=""',
     'empty=0',
     'for _try in 1 2 3 4 5 6 7 8; do',
-    '  set +e',
-    '  fstype="$(blkid -p -s TYPE -o value "$dev" 2>/dev/null)"',
-    '  status=$?',
-    '  set -e',
+    '  status=0',
+    '  fstype="$(blkid -p -s TYPE -o value "$dev" 2>/dev/null)" || status=$?',
     '  if [ "$status" -eq 0 ] && [ -n "$fstype" ]; then',
     '    confirmed=keep',
     '    break',
@@ -1695,9 +1653,7 @@ export function buildDigitalOceanVolumeMountScript(input: VolumeMountScriptPaths
     '    exit 1',
     '  fi',
     '  formatted=1',
-    '  set +e',
-    '  fstype="$(blkid -p -s TYPE -o value "$dev" 2>/dev/null)"',
-    '  set -e',
+    '  fstype="$(blkid -p -s TYPE -o value "$dev" 2>/dev/null || true)"',
     'elif [ "$confirmed" != keep ]; then',
     '  echo "Could not read the filesystem on $dev. Refusing to format it. It is not mounted at $mnt." >&2',
     '  exit 1',
@@ -1706,15 +1662,13 @@ export function buildDigitalOceanVolumeMountScript(input: VolumeMountScriptPaths
     '  echo "Memory volume $dev has no filesystem. It is not mounted at $mnt." >&2',
     '  exit 1',
     'fi',
-    'set +e',
-    'uuid="$(blkid -p -s UUID -o value "$dev" 2>/dev/null)"',
-    'set -e',
+    'uuid="$(blkid -p -s UUID -o value "$dev" 2>/dev/null || true)"',
     'if ! printf "%s" "$uuid" | grep -Eq "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"; then',
     '  echo "Memory volume $dev has no filesystem UUID. It is not mounted at $mnt." >&2',
     '  exit 1',
     'fi',
     'mkdir -p "$mnt"',
-    'if ! findmnt --target "$mnt" >/dev/null 2>&1; then',
+    'if ! findmnt --mountpoint "$mnt" >/dev/null 2>&1; then',
     '  if [ -d "$mnt" ] && [ -n "$(ls -A "$mnt" 2>/dev/null || true)" ]; then',
     '    saved="$(mktemp -d)"',
     '    cp -a "$mnt"/. "$saved"/',
@@ -1734,23 +1688,23 @@ export function buildDigitalOceanVolumeMountScript(input: VolumeMountScriptPaths
     '  cat "$tmp" > "$fstab"',
     'fi',
     'rm -f "$tmp"',
-    'mounted_uuid="$(findmnt -n -o UUID --target "$mnt" 2>/dev/null || true)"',
+    'mounted_uuid="$(findmnt -n -o UUID --mountpoint "$mnt" 2>/dev/null || true)"',
     'if [ -n "$mounted_uuid" ] && [ "$mounted_uuid" != "$uuid" ]; then',
     '  if ! umount "$mnt"; then',
     '    echo "Could not unmount $mnt to mount the memory volume." >&2',
     '    exit 1',
     '  fi',
     'fi',
-    'mounted_uuid="$(findmnt -n -o UUID --target "$mnt" 2>/dev/null || true)"',
+    'mounted_uuid="$(findmnt -n -o UUID --mountpoint "$mnt" 2>/dev/null || true)"',
     'if [ "$mounted_uuid" != "$uuid" ]; then',
     '  if ! mount "$mnt"; then',
     '    echo "Failed to mount the memory volume at $mnt." >&2',
     '    exit 1',
     '  fi',
     'fi',
-    'mounted_uuid="$(findmnt -n -o UUID --target "$mnt" 2>/dev/null || true)"',
-    'mounted_source="$(findmnt -n -o SOURCE --target "$mnt" 2>/dev/null || true)"',
-    'root_source="$(findmnt -n -o SOURCE --target / 2>/dev/null || true)"',
+    'mounted_uuid="$(findmnt -n -o UUID --mountpoint "$mnt" 2>/dev/null || true)"',
+    'mounted_source="$(findmnt -n -o SOURCE --mountpoint "$mnt" 2>/dev/null || true)"',
+    'root_source="$(findmnt -n -o SOURCE --mountpoint / 2>/dev/null || true)"',
     'if [ "$mounted_uuid" != "$uuid" ] || [ -z "$mounted_source" ] || [ "$mounted_source" = "$root_source" ]; then',
     '  echo "Memory volume is not mounted at $mnt." >&2',
     '  exit 1',
@@ -1806,17 +1760,8 @@ export function buildDropletRestartOnMemoryCommand(volumeName: string, image: st
   if (!image || /[\n\r\0']/.test(image) || image.startsWith('-')) {
     throw new Error('Refusing to restart the agent container from an unexpected image name')
   }
-  const mount = digitalOceanMemoryMountPath(volumeName)
-  const args = [
-    'docker', 'run', '-d',
-    '--name', 'cast-agent',
-    '--restart', 'unless-stopped',
-    '-p', '127.0.0.1:8080:8080',
-    '-v', `${mount}:/app/agent/memory`,
-    '--env-file', DROPLET_ENV_FILE,
-    image,
-  ]
-  return args.map(shellSingleQuote).join(' ')
+  assertShellToken(volumeName, 'volume name')
+  return remoteDockerRunCommand({volumeId: volumeName, imageTag: image})
 }
 
 /**
@@ -1853,8 +1798,7 @@ export function buildDropletMemoryVerifyScript(volumeName: string): string {
   ].join('\n')
 }
 
-export function parseDropletMemoryBind(stdout: string): DropletMemoryBind {
-  if (/^container=absent$/m.test(stdout)) return 'absent'
+export function parseDropletMemoryBind(stdout: string): 'ok' {
   if (/^container=ok$/m.test(stdout)) return 'ok'
   throw new Error('Agent container is not writing memory on the mounted volume.')
 }
@@ -1959,27 +1903,29 @@ export async function verifyDropletContainerMemory(
 
 /**
  * After an upgrade, recreate the container when its memory directory is
- * not the mounted volume. A missing container leaves the mount in place
- * for the next deploy.
+ * not the mounted volume. The running container's image is started again
+ * on the mount.
  */
 export async function ensureDropletContainerMemory(
   ip: string,
   volumeName: string,
   secrets: string[] = [],
-): Promise<DropletMemoryBind> {
+): Promise<void> {
   const mountPath = digitalOceanMemoryMountPath(volumeName)
   try {
     await verifyDropletContainerMemory(ip, volumeName, secrets)
     // The container already writes to the volume. Refresh fstab without
     // stopping it. The script does not format a filesystem it can read.
     await runVolumeMountScript(ip, volumeName, secrets)
-    return 'ok'
+    return
   } catch (error) {
     if (error instanceof SshHostKeyError) throw error
   }
   const image = await readDropletContainerImage(ip, secrets)
+  if (!image) {
+    throw new Error(`Agent container is not on the droplet, so its memory could not be moved onto ${mountPath}.`)
+  }
   await mountDigitalOceanMemoryVolume(ip, volumeName, secrets)
-  if (!image) return 'absent'
   const restart = buildDropletRestartOnMemoryCommand(volumeName, image)
   await runDropletMemoryCommand(
     ip,
@@ -1989,7 +1935,6 @@ export async function ensureDropletContainerMemory(
     `Failed to restart the agent container on ${mountPath}.`,
   )
   await verifyDropletContainerMemory(ip, volumeName, secrets)
-  return 'ok'
 }
 
 export default class DigitalOceanDeploy extends Command {
