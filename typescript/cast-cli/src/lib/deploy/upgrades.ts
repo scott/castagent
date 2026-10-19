@@ -505,7 +505,7 @@ export function failedUpgradeTarget(state: string | null | undefined): string | 
 }
 
 export function upgradeRolledBackMessage(agent: string, oldVersion: string, target: string, upgradeError: string): string {
-  return `Upgrade to ${target} failed. ${agent} is back on ${oldVersion}.\n\nError: ${upgradeError}\n\nTo try again: cast upgrade ${agent} ${target}`
+  return `Upgrade to ${target} failed. ${agent} is back on ${oldVersion}.\n\nReason: ${upgradeError}\n\nTo try again: cast upgrade ${agent} ${target}`
 }
 
 export function upgradeRestoreFailedMessage(
@@ -709,10 +709,11 @@ export async function upgradeSpritesDeployment(
       throwRestoreFailure(withoutSecrets(restoreFailure.trim(), secrets))
     }
 
+    host.log(`Restoring ${knownGood} on the remote...`)
     try {
       await deployToSprites(agentName, {
-        log: (line) => host.log(line),
-        warn: (line) => host.warn(line),
+        log: () => {},
+        warn: () => {},
       }, {
         ...spriteOptions,
         authToken,

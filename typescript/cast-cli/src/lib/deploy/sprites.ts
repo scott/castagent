@@ -263,10 +263,12 @@ export async function rollbackFailedSpriteDeploy(input: {
   }
 }
 
-function tailText(text: string, maxLines = 80): string {
-  const lines = text.trim().split('\n')
-  if (lines.length <= maxLines) return text.trim()
-  return lines.slice(-maxLines).join('\n').trim()
+/** At most 20 lines, already limited to the current attempt by the caller. */
+export function formatAttemptLogTail(logs: string, maxLines = 20): string {
+  const lines = logs.trim().split('\n').filter(line => line.length > 0)
+  if (lines.length === 0) return ''
+  const kept = lines.slice(-maxLines)
+  return ['Last lines from the cast-agent service log:', ...kept.map(line => `  ${line}`)].join('\n')
 }
 
 export function spriteHealthFailureMessage(
@@ -277,7 +279,7 @@ export function spriteHealthFailureMessage(
   const summary = result.reason === 'timeout'
     ? `Sprite service '${SPRITE_SERVICE_NAME}' on '${spriteName}' did not become ready (status: ${status}).`
     : `Sprite service '${SPRITE_SERVICE_NAME}' on '${spriteName}' failed before the runtime was ready.`
-  const logs = tailText(result.logs)
+  const logs = formatAttemptLogTail(result.logs)
   const parts = [summary, `Status: ${status}`]
   if (logs) parts.push(logs)
   parts.push(`Logs: sprite exec -s ${spriteName} -- cat ${SPRITE_SERVICE_LOG}`)

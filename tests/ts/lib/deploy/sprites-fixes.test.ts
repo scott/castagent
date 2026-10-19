@@ -15,6 +15,7 @@ import {collectRuntimeLogs} from '../../../../typescript/cast-cli/src/lib/runtim
 import SpritesDeploy, {
   cleanupRecordedSpriteMemory,
   deployToSprites,
+  formatAttemptLogTail,
   recordedHostMemoryPaths,
   spriteMemoryConfig,
 } from '../../../../typescript/cast-cli/src/lib/deploy/sprites'
@@ -592,6 +593,11 @@ describe('Sprites deploy fixes', () => {
     }
   }
 
+  function lastFilledLog(logs: string[]): string {
+    const filled = logs.filter(entry => entry.trim().length > 0)
+    return filled[filled.length - 1] || ''
+  }
+
   function expectExactFailure(
     error: {message?: string; oclif?: {exit?: number}; skipOclifErrorHandling?: boolean} | undefined,
     stderr: string,
@@ -665,6 +671,8 @@ describe('Sprites deploy fixes', () => {
       expectExactFailure(result.error, result.stderr)
       const text = result.error?.message || ''
       expect(text.startsWith(`Upgrade to 1.2 failed, and restoring 1.0.0 on the remote also failed.\n\nUpgrade error: `)).to.equal(true)
+      expect(text).to.not.match(/^Error:/)
+      expect(lastFilledLog(result.logs)).to.equal('Restoring 1.0.0 on the remote...')
       expect(text).to.include('\nRestore error: ')
       expect(text.endsWith(`\n\n${env.agentName} may be running the broken 1.2 release. Your local files are back on 1.0.0.\nTo restore 1.0.0 on the remote, run:\n  cast upgrade ${env.agentName} 1.0.0`)).to.equal(true)
       expect(text).to.include('failed before the runtime was ready')
@@ -721,7 +729,9 @@ describe('Sprites deploy fixes', () => {
       expect(logs).to.not.include('To connect:')
       expect(logs).to.not.include('To destroy:')
       expect(logs).to.not.include(`cast shutdown ${env.agentName}`)
-      expect(text.startsWith(`Upgrade to 1.2 failed. ${env.agentName} is back on 1.0.0.\n\nError: `)).to.equal(true)
+      expect(text.startsWith(`Upgrade to 1.2 failed. ${env.agentName} is back on 1.0.0.\n\nReason: `)).to.equal(true)
+      expect(text).to.not.match(/^Error:/)
+      expect(lastFilledLog(result.logs)).to.equal(`Restoring 1.0.0 on the remote...`)
       expect(text.endsWith(`\n\nTo try again: cast upgrade ${env.agentName} 1.2`)).to.equal(true)
       expect(text).to.include('failed before the runtime was ready')
       expect(text).to.not.include('cast deploy')
@@ -860,6 +870,22 @@ describe('Sprites deploy fixes', () => {
     }
   })
 
+  it('keeps at most 20 lines from the current attempt in the health failure', () => {
+    const lines = Array.from({length: 25}, (_, index) => `attempt-line-${index}`)
+    const tail = formatAttemptLogTail(lines.join('\n'))
+    expect(tail.startsWith('Last lines from the cast-agent service log:\n')).to.equal(true)
+    const body = tail.split('\n').slice(1)
+    expect(body).to.have.length(20)
+    expect(body[0]).to.equal('  attempt-line-5')
+    expect(body[19]).to.equal('  attempt-line-24')
+    expect(tail).to.not.include('attempt-line-4')
+    const stale = `Agent ready on port 8080\nprevious attempt\n---CAST-ATTEMPT-1-abc---\n${lines.join('\n')}`
+    const current = stale.split('---CAST-ATTEMPT-1-abc---\n')[1]
+    const formatted = formatAttemptLogTail(current)
+    expect(formatted).to.not.include('Agent ready')
+    expect(formatted.split('\n').slice(1)).to.have.length(20)
+  })
+
   it('drops service-log lines from before this attempt when the health check fails', async () => {
     const env = setup('stale')
     process.env.SPRITE_MOCK_HEALTH = 'crash'
@@ -869,7 +895,7 @@ describe('Sprites deploy fixes', () => {
       const result = await runCli(env, '1.2', tarball)
       expectExactFailure(result.error, result.stderr)
       const text = result.error?.message || ''
-      expect(text).to.include('No module named')
+      expect(text).to.include('Last lines from the cast-agent service log:\n  ModuleNotFoundError: No module named \'cast\'')
       expect(text).to.not.include('Agent ready')
       expect(text).to.not.include('previous attempt')
       expect(text).to.not.include(TOKEN)
@@ -929,7 +955,8 @@ describe('Sprites deploy fixes', () => {
       const result = await runCli(env, '1.2', tarball)
       expectNonZeroExit(result.error)
       const text = result.error?.message || ''
-      expect(text.startsWith(`Upgrade to 1.2 failed. ${env.agentName} is back on the previous release.\n\nError: `)).to.equal(true)
+      expect(text.startsWith(`Upgrade to 1.2 failed. ${env.agentName} is back on the previous release.\n\nReason: `)).to.equal(true)
+      expect(lastFilledLog(result.logs)).to.equal('Restoring the previous release on the remote...')
       expect(text.endsWith(`\n\nTo try again: cast upgrade ${env.agentName} 1.2`)).to.equal(true)
       expect(text).to.include('failed before the runtime was ready')
       expect(text).to.not.include('<old>')
