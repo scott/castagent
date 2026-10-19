@@ -500,7 +500,7 @@ export const UPGRADE_FAILED_STATE = 'upgrade-failed'
 
 export function formatUpgradeFailedCopy(agentName: string, knownGoodVersion: string | null | undefined): string {
   const version = knownGoodVersion && knownGoodVersion.length > 0 ? knownGoodVersion : '<version>'
-  return UPGRADE_FAILED_COPY.replaceAll('<agent>', agentName).replaceAll('<version>', version)
+  return UPGRADE_FAILED_COPY.split('<agent>').join(agentName).split('<version>').join(version)
 }
 
 /** True when `cast upgrade` should refuse because the remote is already on `version`. */
