@@ -1,5 +1,6 @@
 import {expect} from 'chai'
 import {spawnSync} from 'child_process'
+import sinon from 'sinon'
 import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as os from 'os'
@@ -22,7 +23,18 @@ import {
   spriteCliEnv,
   SPRITE_SERVICE_LOG,
 } from '../../../../typescript/cast-cli/src/lib/deploy/sprites-service'
-import {REMOTE_STATE_UNKNOWN, upgradeRefusedAsCurrent, upgradeSpritesDeployment, UPGRADE_ROLLED_BACK_COPY} from '../../../../typescript/cast-cli/src/lib/deploy/upgrades'
+import UpgradeCommand from '../../../../typescript/cast-cli/src/commands/upgrade'
+import * as releases from '../../../../typescript/cast-cli/src/lib/releases'
+import {
+  failedUpgradeTarget,
+  REMOTE_STATE_UNKNOWN,
+  remoteStateUnknownValue,
+  restoredLine,
+  restoringLine,
+  unfinishedUpgradeLine,
+  upgradeRefusedAsCurrent,
+  upgradeSpritesDeployment,
+} from '../../../../typescript/cast-cli/src/lib/deploy/upgrades'
 
 const TOKEN = 'org-slug/org-id/token-id/not-a-real-sprites-token'
 const MODEL_KEY = 'sk-test-openrouter'
@@ -533,6 +545,42 @@ describe('Sprites deploy fixes', () => {
     }
   }
 
+  async function runCli(env: MockEnv, version: string, tarball: string): Promise<{logs: string[]; error?: {message?: string; oclif?: {exit?: number}}}> {
+    const sandbox = sinon.createSandbox()
+    sandbox.stub(releases, 'validateSemver').resolves(true)
+    sandbox.stub(releases, 'getRelease').resolves({
+      version,
+      change_number: 1,
+      message: '',
+      changelog: '',
+      created_at: '2026-01-01T00:00:00.000Z',
+      tarball_path: tarball,
+    })
+    const instance = new UpgradeCommand(['upgrade', env.agentName, version], {} as any) as any
+    instance.parse = async () => ({
+      args: {agent: env.agentName, version},
+      flags: {'list-versions': false},
+    })
+    instance.confirm = async () => true
+    const logs: string[] = []
+    instance.log = (msg?: string) => {
+      logs.push(msg ?? '')
+    }
+    try {
+      await instance.run()
+      return {logs}
+    } catch (error) {
+      return {logs, error: error as {message?: string; oclif?: {exit?: number}}}
+    } finally {
+      sandbox.restore()
+    }
+  }
+
+  function expectNonZeroExit(error: {oclif?: {exit?: number}} | undefined): void {
+    expect(error?.oclif?.exit, JSON.stringify(error)).to.be.a('number')
+    expect(error?.oclif?.exit).to.not.equal(0)
+  }
+
   async function cleanupUpgrade(env: MockEnv): Promise<void> {
     await keychain.deleteDeploymentToken(env.sha)
     await keychain.deleteToken(env.agentName)
@@ -586,10 +634,20 @@ describe('Sprites deploy fixes', () => {
     process.env.SPRITE_MOCK_HEALTH = 'crash'
     try {
       const {tarball, agentDir} = await prepareUpgrade(env)
-      const result = await runUpgrade(env, tarball)
-      expect(result.error || '').to.include('failed before the runtime was ready')
+      const result = await runCli(env, '1.2', tarball)
+      expectNonZeroExit(result.error)
+      const text = result.error?.message || ''
+      expect(text.startsWith(`Upgrade to 1.2 failed, and restoring 1.0.0 on the remote also failed.\n\nUpgrade error: `)).to.equal(true)
+      expect(text).to.include('\nRestore error: ')
+      expect(text.endsWith(`\n\n${env.agentName} may be running the broken 1.2 release. Your local files are back on 1.0.0.\nTo restore 1.0.0 on the remote, run:\n  cast upgrade ${env.agentName} 1.0.0`)).to.equal(true)
+      expect(text).to.include('failed before the runtime was ready')
+      expect(text).to.not.include('cast deploy')
+      expect(text).to.not.include(TOKEN)
+      expect(text).to.not.include(BEARER)
       expect(result.logs.join('\n')).to.not.include('Upgraded to version 1.2 on Sprites.')
       expect(result.logs.join('\n')).to.not.include('Sprites Deployment Successful!')
+      expect(result.logs.join('\n')).to.not.include(TOKEN)
+      expect(result.logs.join('\n')).to.not.include(BEARER)
       assertKnownSpriteCommands(env.log, env.agentName)
       expect(fs.readFileSync(path.join(agentDir, 'agent.yaml'), 'utf8')).to.equal('name: original\n')
       expect(fs.readFileSync(path.join(agentDir, 'notes.txt'), 'utf8')).to.equal('keep me\n')
@@ -606,12 +664,11 @@ describe('Sprites deploy fixes', () => {
       expect(fs.existsSync(`${env.tar}.3`)).to.equal(false)
       const row = db.getDeploymentBySha(env.sha)
       expect(row.deployed_version).to.equal('1.0.0')
-      expect(row.remote_version_state).to.equal(REMOTE_STATE_UNKNOWN)
+      expect(row.deployed_version).to.equal('1.0.0')
+      expect(row.remote_version_state).to.equal(remoteStateUnknownValue('1.2'))
+      expect(failedUpgradeTarget(row.remote_version_state)).to.equal('1.2')
       expect(upgradeRefusedAsCurrent(row, '1.0.0')).to.equal(false)
       expect(upgradeRefusedAsCurrent({deployed_version: '1.0.0', remote_version_state: null}, '1.0.0')).to.equal(true)
-      expect(result.error || '').to.include(`cast upgrade ${env.agentName} 1.0.0`)
-      expect(result.error || '').to.include('PLACEHOLDER: the remote may be on the broken release.')
-      expect(result.error || '').to.not.include(UPGRADE_ROLLED_BACK_COPY)
       expect(db.listDeployments(env.agentName)).to.have.length(1)
       expect(await keychain.getDeploymentToken(env.sha)).to.equal(BEARER)
       const script = fs.readFileSync(env.script, 'utf8')
@@ -628,12 +685,19 @@ describe('Sprites deploy fixes', () => {
     process.env.SPRITE_MOCK_HEALTH = 'crash,ready'
     try {
       const {tarball, agentDir} = await prepareUpgrade(env)
-      const result = await runUpgrade(env, tarball)
-      expect(result.error || '').to.include('failed before the runtime was ready')
-      expect(result.error || '').to.include(UPGRADE_ROLLED_BACK_COPY)
-      expect(result.error || '').to.not.include(`cast upgrade ${env.agentName} 1.0.0`)
-      expect(result.logs.join('\n')).to.include(`Redeploying the previous release of ${env.agentName}`)
+      const result = await runCli(env, '1.2', tarball)
+      expectNonZeroExit(result.error)
+      const text = result.error?.message || ''
+      expect(text.startsWith(`Upgrade to 1.2 failed. ${env.agentName} is back on 1.0.0.\n\nError: `)).to.equal(true)
+      expect(text.endsWith(`\n\nTo try again: cast upgrade ${env.agentName} 1.2`)).to.equal(true)
+      expect(text).to.include('failed before the runtime was ready')
+      expect(text).to.not.include('cast deploy')
+      expect(text).to.not.include('remote also failed')
+      expect(text).to.not.include(TOKEN)
+      expect(text).to.not.include(BEARER)
       expect(result.logs.join('\n')).to.not.include('Upgraded to version 1.2 on Sprites.')
+      expect(result.logs.join('\n')).to.not.include(TOKEN)
+      expect(result.logs.join('\n')).to.not.include(BEARER)
       assertKnownSpriteCommands(env.log, env.agentName)
       expect(fs.readFileSync(path.join(agentDir, 'agent.yaml'), 'utf8')).to.equal('name: original\n')
       expect(fs.readFileSync(path.join(agentDir, 'notes.txt'), 'utf8')).to.equal('keep me\n')
@@ -659,6 +723,98 @@ describe('Sprites deploy fixes', () => {
       const joined = readCalls(env.log).map(call => call.argv.join('\n')).join('\n')
       expect(joined).to.not.include(BEARER)
       expect(joined).to.not.include(TOKEN)
+    } finally {
+      await cleanupUpgrade(env)
+    }
+  })
+
+  it('lets the next upgrade restore the old version while the failed flag is set', async () => {
+    const env = setup('upold')
+    try {
+      const {agentDir} = await prepareUpgrade(env)
+      db.setRemoteVersionState(env.sha, remoteStateUnknownValue('1.2'))
+      const oldRelease = path.join(env.dir, '1.0.tar.gz')
+      await tar.create({
+        gzip: true,
+        file: oldRelease,
+        cwd: agentDir,
+        portable: true,
+      }, ['agent.yaml', 'notes.txt', 'skills', '.cast'])
+      const result = await runCli(env, '1.0.0', oldRelease)
+      expect(result.error, result.logs.join('\n')).to.equal(undefined)
+      const logs = result.logs.join('\n')
+      expect(logs).to.include(unfinishedUpgradeLine(env.agentName, '1.2'))
+      expect(logs).to.include(restoringLine('1.0.0'))
+      expect(logs).to.include(restoredLine(env.agentName, '1.0.0'))
+      expect(logs).to.not.include('already at version')
+      expect(logs).to.not.include('Upgraded to version 1.0.0 successfully.')
+      expect(logs).to.not.include(TOKEN)
+      expect(logs).to.not.include(BEARER)
+      assertKnownSpriteCommands(env.log, env.agentName)
+      const row = db.getDeploymentBySha(env.sha)
+      expect(row.deployed_version).to.equal('1.0.0')
+      expect(row.remote_version_state).to.equal(null)
+      expect(upgradeRefusedAsCurrent(row, '1.0.0')).to.equal(true)
+      expect(fs.readFileSync(path.join(agentDir, 'agent.yaml'), 'utf8')).to.include('name: original')
+    } finally {
+      await cleanupUpgrade(env)
+    }
+  })
+
+  it('lets the next upgrade target a different release while the failed flag is set', async () => {
+    const env = setup('upnew')
+    try {
+      const {tarball} = await prepareUpgrade(env)
+      db.setRemoteVersionState(env.sha, remoteStateUnknownValue('1.2'))
+      const result = await runCli(env, '1.3', tarball)
+      expect(result.error, result.logs.join('\n')).to.equal(undefined)
+      const logs = result.logs.join('\n')
+      expect(logs).to.include(unfinishedUpgradeLine(env.agentName, '1.2'))
+      expect(logs).to.include(`Upgrading ${env.agentName} from version 1.0.0 to 1.3...`)
+      expect(logs).to.include('Upgraded to version 1.3 successfully.')
+      expect(logs).to.not.include(restoringLine('1.0.0'))
+      expect(logs).to.not.include('already at version')
+      expect(logs).to.not.include(TOKEN)
+      expect(logs).to.not.include(BEARER)
+      assertKnownSpriteCommands(env.log, env.agentName)
+      const row = db.getDeploymentBySha(env.sha)
+      expect(row.deployed_version).to.equal('1.3')
+      expect(row.remote_version_state).to.equal(null)
+    } finally {
+      await cleanupUpgrade(env)
+    }
+  })
+
+  it('shows the failed restore copy when restoring the old version fails again', async () => {
+    const env = setup('upagain')
+    process.env.SPRITE_MOCK_HEALTH = 'crash'
+    try {
+      const {agentDir} = await prepareUpgrade(env)
+      db.setRemoteVersionState(env.sha, remoteStateUnknownValue('1.2'))
+      const oldRelease = path.join(env.dir, '1.0.tar.gz')
+      await tar.create({
+        gzip: true,
+        file: oldRelease,
+        cwd: agentDir,
+        portable: true,
+      }, ['agent.yaml', 'notes.txt', 'skills', '.cast'])
+      const result = await runCli(env, '1.0.0', oldRelease)
+      expectNonZeroExit(result.error)
+      const text = result.error?.message || ''
+      expect(result.logs.join('\n')).to.include(unfinishedUpgradeLine(env.agentName, '1.2'))
+      expect(result.logs.join('\n')).to.include(restoringLine('1.0.0'))
+      expect(text.startsWith(`Upgrade to 1.0.0 failed, and restoring 1.0.0 on the remote also failed.\n\nUpgrade error: `)).to.equal(true)
+      expect(text.endsWith(`\n\n${env.agentName} may be running the broken 1.0.0 release. Your local files are back on 1.0.0.\nTo restore 1.0.0 on the remote, run:\n  cast upgrade ${env.agentName} 1.0.0`)).to.equal(true)
+      expect(text).to.not.include('cast deploy')
+      expect(text).to.not.include(TOKEN)
+      expect(text).to.not.include(BEARER)
+      expect(result.logs.join('\n')).to.not.include(TOKEN)
+      expect(result.logs.join('\n')).to.not.include(BEARER)
+      assertKnownSpriteCommands(env.log, env.agentName)
+      const row = db.getDeploymentBySha(env.sha)
+      expect(row.deployed_version).to.equal('1.0.0')
+      expect(row.remote_version_state).to.equal(remoteStateUnknownValue('1.0.0'))
+      expect(upgradeRefusedAsCurrent(row, '1.0.0')).to.equal(false)
     } finally {
       await cleanupUpgrade(env)
     }

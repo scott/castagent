@@ -19,10 +19,12 @@ import {
   upgradeDockerDeployment,
   upgradeFlyDeployment,
   upgradeRailwayDeployment,
-  REMOTE_STATE_UNKNOWN,
+  failedUpgradeTarget,
+  restoredLine,
+  restoringLine,
+  unfinishedUpgradeLine,
   upgradeRefusedAsCurrent,
   upgradeSpritesDeployment,
-  UPGRADE_ROLLED_BACK_COPY,
 } from '../lib/deploy/upgrades'
 import type {UpgradeContext} from '../lib/deploy/types'
 
@@ -144,12 +146,21 @@ export default class Upgrade extends Command {
 
     if (upgradeRefusedAsCurrent(deployment, version)) {
       this.log(`Agent '${agentName}' is already at version ${version || currentVersion}.`)
-      this.log(`Use 'cast upgrade ${agentName} <version>' to upgrade to a different version.`)
+      this.log(`Use 'cast upgrade ${agentName} <version>' to pick a different release.`)
       return
     }
 
-    this.log(`Upgrading ${agentName} from version ${currentVersion || 'unknown'} to ${version}...`)
-    this.log(`Provider: ${provider}`)
+    const failedTarget = failedUpgradeTarget(deployment.remote_version_state)
+    const restoring = failedTarget !== null && version === currentVersion
+    if (failedTarget) {
+      this.log(unfinishedUpgradeLine(agentName, failedTarget))
+    }
+    if (restoring) {
+      this.log(restoringLine(String(currentVersion)))
+    } else {
+      this.log(`Upgrading ${agentName} from version ${currentVersion || 'unknown'} to ${version}...`)
+      this.log(`Provider: ${provider}`)
+    }
 
     const confirmed = await this.confirm(`Proceed with upgrade?`)
     if (!confirmed) {
@@ -210,16 +221,19 @@ export default class Upgrade extends Command {
         db.updateDeployedVersion(agentName, versionToStore)
       }
       db.setRemoteVersionState(deploymentSha, null)
-      this.log(`Upgraded to version ${versionToStore} successfully.`)
+      if (restoring) {
+        this.log(restoredLine(agentName, String(currentVersion)))
+      } else {
+        this.log(`Upgraded to version ${versionToStore} successfully.`)
+      }
 
     } catch (error: any) {
       if (error.oclif && error.oclif.exit !== undefined) {
         throw error
       }
 
-      const recorded = db.getDeploymentBySha(deploymentSha)
       const text = error instanceof Error ? error.message : String(error)
-      if (recorded?.remote_version_state === REMOTE_STATE_UNKNOWN || text.includes(UPGRADE_ROLLED_BACK_COPY)) {
+      if (provider === 'sprites') {
         this.error(text)
       }
 
