@@ -375,7 +375,7 @@ describe('Git Commit Command', () => {
         cwd: tempAgentDir,
         encoding: 'utf8',
       }).trim()
-      expect(ident).to.equal(
+      expect(ident.replace(/Z/g, '+00:00')).to.equal(
         'Env Author|env-author@example.com|Env Committer|env-committer@example.com|2020-01-02T03:04:05+00:00|2021-05-06T07:08:09+00:00',
       )
     } finally {
