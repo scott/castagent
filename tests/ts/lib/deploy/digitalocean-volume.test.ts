@@ -651,6 +651,84 @@ exit 0
       }
       expect(clock.elapsed()).to.be.greaterThan(0)
     })
+
+    it('waits out a lagging droplet id after the attach action has completed', async () => {
+      const clock = clockStub()
+      let reads = 0
+      const client: DigitalOceanVolumeClient = {
+        async listVolumes() {
+          return [volume([])]
+        },
+        async createVolume() {
+          throw new Error('should not create')
+        },
+        async attachVolumeAction() {
+          return {actionId: '9', status: 'completed'}
+        },
+        async readAction() {
+          return 'completed'
+        },
+        async readVolume() {
+          reads += 1
+          if (reads < 4) return volume([])
+          return volume([42])
+        },
+        async dropletExists() {
+          return false
+        },
+      }
+      const prepared = await prepareDigitalOceanMemoryVolume({
+        client,
+        volumeName: VOLUME_NAME,
+        region: 'nyc3',
+        dropletId: '42',
+        clock,
+      })
+      expect(prepared.volume.dropletIds).to.deep.equal([42])
+      expect(reads).to.equal(4)
+      expect(clock.elapsed()).to.equal(14_000)
+    })
+
+    it('says how long it waited when the volume never lists the new droplet', async () => {
+      const clock = clockStub()
+      let reads = 0
+      const client: DigitalOceanVolumeClient = {
+        async listVolumes() {
+          return [volume([])]
+        },
+        async createVolume() {
+          throw new Error('should not create')
+        },
+        async attachVolumeAction() {
+          return {actionId: '9', status: 'completed'}
+        },
+        async readAction() {
+          return 'completed'
+        },
+        async readVolume() {
+          reads += 1
+          return volume([])
+        },
+        async dropletExists() {
+          return false
+        },
+      }
+      try {
+        await prepareDigitalOceanMemoryVolume({
+          client,
+          volumeName: VOLUME_NAME,
+          region: 'nyc3',
+          dropletId: '42',
+          clock,
+        })
+        expect.fail('should have timed out')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        expect(message).to.equal(`Memory volume '${VOLUME_NAME}' did not attach to droplet 42 after 60 seconds.`)
+      }
+      expect(reads).to.be.greaterThan(1)
+      expect(clock.elapsed()).to.equal(60_000)
+    })
   })
 
   describe('volume API client', () => {

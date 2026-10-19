@@ -1444,6 +1444,40 @@ export function digitalOceanVolumeClient(apiToken: string): DigitalOceanVolumeCl
   }
 }
 
+function volumeAttachWaitMessage(volumeName: string, dropletId: number, waitedMs: number): string {
+  const seconds = Math.max(0, Math.round(waitedMs / 1000))
+  return `Memory volume '${volumeName}' did not attach to droplet ${dropletId} after ${seconds} seconds.`
+}
+
+/**
+ * The attach action can complete before droplet_ids lists the new droplet.
+ * Poll the volume until it does, or until the attach timeout.
+ */
+async function waitForVolumeOnDroplet(
+  client: DigitalOceanVolumeClient,
+  volume: DigitalOceanVolumeRecord,
+  dropletId: number,
+  clock: {now(): number; sleep(ms: number): Promise<void>},
+): Promise<DigitalOceanVolumeRecord> {
+  const started = clock.now()
+  const deadline = started + VOLUME_ACTION_TIMEOUT_MS
+  let delay = 0
+  while (true) {
+    const updated = await client.readVolume(volume.id)
+    if (updated.dropletIds.includes(dropletId)) return updated
+    const now = clock.now()
+    if (now >= deadline) {
+      throw new Error(volumeAttachWaitMessage(volume.name, dropletId, now - started))
+    }
+    delay = nextDetachDelay(delay)
+    const wait = Math.min(delay, deadline - now)
+    if (wait <= 0) {
+      throw new Error(volumeAttachWaitMessage(volume.name, dropletId, clock.now() - started))
+    }
+    await clock.sleep(wait)
+  }
+}
+
 async function waitForVolumeAction(
   client: DigitalOceanVolumeClient,
   volume: DigitalOceanVolumeRecord,
@@ -1564,22 +1598,16 @@ async function attachPreparedVolume(
   if (planVolumeAttachment(current.dropletIds, dropletId) === 'attached') return current
 
   const action = await client.attachVolumeAction(current.id, dropletId, region)
-  if (action.status === 'completed') {
-    const updated = await client.readVolume(current.id)
-    if (updated.dropletIds.includes(dropletId)) return updated
+  if (action.status !== 'completed') {
+    try {
+      await waitForVolumeAction(client, current, action.actionId, clock)
+    } catch (error) {
+      const updated = await client.readVolume(current.id).catch(() => null)
+      if (updated?.dropletIds.includes(dropletId)) return updated
+      throw error
+    }
   }
-  try {
-    await waitForVolumeAction(client, current, action.actionId, clock)
-  } catch (error) {
-    const updated = await client.readVolume(current.id).catch(() => null)
-    if (updated?.dropletIds.includes(dropletId)) return updated
-    throw error
-  }
-  const updated = await client.readVolume(current.id)
-  if (!updated.dropletIds.includes(dropletId)) {
-    throw new Error(`Memory volume '${current.name}' did not attach to droplet ${dropletId}.`)
-  }
-  return updated
+  return waitForVolumeOnDroplet(client, current, dropletId, clock)
 }
 
 export interface VolumeMountScriptPaths {
