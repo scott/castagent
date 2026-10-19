@@ -62,7 +62,26 @@ trap 'rm -rf "$TMP"' EXIT
 
 mkdir -p "$TMP/stubs" "$TMP/tools" "$TMP/fixtures" "$TMP/work"
 REAL_GIT="$(command -v git)"
-PATH="$TMP/stubs:/usr/bin:/bin"
+# ubuntu-latest now ships Python >= 3.11 with a working venv, and may ship
+# uv. Either one makes install.sh skip the pinned uv archive. The bootstrap
+# cases need a machine that has neither, so the system bin dir below omits
+# those toolchains. Stubs still come first.
+HOSTBIN="$TMP/hostbin"
+mkdir -p "$HOSTBIN"
+for dir in /usr/bin /bin; do
+    for f in "$dir"/*; do
+        base="${f##*/}"
+        case "$base" in
+            python|python3|python3.*|uv|pip|pip3|pip3.*|node|npm|npx|bun|bunx)
+                continue
+                ;;
+        esac
+        if [[ ! -e "$HOSTBIN/$base" ]]; then
+            ln -s "$f" "$HOSTBIN/$base"
+        fi
+    done
+done
+PATH="$TMP/stubs:$HOSTBIN"
 export PATH
 export CAST_INSTALL_LOG="$TMP/calls.log"
 export CAST_INSTALL_SKIP_SYSTEM_BIN=1
@@ -390,7 +409,8 @@ EOF
 
 mkdir -p "$TMP/py-ok"
 cp "$TMP/tools/python3" "$TMP/py-ok/python3"
-chmod +x "$TMP/stubs/"* "$TMP/tools/"* "$TMP/py-ok/python3" "$TMP/fixtures/uv"
+cp "$TMP/tools/pip3" "$TMP/py-ok/pip3"
+chmod +x "$TMP/stubs/"* "$TMP/tools/"* "$TMP/py-ok/python3" "$TMP/py-ok/pip3" "$TMP/fixtures/uv"
 
 SYSTEM_CAST_BEFORE=""
 if [[ -L /usr/local/bin/cast || -e /usr/local/bin/cast ]]; then
@@ -590,7 +610,7 @@ UBUNTU_HOME="$TMP/ubuntu-home"
 UBUNTU_REPO="$TMP/ubuntu-repo"
 seed_checkout "$UBUNTU_REPO"
 reset_log
-PATH="$TMP/ubuntu-bin:$TMP/tools:$TMP/stubs:/usr/bin:/bin"
+PATH="$TMP/ubuntu-bin:$TMP/tools:$TMP/stubs:$HOSTBIN"
 export PATH
 run_file "$UBUNTU_HOME" "$UBUNTU_REPO/install.sh" "$TMP/ubuntu.out"
 [[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/ubuntu.out" >&2; fail "Ubuntu system Python install failed ($RUN_STATUS)"; }
@@ -598,7 +618,7 @@ assert_contains "$CAST_INSTALL_LOG" "apt-get install -y python3-venv python3-pip
 assert_not_contains "$TMP/ubuntu.out" "Failed to install pip" "Ubuntu does not stop on disabled ensurepip"
 assert_not_contains "$CAST_INSTALL_LOG" "astral.sh" "a usable system Python does not install uv"
 assert_contains "$CAST_INSTALL_LOG" "npm $UBUNTU_REPO install" "Ubuntu install builds the checkout"
-PATH="$TMP/stubs:/usr/bin:/bin"
+PATH="$TMP/stubs:$HOSTBIN"
 export PATH
 unset CAST_PYTHON_VENV_READY
 
@@ -607,9 +627,9 @@ export CAST_UNAME_M=arm64
 rm -f "$CAST_GIT_READY"
 BREW_HOME="$TMP/brew-home"
 reset_log
-# Debian's /usr/bin/python3 cannot create a venv. Give the Darwin run a
-# working interpreter so it does not fall through to apt-get.
-PATH="$TMP/py-ok:$TMP/stubs:/usr/bin:/bin"
+# The bootstrap PATH has no Python. Give the Darwin run a working
+# interpreter so it does not fall through to apt-get.
+PATH="$TMP/py-ok:$TMP/stubs:$HOSTBIN"
 export PATH
 run_piped "$BREW_HOME" "$TMP/brew.out"
 [[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/brew.out" >&2; fail "macOS one-liner failed ($RUN_STATUS)"; }
@@ -635,7 +655,7 @@ FILE_HOME="$TMP/file-home"
 FILE_REPO="$TMP/file-repo"
 seed_checkout "$FILE_REPO"
 reset_log
-PATH="$TMP/tools:$TMP/stubs:/usr/bin:/bin"
+PATH="$TMP/tools:$TMP/stubs:$HOSTBIN"
 export PATH
 run_file "$FILE_HOME" "$FILE_REPO/install.sh" "$TMP/file.out"
 [[ "$RUN_STATUS" -eq 0 ]] || { cat "$TMP/file.out" >&2; fail "checkout install failed ($RUN_STATUS)"; }
@@ -656,7 +676,7 @@ fi
 
 export CAST_UNAME_S=Linux
 export CAST_UNAME_M=x86_64
-PATH="$TMP/stubs:/usr/bin:/bin"
+PATH="$TMP/stubs:$HOSTBIN"
 export PATH
 
 BAD_NODE="$TMP/fixtures/checksums-bad-node.txt"
@@ -708,7 +728,7 @@ assert_not_contains "$CAST_INSTALL_LOG" "curl https://nodejs.org" "node is not d
 # both refused before the cloned install.sh runs.
 mkdir -p "$TMP/realgit"
 ln -sfn "$REAL_GIT" "$TMP/realgit/git"
-SIG_PATH="$TMP/realgit:$TMP/stubs:/usr/bin:/bin"
+SIG_PATH="$TMP/realgit:$TMP/stubs:$HOSTBIN"
 
 write_signed_fixture() {
     local repo="$1"
