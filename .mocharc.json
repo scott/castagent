@@ -1,6 +1,6 @@
 {
   "extension": ["ts"],
-  "require": ["ts-node/register", "tests/ts/global-setup.ts"],
+  "require": ["ts-node/register", "tests/ts/register-keytar-mock.cjs", "tests/ts/global-setup.ts"],
   "allow-uncached": true,
   "timeout": 30000
 }

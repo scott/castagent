@@ -13,7 +13,7 @@
     "install:all": "npm install && cd typescript/cast-cli && npm install && cd ../cast-tui && npm install",
     "dev:cli": "cd typescript/cast-cli && npm run dev",
     "dev:tui": "cd typescript/cast-tui && npm run dev",
-    "test": "nyc mocha --forbid-only 'tests/**/*.test.ts'; npm run clean:test",
+    "test": "sh scripts/run-tests.sh",
     "test:clean": "npx ts-node tests/ts/cleanup-test-agents.ts && npm test",
     "clean:test": "npx ts-node tests/ts/cleanup-test-agents.ts",
     "coverage": "nyc report --reporter=text-lcov > coverage/lcov.info",
