@@ -481,7 +481,11 @@ describe('shutdown command', () => {
       const deployUtils = require('../../../typescript/cast-cli/src/lib/deploy/deploy-utils')
       sandbox.stub(deployUtils, 'execCommand').callsFake(async (...raw: unknown[]) => {
         const args = Array.isArray(raw[1]) ? raw[1] as string[] : []
-        const rest = args[0] === '--access-token' ? args.slice(2) : args
+        const options = raw[2] as {env?: NodeJS.ProcessEnv} | undefined
+        expect(args).to.not.include('--access-token')
+        expect(args.join('\0')).to.not.include('dop_test')
+        expect(options?.env?.DIGITALOCEAN_ACCESS_TOKEN).to.equal('dop_test')
+        const rest = args
         if (rest[2] === 'delete-tag') {
           return {exitCode: 1, stdout: '', stderr: 'permission denied'}
         }

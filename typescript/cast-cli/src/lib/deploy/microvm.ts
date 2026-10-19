@@ -6,6 +6,7 @@ import * as path from 'path'
 import {keychain} from '../keychain'
 import {db} from '../sqlite'
 import {
+  assertSecretsNotInArgv,
   deploymentShaFromEnv,
   execCommand,
   generateAuthToken,
@@ -598,8 +599,21 @@ async function run(command: string, args: string[], opts?: {silent?: boolean; ti
   })
 }
 
+/**
+ * Environment for a doctl child. doctl reads DIGITALOCEAN_ACCESS_TOKEN.
+ * The token stays out of argv, where ps and command logs can read it.
+ */
+export function doctlChildEnv(token: string, base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return {...base, DIGITALOCEAN_ACCESS_TOKEN: token}
+}
+
 function doctl(token: string, args: string[], opts?: {silent?: boolean; timeoutMs?: number}) {
-  return run('doctl', ['--access-token', token, ...args], opts)
+  assertSecretsNotInArgv('doctl', args, [token])
+  return run('doctl', args, {
+    silent: opts?.silent,
+    timeoutMs: opts?.timeoutMs,
+    env: doctlChildEnv(token),
+  })
 }
 
 /**

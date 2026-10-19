@@ -248,6 +248,9 @@ describe('deployment secret handling', () => {
         'utf8',
       )
       expect(source).to.not.include("push('--env'")
+      expect(source).to.not.include("['--access-token'")
+      expect(source).to.not.include('--access-token')
+      expect(source).to.include('DIGITALOCEAN_ACCESS_TOKEN')
       expect(source).to.not.include('secrets\', \'set\'')
     })
 
