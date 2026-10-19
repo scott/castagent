@@ -39,7 +39,7 @@ function uniqueSha(used: Set<string>): string {
   return sha
 }
 
-async function withDeploymentSha(id: string, run: () => Promise<void>): Promise<void> {
+async function withDeploymentSha(id: string, run: () => Promise<unknown>): Promise<void> {
   const previous = process.env.CAST_DEPLOYMENT_SHA
   process.env.CAST_DEPLOYMENT_SHA = id
   try {
