@@ -107,7 +107,7 @@ if [[ "${1:-}" == "clone" ]]; then
     chmod +x "$dest/typescript/cast-cli/bin/run"
     printf '%s\n' '{"name":"cast-cli"}' > "$dest/typescript/cast-cli/package.json"
     printf '%s\n' '{"name":"cast-tui"}' > "$dest/typescript/cast-tui/package.json"
-    printf '%s\n' '[project]' 'name = "cast"' 'version = "0.0.0"' > "$dest/python/pyproject.toml"
+    printf '%s\n' '[project]' 'name = "cast"' > "$dest/python/pyproject.toml"
     printf '%s\n' '{"name":"castagent"}' > "$dest/package.json"
     cp "${CAST_INSTALL_TEST_SCRIPT:?}" "$dest/install.sh"
     cp "${CAST_INSTALL_TEST_CHECKSUMS:?}" "$dest/install-checksums.txt"
@@ -408,7 +408,7 @@ seed_checkout() {
     chmod +x "$repo/typescript/cast-cli/bin/run"
     printf '%s\n' '{"name":"cast-cli"}' > "$repo/typescript/cast-cli/package.json"
     printf '%s\n' '{"name":"cast-tui"}' > "$repo/typescript/cast-tui/package.json"
-    printf '%s\n' '[project]' 'name = "cast"' 'version = "0.0.0"' > "$repo/python/pyproject.toml"
+    printf '%s\n' '[project]' 'name = "cast"' > "$repo/python/pyproject.toml"
     printf '%s\n' '{"name":"castagent"}' > "$repo/package.json"
     cp "$SCRIPT_SRC" "$repo/install.sh"
     chmod +x "$repo/install.sh"
@@ -692,7 +692,7 @@ mkdir -p "$OLD_REPO/typescript/cast-cli/bin" "$OLD_REPO/typescript/cast-tui" "$O
 printf '%s\n' '#!/bin/bash' 'echo cast-cli' > "$OLD_REPO/typescript/cast-cli/bin/run"
 chmod +x "$OLD_REPO/typescript/cast-cli/bin/run"
 printf '%s\n' '{"name":"cast-tui"}' > "$OLD_REPO/typescript/cast-tui/package.json"
-printf '%s\n' '[project]' 'name = "cast"' 'version = "0.0.0"' > "$OLD_REPO/python/pyproject.toml"
+printf '%s\n' '[project]' 'name = "cast"' > "$OLD_REPO/python/pyproject.toml"
 printf '%s\n' '#!/bin/bash' 'echo RAN_OLD_INSTALLER' 'exit 0' > "$OLD_REPO/install.sh"
 chmod +x "$OLD_REPO/install.sh"
 reset_log
@@ -717,7 +717,7 @@ write_signed_fixture() {
     printf '%s\n' '#!/bin/bash' 'echo cast-cli' > "$repo/typescript/cast-cli/bin/run"
     chmod +x "$repo/typescript/cast-cli/bin/run"
     printf '%s\n' '{"name":"cast-tui"}' > "$repo/typescript/cast-tui/package.json"
-    printf '%s\n' '[project]' 'name = "cast"' 'version = "0.0.0"' > "$repo/python/pyproject.toml"
+    printf '%s\n' '[project]' 'name = "cast"' > "$repo/python/pyproject.toml"
     cat > "$repo/install.sh" << 'EOF'
 #!/bin/bash
 require_sha256() { :; }
