@@ -571,22 +571,27 @@ export default class Deploy extends Command {
       // version in the agent directory. With no readable version there,
       // keep the newest release, or "latest" when none exists.
       let versionToStore = version
+      let releaseFallback: string | null | undefined
       if (version === 'latest') {
         const present = readAgentDirReleaseVersion(agentPath)
         if (present) {
           versionToStore = present
         } else {
-          const currentRelease = await getCurrentRelease(agentName)
-          if (currentRelease) {
-            versionToStore = currentRelease
-            this.log(`Warning: agent.yaml has no version. Recorded ${currentRelease} from releases.json. Add a version to agent.yaml or pass --version to choose.`)
-          } else {
-            versionToStore = 'latest'
-            this.log('Warning: agent.yaml has no version and releases.json has no releases. Recorded latest. Add a version to agent.yaml or pass --version to choose.')
-          }
+          releaseFallback = await getCurrentRelease(agentName)
+          versionToStore = releaseFallback || 'latest'
         }
       }
       db.updateDeployedVersion(agentName, versionToStore)
+      // The warning names the value that was written, and it comes out
+      // before the deploy result lines below.
+      if (releaseFallback !== undefined) {
+        const recordedVersion = db.getDeployedVersion(agentName) ?? versionToStore
+        if (releaseFallback) {
+          this.log(`Warning: agent.yaml has no version. Recorded ${recordedVersion} from releases.json. Add a version to agent.yaml or pass --version to choose.`)
+        } else {
+          this.log(`Warning: agent.yaml has no version and releases.json has no releases. Recorded ${recordedVersion}. Add a version to agent.yaml or pass --version to choose.`)
+        }
+      }
 
       this.log('')
       this.log(`Deployed ${agentName} with deployment SHA: ${deploymentSha}`)

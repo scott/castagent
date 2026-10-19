@@ -904,23 +904,33 @@ describe('Deploy Command - recorded release version', () => {
 
   it('warns once and records the releases.json version when agent.yaml has no version', async () => {
     const agentName = `deploy-warn-release-${Date.now()}`
-    const line = 'Warning: agent.yaml has no version. Recorded 1.2 from releases.json. Add a version to agent.yaml or pass --version to choose.'
     await withAgent(agentName, async () => {
       stubReleasePython('1.2')
       const {recorded, logs} = await deployRecorded(agentName, 'name: bare\ndescription: no release field\n', 'latest')
       expect(recorded).to.equal('1.2')
-      expect(logs.filter(entry => entry === line)).to.deep.equal([line])
+      const line = `Warning: agent.yaml has no version. Recorded ${recorded} from releases.json. Add a version to agent.yaml or pass --version to choose.`
+      const warnings = logs.filter(entry => entry.startsWith('Warning:'))
+      expect(warnings).to.deep.equal([line])
+      const named = warnings[0].match(/^Warning: agent.yaml has no version\. Recorded (.+) from releases\.json\. Add a version to agent\.yaml or pass --version to choose\.$/)
+      expect(named?.[1]).to.equal(recorded)
+      const resultAt = logs.findIndex(entry => entry.startsWith('Deployed '))
+      expect(logs.indexOf(warnings[0])).to.be.greaterThan(-1).and.lessThan(resultAt)
     })
   })
 
   it('warns once and records latest when agent.yaml and releases.json have no version', async () => {
     const agentName = `deploy-warn-latest-${Date.now()}`
-    const line = 'Warning: agent.yaml has no version and releases.json has no releases. Recorded latest. Add a version to agent.yaml or pass --version to choose.'
     await withAgent(agentName, async () => {
       stubReleasePython('null')
       const {recorded, logs} = await deployRecorded(agentName, 'name: bare\ndescription: no release field\n', 'latest')
       expect(recorded).to.equal('latest')
-      expect(logs.filter(entry => entry === line)).to.deep.equal([line])
+      const line = `Warning: agent.yaml has no version and releases.json has no releases. Recorded ${recorded}. Add a version to agent.yaml or pass --version to choose.`
+      const warnings = logs.filter(entry => entry.startsWith('Warning:'))
+      expect(warnings).to.deep.equal([line])
+      const named = warnings[0].match(/^Warning: agent.yaml has no version and releases\.json has no releases\. Recorded (.+)\. Add a version to agent\.yaml or pass --version to choose\.$/)
+      expect(named?.[1]).to.equal(recorded)
+      const resultAt = logs.findIndex(entry => entry.startsWith('Deployed '))
+      expect(logs.indexOf(warnings[0])).to.be.greaterThan(-1).and.lessThan(resultAt)
     })
   })
 
