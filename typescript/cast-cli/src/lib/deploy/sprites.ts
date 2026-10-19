@@ -28,10 +28,12 @@ import {
   SPRITE_SERVICE_LOG,
   SPRITE_SERVICE_NAME,
   ensureSpriteCliToken,
+  logsSinceAttempt,
   parseSpriteServiceProbe,
   redactSecrets,
   redactSpriteSecrets,
   spriteAgentLaunchScript,
+  spriteAttemptMarker,
   spriteCliEnv,
   spriteHealthProbeCommand,
   spriteInstallExecArgs,
@@ -100,6 +102,12 @@ export interface SpriteDeployOptions {
    * after this call returns.
    */
   recordDeployment?: boolean
+  /**
+   * When false, a successful install does not print the success banner or
+   * the connect and shutdown hints. A restore redeploy passes false.
+   * A normal deploy leaves this unset.
+   */
+  announceSuccess?: boolean
 }
 
 export interface SpriteDestroyOptions {
@@ -365,12 +373,14 @@ export async function deployToSprites(
     hooks.log('Starting agent service...')
     const resolvedEnv = options.serviceEnv ? options.serviceEnv() : inferenceEnv()
     const inference = filterInferenceEnv(readAgentModel(agentPath), resolvedEnv, options.inferenceCatalog)
-    await setupBackgroundService(spriteName, agentName, authToken, inference)
+    const attemptMarker = spriteAttemptMarker(options.now?.())
+    await setupBackgroundService(spriteName, agentName, authToken, inference, attemptMarker)
 
     hooks.log('Waiting for the agent service to become ready...')
     const health = await waitForContainerHealth(async () => {
       try {
-        return parseSpriteServiceProbe(runSpriteExec(spriteName, spriteHealthProbeCommand(), 20000))
+        const parsed = parseSpriteServiceProbe(runSpriteExec(spriteName, spriteHealthProbeCommand(), 20000))
+        return {status: parsed.status, logs: logsSinceAttempt(parsed.logs, attemptMarker)}
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error)
         return {status: 'missing', logs: message}
@@ -407,30 +417,32 @@ export async function deployToSprites(
       )
     }
 
-    hooks.log('')
-    hooks.log('╔══════════════════════════════════════════════════════════════╗')
-    hooks.log('║              Sprites Deployment Successful!                  ║')
-    hooks.log('╚══════════════════════════════════════════════════════════════╝')
-    hooks.log('')
-    hooks.log(`Agent: ${agentName}`)
-    hooks.log(`Sprite: ${spriteName}`)
-    hooks.log('Provider: sprites')
-    hooks.log('')
-    hooks.log('To connect:')
-    hooks.log(`  cast connect ${agentName}`)
-    hooks.log('cast connect starts a local sprite proxy and sends the deployment bearer token.')
-    if (deploymentUrl) {
-      hooks.log(`Sprites address: ${deploymentUrl}`)
+    if (options.announceSuccess !== false) {
+      hooks.log('')
+      hooks.log('╔══════════════════════════════════════════════════════════════╗')
+      hooks.log('║              Sprites Deployment Successful!                  ║')
+      hooks.log('╚══════════════════════════════════════════════════════════════╝')
+      hooks.log('')
+      hooks.log(`Agent: ${agentName}`)
+      hooks.log(`Sprite: ${spriteName}`)
+      hooks.log('Provider: sprites')
+      hooks.log('')
+      hooks.log('To connect:')
+      hooks.log(`  cast connect ${agentName}`)
+      hooks.log('cast connect starts a local sprite proxy and sends the deployment bearer token.')
+      if (deploymentUrl) {
+        hooks.log(`Sprites address: ${deploymentUrl}`)
+      }
+      hooks.log('That address needs Sprites org auth. A request without it returns 302 to the Sprites login page.')
+      hooks.log('It is not a direct agent URL. Use cast connect.')
+      hooks.log('')
+      hooks.log('To view logs:')
+      hooks.log(`  cast logs ${agentName}`)
+      hooks.log(`  sprite exec -s ${spriteName} -- cat ${SPRITE_SERVICE_LOG}`)
+      hooks.log('')
+      hooks.log('To destroy:')
+      hooks.log(`  cast shutdown ${agentName}`)
     }
-    hooks.log('That address needs Sprites org auth. A request without it returns 302 to the Sprites login page.')
-    hooks.log('It is not a direct agent URL. Use cast connect.')
-    hooks.log('')
-    hooks.log('To view logs:')
-    hooks.log(`  cast logs ${agentName}`)
-    hooks.log(`  sprite exec -s ${spriteName} -- cat ${SPRITE_SERVICE_LOG}`)
-    hooks.log('')
-    hooks.log('To destroy:')
-    hooks.log(`  cast shutdown ${agentName}`)
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     try {
@@ -605,13 +617,14 @@ async function setupBackgroundService(
   agentName: string,
   authToken: string,
   env: Record<string, string>,
+  attemptMarker: string,
 ): Promise<void> {
   await execOnSprite(spriteName, `if [ -f ${AGENT_DIR}/agent.pid ]; then kill $(cat ${AGENT_DIR}/agent.pid) 2>/dev/null; rm -f ${AGENT_DIR}/agent.pid; fi`)
 
   // stdin is the script. The remote bash -c string must stay one argument.
   // env is already narrowed to the model's inference key.
   const args = spriteInstallExecArgs(spriteName)
-  const script = spriteAgentLaunchScript(agentName, authToken, env)
+  const script = spriteAgentLaunchScript(agentName, authToken, env, attemptMarker)
   assertSecretsNotInArgv('sprite exec', args, secretValues({AUTH_TOKEN: authToken, ...env}))
   const startResult = await execCommand(
     'sprite',

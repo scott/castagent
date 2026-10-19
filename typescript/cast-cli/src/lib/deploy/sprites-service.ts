@@ -19,15 +19,21 @@ export function spriteAgentLaunchScript(
   agentName: string,
   authToken: string,
   env: Record<string, string>,
+  attemptMarker?: string,
 ): string {
   const lines = [
     '#!/bin/bash',
     `cd ${SPRITE_AGENT_DIR}`,
+  ]
+  if (attemptMarker) {
+    lines.push("printf '%s\\n' " + shellSingleQuote(attemptMarker))
+  }
+  lines.push(
     `export PYTHONPATH=${SPRITE_AGENT_DIR}/.cast-runtime`,
     `export CAST_AGENT_NAME=${shellSingleQuote(agentName)}`,
     `export CAST_AGENT_PATH=${SPRITE_AGENT_DIR}`,
     `export AUTH_TOKEN=${shellSingleQuote(authToken)}`,
-  ]
+  )
   for (const [key, value] of Object.entries(env)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue
     lines.push(`export ${key}=${shellSingleQuote(value)}`)
@@ -36,6 +42,19 @@ export function spriteAgentLaunchScript(
     `exec ${SPRITE_AGENT_DIR}/venv/bin/python -m cast.runtime --agent-path ${SPRITE_AGENT_DIR} --port 8080 --host 0.0.0.0`,
   )
   return `${lines.join('\n')}\n`
+}
+
+/** A line written at the start of this deploy so earlier service-log lines can be dropped. */
+export function spriteAttemptMarker(now = Date.now(), nonce = Math.random().toString(16).slice(2)): string {
+  return `---CAST-ATTEMPT-${now}-${nonce}---`
+}
+
+/** Log text written after `marker`. The whole log is kept when the marker is absent. */
+export function logsSinceAttempt(logs: string, marker: string): string {
+  if (!marker) return logs
+  const at = logs.lastIndexOf(marker)
+  if (at === -1) return logs
+  return logs.slice(at + marker.length).replace(/^\r?\n/, '')
 }
 
 /**

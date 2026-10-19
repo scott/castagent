@@ -134,12 +134,19 @@ function respond(stdin) {
       try { seen = Number(fs.readFileSync(countFile, 'utf8')) || 0 } catch (e) { seen = 0 }
       const mode = modes[Math.min(seen, Math.max(modes.length - 1, 0))] || 'ready'
       try { fs.writeFileSync(countFile, String(seen + 1)) } catch (e) {}
+      let marker = ''
+      try {
+        const script = fs.readFileSync(process.env.SPRITE_MOCK_SCRIPT || '', 'utf8')
+        const match = script.match(/---CAST-ATTEMPT-[A-Za-z0-9-]+---/)
+        if (match) marker = match[0] + '\\n'
+      } catch (e) {}
+      const stale = process.env.SPRITE_MOCK_STALE_READY ? 'Agent ready on port 8080\\nprevious attempt\\n' : ''
       if (mode === 'crash') {
-        process.stdout.write('{"status":"running"}\\n---CAST-LOG---\\nModuleNotFoundError: No module named \\'cast\\'\\n')
+        process.stdout.write('{"status":"running"}\\n---CAST-LOG---\\n' + stale + marker + 'ModuleNotFoundError: No module named \\'cast\\'\\n')
       } else if (mode === 'down') {
-        process.stdout.write('{"status":"stopped"}\\n---CAST-LOG---\\n')
+        process.stdout.write('{"status":"stopped"}\\n---CAST-LOG---\\n' + stale + marker)
       } else {
-        process.stdout.write('{"status":"running"}\\n---CAST-LOG---\\nAgent ready on port 8080\\n')
+        process.stdout.write('{"status":"running"}\\n---CAST-LOG---\\n' + stale + marker + 'Agent ready on port 8080\\n')
       }
       process.exit(0)
     }
@@ -212,6 +219,7 @@ describe('Sprites deploy fixes', () => {
     SPRITE_MOCK_DESTROY: process.env.SPRITE_MOCK_DESTROY,
     SPRITE_MOCK_PIP: process.env.SPRITE_MOCK_PIP,
     SPRITE_MOCK_HEALTH: process.env.SPRITE_MOCK_HEALTH,
+    SPRITE_MOCK_STALE_READY: process.env.SPRITE_MOCK_STALE_READY,
     SUDO_CALLS: process.env.SUDO_CALLS,
   }
 
@@ -546,7 +554,7 @@ describe('Sprites deploy fixes', () => {
     }
   }
 
-  async function runCli(env: MockEnv, version: string, tarball: string): Promise<{logs: string[]; error?: {message?: string; oclif?: {exit?: number}}}> {
+  async function runCli(env: MockEnv, version: string, tarball: string): Promise<{logs: string[]; stderr: string; error?: {message?: string; oclif?: {exit?: number}; skipOclifErrorHandling?: boolean}}> {
     const sandbox = sinon.createSandbox()
     sandbox.stub(releases, 'validateSemver').resolves(true)
     sandbox.stub(releases, 'getRelease').resolves({
@@ -567,14 +575,31 @@ describe('Sprites deploy fixes', () => {
     instance.log = (msg?: string) => {
       logs.push(msg ?? '')
     }
+    const stderrChunks: string[] = []
+    const writeStderr = process.stderr.write.bind(process.stderr)
+    process.stderr.write = ((chunk: string | Uint8Array) => {
+      stderrChunks.push(typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString())
+      return true
+    }) as typeof process.stderr.write
     try {
       await instance.run()
-      return {logs}
+      return {logs, stderr: stderrChunks.join('')}
     } catch (error) {
-      return {logs, error: error as {message?: string; oclif?: {exit?: number}}}
+      return {logs, stderr: stderrChunks.join(''), error: error as {message?: string; oclif?: {exit?: number}; skipOclifErrorHandling?: boolean}}
     } finally {
+      process.stderr.write = writeStderr
       sandbox.restore()
     }
+  }
+
+  function expectExactFailure(
+    error: {message?: string; oclif?: {exit?: number}; skipOclifErrorHandling?: boolean} | undefined,
+    stderr: string,
+  ): void {
+    expect(error?.oclif?.exit).to.equal(2)
+    expect(error?.skipOclifErrorHandling).to.equal(true)
+    expect(stderr).to.equal(`${error?.message}\n`)
+    expect(stderr.startsWith('Error:')).to.equal(false)
   }
 
   function expectNonZeroExit(error: {oclif?: {exit?: number}} | undefined): void {
@@ -637,6 +662,7 @@ describe('Sprites deploy fixes', () => {
       const {tarball, agentDir} = await prepareUpgrade(env)
       const result = await runCli(env, '1.2', tarball)
       expectNonZeroExit(result.error)
+      expectExactFailure(result.error, result.stderr)
       const text = result.error?.message || ''
       expect(text.startsWith(`Upgrade to 1.2 failed, and restoring 1.0.0 on the remote also failed.\n\nUpgrade error: `)).to.equal(true)
       expect(text).to.include('\nRestore error: ')
@@ -688,7 +714,13 @@ describe('Sprites deploy fixes', () => {
       const {tarball, agentDir} = await prepareUpgrade(env)
       const result = await runCli(env, '1.2', tarball)
       expectNonZeroExit(result.error)
+      expectExactFailure(result.error, result.stderr)
       const text = result.error?.message || ''
+      const logs = result.logs.join('\n')
+      expect(logs).to.not.include('Sprites Deployment Successful!')
+      expect(logs).to.not.include('To connect:')
+      expect(logs).to.not.include('To destroy:')
+      expect(logs).to.not.include(`cast shutdown ${env.agentName}`)
       expect(text.startsWith(`Upgrade to 1.2 failed. ${env.agentName} is back on 1.0.0.\n\nError: `)).to.equal(true)
       expect(text.endsWith(`\n\nTo try again: cast upgrade ${env.agentName} 1.2`)).to.equal(true)
       expect(text).to.include('failed before the runtime was ready')
@@ -749,6 +781,10 @@ describe('Sprites deploy fixes', () => {
       expect(logs).to.include(restoredLine(env.agentName, '1.0.0'))
       expect(logs).to.not.include('already at version')
       expect(logs).to.not.include('Upgraded to version 1.0.0 successfully.')
+      expect(logs).to.not.include('Upgraded to version 1.0.0 on Sprites.')
+      expect(logs).to.not.include('Sprites Deployment Successful!')
+      expect(logs).to.not.include('To connect:')
+      expect(logs).to.not.include('To destroy:')
       expect(logs).to.not.include(TOKEN)
       expect(logs).to.not.include(BEARER)
       assertKnownSpriteCommands(env.log, env.agentName)
@@ -801,6 +837,7 @@ describe('Sprites deploy fixes', () => {
       }, ['agent.yaml', 'notes.txt', 'skills', '.cast'])
       const result = await runCli(env, '1.0.0', oldRelease)
       expectNonZeroExit(result.error)
+      expectExactFailure(result.error, result.stderr)
       const text = result.error?.message || ''
       expect(result.logs.join('\n')).to.include(unfinishedUpgradeLine(env.agentName, '1.2'))
       expect(result.logs.join('\n')).to.include(restoringLine('1.0.0'))
@@ -818,6 +855,28 @@ describe('Sprites deploy fixes', () => {
       expect(row.deployed_version).to.equal('1.0.0')
       expect(row.remote_version_state).to.equal(remoteStateUnknownValue('1.2'))
       expect(upgradeRefusedAsCurrent(row, '1.0.0')).to.equal(false)
+    } finally {
+      await cleanupUpgrade(env)
+    }
+  })
+
+  it('drops service-log lines from before this attempt when the health check fails', async () => {
+    const env = setup('stale')
+    process.env.SPRITE_MOCK_HEALTH = 'crash'
+    process.env.SPRITE_MOCK_STALE_READY = '1'
+    try {
+      const {tarball} = await prepareUpgrade(env)
+      const result = await runCli(env, '1.2', tarball)
+      expectExactFailure(result.error, result.stderr)
+      const text = result.error?.message || ''
+      expect(text).to.include('No module named')
+      expect(text).to.not.include('Agent ready')
+      expect(text).to.not.include('previous attempt')
+      expect(text).to.not.include(TOKEN)
+      expect(text).to.not.include(BEARER)
+      const joined = readCalls(env.log).map(call => call.argv.join('\n')).join('\n')
+      expect(joined).to.not.include(BEARER)
+      expect(joined).to.not.include(TOKEN)
     } finally {
       await cleanupUpgrade(env)
     }

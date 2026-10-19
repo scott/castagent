@@ -1,4 +1,4 @@
-import {Args, Command, Flags} from '@oclif/core'
+import {Args, Command, Errors, Flags} from '@oclif/core'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -22,6 +22,7 @@ import {
   failedUpgradeTarget,
   restoredLine,
   restoringLine,
+  SpritesUpgradeFailure,
   unfinishedUpgradeLine,
   upgradeRefusedAsCurrent,
   upgradeSpritesDeployment,
@@ -233,6 +234,12 @@ export default class Upgrade extends Command {
       }
 
       const text = error instanceof Error ? error.message : String(error)
+      if (provider === 'sprites' && error instanceof SpritesUpgradeFailure) {
+        process.stderr.write(`${text}\n`)
+        const failure = new Errors.CLIError(text, {exit: 2})
+        failure.skipOclifErrorHandling = true
+        throw failure
+      }
       if (provider === 'sprites') {
         this.error(text)
       }

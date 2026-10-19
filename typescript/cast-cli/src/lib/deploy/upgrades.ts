@@ -617,6 +617,11 @@ export async function upgradeSpritesDeployment(
   }
 
   const spriteName = `cast-${agentName}`
+  const recordedVersion = typeof deployment?.deployed_version === 'string' && deployment.deployed_version.length > 0
+    ? deployment.deployed_version
+    : null
+  const priorFailedTarget = failedUpgradeTarget(deployment?.remote_version_state)
+  const restoring = priorFailedTarget !== null && recordedVersion !== null && version === recordedVersion
   const snapshotRoot = snapshotAgentDirectory(agentPath)
   let remoteAttempted = false
   try {
@@ -646,14 +651,17 @@ export async function upgradeSpritesDeployment(
       ...spriteOptions,
       authToken,
       recordDeployment: false,
+      announceSuccess: !restoring,
     })
     if (deployment?.id) db.setRemoteVersionState(deployment.id, null)
 
-    host.log('')
-    host.log(`Upgraded to version ${version} on Sprites.`)
-    host.log(`Sprite: ${spriteName}`)
-    host.log(`Volume ${existingVolumeId || 'preserved'}.`)
-    host.log('')
+    if (!restoring) {
+      host.log('')
+      host.log(`Upgraded to version ${version} on Sprites.`)
+      host.log(`Sprite: ${spriteName}`)
+      host.log(`Volume ${existingVolumeId || 'preserved'}.`)
+      host.log('')
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     let restoreFailure = ''
@@ -670,20 +678,15 @@ export async function upgradeSpritesDeployment(
       if (restoreFailure) throw new Error(`${message}${restoreFailure}`)
       throw error
     }
-    const recordedVersion = typeof deployment?.deployed_version === 'string' && deployment.deployed_version.length > 0
-      ? deployment.deployed_version
-      : null
-    const priorFailedTarget = failedUpgradeTarget(deployment?.remote_version_state)
-    const repeatedRestore = priorFailedTarget !== null && recordedVersion !== null && version === recordedVersion
     const knownGood = recordedVersion || 'the previous release'
     const secrets = [authToken, process.env.SPRITES_TOKEN, process.env.SPRITE_TOKEN]
     const upgradeError = withoutSecrets(message, secrets)
     const markUnknown = (): void => {
-      if (repeatedRestore) return
+      if (restoring) return
       if (deployment?.id) db.setRemoteVersionState(deployment.id, remoteStateUnknownValue(version))
     }
     const throwRestoreFailure = (restoreError: string): never => {
-      if (repeatedRestore && priorFailedTarget) {
+      if (restoring && priorFailedTarget) {
         throw new SpritesUpgradeFailure(
           restoreFailedAgainMessage(agentName, knownGood, priorFailedTarget, upgradeError),
           'remote-state-unknown',
@@ -714,6 +717,7 @@ export async function upgradeSpritesDeployment(
         ...spriteOptions,
         authToken,
         recordDeployment: false,
+        announceSuccess: false,
       })
     } catch (rollbackError) {
       const rollbackMessage = rollbackError instanceof Error ? rollbackError.message : String(rollbackError)

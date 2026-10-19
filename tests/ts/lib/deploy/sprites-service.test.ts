@@ -1,6 +1,8 @@
 import {expect} from 'chai'
 import {
+  logsSinceAttempt,
   spriteAgentLaunchScript,
+  spriteAttemptMarker,
   spriteInstallExecArgs,
   spriteInstallServiceCommand,
   spriteStartServiceArgs,
@@ -48,6 +50,21 @@ describe('sprite agent service', () => {
     expect(joined).to.not.include('sk-or-v1-example')
     expect(joined).to.not.include('AUTH_TOKEN=')
     expect(args[0]).to.equal('exec')
+  })
+
+  it('keeps only the service log written after the attempt marker', () => {
+    const marker = spriteAttemptMarker(1, 'abc')
+    const logs = [
+      'Agent ready on port 8080',
+      'previous attempt',
+      marker,
+      "ModuleNotFoundError: No module named 'cast'",
+    ].join('\n')
+    const current = logsSinceAttempt(logs, marker)
+    expect(current).to.equal("ModuleNotFoundError: No module named 'cast'")
+    expect(current).to.not.include('Agent ready')
+    expect(current).to.not.include('previous attempt')
+    expect(logsSinceAttempt(logs, '---CAST-ATTEMPT-missing---')).to.equal(logs)
   })
 
   it('starts the service with separate argv so a shell cannot drop the name', () => {
