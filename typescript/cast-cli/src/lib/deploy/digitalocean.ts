@@ -1,5 +1,6 @@
 import {Args, Command, Flags} from '@oclif/core'
 import {execFileSync, spawn, type ChildProcess} from 'child_process'
+import {createHash} from 'crypto'
 import * as net from 'net'
 import * as path from 'path'
 import * as fs from 'fs'
@@ -830,43 +831,104 @@ export async function startDropletSshTunnel(
 export interface AccountSshKey {
   id: number | string
   name: string
+  /** MD5 fingerprint from the DigitalOcean account key, when the API sent one. */
+  fingerprint?: string
 }
 
-export interface NamedDroplet {
-  id: string
-  name: string
-}
-
-export type AccountSshKeyCleanup =
-  | {action: 'remove'; id: number | string}
-  | {action: 'keep'}
-  | {action: 'absent'}
-
-export interface CastAccountKeyConsumer {
-  id: string
-  name: string
+/** OpenSSH `MD5:` prefix and letter case are not part of the fingerprint. */
+export function normalizeSshFingerprint(value: string): string {
+  return value.trim().replace(/^MD5:/i, '').toLowerCase()
 }
 
 /**
- * The account key is shared. Remove it only when no other Cast droplet
- * and no Cast MicroVM (or other Cast resource that still references it)
- * remains. A droplet still listed under the id just deleted does not count.
- * Volumes and the container registry do not use this login key.
+ * MD5 fingerprint of an OpenSSH public key, colon-separated.
+ * Account keys are matched on this value. Droplet create receives the key id.
  */
-export function accountSshKeyCleanup(
-  droplets: NamedDroplet[],
-  keys: AccountSshKey[],
-  removedDropletId: string,
-  stillUsing: CastAccountKeyConsumer[] = [],
-): AccountSshKeyCleanup {
-  const key = keys.find(item => item.name === SSH_KEY_NAME)
-  const dropletRemains = droplets.some(droplet =>
-    droplet.id !== removedDropletId && droplet.name.startsWith('cast-'),
+export function sshPublicKeyMd5Fingerprint(publicKey: string): string {
+  const material = publicKey.trim().split(/\s+/)[1] || ''
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(material)) {
+    throw new Error('SSH public key is missing its key material')
+  }
+  const blob = Buffer.from(material, 'base64')
+  if (blob.length === 0) {
+    throw new Error('SSH public key is missing its key material')
+  }
+  const hex = createHash('md5').update(blob).digest('hex')
+  return (hex.match(/.{2}/g) || []).join(':')
+}
+
+/**
+ * Name for a newly uploaded login key. The first choice includes the
+ * first 8 hex characters of the fingerprint. Later attempts add a suffix
+ * so an existing name is left untouched.
+ */
+export function loginKeyUploadName(fingerprint: string, attempt = 0): string {
+  const hex = normalizeSshFingerprint(fingerprint).replace(/[^0-9a-f]/g, '')
+  if (!/^[0-9a-f]{32}$/.test(hex)) {
+    throw new Error('SSH public key fingerprint is not an MD5 fingerprint')
+  }
+  const base = `${SSH_KEY_NAME}-${hex.slice(0, 8)}`
+  if (attempt <= 0) return base
+  return `${base}-${attempt + 1}`
+}
+
+/** Any account key with this fingerprint, whatever its name. */
+export function accountKeyMatchingFingerprint(keys: AccountSshKey[], localFingerprint: string): AccountSshKey | undefined {
+  const local = normalizeSshFingerprint(localFingerprint)
+  return keys.find(key =>
+    typeof key.fingerprint === 'string' && key.fingerprint.length > 0 && normalizeSshFingerprint(key.fingerprint) === local,
   )
-  const otherRemains = stillUsing.length > 0
-  if (dropletRemains || otherRemains) return key ? {action: 'keep'} : {action: 'absent'}
-  if (!key) return {action: 'absent'}
-  return {action: 'remove', id: key.id}
+}
+
+/**
+ * DigitalOcean returns 422 when an SSH key name is already taken, and a
+ * different 422 when the public key itself is already on the account.
+ */
+export function sshKeyUploadConflict(error: unknown): 'name' | 'key' | null {
+  if (axios.isAxiosError(error)) {
+    const status = error.response?.status
+    if (status && status !== 409 && status !== 422) return null
+  } else {
+    return null
+  }
+  const detail = axiosErrorDetail(error).toLowerCase()
+  if (!detail) return null
+  if (/\bname\b/.test(detail) && /(already|exists|exist|in use|taken)/.test(detail)) return 'name'
+  if (/(already in use|already exists|duplicate)/.test(detail)) return 'key'
+  return null
+}
+
+/** doctl 1.181 prints API failures as JSON on stdout and leaves stderr empty. */
+export function extractDigitalOceanErrorDetail(text: string): string {
+  const start = text.indexOf('{')
+  const end = text.lastIndexOf('}')
+  if (start === -1 || end <= start) return ''
+  try {
+    const parsed = JSON.parse(text.slice(start, end + 1)) as {errors?: unknown}
+    if (!parsed || !Array.isArray(parsed.errors)) return ''
+    const details = parsed.errors
+      .map(item => {
+        if (!item || typeof item !== 'object') return ''
+        const detail = (item as {detail?: unknown}).detail
+        return typeof detail === 'string' ? detail.trim() : ''
+      })
+      .filter(detail => detail.length > 0)
+    return details.join('\n')
+  } catch {
+    return ''
+  }
+}
+
+export function digitalOceanCommandError(prefix: string, result: {stdout?: string; stderr?: string}): string {
+  const stderr = (result.stderr || '').trim()
+  const stdout = (result.stdout || '').trim()
+  const parts: string[] = []
+  if (stderr) parts.push(stderr)
+  const detail = extractDigitalOceanErrorDetail(stdout)
+  const extra = detail || (stdout && stdout !== stderr ? stdout : '')
+  if (extra && !stderr.includes(extra)) parts.push(extra)
+  const body = parts.join('\n')
+  return body ? `${prefix}: ${body}` : prefix
 }
 
 /** True when a doctl argv would delete an account SSH key. */
@@ -874,58 +936,9 @@ export function isDigitalOceanSshKeyDelete(args: readonly string[]): boolean {
   return args.includes('ssh-key') && args.includes('delete')
 }
 
-function tagNames(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  const names: string[] = []
-  for (const tag of value) {
-    if (typeof tag === 'string' && tag.length > 0) names.push(tag)
-    else if (tag && typeof tag === 'object' && typeof (tag as {name?: unknown}).name === 'string') {
-      names.push((tag as {name: string}).name)
-    }
-  }
-  return names
-}
-
-function sshKeyEntryUsesAccountKey(entry: unknown): boolean {
-  if (typeof entry === 'string') return entry === SSH_KEY_NAME
-  if (!entry || typeof entry !== 'object') return false
-  const name = (entry as {name?: unknown}).name
-  return name === SSH_KEY_NAME
-}
-
-/**
- * Cast MicroVMs are named `cast-*` or tagged `cast`. A record that lists
- * SSH keys and does not include `cast-do-key` is not using it. A record
- * that does not say which keys it uses is treated as still using the key.
- */
-export function castMicrovmsUsingAccountKey(stdout: string): CastAccountKeyConsumer[] {
-  const trimmed = stdout.trim()
-  if (!trimmed) return []
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(trimmed)
-  } catch {
-    throw new Error('Could not read the DigitalOcean MicroVM list')
-  }
-  const records = Array.isArray(parsed)
-    ? parsed
-    : parsed && typeof parsed === 'object' && Array.isArray((parsed as {microvms?: unknown}).microvms)
-      ? (parsed as {microvms: unknown[]}).microvms
-      : []
-  const consumers: CastAccountKeyConsumer[] = []
-  for (const record of records) {
-    if (!record || typeof record !== 'object') continue
-    const item = record as {id?: unknown; name?: unknown; tags?: unknown; ssh_keys?: unknown; sshKeys?: unknown}
-    const id = item.id == null ? '' : String(item.id)
-    const name = typeof item.name === 'string' ? item.name : ''
-    if (!id) continue
-    const createdByCast = name.startsWith('cast-') || tagNames(item.tags).includes('cast')
-    if (!createdByCast) continue
-    const listedKeys = Array.isArray(item.ssh_keys) ? item.ssh_keys : Array.isArray(item.sshKeys) ? item.sshKeys : null
-    if (listedKeys && !listedKeys.some(sshKeyEntryUsesAccountKey)) continue
-    consumers.push({id, name: name || id})
-  }
-  return consumers
+/** Shutdown names the account keys it leaves. Cast never deletes them. */
+export function leftAccountSshKeysMessage(): string {
+  return `Left DigitalOcean account SSH keys in place, including '${SSH_KEY_NAME}'.`
 }
 
 /** Follow only the next page of this account's SSH keys. */
@@ -957,8 +970,13 @@ async function listAccountSshKeys(apiToken: string): Promise<AccountSshKey[]> {
         if (!item || typeof item !== 'object') continue
         const id = (item as {id?: unknown}).id
         const name = (item as {name?: unknown}).name
+        const fingerprint = (item as {fingerprint?: unknown}).fingerprint
         if ((typeof id === 'number' || typeof id === 'string') && typeof name === 'string') {
-          keys.push({id, name})
+          keys.push({
+            id,
+            name,
+            ...(typeof fingerprint === 'string' && fingerprint.length > 0 ? {fingerprint} : {}),
+          })
         }
       }
     }
@@ -967,98 +985,32 @@ async function listAccountSshKeys(apiToken: string): Promise<AccountSshKey[]> {
   return keys
 }
 
-function assertAccountSshKeyId(id: number | string): string {
+function axiosErrorDetail(error: unknown): string {
+  if (axios.isAxiosError(error)) {
+    const data = error.response?.data
+    const body = typeof data === 'string' ? data.trim() : data ? JSON.stringify(data) : ''
+    return body ? `${error.message}: ${body}` : error.message
+  }
+  return error instanceof Error ? error.message : String(error)
+}
+
+function numericAccountSshKeyId(id: number | string): string {
   const text = String(id)
   if (!/^[0-9]+$/.test(text)) {
-    throw new Error('Refusing to delete an SSH key with an unexpected id')
+    throw new Error('DigitalOcean returned an unexpected SSH key id')
   }
   return text
 }
 
-async function listDropletRecords(): Promise<NamedDroplet[]> {
-  const result = await execCommand(
-    'doctl',
-    ['compute', 'droplet', 'list', '--format', 'ID,Name', '--no-header'],
-    {silent: true},
-  )
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || 'Failed to list DigitalOcean droplets')
-  }
-  const droplets: NamedDroplet[] = []
-  for (const line of result.stdout.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const parts = trimmed.split(/\s+/)
-    if (parts.length < 2 || !parts[0] || !parts[1]) continue
-    droplets.push({id: parts[0], name: parts[1]})
-  }
-  return droplets
+function sshKeyIdFromCreateResponse(data: unknown): string | null {
+  if (!data || typeof data !== 'object') return null
+  const record = data as {ssh_key?: {id?: unknown}; id?: unknown}
+  const id = record.ssh_key?.id ?? record.id
+  if (typeof id === 'number' && Number.isInteger(id) && id > 0) return String(id)
+  if (typeof id === 'string' && /^[0-9]+$/.test(id)) return id
+  return null
 }
 
-async function listAccountSshKeysFromDoctl(): Promise<AccountSshKey[]> {
-  const result = await execCommand(
-    'doctl',
-    ['compute', 'ssh-key', 'list', '--format', 'ID,Name', '--no-header'],
-    {silent: true},
-  )
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || 'Failed to list DigitalOcean SSH keys')
-  }
-  const keys: AccountSshKey[] = []
-  for (const line of result.stdout.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const parts = trimmed.split(/\s+/)
-    if (parts.length < 2 || !parts[0] || !parts[1]) continue
-    keys.push({id: parts[0], name: parts.slice(1).join(' ')})
-  }
-  return keys
-}
-
-async function listCastMicrovmsUsingAccountKey(): Promise<CastAccountKeyConsumer[]> {
-  const result = await execCommand(
-    'doctl',
-    ['compute', 'microvm', 'list', '--output', 'json'],
-    {silent: true},
-  )
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || 'Failed to list DigitalOcean MicroVMs')
-  }
-  return castMicrovmsUsingAccountKey(result.stdout)
-}
-
-/**
- * Delete `cast-do-key` only when no other Cast droplet, MicroVM, or
- * other Cast resource still uses it. Failures are logged. The droplet
- * delete has already finished. A failed deploy does not call this.
- */
-export async function removeUnusedCastAccountSshKey(
-  _apiToken: string,
-  removedDropletId: string,
-): Promise<'removed' | 'kept' | 'absent' | 'failed'> {
-  try {
-    const droplets = await listDropletRecords()
-    const stillUsing = await listCastMicrovmsUsingAccountKey()
-    const keys = await listAccountSshKeysFromDoctl()
-    const decision = accountSshKeyCleanup(droplets, keys, removedDropletId, stillUsing)
-    if (decision.action === 'keep') {
-      console.log(`Left DigitalOcean account SSH key '${SSH_KEY_NAME}' in place. Another Cast droplet or MicroVM still uses it.`)
-      return 'kept'
-    }
-    if (decision.action === 'absent') return 'absent'
-    const id = assertAccountSshKeyId(decision.id)
-    const deleted = await execCommand('doctl', ['compute', 'ssh-key', 'delete', id, '--force'], {silent: true})
-    if (deleted.exitCode !== 0) {
-      throw new Error(deleted.stderr || deleted.stdout || 'Failed to delete the account SSH key')
-    }
-    console.log(`Removed DigitalOcean account SSH key '${SSH_KEY_NAME}'.`)
-    return 'removed'
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.log(`Note: DigitalOcean account SSH key '${SSH_KEY_NAME}' could not be removed. ${message}`)
-    return 'failed'
-  }
-}
 
 function resourceAlreadyGone(stdout: string, stderr: string): boolean {
   return /not found|could not be found|does not exist|\b404\b/i.test(`${stdout}\n${stderr}`)
@@ -1112,7 +1064,7 @@ export interface FailedDropletReleaseResult {
  * After a droplet deploy fails, delete the droplet and any volume this
  * attempt created, and drop the known_hosts pin. If the droplet or volume
  * cannot be deleted, record the deployment so `cast shutdown` can finish
- * the cleanup. The shared account key `cast-do-key` is never deleted.
+ * the cleanup. Account SSH keys are left in place.
  */
 export async function releaseFailedDroplet(input: FailedDropletRelease): Promise<FailedDropletReleaseResult> {
   const log = input.log ?? console.log
@@ -1332,7 +1284,7 @@ export default class DigitalOceanDeploy extends Command {
         region: digitalOceanVolumeRegion(row.volume_config),
       }))
     await removeDigitalOceanMemoryVolumes(agentName, recorded)
-    await removeUnusedCastAccountSshKey(apiToken, dropletId)
+    console.log(leftAccountSshKeysMessage())
   }
 
   async run(): Promise<void> {
@@ -1409,8 +1361,9 @@ export default class DigitalOceanDeploy extends Command {
       )
       const volumeId = memoryPlan.volumeId
 
-      // Setup SSH key. A local key is uploaded when the account key is missing.
-      await this.ensureSshKey()
+      // Reuse an account key with this machine's fingerprint, or upload
+      // the public key under a new name. Existing account keys stay put.
+      const sshKeyId = await this.ensureSshKey()
 
       // Prepare on-host TUI bundle (cast-tui command inside the container).
       // Skipped entirely when --with-tui is not set, which keeps the image
@@ -1425,7 +1378,7 @@ export default class DigitalOceanDeploy extends Command {
       const droplet = await this.getOrCreateDroplet(agentName, agentPath, apiToken, dropletSize, {
         tokenHash,
         volumeConfig: volumeConfigForCleanup,
-      })
+      }, sshKeyId)
       if (droplet.created) {
         createdDroplet = {id: droplet.id, name: droplet.name, ip: droplet.ip, region: droplet.region}
       }
@@ -1593,7 +1546,7 @@ export default class DigitalOceanDeploy extends Command {
     return process.cwd()
   }
 
-  private async ensureSshKey(): Promise<void> {
+  private async ensureSshKey(): Promise<string> {
     const keyPath = sshLoginKeyPath()
     if (!fs.existsSync(keyPath)) {
       fs.mkdirSync(path.dirname(keyPath), {recursive: true, mode: 0o700})
@@ -1615,31 +1568,87 @@ export default class DigitalOceanDeploy extends Command {
       }
     }
 
-    // Upload when the account key is missing, including after shutdown
-    // removed it and the local private key is still here.
+    // Upload when no account key has this public key's fingerprint.
+    // A different key that only shares a name is left in place.
+    // The public key travels in the JSON body. The API token stays in
+    // the Authorization header. Cast never deletes an account SSH key.
     const apiToken = getProviderToken('digitalocean', ['DIGITALOCEAN_ACCESS_TOKEN', 'DIGITALOCEAN_API_TOKEN', 'DIGITALOCEAN_API_KEY'])
     if (!apiToken) {
       throw new Error('DigitalOcean API token not found')
     }
 
     const pubKey = fs.readFileSync(`${keyPath}.pub`, 'utf8').trim()
-
-    try {
-      const keys = await listAccountSshKeys(apiToken)
-      if (keys.some(key => key.name === SSH_KEY_NAME)) return
-    } catch {
-      // ignore, will try to create
+    const fingerprint = sshPublicKeyMd5Fingerprint(pubKey)
+    const headers = {
+      Authorization: `Bearer ${apiToken}`,
+      'Content-Type': 'application/json',
     }
 
-    await axios.post('https://api.digitalocean.com/v2/account/keys', {
-      name: SSH_KEY_NAME,
-      public_key: pubKey,
-    }, {
-      headers: {
-        Authorization: `Bearer ${apiToken}`,
-        'Content-Type': 'application/json',
-      },
-    })
+    let keys: AccountSshKey[] = []
+    try {
+      keys = await listAccountSshKeys(apiToken)
+    } catch {
+      // A failed list still tries the upload below.
+    }
+
+    const matched = accountKeyMatchingFingerprint(keys, fingerprint)
+    if (matched) return numericAccountSshKeyId(matched.id)
+
+    const maxAttempts = 8
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      const name = loginKeyUploadName(fingerprint, attempt)
+      const named = keys.find(key => key.name === name)
+      if (named) {
+        if (named.fingerprint && normalizeSshFingerprint(named.fingerprint) === normalizeSshFingerprint(fingerprint)) {
+          return numericAccountSshKeyId(named.id)
+        }
+        continue
+      }
+      try {
+        const response = await axios.post('https://api.digitalocean.com/v2/account/keys', {
+          name,
+          public_key: pubKey,
+        }, {headers})
+        const createdId = sshKeyIdFromCreateResponse(response.data)
+        if (createdId) {
+          this.log(`Uploaded DigitalOcean SSH key '${name}'.`)
+          return createdId
+        }
+      } catch (error) {
+        const conflict = sshKeyUploadConflict(error)
+        if (!conflict) {
+          throw new Error(`Failed to upload DigitalOcean SSH key '${name}': ${axiosErrorDetail(error)}`)
+        }
+        let refreshed: AccountSshKey[] | null = null
+        try {
+          refreshed = await listAccountSshKeys(apiToken)
+        } catch {
+          refreshed = null
+        }
+        if (refreshed) {
+          keys = refreshed
+          const byFingerprint = accountKeyMatchingFingerprint(keys, fingerprint)
+          if (byFingerprint) return numericAccountSshKeyId(byFingerprint.id)
+          const byName = keys.find(key => key.name === name)
+          if (byName?.fingerprint && normalizeSshFingerprint(byName.fingerprint) === normalizeSshFingerprint(fingerprint)) {
+            return numericAccountSshKeyId(byName.id)
+          }
+        }
+        // The name belongs to a different fingerprint. Leave that key
+        // alone and upload under a distinct suffix.
+        if (conflict === 'name') continue
+        throw new Error(`Failed to upload DigitalOcean SSH key '${name}': ${axiosErrorDetail(error)}`)
+      }
+      try {
+        keys = await listAccountSshKeys(apiToken)
+      } catch {
+        throw new Error(`DigitalOcean accepted SSH key '${name}' but did not return an id`)
+      }
+      const created = accountKeyMatchingFingerprint(keys, fingerprint)
+      if (created) return numericAccountSshKeyId(created.id)
+      throw new Error(`DigitalOcean accepted SSH key '${name}' but did not return an id`)
+    }
+    throw new Error(`Could not upload DigitalOcean SSH key '${loginKeyUploadName(fingerprint)}' under a unique name`)
   }
 
   private async getOrCreateDroplet(
@@ -1648,6 +1657,7 @@ export default class DigitalOceanDeploy extends Command {
     apiToken?: string,
     size: string = 's-2vcpu-2gb',
     rollback?: {tokenHash: string; volumeConfig: string},
+    sshKeyId?: string,
   ): Promise<{id: string; name: string; ip: string; region: string; created: boolean}> {
     const dropletName = `cast-${agentName}`
     const region = DIGITALOCEAN_DROPLET_REGION
@@ -1668,9 +1678,22 @@ export default class DigitalOceanDeploy extends Command {
     // Create droplet with cloud-init
     this.log(`Creating droplet '${dropletName}'...`)
 
-    // Get SSH key fingerprint (MD5 format required by DO API)
-    const keyResult = await execCommand('ssh-keygen', ['-l', '-E', 'md5', '-f', `${sshLoginKeyPath()}.pub`], {silent: true})
-    const fingerprint = keyResult.stdout.trim().split(/\s+/)[1].replace(/^MD5:/, '')
+    // Droplet create receives the account key id. The private key and the
+    // API token are not process arguments. Callers that have not resolved
+    // an id still pass the local public key's fingerprint.
+    let sshKeys = ''
+    if (sshKeyId) {
+      if (!/^[0-9]+$/.test(sshKeyId)) {
+        throw new Error('Refusing to create a droplet with an unexpected SSH key id')
+      }
+      sshKeys = sshKeyId
+    } else {
+      const keyResult = await execCommand('ssh-keygen', ['-l', '-E', 'md5', '-f', `${sshLoginKeyPath()}.pub`], {silent: true})
+      sshKeys = keyResult.stdout.trim().split(/\s+/)[1]?.replace(/^MD5:/i, '') || ''
+      if (!sshKeys) {
+        throw new Error('Could not read the local SSH public key fingerprint')
+      }
+    }
 
     // Write cloud-init to install Docker and seed a baseline MOTD.
     //
@@ -1747,13 +1770,13 @@ export default class DigitalOceanDeploy extends Command {
         '--region', region,
         '--size', size,
         '--image', 'ubuntu-24-04-x64',
-        '--ssh-keys', fingerprint,
+        '--ssh-keys', sshKeys,
         '--user-data-file', cloudInitPath,
         '--wait',
       ], {silent: true})
 
       if (createResult.exitCode !== 0) {
-        throw new Error(`Failed to create droplet: ${createResult.stderr}`)
+        throw new Error(digitalOceanCommandError('Failed to create droplet', createResult))
       }
 
       // Get IP, then pin the host key before any SSH session.

@@ -7,8 +7,6 @@ import * as os from 'os'
 import axios from 'axios'
 
 import DigitalOceanDeploy, {
-  accountSshKeyCleanup,
-  castMicrovmsUsingAccountKey,
   digitalOceanKeysPage,
   digitalOceanMemoryVolumeName,
   digitalOceanMemoryVolumesToRemove,
@@ -30,6 +28,13 @@ import DigitalOceanDeploy, {
   remoteDockerRunCommand,
   removeDigitalOceanMemoryVolumes,
   SSH_KEY_NAME,
+  leftAccountSshKeysMessage,
+  accountKeyMatchingFingerprint,
+  digitalOceanCommandError,
+  extractDigitalOceanErrorDetail,
+  loginKeyUploadName,
+  sshKeyUploadConflict,
+  sshPublicKeyMd5Fingerprint,
 } from '../../../../typescript/cast-cli/src/lib/deploy/digitalocean'
 import {digitaloceanProvider} from '../../../../typescript/cast-cli/src/lib/deploy/providers/digitalocean'
 import * as deployUtils from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
@@ -1852,6 +1857,7 @@ describe('DigitalOcean Deploy Provider', () => {
         expect.fail('create should have failed')
       } catch (error: any) {
         expect(error.message).to.include('Failed to create droplet')
+        expect(error.message).to.include('create failed')
       } finally {
         fs.rmSync(tempDir, {recursive: true, force: true})
       }
@@ -1861,6 +1867,68 @@ describe('DigitalOcean Deploy Provider', () => {
       expect(saved.called).to.equal(false)
       expect(fs.readFileSync(castKnownHostsPath(), 'utf8')).to.not.include('203.0.113.45')
       expect(fs.existsSync(path.join(tempDir, '.cloud-init.yml'))).to.equal(false)
+    })
+
+    it('reports a doctl API error that arrived on stdout', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-test-do-stdout-'))
+      const exec = stubFn(sandbox.stub(deployUtils, 'execCommand') as any)
+      const detail = '19:43:ae:98:f1:4f:05:b8:2c:ea:f4:93:4a:e8:93:80 are invalid key identifiers for Droplet creation.'
+      exec.onFirstCall().resolves({stdout: '', stderr: '', exitCode: 0})
+        .onSecondCall().resolves({
+          stdout: '3072 MD5:ab:cd:ef:12:34:56:78:90:ab:cd:ef:12:34:56:78:90 key (ED25519)\n',
+          stderr: '',
+          exitCode: 0,
+        })
+        .onThirdCall().resolves({
+          stdout: JSON.stringify({errors: [{detail}]}),
+          stderr: '',
+          exitCode: 1,
+        })
+        .onCall(3).resolves({stdout: '', stderr: '', exitCode: 0})
+      sandbox.stub(instance, 'warn').returns(undefined)
+      sandbox.stub(instance, 'log').returns(undefined)
+      try {
+        await instance.getOrCreateDroplet('stdout-agent', tempDir)
+        expect.fail('create should have failed')
+      } catch (error: any) {
+        expect(error.message).to.include('Failed to create droplet')
+        expect(error.message).to.include('invalid key identifiers')
+        expect(error.message).to.not.match(/Failed to create droplet:\s*$/)
+      } finally {
+        fs.rmSync(tempDir, {recursive: true, force: true})
+      }
+    })
+
+    it('creates a droplet with the resolved account key id', async () => {
+      const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-test-do-keyid-'))
+      const exec = stubFn(sandbox.stub(deployUtils, 'execCommand') as any)
+      exec.onFirstCall().resolves({stdout: '', stderr: '', exitCode: 0})
+        .onSecondCall().callsFake(async (...raw: unknown[]) => {
+          const command = String(raw[0])
+          const args = (raw[1] as string[]) || []
+          expect(command).to.equal('doctl')
+          const keyIndex = args.indexOf('--ssh-keys')
+          expect(args[keyIndex + 1]).to.equal('512189')
+          expect(args.join(' ')).to.not.include('PRIVATE')
+          expect(args.join(' ')).to.not.include('test-token')
+          return {stdout: '', stderr: '', exitCode: 0}
+        })
+        .onThirdCall().resolves({stdout: '7654321  203.0.113.9', stderr: '', exitCode: 0})
+      try {
+        const result = await instance.getOrCreateDroplet(
+          'id-agent',
+          tempDir,
+          'test-token',
+          's-2vcpu-2gb',
+          undefined,
+          '512189',
+        )
+        expect(result.id).to.equal('7654321')
+        expect(result.ip).to.equal('203.0.113.9')
+        expect(exec.getCalls().map((call: sinon.SinonSpyCall) => call.args[0])).to.not.include('ssh-keygen')
+      } finally {
+        fs.rmSync(tempDir, {recursive: true, force: true})
+      }
     })
   })
 
@@ -2069,19 +2137,25 @@ describe('DigitalOcean Deploy Provider', () => {
         fs.mkdirSync(path.dirname(keyPath), {recursive: true, mode: 0o700})
         execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', keyPath, '-C', 'test'])
         const pub = fs.readFileSync(`${keyPath}.pub`, 'utf8').trim()
+        const fingerprint = sshPublicKeyMd5Fingerprint(pub)
         sandbox.stub(deployUtils, 'getProviderToken').returns('test-token')
         sandbox.stub(axios, 'get').resolves({data: {ssh_keys: []}})
-        const post = sandbox.stub(axios, 'post').resolves({data: {}})
-        await instance.ensureSshKey()
+        const post = sandbox.stub(axios, 'post').resolves({data: {ssh_key: {id: 42}}})
+        const remove = sandbox.stub(axios, 'delete').resolves({data: {}})
+        const keyId = await instance.ensureSshKey()
+        expect(keyId).to.equal('42')
+        expect(remove.called).to.equal(false)
         expect(post.calledOnce).to.equal(true)
         expect(post.firstCall.args[0]).to.equal('https://api.digitalocean.com/v2/account/keys')
-        expect(post.firstCall.args[1]).to.deep.equal({name: SSH_KEY_NAME, public_key: pub})
+        expect(post.firstCall.args[1]).to.deep.equal({name: loginKeyUploadName(fingerprint), public_key: pub})
+        expect(JSON.stringify(post.firstCall.args[1])).to.not.include('OPENSSH PRIVATE KEY')
+        expect(String(post.firstCall.args[0])).to.not.include('test-token')
       } finally {
         restoreEnv(home, previousHome)
       }
     })
 
-    it('does not upload when the account key is already present', async () => {
+    it('does not upload when the account key matches this machine', async () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-do-key-'))
       const previousHome = process.env.HOME
       process.env.HOME = home
@@ -2089,56 +2163,177 @@ describe('DigitalOcean Deploy Provider', () => {
       try {
         fs.mkdirSync(path.dirname(keyPath), {recursive: true, mode: 0o700})
         execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', keyPath, '-C', 'test'])
+        const fingerprint = sshPublicKeyMd5Fingerprint(fs.readFileSync(`${keyPath}.pub`, 'utf8'))
         sandbox.stub(deployUtils, 'getProviderToken').returns('test-token')
-        sandbox.stub(axios, 'get').resolves({data: {ssh_keys: [{id: 7, name: SSH_KEY_NAME}]}})
+        sandbox.stub(axios, 'get').resolves({data: {ssh_keys: [{id: 7, name: SSH_KEY_NAME, fingerprint}]}})
         const post = sandbox.stub(axios, 'post').resolves({data: {}})
-        await instance.ensureSshKey()
+        const remove = sandbox.stub(axios, 'delete').resolves({data: {}})
+        const keyId = await instance.ensureSshKey()
+        expect(keyId).to.equal('7')
         expect(post.called).to.equal(false)
+        expect(remove.called).to.equal(false)
       } finally {
         restoreEnv(home, previousHome)
       }
     })
 
-    it('chooses whether the shared account key can be removed', () => {
-      expect(accountSshKeyCleanup(
-        [{id: '99', name: 'cast-demo'}],
-        [{id: 42, name: SSH_KEY_NAME}],
-        '99',
-      )).to.deep.equal({action: 'remove', id: 42})
-      expect(accountSshKeyCleanup(
-        [{id: '99', name: 'cast-demo'}, {id: '100', name: 'cast-other'}],
-        [{id: 42, name: SSH_KEY_NAME}],
-        '99',
-      )).to.deep.equal({action: 'keep'})
-      expect(accountSshKeyCleanup(
-        [{id: '99', name: 'cast-demo'}, {id: '5', name: 'personal'}],
-        [{id: 42, name: SSH_KEY_NAME}],
-        '99',
-      ).action).to.equal('remove')
-      expect(accountSshKeyCleanup([], [{id: 1, name: 'other'}], '').action).to.equal('absent')
+    it('reuses a matching fingerprint under a different name', async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-do-key-'))
+      const previousHome = process.env.HOME
+      process.env.HOME = home
+      const keyPath = path.join(home, '.ssh', 'cast_do_key')
+      try {
+        fs.mkdirSync(path.dirname(keyPath), {recursive: true, mode: 0o700})
+        execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', keyPath, '-C', 'test'])
+        const fingerprint = sshPublicKeyMd5Fingerprint(fs.readFileSync(`${keyPath}.pub`, 'utf8'))
+        sandbox.stub(deployUtils, 'getProviderToken').returns('test-token')
+        sandbox.stub(axios, 'get').resolves({data: {ssh_keys: [{
+          id: 15,
+          name: 'laptop',
+          fingerprint: `MD5:${fingerprint.toUpperCase()}`,
+        }]}})
+        const post = sandbox.stub(axios, 'post').resolves({data: {}})
+        const remove = sandbox.stub(axios, 'delete').resolves({data: {}})
+        const keyId = await instance.ensureSshKey()
+        expect(keyId).to.equal('15')
+        expect(post.called).to.equal(false)
+        expect(remove.called).to.equal(false)
+      } finally {
+        restoreEnv(home, previousHome)
+      }
+    })
+
+    it('uploads a uniquely named key when the account fingerprint differs and does not delete', async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-do-key-'))
+      const previousHome = process.env.HOME
+      process.env.HOME = home
+      const keyPath = path.join(home, '.ssh', 'cast_do_key')
+      try {
+        fs.mkdirSync(path.dirname(keyPath), {recursive: true, mode: 0o700})
+        execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', keyPath, '-C', 'test'])
+        const pub = fs.readFileSync(`${keyPath}.pub`, 'utf8').trim()
+        const fingerprint = sshPublicKeyMd5Fingerprint(pub)
+        sandbox.stub(deployUtils, 'getProviderToken').returns('test-token')
+        sandbox.stub(axios, 'get').resolves({data: {ssh_keys: [{
+          id: 60105641,
+          name: SSH_KEY_NAME,
+          fingerprint: 'ae:08:1d:1d:46:a3:4f:8e:c8:b7:f3:37:01:fa:d3:a6',
+        }]}})
+        const remove = sandbox.stub(axios, 'delete').resolves({data: {}})
+        const post = sandbox.stub(axios, 'post').resolves({data: {ssh_key: {id: 88}}})
+        const keyId = await instance.ensureSshKey()
+        expect(keyId).to.equal('88')
+        expect(remove.called).to.equal(false)
+        expect(post.calledOnce).to.equal(true)
+        const uploaded = post.firstCall.args[1] as {name: string; public_key: string}
+        expect(uploaded).to.deep.equal({name: loginKeyUploadName(fingerprint), public_key: pub})
+        expect(uploaded.name).to.not.equal(SSH_KEY_NAME)
+        expect(JSON.stringify(post.firstCall.args)).to.not.include('60105641')
+      } finally {
+        restoreEnv(home, previousHome)
+      }
+    })
+
+    it('picks a distinct suffix when the fingerprint name is already taken', async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-do-key-'))
+      const previousHome = process.env.HOME
+      process.env.HOME = home
+      const keyPath = path.join(home, '.ssh', 'cast_do_key')
+      try {
+        fs.mkdirSync(path.dirname(keyPath), {recursive: true, mode: 0o700})
+        execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', keyPath, '-C', 'test'])
+        const pub = fs.readFileSync(`${keyPath}.pub`, 'utf8').trim()
+        const fingerprint = sshPublicKeyMd5Fingerprint(pub)
+        const takenName = loginKeyUploadName(fingerprint)
+        let listed = 0
+        sandbox.stub(deployUtils, 'getProviderToken').returns('test-token')
+        sandbox.stub(axios, 'get').callsFake(async () => {
+          listed += 1
+          if (listed === 1) return {data: {ssh_keys: []}}
+          return {data: {ssh_keys: [{
+            id: 4,
+            name: takenName,
+            fingerprint: 'ae:08:1d:1d:46:a3:4f:8e:c8:b7:f3:37:01:fa:d3:a6',
+          }]}}
+        })
+        const conflict = new axios.AxiosError('Request failed with status code 422')
+        conflict.response = {
+          status: 422,
+          statusText: 'Unprocessable Entity',
+          headers: {},
+          config: {headers: new axios.AxiosHeaders()} as never,
+          data: {id: 'unprocessable_entity', message: 'SSH key name is already in use'},
+        }
+        const post = sandbox.stub(axios, 'post')
+        post.onFirstCall().rejects(conflict)
+        post.onSecondCall().resolves({data: {ssh_key: {id: 99}}})
+        const remove = sandbox.stub(axios, 'delete').resolves({data: {}})
+        const keyId = await instance.ensureSshKey()
+        expect(keyId).to.equal('99')
+        expect(remove.called).to.equal(false)
+        expect(post.callCount).to.equal(2)
+        const firstBody = post.firstCall.args[1] as {name: string}
+        const secondBody = post.secondCall.args[1] as {name: string; public_key: string}
+        expect(firstBody.name).to.equal(takenName)
+        expect(secondBody).to.deep.equal({
+          name: loginKeyUploadName(fingerprint, 1),
+          public_key: pub,
+        })
+        expect(secondBody.name).to.not.equal(takenName)
+      } finally {
+        restoreEnv(home, previousHome)
+      }
+    })
+
+    it('plans a login-key upload from fingerprints, not the key name', () => {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-fp-'))
+      try {
+        execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', path.join(dir, 'k'), '-C', 'cast@digitalocean'])
+        const pub = fs.readFileSync(path.join(dir, 'k.pub'), 'utf8')
+        const listed = execFileSync('ssh-keygen', ['-l', '-E', 'md5', '-f', path.join(dir, 'k.pub')], {encoding: 'utf8'})
+        const fingerprint = listed.trim().split(/\s+/)[1].replace(/^MD5:/, '')
+        const short = fingerprint.replace(/:/g, '').slice(0, 8)
+        expect(sshPublicKeyMd5Fingerprint(pub)).to.equal(fingerprint)
+        expect(loginKeyUploadName(fingerprint)).to.equal(`cast-do-key-${short}`)
+        expect(loginKeyUploadName(fingerprint, 1)).to.equal(`cast-do-key-${short}-2`)
+        expect(accountKeyMatchingFingerprint([], fingerprint)).to.equal(undefined)
+        expect(accountKeyMatchingFingerprint(
+          [{id: 15, name: 'laptop', fingerprint: `MD5:${fingerprint.toUpperCase()}`}],
+          fingerprint,
+        )?.id).to.equal(15)
+        expect(accountKeyMatchingFingerprint([{id: 7, name: SSH_KEY_NAME}], fingerprint)).to.equal(undefined)
+        expect(accountKeyMatchingFingerprint(
+          [{id: 8, name: SSH_KEY_NAME, fingerprint: 'aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99'}],
+          fingerprint,
+        )).to.equal(undefined)
+        const taken = new axios.AxiosError('Request failed with status code 422')
+        taken.response = {
+          status: 422,
+          statusText: 'Unprocessable Entity',
+          headers: {},
+          config: {headers: new axios.AxiosHeaders()} as never,
+          data: {message: 'SSH key name is already in use'},
+        }
+        expect(sshKeyUploadConflict(taken)).to.equal('name')
+        expect(sshKeyUploadConflict(new Error('upload failed'))).to.equal(null)
+      } finally {
+        fs.rmSync(dir, {recursive: true, force: true})
+      }
+      expect(extractDigitalOceanErrorDetail(
+        '{"errors":[{"detail":"keys are invalid key identifiers for Droplet creation."}]}',
+      )).to.equal('keys are invalid key identifiers for Droplet creation.')
+      expect(digitalOceanCommandError('Failed to create droplet', {
+        stdout: '{"errors":[{"detail":"keys are invalid key identifiers for Droplet creation."}]}',
+        stderr: '',
+      })).to.equal('Failed to create droplet: keys are invalid key identifiers for Droplet creation.')
+      expect(digitalOceanCommandError('Failed to create droplet', {stdout: '', stderr: ''})).to.equal('Failed to create droplet')
+    })
+
+    it('recognizes an SSH key delete and follows only DigitalOcean key pages', () => {
       expect(isDigitalOceanSshKeyDelete(['compute', 'ssh-key', 'delete', '42', '--force'])).to.equal(true)
       expect(isDigitalOceanSshKeyDelete(['compute', 'droplet', 'delete', '42', '--force'])).to.equal(false)
       expect(isDigitalOceanSshKeyDelete(['compute', 'volume', 'delete', 'cast-mail', '--force'])).to.equal(false)
-      expect(accountSshKeyCleanup(
-        [{id: '99', name: 'cast-demo'}],
-        [{id: 42, name: SSH_KEY_NAME}],
-        '99',
-        [{id: 'mv-1', name: 'cast-demo-abc123'}],
-      ).action).to.equal('keep')
-      const castVm = JSON.stringify([{id: 'mv-1', name: 'cast-demo-abc123', tags: ['cast']}])
-      expect(castMicrovmsUsingAccountKey(castVm)).to.deep.equal([{id: 'mv-1', name: 'cast-demo-abc123'}])
-      expect(castMicrovmsUsingAccountKey(JSON.stringify([{id: 'mv-2', name: 'unrelated'}]))).to.deep.equal([])
-      expect(castMicrovmsUsingAccountKey(JSON.stringify([
-        {id: 'mv-3', name: 'cast-demo', ssh_keys: []},
-      ]))).to.deep.equal([])
-      expect(castMicrovmsUsingAccountKey(JSON.stringify([
-        {id: 'mv-4', name: 'other', tags: ['cast'], ssh_keys: [{name: SSH_KEY_NAME}]},
-      ]))).to.deep.equal([{id: 'mv-4', name: 'other'}])
-      expect(castMicrovmsUsingAccountKey(JSON.stringify({
-        microvms: [{id: 'mv-5', name: 'workload', tags: [{name: 'cast'}]}],
-      }))).to.deep.equal([{id: 'mv-5', name: 'workload'}])
-      expect(castMicrovmsUsingAccountKey('')).to.deep.equal([])
-      expect(() => castMicrovmsUsingAccountKey('{')).to.throw('Could not read the DigitalOcean MicroVM list')
+      expect(leftAccountSshKeysMessage()).to.include(SSH_KEY_NAME)
       expect(digitalOceanKeysPage('https://api.digitalocean.com/v2/account/keys?page=2')).to.include('page=2')
       expect(digitalOceanKeysPage('https://evil.example/v2/account/keys')).to.equal(null)
       expect(digitalOceanKeysPage('http://api.digitalocean.com/v2/account/keys')).to.equal(null)
@@ -2146,23 +2341,25 @@ describe('DigitalOcean Deploy Provider', () => {
       expect(digitalOceanKeysPage('https://api.digitalocean.com:444/v2/account/keys')).to.equal(null)
     })
 
-    async function destroyWith(input: {
-      dropletLists: string[]
-      sshKeys?: string
-      microvms?: string
-      microvmExit?: number
-    }): Promise<{deletedId?: string; logs: string[]}> {
+    async function destroyWith(dropletLists: string[]): Promise<{commands: string[]; logs: string[]}> {
       sandbox.stub(db, 'listDeployments').returns([])
       sandbox.stub(deployUtils, 'getProviderToken').returns('test-token')
+      const httpDelete = sandbox.stub(axios, 'delete').callsFake(async () => {
+        throw new Error('shutdown issued an SSH key HTTP delete')
+      })
       let listed = 0
-      let deletedId: string | undefined
+      const commands: string[] = []
       sandbox.stub(deployUtils, 'execCommand').callsFake(async (_command: string, args: string[] = []) => {
         const line = args.join(' ')
+        commands.push(line)
+        if (isDigitalOceanSshKeyDelete(args) || line.includes('ssh-key')) {
+          throw new Error(`shutdown touched an account SSH key: ${line}`)
+        }
         if (line.includes('account') && line.includes('get')) {
           return {stdout: 'ok', stderr: '', exitCode: 0}
         }
         if (line.includes('droplet') && line.includes('list')) {
-          const stdout = input.dropletLists[Math.min(listed, input.dropletLists.length - 1)] || ''
+          const stdout = dropletLists[Math.min(listed, dropletLists.length - 1)] || ''
           listed += 1
           return {stdout, stderr: '', exitCode: 0}
         }
@@ -2172,19 +2369,6 @@ describe('DigitalOcean Deploy Provider', () => {
         if (line.includes('volume')) {
           return {stdout: '', stderr: '', exitCode: 0}
         }
-        if (line.includes('microvm') && line.includes('list')) {
-          if (input.microvmExit) {
-            return {stdout: '', stderr: 'microvm list failed', exitCode: input.microvmExit}
-          }
-          return {stdout: input.microvms ?? '[]', stderr: '', exitCode: 0}
-        }
-        if (line.includes('ssh-key') && line.includes('list')) {
-          return {stdout: input.sshKeys ?? '', stderr: '', exitCode: 0}
-        }
-        if (line.includes('ssh-key') && line.includes('delete')) {
-          deletedId = args[args.indexOf('delete') + 1]
-          return {stdout: '', stderr: '', exitCode: 0}
-        }
         throw new Error(`unexpected command ${line}`)
       })
       const logs: string[] = []
@@ -2192,87 +2376,27 @@ describe('DigitalOcean Deploy Provider', () => {
         logs.push(String(message))
       })
       await DigitalOceanDeploy.destroy(agentName)
-      return {deletedId, logs}
+      expect(httpDelete.called).to.equal(false)
+      expect(commands.some(line => isDigitalOceanSshKeyDelete(line.split(/\s+/)))).to.equal(false)
+      expect(logs.join('\n')).to.include(leftAccountSshKeysMessage())
+      return {commands, logs}
     }
 
-    it('removes the account SSH key after the last Cast droplet is deleted', async () => {
-      const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`, `99 cast-${agentName}\n`],
-        sshKeys: `42 ${SSH_KEY_NAME}\n`,
-        microvms: '[]',
-      })
-      expect(result.deletedId).to.equal('42')
-      expect(result.logs.join('\n')).to.include(`Removed DigitalOcean account SSH key '${SSH_KEY_NAME}'.`)
+    it('leaves account SSH keys after the last Cast droplet is deleted', async () => {
+      const result = await destroyWith([`99 cast-${agentName}\n`, `99 cast-${agentName}\n`])
+      expect(result.commands.some(line => line.includes('droplet') && line.includes('delete'))).to.equal(true)
+      expect(result.commands.some(line => line.includes('ssh-key'))).to.equal(false)
     })
 
-    it('keeps the account SSH key while another Cast droplet remains', async () => {
-      const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`, `99 cast-${agentName}\n100 cast-other\n`],
-        sshKeys: `42 ${SSH_KEY_NAME}\n`,
-      })
-      expect(result.deletedId).to.equal(undefined)
-      expect(result.logs.join('\n')).to.include(`Left DigitalOcean account SSH key '${SSH_KEY_NAME}'`)
+    it('leaves account SSH keys while another Cast droplet remains', async () => {
+      const result = await destroyWith([`99 cast-${agentName}\n`, `99 cast-${agentName}\n100 cast-other\n`])
+      expect(result.commands.some(line => line.includes('ssh-key'))).to.equal(false)
     })
 
-    it('keeps the account SSH key while a Cast MicroVM remains', async () => {
-      const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`, ''],
-        sshKeys: `42 ${SSH_KEY_NAME}\n`,
-        microvms: JSON.stringify([{id: 'mv-1', name: 'cast-other-abc123', tags: ['cast']}]),
-      })
-      expect(result.deletedId).to.equal(undefined)
-      expect(result.logs.join('\n')).to.include('MicroVM')
-    })
-
-    it('removes the account SSH key when the only MicroVM is not one Cast created', async () => {
-      const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`, ''],
-        sshKeys: `42 ${SSH_KEY_NAME}\n`,
-        microvms: JSON.stringify([{id: 'mv-2', name: 'unrelated-vm'}]),
-      })
-      expect(result.deletedId).to.equal('42')
-    })
-
-    it('removes the account SSH key when a Cast MicroVM lists other SSH keys', async () => {
-      const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`, ''],
-        sshKeys: `42 ${SSH_KEY_NAME}\n`,
-        microvms: JSON.stringify([{id: 'mv-3', name: 'cast-other', ssh_keys: [{name: 'someone-else'}]}]),
-      })
-      expect(result.deletedId).to.equal('42')
-    })
-
-    it('does not delete the account SSH key when MicroVMs cannot be listed', async () => {
-      const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`, ''],
-        sshKeys: `42 ${SSH_KEY_NAME}\n`,
-        microvmExit: 1,
-      })
-      expect(result.deletedId).to.equal(undefined)
-      expect(result.logs.join('\n')).to.include('could not be removed')
-      expect(result.logs.join('\n')).to.include('microvm list failed')
-      expect(result.logs.join('\n')).to.not.include(`Removed DigitalOcean account SSH key '${SSH_KEY_NAME}'`)
-    })
-
-    it('removes a leftover account SSH key when the droplet is already gone', async () => {
-      const result = await destroyWith({
-        dropletLists: ['', ''],
-        sshKeys: `9 ${SSH_KEY_NAME}\n`,
-        microvms: '[]',
-      })
-      expect(result.deletedId).to.equal('9')
+    it('leaves account SSH keys when the droplet is already gone', async () => {
+      const result = await destroyWith(['', ''])
       expect(result.logs.join('\n')).to.include(`Droplet 'cast-${agentName}' not found.`)
-    })
-
-    it('does not fail shutdown when the account key id is unexpected', async () => {
-      const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`, ''],
-        sshKeys: `42;rm ${SSH_KEY_NAME}\n`,
-        microvms: '[]',
-      })
-      expect(result.deletedId).to.equal(undefined)
-      expect(result.logs.join('\n')).to.include('could not be removed')
-      expect(result.logs.join('\n')).to.include('unexpected id')
+      expect(result.commands.some(line => line.includes('ssh-key'))).to.equal(false)
     })
   })
 
@@ -2536,7 +2660,11 @@ describe('DigitalOcean Deploy Provider', () => {
       })
       sandbox.stub(deployUtils, 'checkCli').resolves()
       sandbox.stub(deployUtils, 'getProviderToken').returns('test-token')
-      sandbox.stub(axios, 'get').resolves({data: {ssh_keys: [{id: 7, name: SSH_KEY_NAME}]}})
+      const keyPath = path.join(home, '.ssh', 'cast_do_key')
+      fs.mkdirSync(path.dirname(keyPath), {recursive: true, mode: 0o700})
+      execFileSync('ssh-keygen', ['-q', '-t', 'ed25519', '-N', '', '-f', keyPath, '-C', 'test'])
+      const fingerprint = sshPublicKeyMd5Fingerprint(fs.readFileSync(`${keyPath}.pub`, 'utf8'))
+      sandbox.stub(axios, 'get').resolves({data: {ssh_keys: [{id: 7, name: SSH_KEY_NAME, fingerprint}]}})
       sandbox.stub(instance, 'getOrCreateDroplet').resolves({
         id: '4646',
         name: `cast-${agentName}`,

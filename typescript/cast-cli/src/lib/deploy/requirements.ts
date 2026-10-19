@@ -1,4 +1,4 @@
-import {execSync} from 'child_process'
+import {execFileSync} from 'child_process'
 import * as fs from 'fs'
 import * as path from 'path'
 import YAML from 'yaml'
@@ -152,10 +152,16 @@ export function renderRequirementsFile(input: {
 }
 
 export function readFrozenRequirements(projectRoot: string): string {
-  const pipPath = path.join(projectRoot, 'python', '.venv', 'bin', 'pip')
-  if (!fs.existsSync(pipPath)) return ''
+  // The pip script's shebang records the path where the virtualenv was
+  // created. A renamed checkout still runs via `python -m pip` because
+  // the interpreter is a symlink, not that script.
+  const pythonPath = path.join(projectRoot, 'python', '.venv', 'bin', 'python')
+  if (!fs.existsSync(pythonPath)) return ''
   try {
-    return execSync(`"${pipPath}" freeze`, {encoding: 'utf8'})
+    return execFileSync(pythonPath, ['-m', 'pip', 'freeze'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
   } catch {
     return ''
   }
