@@ -1904,7 +1904,9 @@ describe('DigitalOcean Deploy Provider', () => {
       const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-test-do-keyid-'))
       const exec = stubFn(sandbox.stub(deployUtils, 'execCommand') as any)
       exec.onFirstCall().resolves({stdout: '', stderr: '', exitCode: 0})
-        .onSecondCall().callsFake(async (command: string, args: string[] = []) => {
+        .onSecondCall().callsFake(async (...raw: unknown[]) => {
+          const command = String(raw[0])
+          const args = (raw[1] as string[]) || []
           expect(command).to.equal('doctl')
           const keyIndex = args.indexOf('--ssh-keys')
           expect(args[keyIndex + 1]).to.equal('512189')
@@ -2224,8 +2226,9 @@ describe('DigitalOcean Deploy Provider', () => {
         expect(keyId).to.equal('88')
         expect(remove.called).to.equal(false)
         expect(post.calledOnce).to.equal(true)
-        expect(post.firstCall.args[1]).to.deep.equal({name: loginKeyUploadName(fingerprint), public_key: pub})
-        expect(post.firstCall.args[1].name).to.not.equal(SSH_KEY_NAME)
+        const uploaded = post.firstCall.args[1] as {name: string; public_key: string}
+        expect(uploaded).to.deep.equal({name: loginKeyUploadName(fingerprint), public_key: pub})
+        expect(uploaded.name).to.not.equal(SSH_KEY_NAME)
         expect(JSON.stringify(post.firstCall.args)).to.not.include('60105641')
       } finally {
         restoreEnv(home, previousHome)
@@ -2259,7 +2262,7 @@ describe('DigitalOcean Deploy Provider', () => {
           status: 422,
           statusText: 'Unprocessable Entity',
           headers: {},
-          config: {headers: new axios.AxiosHeaders()} as axios.InternalAxiosRequestConfig,
+          config: {headers: new axios.AxiosHeaders()} as never,
           data: {id: 'unprocessable_entity', message: 'SSH key name is already in use'},
         }
         const post = sandbox.stub(axios, 'post')
@@ -2270,12 +2273,14 @@ describe('DigitalOcean Deploy Provider', () => {
         expect(keyId).to.equal('99')
         expect(remove.called).to.equal(false)
         expect(post.callCount).to.equal(2)
-        expect(post.firstCall.args[1].name).to.equal(takenName)
-        expect(post.secondCall.args[1]).to.deep.equal({
+        const firstBody = post.firstCall.args[1] as {name: string}
+        const secondBody = post.secondCall.args[1] as {name: string; public_key: string}
+        expect(firstBody.name).to.equal(takenName)
+        expect(secondBody).to.deep.equal({
           name: loginKeyUploadName(fingerprint, 1),
           public_key: pub,
         })
-        expect(post.secondCall.args[1].name).to.not.equal(takenName)
+        expect(secondBody.name).to.not.equal(takenName)
       } finally {
         restoreEnv(home, previousHome)
       }
@@ -2307,7 +2312,7 @@ describe('DigitalOcean Deploy Provider', () => {
           status: 422,
           statusText: 'Unprocessable Entity',
           headers: {},
-          config: {headers: new axios.AxiosHeaders()} as axios.InternalAxiosRequestConfig,
+          config: {headers: new axios.AxiosHeaders()} as never,
           data: {message: 'SSH key name is already in use'},
         }
         expect(sshKeyUploadConflict(taken)).to.equal('name')
