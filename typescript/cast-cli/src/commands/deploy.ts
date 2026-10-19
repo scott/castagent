@@ -577,7 +577,13 @@ export default class Deploy extends Command {
           versionToStore = present
         } else {
           const currentRelease = await getCurrentRelease(agentName)
-          versionToStore = currentRelease || 'latest'
+          if (currentRelease) {
+            versionToStore = currentRelease
+            this.log(`Warning: agent.yaml has no version. Recorded ${currentRelease} from releases.json. Add a version to agent.yaml or pass --version to choose.`)
+          } else {
+            versionToStore = 'latest'
+            this.log('Warning: agent.yaml has no version and releases.json has no releases. Recorded latest. Add a version to agent.yaml or pass --version to choose.')
+          }
         }
       }
       db.updateDeployedVersion(agentName, versionToStore)

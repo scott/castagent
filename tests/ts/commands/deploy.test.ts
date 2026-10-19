@@ -821,7 +821,7 @@ describe('Deploy Command - recorded release version', () => {
     })
   }
 
-  async function deployRecorded(agentName: string, yaml: string, version: string): Promise<string | null> {
+  async function deployRecorded(agentName: string, yaml: string, version: string): Promise<{recorded: string | null; logs: string[]}> {
     const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
     fs.mkdirSync(agentDir, {recursive: true})
     fs.writeFileSync(path.join(agentDir, 'agent.yaml'), yaml)
@@ -844,10 +844,13 @@ describe('Deploy Command - recorded release version', () => {
       metadata: {},
       nonExistentFlags: [],
     })
-    instance.log = () => {}
+    const logs: string[] = []
+    instance.log = (message?: string) => {
+      logs.push(message ?? '')
+    }
     instance.error = ((message: string) => oclifError(message)) as typeof instance.error
     await instance.run()
-    return db.getDeployedVersion(agentName)
+    return {recorded: db.getDeployedVersion(agentName), logs}
   }
 
   async function withAgent(agentName: string, run: () => Promise<void>): Promise<void> {
@@ -874,7 +877,7 @@ describe('Deploy Command - recorded release version', () => {
     const agentName = `deploy-dir-version-${Date.now()}`
     await withAgent(agentName, async () => {
       stubReleasePython('1.2')
-      const recorded = await deployRecorded(agentName, 'name: older\nversion: "1.1"\n', 'latest')
+      const {recorded} = await deployRecorded(agentName, 'name: older\nversion: "1.1"\n', 'latest')
       expect(recorded).to.equal('1.1')
     })
   })
@@ -883,7 +886,7 @@ describe('Deploy Command - recorded release version', () => {
     const agentName = `deploy-flag-version-${Date.now()}`
     await withAgent(agentName, async () => {
       stubReleasePython('9.9')
-      const recorded = await deployRecorded(agentName, 'name: pinned\nversion: "1.1"\n', '1.2')
+      const {recorded} = await deployRecorded(agentName, 'name: pinned\nversion: "1.1"\n', '1.2')
       expect(recorded).to.equal('1.2')
       const yaml = fs.readFileSync(path.join(os.homedir(), '.cast', 'agents', agentName, 'agent.yaml'), 'utf8')
       expect(yaml).to.include('version: "1.1"')
@@ -894,8 +897,50 @@ describe('Deploy Command - recorded release version', () => {
     const agentName = `deploy-no-dir-version-${Date.now()}`
     await withAgent(agentName, async () => {
       stubReleasePython('1.2')
-      const recorded = await deployRecorded(agentName, 'name: bare\ndescription: no release field\n', 'latest')
+      const {recorded} = await deployRecorded(agentName, 'name: bare\ndescription: no release field\n', 'latest')
       expect(recorded).to.equal('1.2')
+    })
+  })
+
+  it('warns once and records the releases.json version when agent.yaml has no version', async () => {
+    const agentName = `deploy-warn-release-${Date.now()}`
+    const line = 'Warning: agent.yaml has no version. Recorded 1.2 from releases.json. Add a version to agent.yaml or pass --version to choose.'
+    await withAgent(agentName, async () => {
+      stubReleasePython('1.2')
+      const {recorded, logs} = await deployRecorded(agentName, 'name: bare\ndescription: no release field\n', 'latest')
+      expect(recorded).to.equal('1.2')
+      expect(logs.filter(entry => entry === line)).to.deep.equal([line])
+    })
+  })
+
+  it('warns once and records latest when agent.yaml and releases.json have no version', async () => {
+    const agentName = `deploy-warn-latest-${Date.now()}`
+    const line = 'Warning: agent.yaml has no version and releases.json has no releases. Recorded latest. Add a version to agent.yaml or pass --version to choose.'
+    await withAgent(agentName, async () => {
+      stubReleasePython('null')
+      const {recorded, logs} = await deployRecorded(agentName, 'name: bare\ndescription: no release field\n', 'latest')
+      expect(recorded).to.equal('latest')
+      expect(logs.filter(entry => entry === line)).to.deep.equal([line])
+    })
+  })
+
+  it('prints no version warning when --version is passed', async () => {
+    const agentName = `deploy-warn-flag-${Date.now()}`
+    await withAgent(agentName, async () => {
+      stubReleasePython('9.9')
+      const {recorded, logs} = await deployRecorded(agentName, 'name: bare\ndescription: no release field\n', '1.2')
+      expect(recorded).to.equal('1.2')
+      expect(logs.filter(entry => entry.startsWith('Warning:'))).to.deep.equal([])
+    })
+  })
+
+  it('prints no version warning when agent.yaml has a version', async () => {
+    const agentName = `deploy-warn-yaml-${Date.now()}`
+    await withAgent(agentName, async () => {
+      stubReleasePython('1.2')
+      const {recorded, logs} = await deployRecorded(agentName, 'name: older\nversion: "1.1"\n', 'latest')
+      expect(recorded).to.equal('1.1')
+      expect(logs.filter(entry => entry.startsWith('Warning:'))).to.deep.equal([])
     })
   })
 })
