@@ -120,19 +120,22 @@ the tag and token in place.
 
 Fly shutdown destroys every machine, then the app, then any volumes that
 are still there. A stopped machine still binds its volume, so Cast uses
-`flyctl machine destroy --force` rather than `flyctl machine stop`. The
-volume name is the one deploy created (`cast_<agent>_memory`, or another
+`flyctl machine destroy --force` rather than `flyctl machine stop`. Cast
+prints `Destroyed Fly machine '<id>'.` for each machine that destroy
+removes. The volume name is the one deploy created (`cast_<agent>_memory`, or another
 valid name stored on the deployment). After the app is gone, Cast lists
 volumes with `flyctl volumes list --json` and deletes every remaining
 `vol_...` id with that name. Fly allows more than one volume to share a
 name, and a deploy creates one only when the list has none.
 `flyctl volumes delete` does not accept the name, and it refuses a volume
 that is still bound to a machine. Cast says the volume was removed only
-when an id delete exits 0. It says the volume was not present only when
-the list has no volume of that name, or the app is already gone so the
-list cannot be read. A list, machine destroy, or app destroy that fails
+when an id delete exits 0. When `flyctl apps destroy` exits 0 and the
+volume is no longer listed, Cast says the memory volume was removed with
+the app. It says the volume was not present when that destroy did not
+remove the app and the volume lookup finds nothing. A list, machine destroy, or app destroy that fails
 for another reason exits non-zero and leaves the deployment and its token
-recorded, so `cast shutdown` can be run again.
+recorded, so `cast shutdown` can be run again. The retry hint is printed
+on the next line after Fly's error text.
 It says the app was destroyed only when `flyctl apps destroy` exits 0.
 "Not found" or "does not exist" on stdout or stderr means the app is
 already gone. A Fly deploy that
