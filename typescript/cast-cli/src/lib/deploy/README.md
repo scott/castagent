@@ -120,7 +120,7 @@ The provider does not repeat this work:
 - Calls `prepare` after those checks, for anything the generic walkthrough cannot express.
 - After `deploy` resolves, stores the deployed version on the deployment row.
 
-`deploy` must call `saveDeployment` (or the db helper it wraps) so `cast connect` and `cast shutdown` can find the row. Use `ctx.deploymentSha` as the row id. `ctx.tokenHash` is the hash of the agent auth token Cast generated. The raw token is `ctx.authToken`. Put it in the host environment. Do not log it.
+`deploy` must call `saveDeployment` (or the db helper it wraps) so `cast connect` and `cast shutdown` can find the row. Use `ctx.deploymentSha` as the row id. `ctx.tokenHash` is the hash of the agent auth token Cast generated. The raw token is `ctx.authToken`. Put it in the host environment. Do not log it. `saveDeployment` marks earlier rows for the same provider and resource deleted and removes their `~/.cast/tokens/deployments/<sha>.token` files. Pass `{supersede: false}` when a failed deploy records a leftover remote, so the previous successful row stays. A second provider and a separate MicroVM stay registered.
 
 ## Context
 

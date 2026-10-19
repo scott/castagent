@@ -57,6 +57,7 @@ const TEST_AGENT_PREFIXES = [
   // require the "sha-test-" prefix specifically.
   'sha-test-',
   'fk-test-',
+  'redeploy-test-',
 ]
 
 // Common test agent names (without prefix)
