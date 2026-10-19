@@ -600,6 +600,26 @@ describe('Sprites deploy fixes', () => {
     return filled[filled.length - 1] || ''
   }
 
+  function attemptHealthFailure(agent: string): string {
+    const sprite = `cast-${agent}`
+    return [
+      `Sprite service 'cast-agent' on '${sprite}' failed before the runtime was ready.`,
+      'Status: running',
+      'Last lines from the cast-agent service log:',
+      "  ModuleNotFoundError: No module named 'cast'",
+      `Logs: sprite exec -s ${sprite} -- cat ${SPRITE_SERVICE_LOG}`,
+    ].join('\n')
+  }
+
+  function expectRollbackStaysQuiet(logs: string[], knownGood: string): void {
+    expect(logs[logs.length - 1]).to.equal(`Restoring ${knownGood} on the remote...`)
+    expect(logs.filter(line => line.startsWith('Deploying ') && line.endsWith(' to Sprites...'))).to.have.length(1)
+    expect(logs.filter(line => line === 'Starting agent service...')).to.have.length(1)
+    expect(logs.filter(line => line === 'Waiting for the agent service to become ready...')).to.have.length(1)
+    expect(logs.filter(line => line === 'Installing dependencies...')).to.have.length(1)
+    expect(logs.filter(line => line === 'Ensuring Python is installed...')).to.have.length(1)
+  }
+
   function expectExactFailure(
     error: {message?: string; oclif?: {exit?: number}; skipOclifErrorHandling?: boolean} | undefined,
     stderr: string,
@@ -672,11 +692,21 @@ describe('Sprites deploy fixes', () => {
       expectNonZeroExit(result.error)
       expectExactFailure(result.error, result.stderr)
       const text = result.error?.message || ''
-      expect(text.startsWith(`Upgrade to 1.2 failed, and restoring 1.0.0 on the remote also failed.\n\nUpgrade error: `)).to.equal(true)
+      const failure = attemptHealthFailure(env.agentName)
+      const expected = [
+        'Upgrade to 1.2 failed, and restoring 1.0.0 on the remote also failed.',
+        '',
+        `Upgrade error: ${failure}`,
+        `Restore error: ${failure}`,
+        '',
+        `${env.agentName} may be running the broken 1.2 release. Your local files are back on 1.0.0.`,
+        'To restore 1.0.0 on the remote, run:',
+        `  cast upgrade ${env.agentName} 1.0.0`,
+      ].join('\n')
+      expect(text).to.equal(expected)
+      expect(result.stderr).to.equal(`${expected}\n`)
       expect(text).to.not.match(/^Error:/)
-      expect(lastFilledLog(result.logs)).to.equal('Restoring 1.0.0 on the remote...')
-      expect(text).to.include('\nRestore error: ')
-      expect(text.endsWith(`\n\n${env.agentName} may be running the broken 1.2 release. Your local files are back on 1.0.0.\nTo restore 1.0.0 on the remote, run:\n  cast upgrade ${env.agentName} 1.0.0`)).to.equal(true)
+      expectRollbackStaysQuiet(result.logs, '1.0.0')
       expect(text).to.include('failed before the runtime was ready')
       expect(text).to.not.include('cast deploy')
       expect(text).to.not.include(TOKEN)
@@ -731,10 +761,18 @@ describe('Sprites deploy fixes', () => {
       expect(logs).to.not.include('To connect:')
       expect(logs).to.not.include('To destroy:')
       expect(logs).to.not.include(`cast shutdown ${env.agentName}`)
-      expect(text.startsWith(`Upgrade to 1.2 failed. ${env.agentName} is back on 1.0.0.\n\nReason: `)).to.equal(true)
+      const expected = [
+        `Upgrade to 1.2 failed. ${env.agentName} is back on 1.0.0.`,
+        '',
+        `Reason: ${attemptHealthFailure(env.agentName)}`,
+        '',
+        `To try again: cast upgrade ${env.agentName} 1.2`,
+      ].join('\n')
+      expect(text).to.equal(expected)
+      expect(result.stderr).to.equal(`${expected}\n`)
       expect(text).to.not.match(/^Error:/)
-      expect(lastFilledLog(result.logs)).to.equal(`Restoring 1.0.0 on the remote...`)
-      expect(text.endsWith(`\n\nTo try again: cast upgrade ${env.agentName} 1.2`)).to.equal(true)
+      expect(text).to.not.include('\nError:')
+      expectRollbackStaysQuiet(result.logs, '1.0.0')
       expect(text).to.include('failed before the runtime was ready')
       expect(text).to.not.include('cast deploy')
       expect(text).to.not.include('remote also failed')
@@ -853,9 +891,18 @@ describe('Sprites deploy fixes', () => {
       const text = result.error?.message || ''
       expect(result.logs.join('\n')).to.include(unfinishedUpgradeLine(env.agentName, '1.2'))
       expect(result.logs.join('\n')).to.include(restoringLine('1.0.0'))
-      expect(text.startsWith(`Restoring 1.0.0 on the remote failed again.\n\nError: `)).to.equal(true)
-      expect(text).to.include('failed before the runtime was ready')
-      expect(text.endsWith(`\n\n${env.agentName} may still be running the broken 1.2 release. Your local files are on 1.0.0.\nTo try again: cast upgrade ${env.agentName} 1.0.0`)).to.equal(true)
+      const expected = [
+        'Restoring 1.0.0 on the remote failed again.',
+        '',
+        `Error: ${attemptHealthFailure(env.agentName)}`,
+        '',
+        `${env.agentName} may still be running the broken 1.2 release. Your local files are on 1.0.0.`,
+        `To try again: cast upgrade ${env.agentName} 1.0.0`,
+      ].join('\n')
+      expect(text).to.equal(expected)
+      expect(result.stderr).to.equal(`${expected}\n`)
+      expect(text).to.not.include('\n\n\n')
+      expectRollbackStaysQuiet(result.logs, '1.0.0')
       expect(text).to.not.include('broken 1.0.0')
       expect(text).to.not.include('cast deploy')
       expect(text).to.not.include(TOKEN)
@@ -886,6 +933,18 @@ describe('Sprites deploy fixes', () => {
     const formatted = formatAttemptLogTail(current)
     expect(formatted).to.not.include('Agent ready')
     expect(formatted.split('\n').slice(1)).to.have.length(20)
+    const message = spriteHealthFailureMessage('cast-email-agent', {
+      status: 'running',
+      logs: lines.join('\n'),
+      reason: 'exited',
+    })
+    const rows = message.split('\n')
+    const headerAt = rows.indexOf('Last lines from the cast-agent service log:')
+    const logsAt = rows.findIndex(line => line.startsWith('Logs: '))
+    expect(headerAt).to.be.greaterThan(0)
+    expect(rows.slice(headerAt + 1, logsAt)).to.have.length(20)
+    expect(rows[headerAt + 1]).to.equal('  attempt-line-5')
+    expect(message).to.not.include('attempt-line-4')
   })
 
   it('shows no service-log lines when the attempt marker is missing', () => {

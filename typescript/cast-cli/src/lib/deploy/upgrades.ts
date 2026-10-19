@@ -504,8 +504,13 @@ export function failedUpgradeTarget(state: string | null | undefined): string | 
   return target.length > 0 ? target : null
 }
 
+/** Drop a trailing newline so the following blank line stays a single gap. */
+function failureText(text: string): string {
+  return text.replace(/[ \t\r\n]+$/g, '')
+}
+
 export function upgradeRolledBackMessage(agent: string, oldVersion: string, target: string, upgradeError: string): string {
-  return `Upgrade to ${target} failed. ${agent} is back on ${oldVersion}.\n\nReason: ${upgradeError}\n\nTo try again: cast upgrade ${agent} ${target}`
+  return `Upgrade to ${target} failed. ${agent} is back on ${oldVersion}.\n\nReason: ${failureText(upgradeError)}\n\nTo try again: cast upgrade ${agent} ${target}`
 }
 
 export function upgradeRestoreFailedMessage(
@@ -529,8 +534,8 @@ export function upgradeRestoreFailedMessage(
   return [
     `Upgrade to ${target} failed, and restoring ${oldVersion} on the remote also failed.`,
     '',
-    `Upgrade error: ${upgradeError}`,
-    `Restore error: ${restoreError}`,
+    `Upgrade error: ${failureText(upgradeError)}`,
+    `Restore error: ${failureText(restoreError)}`,
     '',
     `${agent} may be running the broken ${target} release. ${localFiles}`,
     ...recovery,
@@ -547,7 +552,7 @@ export function restoreFailedAgainMessage(
   return [
     `Restoring ${oldVersion} on the remote failed again.`,
     '',
-    `Error: ${error}`,
+    `Error: ${failureText(error)}`,
     '',
     `${agent} may still be running the broken ${brokenTarget} release. Your local files are on ${oldVersion}.`,
     `To try again: cast upgrade ${agent} ${oldVersion}`,
