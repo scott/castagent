@@ -4,6 +4,7 @@ import * as crypto from 'crypto'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
+import * as tar from 'tar'
 import {gunzipSync} from 'zlib'
 import {keychain} from '../../../../typescript/cast-cli/src/lib/keychain'
 import {db} from '../../../../typescript/cast-cli/src/lib/sqlite'
@@ -21,6 +22,7 @@ import {
   spriteCliEnv,
   SPRITE_SERVICE_LOG,
 } from '../../../../typescript/cast-cli/src/lib/deploy/sprites-service'
+import {upgradeSpritesDeployment} from '../../../../typescript/cast-cli/src/lib/deploy/upgrades'
 
 const TOKEN = 'org-slug/org-id/token-id/not-a-real-sprites-token'
 const MODEL_KEY = 'sk-test-openrouter'
@@ -442,6 +444,160 @@ describe('Sprites deploy fixes', () => {
     } finally {
       console.log = original
       cleanup(env)
+    }
+  })
+
+  const BEARER = 'bearer-token-for-upgrade-test'
+  const SPRITE_SUBCOMMANDS = new Set([
+    'login', 'logout', 'exec', 'console', 'create', 'file', 'use', 'list',
+    'checkpoint', 'restore', 'destroy', 'proxy', 'api', 'url', 'upgrade',
+    'completion', 'org', 'auth',
+  ])
+
+  function assertKnownSpriteCommands(log: string, agentName: string): void {
+    const calls = readCalls(log)
+    expect(calls.length).to.be.greaterThan(0)
+    const spriteName = `cast-${agentName}`
+    for (const call of calls) {
+      const joined = call.argv.join('\n')
+      expect(joined).to.not.include(TOKEN)
+      expect(joined).to.not.include(BEARER)
+      expect(joined).to.not.include(MODEL_KEY)
+      expect(call.argv).to.not.include('--token')
+      expect(call.spriteToken).to.equal(TOKEN)
+      if (call.argv[0].startsWith('-')) continue
+      expect(SPRITE_SUBCOMMANDS.has(call.argv[0]), `unexpected sprite command: ${call.argv.join(' ')}`).to.equal(true)
+    }
+    expect(calls.some(call => call.argv[0] === 'deploy')).to.equal(false)
+    expect(calls.some(call => call.argv[0] === 'exec' && call.argv.includes('-s') && call.argv.includes(spriteName))).to.equal(true)
+    expect(calls.some(call => call.argv[0] === 'create' && call.argv.includes(spriteName))).to.equal(true)
+    expect(calls.some(call => call.argv[0] === 'destroy')).to.equal(false)
+  }
+
+  async function prepareUpgrade(env: MockEnv): Promise<{tarball: string; agentDir: string}> {
+    delete process.env.CAST_DEPLOYMENT_SHA
+    process.env.SPRITE_MOCK_CREATE = 'exists'
+    const agentDir = path.join(env.home, '.cast', 'agents', env.agentName)
+    fs.writeFileSync(path.join(agentDir, 'agent.yaml'), 'name: original\n')
+    fs.writeFileSync(path.join(agentDir, 'notes.txt'), 'keep me\n')
+    fs.mkdirSync(path.join(agentDir, 'skills'))
+    fs.writeFileSync(path.join(agentDir, 'skills', 'hello.txt'), 'skill\n')
+    fs.mkdirSync(path.join(agentDir, '.cast'))
+    fs.writeFileSync(path.join(agentDir, '.cast', 'keep.txt'), 'metadata\n')
+    const releaseDir = path.join(env.dir, 'release')
+    fs.mkdirSync(releaseDir)
+    fs.writeFileSync(path.join(releaseDir, 'agent.yaml'), 'name: upgraded\n')
+    fs.writeFileSync(path.join(releaseDir, 'extra.txt'), 'from release\n')
+    const tarball = path.join(env.dir, '1.2.tar.gz')
+    await tar.create({gzip: true, file: tarball, cwd: releaseDir, portable: true}, ['agent.yaml', 'extra.txt'])
+    db.createDeployment(
+      env.sha,
+      env.agentName,
+      'sprites',
+      `https://cast-${env.agentName}.sprites.app`,
+      keychain.hashToken(BEARER),
+      `cast-${env.agentName}-memory`,
+      spriteMemoryConfig('upgrade-deployment'),
+      '1.0.0',
+    )
+    await keychain.setDeploymentToken(env.sha, BEARER)
+    return {tarball, agentDir}
+  }
+
+  async function runUpgrade(env: MockEnv, tarball: string): Promise<{logs: string[]; error?: string}> {
+    const logs: string[] = []
+    try {
+      await upgradeSpritesDeployment({
+        log: (message) => logs.push(message),
+        warn: (message) => logs.push(message),
+        error: (message: string): never => {
+          throw new Error(message)
+        },
+      }, env.agentName, '1.2', tarball, {
+        ...deployOptions,
+        deployment: db.getDeploymentBySha(env.sha),
+      })
+      return {logs}
+    } catch (error) {
+      return {logs, error: error instanceof Error ? error.message : String(error)}
+    }
+  }
+
+  async function cleanupUpgrade(env: MockEnv): Promise<void> {
+    await keychain.deleteDeploymentToken(env.sha)
+    await keychain.deleteToken(env.agentName)
+    try {
+      db.deleteAgent(env.agentName)
+    } catch {
+      // The row was not recorded.
+    }
+    fs.rmSync(env.dir, {recursive: true, force: true})
+  }
+
+  it('redeploys the existing cast-<agent> sprite and leaves the recorded version for the command to store', async () => {
+    const env = setup('upok')
+    try {
+      const {tarball, agentDir} = await prepareUpgrade(env)
+      const result = await runUpgrade(env, tarball)
+      expect(result.error, result.logs.join('\n')).to.equal(undefined)
+      assertKnownSpriteCommands(env.log, env.agentName)
+      expect(result.logs.join('\n')).to.include(`Redeploying ${env.agentName} to sprite cast-${env.agentName}`)
+      expect(result.logs.join('\n')).to.include('Sprites Deployment Successful!')
+      expect(result.logs.join('\n')).to.include('Upgraded to version 1.2 on Sprites.')
+      expect(result.logs.join('\n')).to.not.include(TOKEN)
+      expect(result.logs.join('\n')).to.not.include(BEARER)
+      expect(fs.readFileSync(path.join(agentDir, 'agent.yaml'), 'utf8')).to.equal('name: upgraded\n')
+      expect(fs.readFileSync(path.join(agentDir, 'extra.txt'), 'utf8')).to.equal('from release\n')
+      expect(fs.existsSync(path.join(agentDir, 'notes.txt'))).to.equal(false)
+      expect(fs.existsSync(path.join(agentDir, 'skills', 'hello.txt'))).to.equal(false)
+      expect(fs.readFileSync(path.join(agentDir, '.cast', 'keep.txt'), 'utf8')).to.equal('metadata\n')
+      expect(fs.existsSync(path.join(agentDir, 'requirements.txt'))).to.equal(true)
+      expect(fs.existsSync(path.join(agentDir, '.cast-runtime', 'cast', 'runtime.py'))).to.equal(true)
+      const script = fs.readFileSync(env.script, 'utf8')
+      expect(script).to.include(`export AUTH_TOKEN='${BEARER}'`)
+      expect(script).to.include(`export OPENROUTER_API_KEY='${MODEL_KEY}'`)
+      expect(script).to.not.include(OTHER_KEY)
+      const uploaded = gunzipSync(Buffer.from(fs.readFileSync(env.tar, 'utf8'), 'base64'))
+      expect(uploaded.includes(Buffer.from('name: upgraded'))).to.equal(true)
+      const row = db.getDeploymentBySha(env.sha)
+      expect(row.deployed_version).to.equal('1.0.0')
+      expect(row.provider).to.equal('sprites')
+      expect(db.listDeployments(env.agentName)).to.have.length(1)
+      expect(await keychain.getDeploymentToken(env.sha)).to.equal(BEARER)
+    } finally {
+      await cleanupUpgrade(env)
+    }
+  })
+
+  it('restores the local agent directory when the sprite redeploy fails and leaves the recorded version', async () => {
+    const env = setup('upbad')
+    process.env.SPRITE_MOCK_HEALTH = 'crash'
+    try {
+      const {tarball, agentDir} = await prepareUpgrade(env)
+      const result = await runUpgrade(env, tarball)
+      expect(result.error || '').to.include('failed before the runtime was ready')
+      expect(result.logs.join('\n')).to.not.include('Upgraded to version 1.2 on Sprites.')
+      expect(result.logs.join('\n')).to.not.include('Sprites Deployment Successful!')
+      assertKnownSpriteCommands(env.log, env.agentName)
+      expect(fs.readFileSync(path.join(agentDir, 'agent.yaml'), 'utf8')).to.equal('name: original\n')
+      expect(fs.readFileSync(path.join(agentDir, 'notes.txt'), 'utf8')).to.equal('keep me\n')
+      expect(fs.readFileSync(path.join(agentDir, 'skills', 'hello.txt'), 'utf8')).to.equal('skill\n')
+      expect(fs.readFileSync(path.join(agentDir, '.cast', 'keep.txt'), 'utf8')).to.equal('metadata\n')
+      expect(fs.existsSync(path.join(agentDir, 'extra.txt'))).to.equal(false)
+      expect(fs.existsSync(path.join(agentDir, 'requirements.txt'))).to.equal(false)
+      expect(fs.existsSync(path.join(agentDir, '.cast-runtime'))).to.equal(false)
+      const uploaded = gunzipSync(Buffer.from(fs.readFileSync(env.tar, 'utf8'), 'base64'))
+      expect(uploaded.includes(Buffer.from('name: upgraded'))).to.equal(true)
+      const row = db.getDeploymentBySha(env.sha)
+      expect(row.deployed_version).to.equal('1.0.0')
+      expect(db.listDeployments(env.agentName)).to.have.length(1)
+      expect(await keychain.getDeploymentToken(env.sha)).to.equal(BEARER)
+      const script = fs.readFileSync(env.script, 'utf8')
+      expect(script).to.include(`export AUTH_TOKEN='${BEARER}'`)
+      const joined = readCalls(env.log).map(call => call.argv.join('\n')).join('\n')
+      expect(joined).to.not.include(BEARER)
+    } finally {
+      await cleanupUpgrade(env)
     }
   })
 

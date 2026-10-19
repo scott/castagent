@@ -152,7 +152,9 @@ export const spritesProvider: DeploymentProvider = {
     await SpritesDeploy.destroy(ctx.agentName, ctx.deployment)
   },
   async upgrade(ctx) {
-    await upgradeSpritesDeployment(ctx, ctx.agentName, ctx.version, ctx.versionTarballPath)
+    await upgradeSpritesDeployment(ctx, ctx.agentName, ctx.version, ctx.versionTarballPath, {
+      deployment: ctx.deployment,
+    })
   },
   async connect(ctx) {
     // The TCP proxy does not start a stopped service. Start it before the
