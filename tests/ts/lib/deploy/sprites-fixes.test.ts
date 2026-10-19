@@ -600,6 +600,10 @@ describe('Sprites deploy fixes', () => {
     return filled[filled.length - 1] || ''
   }
 
+  function logsHint(agent: string): string {
+    return `Logs: sprite exec -s cast-${agent} -- cat ${SPRITE_SERVICE_LOG}`
+  }
+
   function attemptHealthFailure(agent: string): string {
     const sprite = `cast-${agent}`
     return [
@@ -607,8 +611,18 @@ describe('Sprites deploy fixes', () => {
       'Status: running',
       'Last lines from the cast-agent service log:',
       "  ModuleNotFoundError: No module named 'cast'",
-      `Logs: sprite exec -s ${sprite} -- cat ${SPRITE_SERVICE_LOG}`,
     ].join('\n')
+  }
+
+  function expectLogsHintLast(text: string, agent: string): void {
+    const hint = logsHint(agent)
+    expect(text.split(hint).length - 1, text).to.equal(1)
+    expect(text.endsWith(hint), text).to.equal(true)
+    expect(text.slice(0, text.lastIndexOf(hint))).to.not.include('Logs: sprite exec')
+  }
+
+  function deployCalls(log: string): number {
+    return readCalls(log).filter(call => call.argv[0] === 'create').length
   }
 
   function expectRollbackStaysQuiet(logs: string[], knownGood: string): void {
@@ -702,9 +716,13 @@ describe('Sprites deploy fixes', () => {
         `${env.agentName} may be running the broken 1.2 release. Your local files are back on 1.0.0.`,
         'To restore 1.0.0 on the remote, run:',
         `  cast upgrade ${env.agentName} 1.0.0`,
+        logsHint(env.agentName),
       ].join('\n')
       expect(text).to.equal(expected)
       expect(result.stderr).to.equal(`${expected}\n`)
+      expect(text.indexOf('\nRestore error:')).to.be.greaterThan(text.indexOf('\nUpgrade error:'))
+      expect(text.indexOf(logsHint(env.agentName))).to.be.greaterThan(text.indexOf('\nRestore error:'))
+      expectLogsHintLast(text, env.agentName)
       expect(text).to.not.match(/^Error:/)
       expectRollbackStaysQuiet(result.logs, '1.0.0')
       expect(text).to.include('failed before the runtime was ready')
@@ -767,9 +785,12 @@ describe('Sprites deploy fixes', () => {
         `Reason: ${attemptHealthFailure(env.agentName)}`,
         '',
         `To try again: cast upgrade ${env.agentName} 1.2`,
+        logsHint(env.agentName),
       ].join('\n')
       expect(text).to.equal(expected)
       expect(result.stderr).to.equal(`${expected}\n`)
+      expect(text.indexOf(logsHint(env.agentName))).to.be.greaterThan(text.indexOf('\nTo try again:'))
+      expectLogsHintLast(text, env.agentName)
       expect(text).to.not.match(/^Error:/)
       expect(text).to.not.include('\nError:')
       expectRollbackStaysQuiet(result.logs, '1.0.0')
@@ -826,8 +847,14 @@ describe('Sprites deploy fixes', () => {
       const result = await runCli(env, '1.0.0', oldRelease)
       expect(result.error, result.logs.join('\n')).to.equal(undefined)
       const logs = result.logs.join('\n')
-      expect(logs).to.include(unfinishedUpgradeLine(env.agentName, '1.2'))
-      expect(logs).to.include(restoringLine('1.0.0'))
+      const unfinishedAt = result.logs.indexOf(unfinishedUpgradeLine(env.agentName, '1.2'))
+      const restoringAt = result.logs.indexOf(restoringLine('1.0.0'))
+      const restoredAt = result.logs.indexOf(restoredLine(env.agentName, '1.0.0'))
+      expect(unfinishedAt).to.be.greaterThan(-1)
+      expect(restoringAt).to.be.greaterThan(unfinishedAt)
+      expect(restoredAt).to.be.greaterThan(restoringAt)
+      expect(result.logs.filter(line => line.startsWith('Restoring '))).to.deep.equal([restoringLine('1.0.0')])
+      expect(result.logs.some(line => line === 'Restoring 1.0.0...')).to.equal(false)
       expect(logs).to.include(restoredLine(env.agentName, '1.0.0'))
       expect(logs).to.not.include('already at version')
       expect(logs).to.not.include('Upgraded to version 1.0.0 successfully.')
@@ -889,8 +916,12 @@ describe('Sprites deploy fixes', () => {
       expectNonZeroExit(result.error)
       expectExactFailure(result.error, result.stderr)
       const text = result.error?.message || ''
-      expect(result.logs.join('\n')).to.include(unfinishedUpgradeLine(env.agentName, '1.2'))
-      expect(result.logs.join('\n')).to.include(restoringLine('1.0.0'))
+      const unfinishedAt = result.logs.indexOf(unfinishedUpgradeLine(env.agentName, '1.2'))
+      const restoringAt = result.logs.indexOf(restoringLine('1.0.0'))
+      expect(unfinishedAt).to.be.greaterThan(-1)
+      expect(restoringAt).to.be.greaterThan(unfinishedAt)
+      expect(result.logs.filter(line => line.startsWith('Restoring '))).to.deep.equal([restoringLine('1.0.0')])
+      expect(result.logs.some(line => line === 'Restoring 1.0.0...')).to.equal(false)
       const expected = [
         'Restoring 1.0.0 on the remote failed again.',
         '',
@@ -898,11 +929,16 @@ describe('Sprites deploy fixes', () => {
         '',
         `${env.agentName} may still be running the broken 1.2 release. Your local files are on 1.0.0.`,
         `To try again: cast upgrade ${env.agentName} 1.0.0`,
+        logsHint(env.agentName),
       ].join('\n')
       expect(text).to.equal(expected)
       expect(result.stderr).to.equal(`${expected}\n`)
+      expect(text.indexOf(logsHint(env.agentName))).to.be.greaterThan(text.indexOf('\nTo try again:'))
+      expectLogsHintLast(text, env.agentName)
       expect(text).to.not.include('\n\n\n')
-      expectRollbackStaysQuiet(result.logs, '1.0.0')
+      expect(result.logs.filter(line => line === 'Installing dependencies...')).to.have.length(1)
+      expect(result.logs.filter(line => line.startsWith('Deploying ') && line.endsWith(' to Sprites...'))).to.have.length(1)
+      expect(deployCalls(env.log)).to.equal(1)
       expect(text).to.not.include('broken 1.0.0')
       expect(text).to.not.include('cast deploy')
       expect(text).to.not.include(TOKEN)
@@ -1014,7 +1050,8 @@ describe('Sprites deploy fixes', () => {
       expect(text).to.include('\nRestore error: ')
       expect(text).to.include('Failed to restore local agent files: local restore blocked')
       expect(text).to.include('failed before the runtime was ready')
-      expect(text.endsWith(`\n\n${env.agentName} may be running the broken 1.2 release. Your local files could not be restored to 1.0.0. See Restore error above.\nTo restore 1.0.0 on the remote, run:\n  cast upgrade ${env.agentName} 1.0.0`)).to.equal(true)
+      expect(text.endsWith(`\n\n${env.agentName} may be running the broken 1.2 release. Your local files could not be restored to 1.0.0. See Restore error above.\nTo restore 1.0.0 on the remote, run:\n  cast upgrade ${env.agentName} 1.0.0\n${logsHint(env.agentName)}`)).to.equal(true)
+      expectLogsHintLast(text, env.agentName)
       expect(text).to.not.include('Your local files are back on')
       expect(text).to.not.include('cast deploy')
       expect(text).to.not.include(TOKEN)
@@ -1043,7 +1080,8 @@ describe('Sprites deploy fixes', () => {
       const text = result.error?.message || ''
       expect(text.startsWith(`Upgrade to 1.2 failed. ${env.agentName} is back on the previous release.\n\nReason: `)).to.equal(true)
       expect(lastFilledLog(result.logs)).to.equal('Restoring the previous release on the remote...')
-      expect(text.endsWith(`\n\nTo try again: cast upgrade ${env.agentName} 1.2`)).to.equal(true)
+      expect(text.endsWith(`\n\nTo try again: cast upgrade ${env.agentName} 1.2\n${logsHint(env.agentName)}`)).to.equal(true)
+      expectLogsHintLast(text, env.agentName)
       expect(text).to.include('failed before the runtime was ready')
       expect(text).to.not.include('<old>')
       expect(text).to.not.include('cast deploy')
@@ -1074,7 +1112,8 @@ describe('Sprites deploy fixes', () => {
       expect(text.startsWith('Upgrade to 1.2 failed, and restoring the previous release on the remote also failed.\n\nUpgrade error: ')).to.equal(true)
       expect(text).to.include('\nRestore error: ')
       expect(text).to.include(`Your local files are back on the previous release.`)
-      expect(text.endsWith(`\nTo restore it, find the last good release and upgrade to it:\n  cast upgrade ${env.agentName} --list-versions`)).to.equal(true)
+      expect(text.endsWith(`\nTo restore it, find the last good release and upgrade to it:\n  cast upgrade ${env.agentName} --list-versions\n${logsHint(env.agentName)}`)).to.equal(true)
+      expectLogsHintLast(text, env.agentName)
       expect(text).to.not.include(`cast upgrade ${env.agentName} the previous release`)
       expect(text).to.not.match(/^Error:/)
       expect(lastFilledLog(result.logs)).to.equal('Restoring the previous release on the remote...')
