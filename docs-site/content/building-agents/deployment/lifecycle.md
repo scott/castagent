@@ -100,15 +100,13 @@ DigitalOcean droplet shutdown deletes the droplet and its memory
 volume. It looks the volume up by name and region, waits for it to
 finish detaching, and deletes that volume ID. If the volume is still
 attached after about two minutes, the deployment stays recorded.
-It also deletes the account SSH key named `cast-do-key` when
-no other Cast droplet or Cast MicroVM still uses it. The key is left
-in the account when another Cast droplet or MicroVM remains. The login
-key file `~/.ssh/cast_do_key` is not deleted. A deploy that fails after
+It leaves every account SSH key in place, including `cast-do-key`.
+The login key file `~/.ssh/cast_do_key` is not deleted. A deploy that fails after
 creating a droplet deletes that droplet, any volume created for the
 attempt, and the droplet line in `~/.cast/ssh/known_hosts`. That volume
 delete uses the same lookup and waits for the volume to finish detaching.
 The volume is already gone only when the lookup finds nothing. If it is
-still attached after about two minutes, Cast records the deployment. A failed deploy does not delete `cast-do-key`.
+still attached after about two minutes, Cast records the deployment. A failed deploy does not delete account SSH keys.
 If the droplet or volume cannot be deleted, Cast records the deployment
 so `cast shutdown` can remove it. A failed deploy also removes the bearer token it stored for that
 attempt, so a missing `ssh` or `ssh-keygen` does not leave

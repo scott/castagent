@@ -7,8 +7,6 @@ import * as os from 'os'
 import axios from 'axios'
 
 import DigitalOceanDeploy, {
-  accountSshKeyCleanup,
-  castMicrovmsUsingAccountKey,
   digitalOceanKeysPage,
   digitalOceanMemoryVolumeName,
   digitalOceanMemoryVolumesToRemove,
@@ -30,6 +28,7 @@ import DigitalOceanDeploy, {
   remoteDockerRunCommand,
   removeDigitalOceanMemoryVolumes,
   SSH_KEY_NAME,
+  leftAccountSshKeysMessage,
   accountKeyMatchingFingerprint,
   digitalOceanCommandError,
   extractDigitalOceanErrorDetail,
@@ -2330,46 +2329,11 @@ describe('DigitalOcean Deploy Provider', () => {
       expect(digitalOceanCommandError('Failed to create droplet', {stdout: '', stderr: ''})).to.equal('Failed to create droplet')
     })
 
-    it('chooses whether the shared account key can be removed', () => {
-      expect(accountSshKeyCleanup(
-        [{id: '99', name: 'cast-demo'}],
-        [{id: 42, name: SSH_KEY_NAME}],
-        '99',
-      )).to.deep.equal({action: 'remove', id: 42})
-      expect(accountSshKeyCleanup(
-        [{id: '99', name: 'cast-demo'}, {id: '100', name: 'cast-other'}],
-        [{id: 42, name: SSH_KEY_NAME}],
-        '99',
-      )).to.deep.equal({action: 'keep'})
-      expect(accountSshKeyCleanup(
-        [{id: '99', name: 'cast-demo'}, {id: '5', name: 'personal'}],
-        [{id: 42, name: SSH_KEY_NAME}],
-        '99',
-      ).action).to.equal('remove')
-      expect(accountSshKeyCleanup([], [{id: 1, name: 'other'}], '').action).to.equal('absent')
+    it('recognizes an SSH key delete and follows only DigitalOcean key pages', () => {
       expect(isDigitalOceanSshKeyDelete(['compute', 'ssh-key', 'delete', '42', '--force'])).to.equal(true)
       expect(isDigitalOceanSshKeyDelete(['compute', 'droplet', 'delete', '42', '--force'])).to.equal(false)
       expect(isDigitalOceanSshKeyDelete(['compute', 'volume', 'delete', 'cast-mail', '--force'])).to.equal(false)
-      expect(accountSshKeyCleanup(
-        [{id: '99', name: 'cast-demo'}],
-        [{id: 42, name: SSH_KEY_NAME}],
-        '99',
-        [{id: 'mv-1', name: 'cast-demo-abc123'}],
-      ).action).to.equal('keep')
-      const castVm = JSON.stringify([{id: 'mv-1', name: 'cast-demo-abc123', tags: ['cast']}])
-      expect(castMicrovmsUsingAccountKey(castVm)).to.deep.equal([{id: 'mv-1', name: 'cast-demo-abc123'}])
-      expect(castMicrovmsUsingAccountKey(JSON.stringify([{id: 'mv-2', name: 'unrelated'}]))).to.deep.equal([])
-      expect(castMicrovmsUsingAccountKey(JSON.stringify([
-        {id: 'mv-3', name: 'cast-demo', ssh_keys: []},
-      ]))).to.deep.equal([])
-      expect(castMicrovmsUsingAccountKey(JSON.stringify([
-        {id: 'mv-4', name: 'other', tags: ['cast'], ssh_keys: [{name: SSH_KEY_NAME}]},
-      ]))).to.deep.equal([{id: 'mv-4', name: 'other'}])
-      expect(castMicrovmsUsingAccountKey(JSON.stringify({
-        microvms: [{id: 'mv-5', name: 'workload', tags: [{name: 'cast'}]}],
-      }))).to.deep.equal([{id: 'mv-5', name: 'workload'}])
-      expect(castMicrovmsUsingAccountKey('')).to.deep.equal([])
-      expect(() => castMicrovmsUsingAccountKey('{')).to.throw('Could not read the DigitalOcean MicroVM list')
+      expect(leftAccountSshKeysMessage()).to.include(SSH_KEY_NAME)
       expect(digitalOceanKeysPage('https://api.digitalocean.com/v2/account/keys?page=2')).to.include('page=2')
       expect(digitalOceanKeysPage('https://evil.example/v2/account/keys')).to.equal(null)
       expect(digitalOceanKeysPage('http://api.digitalocean.com/v2/account/keys')).to.equal(null)
@@ -2377,23 +2341,25 @@ describe('DigitalOcean Deploy Provider', () => {
       expect(digitalOceanKeysPage('https://api.digitalocean.com:444/v2/account/keys')).to.equal(null)
     })
 
-    async function destroyWith(input: {
-      dropletLists: string[]
-      sshKeys?: string
-      microvms?: string
-      microvmExit?: number
-    }): Promise<{deletedId?: string; logs: string[]}> {
+    async function destroyWith(dropletLists: string[]): Promise<{commands: string[]; logs: string[]}> {
       sandbox.stub(db, 'listDeployments').returns([])
       sandbox.stub(deployUtils, 'getProviderToken').returns('test-token')
+      const httpDelete = sandbox.stub(axios, 'delete').callsFake(async () => {
+        throw new Error('shutdown issued an SSH key HTTP delete')
+      })
       let listed = 0
-      let deletedId: string | undefined
+      const commands: string[] = []
       sandbox.stub(deployUtils, 'execCommand').callsFake(async (_command: string, args: string[] = []) => {
         const line = args.join(' ')
+        commands.push(line)
+        if (isDigitalOceanSshKeyDelete(args) || line.includes('ssh-key')) {
+          throw new Error(`shutdown touched an account SSH key: ${line}`)
+        }
         if (line.includes('account') && line.includes('get')) {
           return {stdout: 'ok', stderr: '', exitCode: 0}
         }
         if (line.includes('droplet') && line.includes('list')) {
-          const stdout = input.dropletLists[Math.min(listed, input.dropletLists.length - 1)] || ''
+          const stdout = dropletLists[Math.min(listed, dropletLists.length - 1)] || ''
           listed += 1
           return {stdout, stderr: '', exitCode: 0}
         }
@@ -2403,19 +2369,6 @@ describe('DigitalOcean Deploy Provider', () => {
         if (line.includes('volume')) {
           return {stdout: '', stderr: '', exitCode: 0}
         }
-        if (line.includes('microvm') && line.includes('list')) {
-          if (input.microvmExit) {
-            return {stdout: '', stderr: 'microvm list failed', exitCode: input.microvmExit}
-          }
-          return {stdout: input.microvms ?? '[]', stderr: '', exitCode: 0}
-        }
-        if (line.includes('ssh-key') && line.includes('list')) {
-          return {stdout: input.sshKeys ?? '', stderr: '', exitCode: 0}
-        }
-        if (line.includes('ssh-key') && line.includes('delete')) {
-          deletedId = args[args.indexOf('delete') + 1]
-          return {stdout: '', stderr: '', exitCode: 0}
-        }
         throw new Error(`unexpected command ${line}`)
       })
       const logs: string[] = []
@@ -2423,87 +2376,27 @@ describe('DigitalOcean Deploy Provider', () => {
         logs.push(String(message))
       })
       await DigitalOceanDeploy.destroy(agentName)
-      return {deletedId, logs}
+      expect(httpDelete.called).to.equal(false)
+      expect(commands.some(line => isDigitalOceanSshKeyDelete(line.split(/\s+/)))).to.equal(false)
+      expect(logs.join('\n')).to.include(leftAccountSshKeysMessage())
+      return {commands, logs}
     }
 
-    it('removes the account SSH key after the last Cast droplet is deleted', async () => {
-      const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`, `99 cast-${agentName}\n`],
-        sshKeys: `42 ${SSH_KEY_NAME}\n`,
-        microvms: '[]',
-      })
-      expect(result.deletedId).to.equal('42')
-      expect(result.logs.join('\n')).to.include(`Removed DigitalOcean account SSH key '${SSH_KEY_NAME}'.`)
+    it('leaves account SSH keys after the last Cast droplet is deleted', async () => {
+      const result = await destroyWith([`99 cast-${agentName}\n`, `99 cast-${agentName}\n`])
+      expect(result.commands.some(line => line.includes('droplet') && line.includes('delete'))).to.equal(true)
+      expect(result.commands.some(line => line.includes('ssh-key'))).to.equal(false)
     })
 
-    it('keeps the account SSH key while another Cast droplet remains', async () => {
-      const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`, `99 cast-${agentName}\n100 cast-other\n`],
-        sshKeys: `42 ${SSH_KEY_NAME}\n`,
-      })
-      expect(result.deletedId).to.equal(undefined)
-      expect(result.logs.join('\n')).to.include(`Left DigitalOcean account SSH key '${SSH_KEY_NAME}'`)
+    it('leaves account SSH keys while another Cast droplet remains', async () => {
+      const result = await destroyWith([`99 cast-${agentName}\n`, `99 cast-${agentName}\n100 cast-other\n`])
+      expect(result.commands.some(line => line.includes('ssh-key'))).to.equal(false)
     })
 
-    it('keeps the account SSH key while a Cast MicroVM remains', async () => {
-      const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`, ''],
-        sshKeys: `42 ${SSH_KEY_NAME}\n`,
-        microvms: JSON.stringify([{id: 'mv-1', name: 'cast-other-abc123', tags: ['cast']}]),
-      })
-      expect(result.deletedId).to.equal(undefined)
-      expect(result.logs.join('\n')).to.include('MicroVM')
-    })
-
-    it('removes the account SSH key when the only MicroVM is not one Cast created', async () => {
-      const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`, ''],
-        sshKeys: `42 ${SSH_KEY_NAME}\n`,
-        microvms: JSON.stringify([{id: 'mv-2', name: 'unrelated-vm'}]),
-      })
-      expect(result.deletedId).to.equal('42')
-    })
-
-    it('removes the account SSH key when a Cast MicroVM lists other SSH keys', async () => {
-      const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`, ''],
-        sshKeys: `42 ${SSH_KEY_NAME}\n`,
-        microvms: JSON.stringify([{id: 'mv-3', name: 'cast-other', ssh_keys: [{name: 'someone-else'}]}]),
-      })
-      expect(result.deletedId).to.equal('42')
-    })
-
-    it('does not delete the account SSH key when MicroVMs cannot be listed', async () => {
-      const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`, ''],
-        sshKeys: `42 ${SSH_KEY_NAME}\n`,
-        microvmExit: 1,
-      })
-      expect(result.deletedId).to.equal(undefined)
-      expect(result.logs.join('\n')).to.include('could not be removed')
-      expect(result.logs.join('\n')).to.include('microvm list failed')
-      expect(result.logs.join('\n')).to.not.include(`Removed DigitalOcean account SSH key '${SSH_KEY_NAME}'`)
-    })
-
-    it('removes a leftover account SSH key when the droplet is already gone', async () => {
-      const result = await destroyWith({
-        dropletLists: ['', ''],
-        sshKeys: `9 ${SSH_KEY_NAME}\n`,
-        microvms: '[]',
-      })
-      expect(result.deletedId).to.equal('9')
+    it('leaves account SSH keys when the droplet is already gone', async () => {
+      const result = await destroyWith(['', ''])
       expect(result.logs.join('\n')).to.include(`Droplet 'cast-${agentName}' not found.`)
-    })
-
-    it('does not fail shutdown when the account key id is unexpected', async () => {
-      const result = await destroyWith({
-        dropletLists: [`99 cast-${agentName}\n`, ''],
-        sshKeys: `42;rm ${SSH_KEY_NAME}\n`,
-        microvms: '[]',
-      })
-      expect(result.deletedId).to.equal(undefined)
-      expect(result.logs.join('\n')).to.include('could not be removed')
-      expect(result.logs.join('\n')).to.include('unexpected id')
+      expect(result.commands.some(line => line.includes('ssh-key'))).to.equal(false)
     })
   })
 

@@ -931,100 +931,14 @@ export function digitalOceanCommandError(prefix: string, result: {stdout?: strin
   return body ? `${prefix}: ${body}` : prefix
 }
 
-export interface NamedDroplet {
-  id: string
-  name: string
-}
-
-export type AccountSshKeyCleanup =
-  | {action: 'remove'; id: number | string}
-  | {action: 'keep'}
-  | {action: 'absent'}
-
-export interface CastAccountKeyConsumer {
-  id: string
-  name: string
-}
-
-/**
- * The account key is shared. Remove it only when no other Cast droplet
- * and no Cast MicroVM (or other Cast resource that still references it)
- * remains. A droplet still listed under the id just deleted does not count.
- * Volumes and the container registry do not use this login key.
- */
-export function accountSshKeyCleanup(
-  droplets: NamedDroplet[],
-  keys: AccountSshKey[],
-  removedDropletId: string,
-  stillUsing: CastAccountKeyConsumer[] = [],
-): AccountSshKeyCleanup {
-  const key = keys.find(item => item.name === SSH_KEY_NAME)
-  const dropletRemains = droplets.some(droplet =>
-    droplet.id !== removedDropletId && droplet.name.startsWith('cast-'),
-  )
-  const otherRemains = stillUsing.length > 0
-  if (dropletRemains || otherRemains) return key ? {action: 'keep'} : {action: 'absent'}
-  if (!key) return {action: 'absent'}
-  return {action: 'remove', id: key.id}
-}
-
 /** True when a doctl argv would delete an account SSH key. */
 export function isDigitalOceanSshKeyDelete(args: readonly string[]): boolean {
   return args.includes('ssh-key') && args.includes('delete')
 }
 
-function tagNames(value: unknown): string[] {
-  if (!Array.isArray(value)) return []
-  const names: string[] = []
-  for (const tag of value) {
-    if (typeof tag === 'string' && tag.length > 0) names.push(tag)
-    else if (tag && typeof tag === 'object' && typeof (tag as {name?: unknown}).name === 'string') {
-      names.push((tag as {name: string}).name)
-    }
-  }
-  return names
-}
-
-function sshKeyEntryUsesAccountKey(entry: unknown): boolean {
-  if (typeof entry === 'string') return entry === SSH_KEY_NAME
-  if (!entry || typeof entry !== 'object') return false
-  const name = (entry as {name?: unknown}).name
-  return name === SSH_KEY_NAME
-}
-
-/**
- * Cast MicroVMs are named `cast-*` or tagged `cast`. A record that lists
- * SSH keys and does not include `cast-do-key` is not using it. A record
- * that does not say which keys it uses is treated as still using the key.
- */
-export function castMicrovmsUsingAccountKey(stdout: string): CastAccountKeyConsumer[] {
-  const trimmed = stdout.trim()
-  if (!trimmed) return []
-  let parsed: unknown
-  try {
-    parsed = JSON.parse(trimmed)
-  } catch {
-    throw new Error('Could not read the DigitalOcean MicroVM list')
-  }
-  const records = Array.isArray(parsed)
-    ? parsed
-    : parsed && typeof parsed === 'object' && Array.isArray((parsed as {microvms?: unknown}).microvms)
-      ? (parsed as {microvms: unknown[]}).microvms
-      : []
-  const consumers: CastAccountKeyConsumer[] = []
-  for (const record of records) {
-    if (!record || typeof record !== 'object') continue
-    const item = record as {id?: unknown; name?: unknown; tags?: unknown; ssh_keys?: unknown; sshKeys?: unknown}
-    const id = item.id == null ? '' : String(item.id)
-    const name = typeof item.name === 'string' ? item.name : ''
-    if (!id) continue
-    const createdByCast = name.startsWith('cast-') || tagNames(item.tags).includes('cast')
-    if (!createdByCast) continue
-    const listedKeys = Array.isArray(item.ssh_keys) ? item.ssh_keys : Array.isArray(item.sshKeys) ? item.sshKeys : null
-    if (listedKeys && !listedKeys.some(sshKeyEntryUsesAccountKey)) continue
-    consumers.push({id, name: name || id})
-  }
-  return consumers
+/** Shutdown names the account keys it leaves. Cast never deletes them. */
+export function leftAccountSshKeysMessage(): string {
+  return `Left DigitalOcean account SSH keys in place, including '${SSH_KEY_NAME}'.`
 }
 
 /** Follow only the next page of this account's SSH keys. */
@@ -1097,98 +1011,6 @@ function sshKeyIdFromCreateResponse(data: unknown): string | null {
   return null
 }
 
-function assertAccountSshKeyId(id: number | string): string {
-  const text = String(id)
-  if (!/^[0-9]+$/.test(text)) {
-    throw new Error('Refusing to delete an SSH key with an unexpected id')
-  }
-  return text
-}
-
-async function listDropletRecords(): Promise<NamedDroplet[]> {
-  const result = await execCommand(
-    'doctl',
-    ['compute', 'droplet', 'list', '--format', 'ID,Name', '--no-header'],
-    {silent: true},
-  )
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || 'Failed to list DigitalOcean droplets')
-  }
-  const droplets: NamedDroplet[] = []
-  for (const line of result.stdout.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const parts = trimmed.split(/\s+/)
-    if (parts.length < 2 || !parts[0] || !parts[1]) continue
-    droplets.push({id: parts[0], name: parts[1]})
-  }
-  return droplets
-}
-
-async function listAccountSshKeysFromDoctl(): Promise<AccountSshKey[]> {
-  const result = await execCommand(
-    'doctl',
-    ['compute', 'ssh-key', 'list', '--format', 'ID,Name', '--no-header'],
-    {silent: true},
-  )
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || 'Failed to list DigitalOcean SSH keys')
-  }
-  const keys: AccountSshKey[] = []
-  for (const line of result.stdout.split('\n')) {
-    const trimmed = line.trim()
-    if (!trimmed) continue
-    const parts = trimmed.split(/\s+/)
-    if (parts.length < 2 || !parts[0] || !parts[1]) continue
-    keys.push({id: parts[0], name: parts.slice(1).join(' ')})
-  }
-  return keys
-}
-
-async function listCastMicrovmsUsingAccountKey(): Promise<CastAccountKeyConsumer[]> {
-  const result = await execCommand(
-    'doctl',
-    ['compute', 'microvm', 'list', '--output', 'json'],
-    {silent: true},
-  )
-  if (result.exitCode !== 0) {
-    throw new Error(result.stderr || result.stdout || 'Failed to list DigitalOcean MicroVMs')
-  }
-  return castMicrovmsUsingAccountKey(result.stdout)
-}
-
-/**
- * Delete `cast-do-key` only when no other Cast droplet, MicroVM, or
- * other Cast resource still uses it. Failures are logged. The droplet
- * delete has already finished. A failed deploy does not call this.
- */
-export async function removeUnusedCastAccountSshKey(
-  _apiToken: string,
-  removedDropletId: string,
-): Promise<'removed' | 'kept' | 'absent' | 'failed'> {
-  try {
-    const droplets = await listDropletRecords()
-    const stillUsing = await listCastMicrovmsUsingAccountKey()
-    const keys = await listAccountSshKeysFromDoctl()
-    const decision = accountSshKeyCleanup(droplets, keys, removedDropletId, stillUsing)
-    if (decision.action === 'keep') {
-      console.log(`Left DigitalOcean account SSH key '${SSH_KEY_NAME}' in place. Another Cast droplet or MicroVM still uses it.`)
-      return 'kept'
-    }
-    if (decision.action === 'absent') return 'absent'
-    const id = assertAccountSshKeyId(decision.id)
-    const deleted = await execCommand('doctl', ['compute', 'ssh-key', 'delete', id, '--force'], {silent: true})
-    if (deleted.exitCode !== 0) {
-      throw new Error(deleted.stderr || deleted.stdout || 'Failed to delete the account SSH key')
-    }
-    console.log(`Removed DigitalOcean account SSH key '${SSH_KEY_NAME}'.`)
-    return 'removed'
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    console.log(`Note: DigitalOcean account SSH key '${SSH_KEY_NAME}' could not be removed. ${message}`)
-    return 'failed'
-  }
-}
 
 function resourceAlreadyGone(stdout: string, stderr: string): boolean {
   return /not found|could not be found|does not exist|\b404\b/i.test(`${stdout}\n${stderr}`)
@@ -1242,7 +1064,7 @@ export interface FailedDropletReleaseResult {
  * After a droplet deploy fails, delete the droplet and any volume this
  * attempt created, and drop the known_hosts pin. If the droplet or volume
  * cannot be deleted, record the deployment so `cast shutdown` can finish
- * the cleanup. The shared account key `cast-do-key` is never deleted.
+ * the cleanup. Account SSH keys are left in place.
  */
 export async function releaseFailedDroplet(input: FailedDropletRelease): Promise<FailedDropletReleaseResult> {
   const log = input.log ?? console.log
@@ -1462,7 +1284,7 @@ export default class DigitalOceanDeploy extends Command {
         region: digitalOceanVolumeRegion(row.volume_config),
       }))
     await removeDigitalOceanMemoryVolumes(agentName, recorded)
-    await removeUnusedCastAccountSshKey(apiToken, dropletId)
+    console.log(leftAccountSshKeysMessage())
   }
 
   async run(): Promise<void> {
@@ -1746,11 +1568,10 @@ export default class DigitalOceanDeploy extends Command {
       }
     }
 
-    // Upload when no account key has this public key's fingerprint,
-    // including after shutdown removed an older cast-do-key and the
-    // local private key is still here. A different key that only shares
-    // a name is left in place. The public key travels in the JSON body.
-    // The API token stays in the Authorization header.
+    // Upload when no account key has this public key's fingerprint.
+    // A different key that only shares a name is left in place.
+    // The public key travels in the JSON body. The API token stays in
+    // the Authorization header. Cast never deletes an account SSH key.
     const apiToken = getProviderToken('digitalocean', ['DIGITALOCEAN_ACCESS_TOKEN', 'DIGITALOCEAN_API_TOKEN', 'DIGITALOCEAN_API_KEY'])
     if (!apiToken) {
       throw new Error('DigitalOcean API token not found')
