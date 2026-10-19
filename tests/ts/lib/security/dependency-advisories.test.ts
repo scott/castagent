@@ -181,6 +181,8 @@ describe('runtime dependency advisories', () => {
       await simpleGit().clone(origin, clone, ['--single-branch'])
 
       const git = simpleGit(clone)
+      await git.addConfig('user.email', 'cast-test@example.com')
+      await git.addConfig('user.name', 'cast-test')
       const status = await git.status()
       expect(status.isClean()).to.equal(true)
       const log = await git.log({maxCount: 1})
