@@ -1179,6 +1179,8 @@ function recordFailedDroplet(
     input.tokenHash ?? '',
     input.volumeName,
     input.volumeConfig,
+    undefined,
+    {supersede: false},
   )
   const leftover = !state.dropletDeleted
     ? `droplet '${state.dropletName}'`

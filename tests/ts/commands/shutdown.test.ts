@@ -59,6 +59,44 @@ function stubDeploymentTokenDelete(sandbox?: sinon.SinonSandbox): void {
   keychainModule.keychain.deleteDeploymentToken = async () => false
 }
 
+/**
+ * Several cases assign sqlite and keychain methods directly. A failed
+ * assertion used to leave those assignments in place for later files,
+ * so token files survived shutdown and redeployed rows were never removed.
+ * Snapshot the real methods before any of those assignments and put them
+ * back after every test, including after sinon restores its own stubs.
+ */
+function snapshotShutdownGlobals(): () => void {
+  const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
+  const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
+  const shutdownModule = require('../../../typescript/cast-cli/src/commands/shutdown')
+  const database = sqliteModule.db
+  const tokens = keychainModule.keychain
+  const destroyers = shutdownModule.PROVIDER_DESTROYERS
+  const saved = {
+    listDeployments: database.listDeployments,
+    getDeploymentBySha: database.getDeploymentBySha,
+    removeAllDeployments: database.removeAllDeployments,
+    removeDeploymentBySha: database.removeDeploymentBySha,
+    deleteToken: tokens.deleteToken,
+    deleteDeploymentToken: tokens.deleteDeploymentToken,
+    fly: destroyers.fly,
+    digitalocean: destroyers.digitalocean,
+    sprites: destroyers.sprites,
+  }
+  return () => {
+    database.listDeployments = saved.listDeployments
+    database.getDeploymentBySha = saved.getDeploymentBySha
+    database.removeAllDeployments = saved.removeAllDeployments
+    database.removeDeploymentBySha = saved.removeDeploymentBySha
+    tokens.deleteToken = saved.deleteToken
+    tokens.deleteDeploymentToken = saved.deleteDeploymentToken
+    destroyers.fly = saved.fly
+    destroyers.digitalocean = saved.digitalocean
+    destroyers.sprites = saved.sprites
+  }
+}
+
 describe('shutdown command', () => {
   let Shutdown: any
 
@@ -684,9 +722,11 @@ describe('shutdown command - confirm method', () => {
 describe('shutdown command - force flag behavior', () => {
   let Shutdown: any
   let sandbox: sinon.SinonSandbox
+  let restoreGlobals: () => void
 
   before(async () => {
     Shutdown = await loadTestCommand('shutdown')
+    restoreGlobals = snapshotShutdownGlobals()
   })
 
   beforeEach(() => {
@@ -696,6 +736,7 @@ describe('shutdown command - force flag behavior', () => {
 
   afterEach(() => {
     sandbox.restore()
+    restoreGlobals()
   })
 
   it('should skip confirmation when --force flag is set', async () => {
@@ -829,9 +870,11 @@ describe('shutdown command - force flag behavior', () => {
 describe('shutdown command - error handling', () => {
   let Shutdown: any
   let sandbox: sinon.SinonSandbox
+  let restoreGlobals: () => void
 
   before(async () => {
     Shutdown = await loadTestCommand('shutdown')
+    restoreGlobals = snapshotShutdownGlobals()
   })
 
   beforeEach(() => {
@@ -841,6 +884,7 @@ describe('shutdown command - error handling', () => {
 
   afterEach(() => {
     sandbox.restore()
+    restoreGlobals()
   })
 
   it('should warn when database removal fails', async () => {

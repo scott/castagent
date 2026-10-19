@@ -225,6 +225,8 @@ export async function rollbackFailedSpriteDeploy(input: {
         input.tokenHash,
         `cast-${input.agentName}-memory`,
         spriteMemoryConfig(input.deploymentId),
+        undefined,
+        {supersede: false},
       )
       input.log(
         `Could not delete sprite '${input.spriteName}'. Recorded the deployment so cast shutdown ${input.agentName} can clean it up.`,
