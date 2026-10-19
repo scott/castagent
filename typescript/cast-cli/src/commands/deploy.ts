@@ -17,7 +17,7 @@ import {
 import type {DeployContext, DeploymentProvider} from '../lib/deploy/types'
 import {createAgentGit} from '../lib/git-identity'
 import {missingAgentError} from '../lib/missing-agent'
-import {getCurrentRelease} from '../lib/releases'
+import {lookupCurrentRelease} from '../lib/releases'
 import {db} from '../lib/sqlite'
 
 const DOCKER_INSTALL_URL = 'https://docs.docker.com/get-docker/'
@@ -85,7 +85,8 @@ function buildDeployFlags(): Record<string, any> {
  * `cast release` writes that field, and the tarball deploys it.
  * releases.json `current` is the newest release, which can be newer
  * than the files left in the directory after a failed upgrade.
- * An empty or unreadable field returns null.
+ * An empty field, a YAML null (`null`, `~`), or an unreadable field returns null.
+ * A `|` block scalar is its trimmed text. A leading byte-order mark is ignored.
  */
 function readAgentDirReleaseVersion(agentPath: string): string | null {
   const yamlPath = path.join(agentPath, 'agent.yaml')
@@ -95,13 +96,44 @@ function readAgentDirReleaseVersion(agentPath: string): string | null {
   } catch {
     return null
   }
-  for (const line of text.split(/\r?\n/)) {
-    const value = topLevelVersionScalar(line)
+  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
+  const lines = text.split(/\r?\n/)
+  for (let index = 0; index < lines.length; index++) {
+    const block = literalBlockVersion(lines, index)
+    if (block !== undefined) {
+      const trimmed = block.trim()
+      return trimmed.length > 0 ? trimmed : null
+    }
+    const value = topLevelVersionScalar(lines[index])
     if (value === undefined) continue
     const trimmed = value.trim()
     return trimmed.length > 0 ? trimmed : null
   }
   return null
+}
+
+const LITERAL_BLOCK_VERSION = /^version[ \t]*:[ \t]*\|[ \t]*(?:#.*)?$/
+
+function literalBlockVersion(lines: string[], index: number): string | undefined {
+  if (!LITERAL_BLOCK_VERSION.test(lines[index] ?? '')) return undefined
+  const content: string[] = []
+  let indent = -1
+  for (let cursor = index + 1; cursor < lines.length; cursor++) {
+    const line = lines[cursor]
+    if (line.trim() === '') {
+      content.push('')
+      continue
+    }
+    const leading = /^ */.exec(line)?.[0].length ?? 0
+    if (leading === 0 || (indent !== -1 && leading < indent)) break
+    if (indent === -1) indent = leading
+    content.push(line.slice(indent))
+  }
+  return content.join('\n')
+}
+
+function isYamlNullToken(value: string): boolean {
+  return value === '~' || value === 'null' || value === 'Null' || value === 'NULL'
 }
 
 function topLevelVersionScalar(line: string): string | undefined {
@@ -120,6 +152,7 @@ function topLevelVersionScalar(line: string): string | undefined {
   if (rest[0] === '|' || rest[0] === '>') return undefined
   const comment = /[ \t]+#/.exec(rest)
   const raw = comment ? rest.slice(0, comment.index) : rest.replace(/[ \t]+$/, '')
+  if (isYamlNullToken(raw.trim())) return ''
   return raw
 }
 
@@ -572,21 +605,33 @@ export default class Deploy extends Command {
       // keep the newest release, or "latest" when none exists.
       let versionToStore = version
       let releaseFallback: string | null | undefined
+      let releaseUnreadable = false
       if (version === 'latest') {
         const present = readAgentDirReleaseVersion(agentPath)
         if (present) {
           versionToStore = present
         } else {
-          releaseFallback = await getCurrentRelease(agentName)
-          versionToStore = releaseFallback || 'latest'
+          const lookup = await lookupCurrentRelease(agentName)
+          if (lookup.ok) {
+            releaseFallback = lookup.version
+            versionToStore = lookup.version || 'latest'
+          } else {
+            // A failed read is not an empty release list. Record the same
+            // fallback and say the file could not be read.
+            releaseUnreadable = true
+            versionToStore = 'latest'
+            if (lookup.error) this.debug('%s', lookup.error)
+          }
         }
       }
       db.updateDeployedVersion(agentName, versionToStore)
       // The warning names the value that was written, and it comes out
       // before the deploy result lines below.
-      if (releaseFallback !== undefined) {
+      if (releaseUnreadable || releaseFallback !== undefined) {
         const recordedVersion = db.getDeployedVersion(agentName) ?? versionToStore
-        if (releaseFallback) {
+        if (releaseUnreadable) {
+          this.log(`Warning: agent.yaml has no version and releases.json could not be read. Recorded ${recordedVersion}. Add a version to agent.yaml or pass --version to choose.`)
+        } else if (releaseFallback) {
           this.log(`Warning: agent.yaml has no version. Recorded ${recordedVersion} from releases.json. Add a version to agent.yaml or pass --version to choose.`)
         } else {
           this.log(`Warning: agent.yaml has no version and releases.json has no releases. Recorded ${recordedVersion}. Add a version to agent.yaml or pass --version to choose.`)

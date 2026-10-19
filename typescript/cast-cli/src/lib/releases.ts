@@ -216,17 +216,34 @@ else:
   }
 }
 
-export async function getCurrentRelease(agentName: string): Promise<string | null> {
+export type CurrentReleaseLookup =
+  | {ok: true; version: string | null}
+  | {ok: false; error: string}
+
+/**
+ * Read releases.json `current`. `ok: true` and a null version means the
+ * file has no current release. `ok: false` means the Python call failed
+ * (missing venv or dependencies). Those are different outcomes.
+ */
+export async function lookupCurrentRelease(agentName: string): Promise<CurrentReleaseLookup> {
   try {
     const output = runPythonScript(`
 ${pythonPrelude()}from cast.releases import get_current_release
 result = get_current_release('${agentName}')
 print(result if result is not None else 'null')
 `)
-    return output === 'null' ? null : output
-  } catch {
-    return null
+    return {ok: true, version: output === 'null' ? null : output}
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message.trim() : String(error ?? '').trim()
+    return {ok: false, error: message}
   }
+}
+
+export async function getCurrentRelease(agentName: string): Promise<string | null> {
+  // Upgrade and other callers still collapse a failed read to "no release".
+  // Deploy uses lookupCurrentRelease so its warning can say which one happened.
+  const lookup = await lookupCurrentRelease(agentName)
+  return lookup.ok ? lookup.version : null
 }
 
 export async function suggestVersion(agentName: string): Promise<{patch: string; minor: string; major: string; breaking?: boolean}> {
