@@ -39,6 +39,21 @@ import {readDoctlAccessToken} from '../../../typescript/cast-cli/src/lib/deploy/
 import {keychain} from '../../../typescript/cast-cli/src/lib/keychain'
 import {db} from '../../../typescript/cast-cli/src/lib/sqlite'
 
+const DOCTL_TOKEN = 'dop_test'
+
+/** doctl argv must not carry the API token. Authenticated calls receive it in the child env. */
+function assertDoctlKeepsTokenOffArgv(
+  command: string,
+  args: string[],
+  options?: {env?: NodeJS.ProcessEnv},
+): void {
+  if (command !== 'doctl') return
+  expect(args).to.not.include('--access-token')
+  expect(args.join('\0')).to.not.include(DOCTL_TOKEN)
+  if (args[0] === 'version') return
+  expect(options?.env?.DIGITALOCEAN_ACCESS_TOKEN).to.equal(DOCTL_TOKEN)
+}
+
 describe('DigitalOcean MicroVM helpers', () => {
   it('sanitizes names and caps them at 63 characters', () => {
     expect(sanitizeMicrovmName('Email_Agent', 'abc123')).to.equal('cast-email-agent-abc123')
@@ -395,6 +410,7 @@ describe('failed MicroVM deploy cleanup', () => {
       warn: message => warnings.push(message),
     })
     const args = exec.firstCall.args[1] as string[]
+    assertDoctlKeepsTokenOffArgv('doctl', args, exec.firstCall.args[2] as {env?: NodeJS.ProcessEnv})
     expect(args).to.include.members([
       'delete-tag', 'cast-mv-cleanup-agent', 'abc123', '--registry', 'cast', '--force',
     ])
@@ -452,8 +468,9 @@ describe('failed MicroVM deploy cleanup', () => {
       saved.push(args)
     })
     sandbox.stub(deployUtils, 'inferenceEnv').returns({})
-    sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = []) => {
+    sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = [], options?: {env?: NodeJS.ProcessEnv}) => {
       calls.push([command, ...args])
+      assertDoctlKeepsTokenOffArgv(command, args, options)
       const ok = (stdout = '') => ({exitCode: 0, stdout, stderr: ''})
       if (command === 'docker') {
         if (args[0] === 'buildx' && opts.mode === 'build-failed') {
@@ -465,7 +482,7 @@ describe('failed MicroVM deploy cleanup', () => {
         return {exitCode: 1, stdout: '', stderr: `unexpected docker ${args.join(' ')}`}
       }
       if (command !== 'doctl') return {exitCode: 1, stdout: '', stderr: `unexpected ${command}`}
-      const rest = args[0] === '--access-token' ? args.slice(2) : args
+      const rest = args
       if (rest[0] === 'version') return ok('doctl version 1.180.0-release\n')
       if (rest[0] === 'registry' && rest[1] === 'get') return ok('[{"name":"cast"}]')
       if (rest[0] === 'registry' && rest[1] === 'docker-config') {
@@ -618,8 +635,9 @@ describe('failed MicroVM deploy cleanup', () => {
     fs.mkdirSync(path.join(home, '.cast', 'agents', agentName), {recursive: true})
     const calls: string[][] = []
     sandbox.stub(deployUtils, 'inferenceEnv').returns({})
-    sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = []) => {
+    sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = [], options?: {env?: NodeJS.ProcessEnv}) => {
       calls.push([command, ...args])
+      assertDoctlKeepsTokenOffArgv(command, args, options)
       const ok = (stdout = '') => ({exitCode: 0, stdout, stderr: ''})
       if (command === 'docker') {
         if (args[0] === 'info' || args[0] === 'buildx' || args[0] === 'tag' || args[0] === 'push') return ok('')
@@ -627,7 +645,7 @@ describe('failed MicroVM deploy cleanup', () => {
         if (args[0] === 'context') return ok('unix:///var/run/docker.sock\n')
         return {exitCode: 1, stdout: '', stderr: `unexpected docker ${args.join(' ')}`}
       }
-      const rest = args[0] === '--access-token' ? args.slice(2) : args
+      const rest = args
       if (rest[0] === 'registry' && rest[1] === 'get') return ok('[{"name":"cast"}]')
       if (rest[0] === 'registry' && rest[1] === 'docker-config') {
         return ok(JSON.stringify({auths: {'registry.digitalocean.com': {auth: 'dGVzdDp0ZXN0'}}}))
@@ -680,8 +698,9 @@ describe('failed MicroVM deploy cleanup', () => {
     fs.mkdirSync(path.join(home, '.cast', 'agents', agentName), {recursive: true})
     const calls: string[][] = []
     sandbox.stub(deployUtils, 'inferenceEnv').returns({})
-    sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = []) => {
+    sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = [], options?: {env?: NodeJS.ProcessEnv}) => {
       calls.push([command, ...args])
+      assertDoctlKeepsTokenOffArgv(command, args, options)
       const ok = (stdout = '') => ({exitCode: 0, stdout, stderr: ''})
       if (command === 'docker') {
         if (args[0] === 'info' || args[0] === 'buildx' || args[0] === 'tag' || args[0] === 'push') return ok('')
@@ -689,7 +708,7 @@ describe('failed MicroVM deploy cleanup', () => {
         if (args[0] === 'context') return ok('unix:///var/run/docker.sock\n')
         return {exitCode: 1, stdout: '', stderr: `unexpected docker ${args.join(' ')}`}
       }
-      const rest = args[0] === '--access-token' ? args.slice(2) : args
+      const rest = args
       if (rest[0] === 'registry' && rest[1] === 'get') return ok('[{"name":"cast"}]')
       if (rest[0] === 'registry' && rest[1] === 'docker-config') {
         return ok(JSON.stringify({auths: {'registry.digitalocean.com': {auth: 'dGVzdDp0ZXN0'}}}))
@@ -766,9 +785,10 @@ describe('MicroVM shutdown registry tag', () => {
 
   function stubDoctl(opts: {vmExit?: number; vmStderr?: string; tagExit?: number; tagStderr?: string} = {}): string[][] {
     const calls: string[][] = []
-    sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = []) => {
+    sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = [], options?: {env?: NodeJS.ProcessEnv}) => {
       calls.push([command, ...args])
-      const rest = args[0] === '--access-token' ? args.slice(2) : args
+      assertDoctlKeepsTokenOffArgv(command, args, options)
+      const rest = args
       if (rest[1] === 'microvm' && rest[2] === 'delete') {
         return {exitCode: opts.vmExit ?? 0, stdout: '', stderr: opts.vmStderr ?? ''}
       }
@@ -863,9 +883,10 @@ describe('MicroVM shutdown registry tag', () => {
       {id: 'bbbbbb', provider: 'microvm', volume_id: 'vm-2', volume_config: volumeConfig('bbbbbb', 'vm-2')},
     ])
     const calls: string[][] = []
-    sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = []) => {
+    sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = [], options?: {env?: NodeJS.ProcessEnv}) => {
       calls.push([command, ...args])
-      const rest = args[0] === '--access-token' ? args.slice(2) : args
+      assertDoctlKeepsTokenOffArgv(command, args, options)
+      const rest = args
       if (rest[2] === 'delete-tag' && rest.includes('abc123')) {
         return {exitCode: 1, stdout: '', stderr: 'permission denied'}
       }
