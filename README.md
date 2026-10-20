@@ -498,14 +498,14 @@ Highlighting text with the mouse copies that selection to the clipboard.
 | `/session resume [id\|name]` | session | Replay a session's transcript into the chat and the model context. Opens the picker if no argument. |
 | `/save [filename]` | session | Save the conversation as plain text. With no name, writes `~/.cast/transcripts/<agent>-<timestamp>.txt`. A relative name stays in that directory. An absolute path or a path starting with `~` is written there, and missing parent directories are created. |
 | `/releases` | session | Shows semantic releases with `C` (Create Release) and `U` (Upgrade, if deployed) shortcuts. |
-| `/release` | agent | Opens a modal to create a new semantic release. Suggests patch/minor/major versions based on the current release. |
-| `/deploy` | agent | Release picker → provider picker → live deploy with SHA shown on success. |
+| `/release` | agent | Opens a modal to create a new semantic release. The version starts at the next patch of the current release, so 1.4.1 suggests 1.4.2 and 1.10 suggests 1.10.1. With no current release the suggestion is 0.1.0. |
+| `/deploy` | agent | Release picker lists releases newest first and marks the row matching `current.version` as `(latest)`, then a provider picker, then a live deploy with the SHA shown on success. |
 | `/upgrade` | agent | Operates on the current agent. Modal lists releases to upgrade to. |
 | `/update [flags]` | agent | Update the current agent's local configuration. No arguments opens a field modal. Dev and production. Hidden on-host. |
 | `/shutdown` | agent | Lists active deployments (every provider) and shuts one down after Y/N. Streams `cast shutdown --force`. Dev and production only. |
 | `/stop` | agent | Stop the current local agent and stay in the TUI. |
 | `/registry` | session | Modal table of every live deployment (agent, SHA, provider, version, time, URL). Release history stays on `/releases`. |
-| `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a SHA directly. Connecting starts a new session for that agent. |
+| `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a 6-character deployment SHA. Connecting starts a new session for that agent. |
 | `/import [source] [name]` | agent | Import a Cast agent from GitHub or a local path. |
 | `/builder-skills [add <github-or-folder>]` | agent | Add or remove skills the builder uses when creating agents. Dev mode only. Applies on the next `cast new` or `cast edit`. |
 | `/model` | agent | Change the model the builder uses. Dev mode only. Hidden in production and on-host. Applies on the next `cast dev`. |
