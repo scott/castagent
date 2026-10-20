@@ -56,7 +56,7 @@ UPDATE_ENDINGS=1 node tests/e2e/run.mjs
 
 CI exits immediately if either variable is set.
 
-PR versus main. This checks out the merge base, reuses `node_modules` when the lockfiles match, rebuilds the CLI in each tree, and runs mocha without coverage, pytest, the provider smoke suite, and the CLI snapshots:
+PR versus main. This checks out the merge base, reuses `node_modules` when the lockfiles match, rebuilds the CLI and the TUI in each tree, and runs mocha without coverage, pytest, the provider smoke suite, and the CLI snapshots. CI also installs docs-site dependencies and Bun first, which is what the extractor test and the TUI error-handling tests need:
 
 ```bash
 node scripts/compare-failures.mjs --run

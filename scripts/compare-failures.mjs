@@ -5,8 +5,9 @@
 //   node scripts/compare-failures.mjs --base <dir> --head <dir>
 //
 // --run builds cast-cli in each tree and runs mocha (no coverage), pytest,
-// and the provider smoke suite. node_modules is reused when the lockfiles
-// match. A failure that also fails on the base is "already failing". A
+// the provider smoke suite, and CLI snapshots. node_modules is reused when
+// the lockfiles match. A suite that does not exist in a tree records no
+// failures. A failure that also fails on the base is "already failing". A
 // failure that passes on the base is a new failure. The process exits 1
 // only when there is a new failure.
 import {execFileSync, spawnSync} from 'node:child_process'
@@ -132,6 +133,7 @@ function linkNodeModules(fromRoot, toRoot) {
     'typescript/node_modules',
     'typescript/cast-cli/node_modules',
     'typescript/cast-tui/node_modules',
+    'docs-site/node_modules',
   ]
   for (const rel of relatives) {
     const src = path.join(fromRoot, rel)
@@ -178,10 +180,19 @@ function installHead(root) {
   if (run('npm', ['install'], {cwd: path.join(root, 'typescript')}) !== 0) {
     throw new Error('typescript npm install failed')
   }
+  if (fs.existsSync(path.join(root, 'docs-site', 'package-lock.json'))) {
+    if (run('npm', ['ci', '--prefix', 'docs-site'], {cwd: root}) !== 0) {
+      throw new Error('docs-site npm ci failed')
+    }
+  }
 }
 
 function buildCli(root) {
   if (run('npm', ['run', 'build:cli'], {cwd: root}) !== 0) throw new Error(`build:cli failed in ${root}`)
+}
+
+function buildTui(root) {
+  if (run('npm', ['run', 'build:tui'], {cwd: root}) !== 0) throw new Error(`build:tui failed in ${root}`)
 }
 
 function recordAbsentSuite(root, entry, summary, label) {
@@ -263,7 +274,7 @@ function runBoth() {
   process.stdout.write(`merge base ${baseSha}\n`)
   execFileSync('git', ['worktree', 'add', '--detach', baseRoot, baseSha], {cwd: repoRoot, stdio: 'inherit'})
   try {
-    const locks = ['package-lock.json', 'typescript/package-lock.json']
+    const locks = ['package-lock.json', 'typescript/package-lock.json', 'docs-site/package-lock.json']
     const reusable = locks.every(rel => sameFile(path.join(repoRoot, rel), path.join(baseRoot, rel)))
     if (reusable) {
       process.stdout.write('lockfiles match; reusing node_modules\n')
@@ -274,6 +285,8 @@ function runBoth() {
     }
     buildCli(repoRoot)
     buildCli(baseRoot)
+    buildTui(repoRoot)
+    buildTui(baseRoot)
     process.stdout.write('running suites on head\n')
     runSuites(repoRoot, headOut)
     process.stdout.write('running suites on merge base\n')

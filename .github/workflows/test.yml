@@ -408,6 +408,14 @@ jobs:
           python -m pip install -e "./python[test]"
           python -m pip install 'langchain-openai>=1.7.2' 'langchain-core>=1.6.12' pyyaml
 
+      - name: Install docs-site dependencies
+        run: npm --prefix docs-site ci
+
+      - name: Install Bun
+        run: |
+          npm install --prefix "$RUNNER_TEMP/bun" bun@1.4.3
+          echo "$RUNNER_TEMP/bun/node_modules/.bin" >> "$GITHUB_PATH"
+
       - name: Compare failures against the merge base
         run: node scripts/compare-failures.mjs --run
         env:
