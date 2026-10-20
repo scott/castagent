@@ -12,7 +12,7 @@ Evidence that a fix is verified is one of these, checked in the pull request:
 - The mocked provider smoke suite is green, and the change is one the smoke cases cover. It runs `cast` against local fakes. It does not call Sprites, Fly, or DigitalOcean and it does not use secrets.
 - A CLI snapshot diff you reviewed. Updating a snapshot is a local command. CI never rewrites snapshots. The diff is the review.
 
-A green compare line means the pull request did not add failures. Tests that already fail on the merge base are listed separately and are not new.
+A green compare line means the pull request did not add failures. Tests that already fail on the main tip are listed separately and are not new.
 
 ## Run the suites locally
 
@@ -25,7 +25,7 @@ npm run build:cli
 python3 -m pip install --user 'langchain-openai>=1.7.2' 'langchain-core>=1.6.12' pyyaml
 ```
 
-Unit tests (mocha, then the Python session tests are a separate CI job):
+Unit tests. `npm test` runs mocha. The Python session tests are a separate CI job; this command runs the Python suites locally:
 
 ```bash
 npm test

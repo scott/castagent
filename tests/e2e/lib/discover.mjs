@@ -50,3 +50,18 @@ export function providerTokens(modules) {
   }
   return tokens
 }
+
+// Names listed in a module's `omitFromEnv` stay in the merged token set
+// (sampler, HTTP fake, tokens.json) but are not copied onto the cast process.
+export function providerEnvTokens(modules) {
+  const tokens = providerTokens(modules)
+  const omit = new Set()
+  for (const mod of modules) {
+    for (const name of mod.omitFromEnv || []) omit.add(name)
+  }
+  const envTokens = {}
+  for (const [name, value] of Object.entries(tokens)) {
+    if (!omit.has(name)) envTokens[name] = value
+  }
+  return envTokens
+}

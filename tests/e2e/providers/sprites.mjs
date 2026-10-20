@@ -26,6 +26,11 @@ export const tokens = {
   SPRITE_TOKEN: 'org-e2e/11111111-1111-4111-8111-111111111111/tokene2e/sprites-secret-e2e-9f3a7c',
 }
 
+// The sprite CLI reads SPRITE_TOKEN. Cast copies SPRITES_TOKEN onto it when
+// SPRITE_TOKEN is unset. Leaving it out of the cast environment is what
+// exercises that copy; the sampler still sees the value via tokens.json.
+export const omitFromEnv = ['SPRITE_TOKEN']
+
 function assertSpriteResources(fx) {
   assertIncludes(blob(fx), 'sprite create cast-smoke')
 }
@@ -127,6 +132,11 @@ export const cases = [
       assert(row.volume_id === 'cast-smoke-memory', String(row.volume_id))
       assert(String(row.deployment_url).startsWith('http://127.0.0.1'), String(row.deployment_url))
       assertSpriteResources(fx)
+      const sprite = fx.requests().filter(req => req.bin === 'sprite')
+      assert(
+        sprite.length > 0 && sprite.every(req => req.env && req.env.SPRITES_TOKEN === true && req.env.SPRITE_TOKEN === true),
+        'sprite child did not receive SPRITE_TOKEN copied from SPRITES_TOKEN',
+      )
       assertEnding('sprites.deploy', result.stdout, result.stderr, fx.home)
     },
   },

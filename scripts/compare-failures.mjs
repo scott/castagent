@@ -19,6 +19,7 @@ import {pathToFileURL} from 'node:url'
 
 const repoRoot = process.cwd()
 const REQUIRED_HEAD = ['mocha.json', 'pytest.xml', 'pytest-session.xml', 'smoke-summary.json', 'snapshot-summary.json']
+const SUBPROCESS_TIMEOUT_MS = 12 * 60 * 1000
 
 function argValue(flag) {
   const index = process.argv.indexOf(flag)
@@ -170,18 +171,66 @@ export function compareSets(baseIds, headIds) {
   return {newFailures, alreadyFailing, fixed}
 }
 
+function summaryAbsent(file) {
+  if (!fs.existsSync(file)) return true
+  try {
+    const data = JSON.parse(fs.readFileSync(file, 'utf8'))
+    return Boolean(data && data.absent === true)
+  } catch {
+    return false
+  }
+}
+
+function suiteEntry(file, absent, readIds) {
+  if (absent) return {absent: true, ids: []}
+  return {absent: false, ids: readIds(file)}
+}
+
 function collect(dir) {
-  const ids = [
-    ...mochaFailures(path.join(dir, 'mocha.json')),
-    ...pytestFailures(path.join(dir, 'pytest.xml')),
-    ...pytestFailures(path.join(dir, 'pytest-session.xml')),
-    ...smokeFailures(path.join(dir, 'smoke-summary.json')),
-    ...snapshotFailures(path.join(dir, 'snapshot-summary.json')),
-  ]
+  const mochaFile = path.join(dir, 'mocha.json')
+  const pytestFile = path.join(dir, 'pytest.xml')
+  const sessionFile = path.join(dir, 'pytest-session.xml')
+  const smokeFile = path.join(dir, 'smoke-summary.json')
+  const snapshotFile = path.join(dir, 'snapshot-summary.json')
+  const suites = {
+    mocha: suiteEntry(mochaFile, summaryAbsent(mochaFile), mochaFailures),
+    pytest: suiteEntry(pytestFile, !fs.existsSync(pytestFile), pytestFailures),
+    session: suiteEntry(sessionFile, !fs.existsSync(sessionFile), pytestFailures),
+    smoke: suiteEntry(smokeFile, summaryAbsent(smokeFile), smokeFailures),
+    snapshots: suiteEntry(snapshotFile, summaryAbsent(snapshotFile), snapshotFailures),
+  }
   return {
-    ids,
-    mocha: mochaStats(path.join(dir, 'mocha.json')),
-    smoke: smokeStats(path.join(dir, 'smoke-summary.json')),
+    ids: Object.values(suites).flatMap(suite => suite.ids),
+    suites,
+    mocha: mochaStats(mochaFile),
+    smoke: smokeStats(smokeFile),
+  }
+}
+
+function emptyCollection() {
+  const empty = {absent: true, ids: []}
+  return {
+    ids: [],
+    suites: {mocha: empty, pytest: empty, session: empty, smoke: empty, snapshots: empty},
+    mocha: {passes: 0, failures: 0, pending: 0},
+    smoke: {passes: 0, failures: 0, skipped: 0},
+  }
+}
+
+function compareCollected(base, head) {
+  const newFailures = []
+  const alreadyFailing = []
+  const fixed = []
+  for (const key of Object.keys(head.suites)) {
+    const compared = compareSets(base.suites[key].ids, head.suites[key].ids)
+    newFailures.push(...compared.newFailures)
+    alreadyFailing.push(...compared.alreadyFailing)
+    if (!head.suites[key].absent) fixed.push(...compared.fixed)
+  }
+  return {
+    newFailures: newFailures.sort(),
+    alreadyFailing: alreadyFailing.sort(),
+    fixed: fixed.sort(),
   }
 }
 
@@ -220,18 +269,37 @@ function linkNodeModules(fromRoot, toRoot) {
   }
 }
 
+function timedOut(result) {
+  return Boolean(result && result.error && result.error.code === 'ETIMEDOUT')
+}
+
+function timeoutError(cmd, args) {
+  return new Error(`timed out after ${SUBPROCESS_TIMEOUT_MS}ms: ${cmd} ${args.join(' ')}`)
+}
+
 function run(cmd, args, options) {
-  const result = spawnSync(cmd, args, {stdio: 'inherit', ...options})
+  const result = spawnSync(cmd, args, {stdio: 'inherit', ...options, timeout: SUBPROCESS_TIMEOUT_MS})
+  if (timedOut(result)) throw timeoutError(cmd, args)
   return result.status ?? 1
 }
 
 function capture(cmd, args, options, outFile) {
-  const result = spawnSync(cmd, args, {...options, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024})
+  const result = spawnSync(cmd, args, {...options, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024, timeout: SUBPROCESS_TIMEOUT_MS})
+  if (timedOut(result)) throw timeoutError(cmd, args)
   fs.mkdirSync(path.dirname(outFile), {recursive: true})
   fs.writeFileSync(outFile, result.stdout || '')
   if (result.stderr) process.stderr.write(result.stderr)
   if (result.error) process.stderr.write(`${result.error.message}\n`)
   return result.status ?? 1
+}
+
+function gitExec(args, options = {}) {
+  try {
+    return execFileSync('git', args, {cwd: repoRoot, ...options, timeout: SUBPROCESS_TIMEOUT_MS})
+  } catch (error) {
+    if (error && error.code === 'ETIMEDOUT') throw timeoutError('git', args)
+    throw error
+  }
 }
 
 function suitesToRun() {
@@ -341,7 +409,12 @@ function emptyJson(file, body) {
 
 function listedIds(root, script) {
   if (!fs.existsSync(path.join(root, script))) return null
-  const result = spawnSync(process.execPath, [script, '--list'], {cwd: root, encoding: 'utf8'})
+  const result = spawnSync(process.execPath, [script, '--list'], {
+    cwd: root,
+    encoding: 'utf8',
+    timeout: SUBPROCESS_TIMEOUT_MS,
+  })
+  if (timedOut(result)) throw timeoutError(script, ['--list'])
   if ((result.status ?? 1) !== 0) return new Set()
   return new Set(result.stdout.split('\n').map(line => line.trim()).filter(Boolean))
 }
@@ -382,16 +455,29 @@ function rerunPytest(root, outDir, records, xmlName) {
     fs.writeFileSync(xml, '<testsuite></testsuite>\n')
     return
   }
-  if (run('python3', ['-m', 'pip', 'install', '-e', `${path.join(root, 'python')}[test]`, 'langchain-openai', 'langchain-core', 'pyyaml'], {cwd: root}) !== 0) {
-    throw new Error(`python install failed in ${root}`)
+  const venv = path.join(outDir, 'py-venv')
+  const pythonBin = path.join(venv, 'bin', 'python')
+  const env = {
+    ...process.env,
+    VIRTUAL_ENV: venv,
+    PYTHONNOUSERSITE: '1',
+    PATH: `${path.join(venv, 'bin')}${path.delimiter}${process.env.PATH || ''}`,
+  }
+  delete env.PYTHONPATH
+  if (!fs.existsSync(pythonBin)) {
+    if (run('python3', ['-m', 'venv', venv], {cwd: root}) !== 0) {
+      throw new Error(`python venv failed in ${root}`)
+    }
+    if (run(pythonBin, ['-m', 'pip', 'install', '-e', `${path.join(root, 'python')}[test]`, 'langchain-openai', 'langchain-core', 'pyyaml'], {cwd: root, env}) !== 0) {
+      throw new Error(`python install failed in ${root}`)
+    }
   }
   const parts = ['<testsuites>']
   let index = 0
   for (const [cwd, nodeIds] of groups) {
     const piece = path.join(outDir, `${xmlName}.${index}.xml`)
     index += 1
-    const env = {...process.env, PYTHONPATH: path.join(root, 'python')}
-    run('python3', ['-m', 'pytest', ...nodeIds, '--junitxml', piece, '-q'], {cwd, env})
+    run(pythonBin, ['-m', 'pytest', ...nodeIds, '--junitxml', piece, '-q'], {cwd, env})
     if (!fs.existsSync(piece)) throw new Error(`pytest did not write ${piece}`)
     parts.push(fs.readFileSync(piece, 'utf8'))
   }
@@ -461,8 +547,8 @@ function fetchBaseSha() {
   const explicit = argValue('--base-ref') || process.env.COMPARE_BASE_REF || ''
   if (explicit && /^[0-9a-f]{7,40}$/i.test(explicit)) return explicit
   const ref = (explicit || process.env.GITHUB_BASE_REF || 'main').replace(/^origin\//, '')
-  execFileSync('git', ['fetch', '--no-tags', '--depth=1', 'origin', ref], {cwd: repoRoot, stdio: 'inherit'})
-  return execFileSync('git', ['rev-parse', '--verify', 'FETCH_HEAD'], {cwd: repoRoot, encoding: 'utf8'}).trim()
+  gitExec(['fetch', '--no-tags', '--depth=1', 'origin', ref], {stdio: 'inherit'})
+  return String(gitExec(['rev-parse', '--verify', 'FETCH_HEAD'], {encoding: 'utf8'})).trim()
 }
 
 function prepareBase(baseRoot) {
@@ -481,24 +567,44 @@ function withBase(fn) {
   const sha = fetchBaseSha()
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-compare-'))
   const baseRoot = path.join(work, 'base')
-  process.stdout.write(`base ${sha} (shallow fetch)\n`)
-  execFileSync('git', ['worktree', 'add', '--detach', baseRoot, sha], {cwd: repoRoot, stdio: 'inherit'})
+  let added = false
+  let cleanupError
   try {
+    process.stdout.write(`base ${sha} (shallow fetch)\n`)
+    gitExec(['worktree', 'add', '--detach', baseRoot, sha], {stdio: 'inherit'})
+    added = true
     prepareBase(baseRoot)
     return fn(baseRoot, sha)
   } finally {
-    try {
-      execFileSync('git', ['worktree', 'remove', '--force', baseRoot], {cwd: repoRoot, stdio: 'ignore'})
-    } catch {
-      fs.rmSync(baseRoot, {recursive: true, force: true})
+    if (added) {
+      try {
+        gitExec(['worktree', 'remove', '--force', baseRoot], {stdio: 'ignore'})
+      } catch (error) {
+        fs.rmSync(baseRoot, {recursive: true, force: true})
+        if (error && error.message && error.message.startsWith('timed out after')) cleanupError = error
+      }
     }
+    fs.rmSync(work, {recursive: true, force: true})
+    if (cleanupError) throw cleanupError
   }
+}
+
+function junitProblem(file) {
+  if (!fs.existsSync(file)) return 'missing'
+  const text = fs.readFileSync(file, 'utf8')
+  if (text.length === 0) return 'empty'
+  if (!/<testsuites?\b/.test(text)) return 'not junit XML'
+  return ''
 }
 
 function requireHead(dir) {
   if (process.env.COMPARE_REQUIRE_ARTIFACTS !== '1') return
   const missing = REQUIRED_HEAD.filter(name => !fs.existsSync(path.join(dir, name)))
   if (missing.length > 0) throw new Error(`head results missing ${missing.join(', ')}`)
+  for (const name of ['pytest.xml', 'pytest-session.xml']) {
+    const problem = junitProblem(path.join(dir, name))
+    if (problem && problem !== 'missing') throw new Error(`head results unusable ${name} (${problem})`)
+  }
 }
 
 function markOutput(needed) {
@@ -507,9 +613,9 @@ function markOutput(needed) {
 }
 
 function writeSummary(baseDir, headDir, baseSha, timings) {
-  const base = baseDir ? collect(baseDir) : {ids: [], mocha: {passes: 0, failures: 0, pending: 0}, smoke: {passes: 0, failures: 0, skipped: 0}}
+  const base = baseDir ? collect(baseDir) : emptyCollection()
   const head = collect(headDir)
-  const compared = compareSets(base.ids, head.ids)
+  const compared = compareCollected(base, head)
   const summary = {
     ok: compared.newFailures.length === 0,
     baseSha: baseSha || null,
@@ -568,21 +674,20 @@ function classify(headDir, started, skipBase) {
   }
   const records = headRecords(headDir)
   const baseStarted = Date.now()
-  let sha = ''
-  let baseOut = ''
+  let summary
   withBase((baseRoot, baseSha) => {
-    sha = baseSha
-    baseOut = path.join(path.dirname(baseRoot), 'base-out')
+    const baseOut = path.join(path.dirname(baseRoot), 'base-out')
     rerunFailures(baseRoot, baseOut, records)
+    const totalMs = Date.now() - started
+    summary = writeSummary(baseOut, headDir, baseSha, {
+      headReused: !hasFlag('--run'),
+      baseSkipped: false,
+      headMs: baseStarted - started,
+      baseMs: Date.now() - baseStarted,
+      totalMs,
+    })
   })
-  const totalMs = Date.now() - started
-  return writeSummary(baseOut, headDir, sha, {
-    headReused: !hasFlag('--run'),
-    baseSkipped: false,
-    headMs: baseStarted - started,
-    baseMs: Date.now() - baseStarted,
-    totalMs,
-  })
+  return summary
 }
 
 function main() {
@@ -603,12 +708,16 @@ Exit 1 when the head has a failure the base does not.
   const started = Date.now()
   if (hasFlag('--run')) {
     const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-compare-'))
-    const headOut = path.join(work, 'head')
-    buildCli(repoRoot)
-    process.stdout.write('running suites on head\n')
-    runSuites(repoRoot, headOut)
-    const summary = classify(headOut, started, false)
-    return summary.pendingBase ? {ok: false} : summary
+    try {
+      const headOut = path.join(work, 'head')
+      buildCli(repoRoot)
+      process.stdout.write('running suites on head\n')
+      runSuites(repoRoot, headOut)
+      const summary = classify(headOut, started, false)
+      return summary.pendingBase ? {ok: false} : summary
+    } finally {
+      fs.rmSync(work, {recursive: true, force: true})
+    }
   }
   const headDir = argValue('--head')
   if (headDir && hasFlag('--skip-base')) {

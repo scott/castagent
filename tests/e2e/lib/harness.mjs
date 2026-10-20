@@ -204,6 +204,17 @@ function linkShims(dir, names) {
 const tuiBundle = path.join(repoRoot, 'typescript/cast-tui/dist/index.js')
 const hiddenTuiBundle = `${tuiBundle}.e2e-hidden`
 
+function restoreTuiBundleNow() {
+  try {
+    if (fs.existsSync(hiddenTuiBundle) && !fs.existsSync(tuiBundle)) {
+      fs.renameSync(hiddenTuiBundle, tuiBundle)
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    process.stderr.write(`e2e: could not restore ${tuiBundle}: ${message}\n`)
+  }
+}
+
 function hideTuiBundle() {
   if (!fs.existsSync(tuiBundle) || fs.existsSync(hiddenTuiBundle)) return false
   fs.renameSync(tuiBundle, hiddenTuiBundle)
@@ -212,9 +223,38 @@ function hideTuiBundle() {
 
 function restoreTuiBundle(hidden) {
   if (!hidden) return
-  if (fs.existsSync(hiddenTuiBundle) && !fs.existsSync(tuiBundle)) {
-    fs.renameSync(hiddenTuiBundle, tuiBundle)
-  }
+  restoreTuiBundleNow()
+}
+
+function onSigint() {
+  stopAndReraise('SIGINT')
+}
+
+function onSigterm() {
+  stopAndReraise('SIGTERM')
+}
+
+function stopAndReraise(signal) {
+  restoreTuiBundleNow()
+  process.removeListener('SIGINT', onSigint)
+  process.removeListener('SIGTERM', onSigterm)
+  process.kill(process.pid, signal)
+}
+
+let tuiGuardsInstalled = false
+
+// Call this from the smoke runner only. Provider shims import this module,
+// and a restore on their startup would put the bundle back while a case
+// still has it hidden. A SIGINT during a case skips `finally`, so the
+// runner restores on the signal and re-raises it. `exit` covers
+// process.exit. The same call repairs a leftover hidden bundle.
+export function installTuiGuards() {
+  if (tuiGuardsInstalled) return
+  tuiGuardsInstalled = true
+  process.on('SIGINT', onSigint)
+  process.on('SIGTERM', onSigterm)
+  process.on('exit', restoreTuiBundleNow)
+  restoreTuiBundleNow()
 }
 
 export async function withFixture(fn) {
@@ -224,9 +264,10 @@ export async function withFixture(fn) {
   fs.writeFileSync(path.join(stateDir, 'world.json'), '{}\n')
   fs.writeFileSync(path.join(stateDir, 'scenario.json'), '{}\n')
   fs.chmodSync(shimPath, 0o755)
-  const {loadProviders, providerHttpHandlers, providerShims, providerTokens} = await import('./discover.mjs')
+  const {loadProviders, providerEnvTokens, providerHttpHandlers, providerShims, providerTokens} = await import('./discover.mjs')
   const modules = await loadProviders()
   const tokens = providerTokens(modules)
+  const envTokens = providerEnvTokens(modules)
   setActiveTokens(tokens)
   fs.writeFileSync(path.join(stateDir, 'tokens.json'), JSON.stringify(tokens))
   linkShims(shimDir, [...BUILTIN_SHIMS, ...providerShims(modules)])
@@ -238,7 +279,7 @@ export async function withFixture(fn) {
     CAST_PROVIDER_HTTP_BASE: http.base,
     CAST_E2E_STATE: stateDir,
     CAST_E2E_HTTP_BASE: http.base,
-    ...tokens,
+    ...envTokens,
     NO_COLOR: '1',
     FORCE_COLOR: '0',
     CI: '1',

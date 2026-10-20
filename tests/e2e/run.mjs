@@ -5,7 +5,9 @@ import fs from 'node:fs'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
 import {loadProviders, providerCases, providerTokens} from './lib/discover.mjs'
-import {assertNoToken, repoRoot, setActiveTokens, startProcSampler, withFixture} from './lib/harness.mjs'
+import {assertNoToken, installTuiGuards, repoRoot, setActiveTokens, startProcSampler, withFixture} from './lib/harness.mjs'
+
+installTuiGuards()
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const summaryPath = process.env.SMOKE_SUMMARY

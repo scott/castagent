@@ -33,7 +33,7 @@ The process writes `tests/e2e/smoke-summary.json` (or `$SMOKE_SUMMARY`) and exit
 
 ## CLI endings
 
-Each case compares the CLI tail with `tests/e2e/endings/<id>.txt`. Ending files are `cat -A` style: `$` marks the end of each line, `^I` is a tab, and `^M` is a carriage return. Paths, ports, deployment SHAs, tar sizes, and key fingerprints are normalized before the comparison. While a case runs, the harness renames `typescript/cast-tui/dist/index.js` out of the way and puts it back afterwards. Connect then always prints the missing-OpenTUI warning, whether or not the TUI was built.
+Each case compares the CLI tail with `tests/e2e/endings/<id>.txt`. Ending files are `cat -A` style: `$` marks the end of each line, `^I` is a tab, and `^M` is a carriage return. Paths, ports, deployment SHAs, tar sizes, and key fingerprints are normalized before the comparison. While a case runs, the harness renames `typescript/cast-tui/dist/index.js` out of the way and puts it back afterwards, including on SIGINT and SIGTERM. A later run also puts it back if a previous run left `index.js.e2e-hidden` and no `index.js`. Connect then always prints the missing-OpenTUI warning, whether or not the TUI was built.
 
 Rewriting those files is explicit and local:
 
@@ -52,7 +52,7 @@ Add one module, `tests/e2e/providers/<name>.mjs`. The runner loads every `*.mjs`
 The module exports:
 
 - `shims`: CLI basenames to place on `PATH` (`['flyctl']`). Each name is a symlink to `tests/e2e/lib/shim.mjs`.
-- `tokens`: fake env values for this provider, `{FLY_API_TOKEN: 'fly-secret-...'}`. The name is the env var. Discovery merges every module's `tokens`. The harness puts them in the `cast` environment, the HTTP fake accepts any of them as a bearer, and the argv sampler scans the merged values. Do not add the token to a shared list.
+- `tokens`: fake env values for this provider, `{FLY_API_TOKEN: 'fly-secret-...'}`. The name is the env var. Discovery merges every module's `tokens`. The harness puts them in the `cast` environment, the HTTP fake accepts any of them as a bearer, and the argv sampler scans the merged values. Do not add the token to a shared list. `omitFromEnv` names stay in that merged set but are left unset on the `cast` process. Sprites uses that for `SPRITE_TOKEN`, so the CLI's copy from `SPRITES_TOKEN` is what the sprite shim sees.
 - `cases`: objects `{id, provider, name, run(fx), skip?}`. `id` is `provider.case`.
 - `handleShim(api)`: optional. Return `false` when `api.bin` is not yours. Call `api.finish(code, stdout, stderr)` to record the command and exit. Return `true` to keep the process alive (an SSH tunnel). `api.envFlags()` reports which merged token env vars were set.
 - `handleHttp(ctx)`: optional. Return `true` after `ctx.send(...)` when the request is yours.

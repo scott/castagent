@@ -36,11 +36,12 @@ if [ "$status" -eq 0 ]; then
   # --exit: a finished suite still holds the sqlite handle and other
   # leftovers, and mocha would otherwise wait forever. The status is
   # the test result; --exit only ends the process after that.
-  # The JSON file is the PR-versus-main input. Spec stays on the console.
+  # Mocha 11 uses only the last --reporter, so a second --reporter json
+  # dropped the spec lines from the CI log. This reporter prints spec and
+  # writes the JSON file the PR-versus-main compare reads.
   mkdir -p "$ROOT/test-results"
   nyc mocha --forbid-only --exit \
-    --reporter spec \
-    --reporter json \
+    --reporter "$ROOT/scripts/mocha-spec-json.cjs" \
     --reporter-option "output=$ROOT/test-results/mocha.json" \
     'tests/**/*.test.ts'
   status=$?

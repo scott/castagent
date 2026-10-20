@@ -389,13 +389,14 @@ jobs:
   # Coverage Summary and PR Comment
   # ============================================================================
   # ============================================================================
-  # PR head versus merge-base failing-test comparison
+  # PR head versus main-tip failing-test comparison
   # One Node and one Python. node_modules is reused when lockfiles match.
   # Coverage instrumentation is not repeated here.
   # ============================================================================
   failure-compare:
     name: PR vs main
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     needs: [test-coverage, provider-smoke, session-python]
     if: "always() && github.event_name == 'pull_request' && !cancelled()"
     steps:
@@ -512,7 +513,7 @@ jobs:
                 : `PR vs main: fail (${fresh} new, ${existing} already failing on main)`;
             } catch (error) {
               core.warning(`PR versus main summary was not available: ${error.message}`);
-              return;
+              compareLine = 'PR vs main: fail (compare did not finish)';
             }
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,

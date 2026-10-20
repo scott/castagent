@@ -1,6 +1,6 @@
 ---
 title: Verified changes
-section: getting-started
+section: configuration
 order: 5
 description: What counts as evidence that a fix is verified, and how to run those checks locally.
 ref: ['']
@@ -10,7 +10,7 @@ ref: ['']
 
 A pull request is verified when its checks are green. That includes the unit
 suites, the mocked provider smoke suite, the CLI snapshot suite, and the
-comparison against the merge base. Reviewers do not re-run those suites,
+comparison against the main tip. Reviewers do not re-run those suites,
 download full logs, or deploy to a real provider to confirm a fix the suites
 already cover.
 
@@ -31,8 +31,8 @@ One of these is enough to call a fix verified:
   run the update command locally and commit the new file. CI does not rewrite
   them.
 
-The compare check lists two groups. A new failure passes on the merge base
-and fails on the pull request. A failure that already fails on the base is
+The compare check lists two groups. A new failure passes on the main tip
+and fails on the pull request. A failure that already fails on the main tip is
 reported on its own and is not counted as new.
 
 ## Run them locally
@@ -75,8 +75,8 @@ UPDATE_SNAPSHOTS=1 node tests/cli-snapshots/run.mjs
 UPDATE_ENDINGS=1 node tests/e2e/run.mjs
 ```
 
-Compare this checkout with the base branch. CI reuses the pull request's
-unit, smoke, and snapshot results. It checks out the base only when the
+Compare this checkout with the main tip. CI reuses the pull request's
+unit, smoke, and snapshot results. It checks out the main tip only when the
 pull request has failures, and then it reruns those ids. Locally, `--run`
 does the same with a fresh head run.
 
