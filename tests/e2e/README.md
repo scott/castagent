@@ -16,24 +16,61 @@ python3 -m pip install --user 'langchain-openai>=1.7.2' 'langchain-core>=1.6.12'
 node tests/e2e/run.mjs
 ```
 
+Run one provider or one case:
+
+```bash
+node tests/e2e/run.mjs --provider fly
+node tests/e2e/run.mjs --case fly.deploy
+node tests/e2e/run.mjs sprites.rollback digitalocean.upgrade-failure
+```
+
+`--provider` takes a comma-separated list. `--case` takes case ids (`provider.case`). A positional argument with a dot is a case id. A positional argument without a dot is a provider name. An unknown name exits 2.
+
 Each case uses a temporary `HOME`, so Python user-site packages would otherwise disappear. The runner keeps the `python3` that was on `PATH` when it started, and puts that interpreter's site packages on `PYTHONPATH`. `pip install --user` locally and `python3 -m pip install` in CI both work. CI also installs `libsecret-1-0` so the keytar module can load. With no Secret Service, Cast stores the deployment token in the temporary home.
 
-The process writes `tests/e2e/smoke-summary.json` (or `$SMOKE_SUMMARY`) and exits non-zero when a case fails. `UPDATE_ENDINGS=1` rewrites `tests/e2e/endings/*.txt` from the current CLI tail. Ending files are `cat -A` style: `$` marks the end of each line, `^I` is a tab, and `^M` is a carriage return.
+The process writes `tests/e2e/smoke-summary.json` (or `$SMOKE_SUMMARY`) and exits non-zero when a case fails.
+
+## CLI endings
+
+Each case compares the CLI tail with `tests/e2e/endings/<id>.txt`. Ending files are `cat -A` style: `$` marks the end of each line, `^I` is a tab, and `^M` is a carriage return. Paths, ports, deployment SHAs, tar sizes, and key fingerprints are normalized before the comparison.
+
+Rewriting those files is explicit and local:
+
+```bash
+UPDATE_ENDINGS=1 node tests/e2e/run.mjs
+```
+
+`UPDATE_SNAPSHOTS=1` is the same switch. CI refuses both. A green run never rewrites an ending.
+
+Fly and DigitalOcean do not roll back by deploying the previous release. Their cases are `fly.upgrade-failure` and `digitalocean.upgrade-failure`: the upgrade fails and the CLI prints a manual rollback hint. Sprites `rollback` is a second deploy that restores `1.0.0`.
+
+## Add a provider
+
+Add one module, `tests/e2e/providers/<name>.mjs`. The runner loads every `*.mjs` file in that directory. Do not edit the runner, the shim dispatcher, or the HTTP server.
+
+The module exports:
+
+- `shims`: CLI basenames to place on `PATH` (`['flyctl']`). Each name is a symlink to `tests/e2e/lib/shim.mjs`.
+- `cases`: objects `{id, provider, name, run(fx), skip?}`. `id` is `provider.case`.
+- `handleShim(api)`: optional. Return `false` when `api.bin` is not yours. Call `api.finish(code, stdout, stderr)` to record the command and exit. Return `true` to keep the process alive (an SSH tunnel).
+- `handleHttp(ctx)`: optional. Return `true` after `ctx.send(...)` when the request is yours.
+
+Shared helpers live in `tests/e2e/lib/` (`assert.mjs`, `harness.mjs`, `state.mjs`). `gzip` and `bun` are built-in stand-ins in `lib/builtin-shims.mjs`, not part of a provider.
+
+`CAST_PROVIDER_HTTP_BASE` is set by the harness to the fake's loopback origin. The value accepts only literal `127.0.0.1` and `::1`. It replaces the origin of an official provider URL and keeps the path and query. Leave it unset and the official origin is used. Fly stores `https://cast-<agent>.fly.dev` in the registry and checks the override before creating an app. `cast connect` rewrites the stored URL only for Fly. MicroVM calls are not redirected. Provider CLIs stay on `PATH`.
+
+Record every command with the shim's `finish` (it calls `recordRequest`). Return scripted stdout, stderr, and exit codes, including failures. `scenario.json` (`fx.setScenario`) is how a case asks for a fault. Do not log token values or stdin.
+
+`run(fx)` may call `fx.writeAgent`, `fx.writeAgentYaml`, `fx.seedRelease`, `fx.setScenario`, `fx.cast`, and `fx.liveRows`. Assert the registry row before and after the command, and call `assertEnding` for the CLI tail.
+
+Skip a case the provider cannot perform today by setting `skip` to the reason. The summary records that reason. Do not invent a passing result for behavior the provider does not have.
+
+Fault keys the sprite shim understands: `pip` and `yaml` as `{once: N}` or `{from: N}` (counts reset by `fx.resetCounts`), and `cliTimeout` for a pip exit 124. Fly and DigitalOcean use `flyDeployFail`, `upgradeDeployFail`, `dockerBuildFail`, and `doHealthFail`.
 
 Each case also fails if a fake provider token value shows up in argv. The CLI shims and the HTTP fake compare argv with those fixed fake values, not with the runner's environment. A `/proc` sampler checks the command lines of live processes. Environment values are not scanned, so a token that stays in the environment is allowed.
 
 The `cast` process is started with an allowlist. `HOME`, `PATH`, the fake provider tokens, and a few locale variables are set explicitly. Real values such as `GH_TOKEN`, `OPENROUTER_API_KEY`, `DIGITALOCEAN_API_TOKEN`, and `DIGITALOCEAN_API_KEY` are not copied in.
 
-## Add a provider fake
+## CLI output snapshots
 
-1. Teach `tests/e2e/lib/shim.mjs` a new basename, and add that name to `SHIMS` in `tests/e2e/lib/harness.mjs`. The harness prepends the shim directory to `PATH`. Cast still resolves the CLI by name.
-2. If the provider calls HTTP, route it in `tests/e2e/lib/http.mjs`. Point Cast at that server with `CAST_PROVIDER_HTTP_BASE` (already set by the harness to the fake's loopback origin). The variable accepts only `127.0.0.1`, `::1`, or `localhost`. It replaces the origin of an official provider URL and keeps the path and query. Leave it unset and the official origin is used. Fly stores `https://cast-<agent>.fly.dev` in the registry. The agent-card check and `cast connect` send that request to the override. MicroVM calls are not redirected. Provider CLIs stay on `PATH`.
-3. Record every command with `recordRequest`. Return scripted stdout, stderr, and exit codes, including failures. `scenario.json` (`fx.setScenario`) is how a case asks for a fault. Do not log token values or stdin.
-
-## Add a case
-
-Add an entry to `cases` in `tests/e2e/lib/cases.mjs`. `id` is `provider.case`. `run(fx)` may call `fx.writeAgent`, `fx.seedRelease`, `fx.setScenario`, `fx.cast`, and `fx.liveRows`. Assert the registry row before and after the command, and call `assertEnding` for the CLI tail.
-
-Skip a case the provider cannot perform today by setting `skip` to the reason. The summary records that reason. Do not invent a passing result for behavior the provider does not have.
-
-Fault keys the sprite shim understands: `pip` and `yaml` as `{once: N}` or `{from: N}` (counts reset by `fx.resetCounts`), and `cliTimeout` for a pip exit 124. Fly and DigitalOcean use `flyDeployFail`, `upgradeDeployFail`, `dockerBuildFail`, and `doHealthFail`.
+Version edge cases and the remaining slash-command text live in `tests/cli-snapshots/`. See that runner's header. Deploy, upgrade, and upgrade-failure wording is the ending files above.

@@ -43,7 +43,7 @@ function allowedEnv(extra) {
   return {...env, ...extra}
 }
 
-const SHIMS = ['sprite', 'flyctl', 'doctl', 'docker', 'ssh', 'gzip', 'bun']
+const BUILTIN_SHIMS = ['gzip', 'bun']
 
 function discoverPython() {
   try {
@@ -98,7 +98,10 @@ export function assertEnding(id, stdout, stderr, home) {
     '',
   ].join('\n')
   const file = path.join(repoRoot, 'tests/e2e/endings', `${id}.txt`)
-  if (process.env.UPDATE_ENDINGS === '1') {
+  if (process.env.UPDATE_ENDINGS === '1' || process.env.UPDATE_SNAPSHOTS === '1') {
+    if (process.env.CI) {
+      throw new Error('refusing to update snapshots in CI. Run UPDATE_ENDINGS=1 node tests/e2e/run.mjs locally and commit the files.')
+    }
     fs.mkdirSync(path.dirname(file), {recursive: true})
     fs.writeFileSync(file, actual)
     return
@@ -148,9 +151,14 @@ function agentYaml(name, version) {
 }
 
 function writeAgent(home, version) {
+  return writeAgentYaml(home, agentYaml(AGENT, version))
+}
+
+function writeAgentYaml(home, yaml) {
   const dir = path.join(home, '.cast', 'agents', AGENT)
   fs.mkdirSync(dir, {recursive: true})
-  fs.writeFileSync(path.join(dir, 'agent.yaml'), agentYaml(AGENT, version))
+  const text = yaml.endsWith('\n') ? yaml : `${yaml}\n`
+  fs.writeFileSync(path.join(dir, 'agent.yaml'), text)
   return dir
 }
 
@@ -178,9 +186,9 @@ function seedRelease(home, version) {
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
-function linkShims(dir) {
+function linkShims(dir, names) {
   fs.mkdirSync(dir, {recursive: true})
-  for (const name of SHIMS) {
+  for (const name of names) {
     const dest = path.join(dir, name)
     if (!fs.existsSync(dest)) fs.symlinkSync(shimPath, dest)
   }
@@ -195,8 +203,10 @@ export async function withFixture(fn) {
   fs.writeFileSync(path.join(stateDir, 'world.json'), '{}\n')
   fs.writeFileSync(path.join(stateDir, 'scenario.json'), '{}\n')
   fs.chmodSync(shimPath, 0o755)
-  linkShims(shimDir)
-  const http = await startFakeHttp(stateDir, TOKENS.DIGITALOCEAN_ACCESS_TOKEN)
+  const {loadProviders, providerHttpHandlers, providerShims} = await import('./discover.mjs')
+  const modules = await loadProviders()
+  linkShims(shimDir, [...BUILTIN_SHIMS, ...providerShims(modules)])
+  const http = await startFakeHttp(stateDir, TOKENS.DIGITALOCEAN_ACCESS_TOKEN, providerHttpHandlers(modules))
   const env = allowedEnv({
     HOME: home,
     USERPROFILE: home,
@@ -220,6 +230,7 @@ export async function withFixture(fn) {
     base: http.base,
     env,
     writeAgent: version => writeAgent(home, version),
+    writeAgentYaml: yaml => writeAgentYaml(home, yaml),
     seedRelease: version => seedRelease(home, version),
     rows: () => liveRows(home),
     liveRows: () => liveRows(home).filter(row => !row.deleted_at),

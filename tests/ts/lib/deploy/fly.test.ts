@@ -1228,6 +1228,41 @@ describe('Fly runtime image and health', () => {
     expect(host.logs.join('\n')).to.include('Deployment Successful')
   })
 
+  it('rejects a bad CAST_PROVIDER_HTTP_BASE before flyctl creates anything', async () => {
+    const previous = process.env.CAST_PROVIDER_HTTP_BASE
+    process.env.CAST_PROVIDER_HTTP_BASE = 'http://localhost:9'
+    const dir = path.join(root, 'early-override')
+    fs.mkdirSync(dir, {recursive: true})
+    const host = flyHost()
+    const calls: string[] = []
+    try {
+      await deployFlyAgent({agentName: 'early', agentPath: dir, host}, {
+        exec: async (args) => {
+          calls.push(args.join(' '))
+          return flyResult(0)
+        },
+        generateAuthToken: async () => ({authToken: 'token', tokenHash: 'hash'}),
+        saveDeployment: async () => 'abc123',
+        listDeployments: () => [],
+        discardTokens: async () => {},
+        inferenceEnv: () => ({}),
+        importSecrets: async () => flyResult(0),
+        stageRuntime: () => {},
+        checkCli: async () => {},
+        confirmReady: async () => {},
+      })
+      expect.fail('deploy should reject localhost')
+    } catch (error) {
+      expect(error).to.be.an('error')
+      expect((error as Error).message).to.match(/127\.0\.0\.1 or ::1/)
+      expect(calls).to.deep.equal([])
+      expect(host.logs.join('\n')).to.not.include('Creating Fly.io app')
+    } finally {
+      if (previous === undefined) delete process.env.CAST_PROVIDER_HTTP_BASE
+      else process.env.CAST_PROVIDER_HTTP_BASE = previous
+    }
+  })
+
   it('stores the official Fly URL when the loopback override is set', async () => {
     const previous = process.env.CAST_PROVIDER_HTTP_BASE
     process.env.CAST_PROVIDER_HTTP_BASE = 'http://127.0.0.1:9'

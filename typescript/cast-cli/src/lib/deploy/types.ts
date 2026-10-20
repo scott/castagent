@@ -48,6 +48,14 @@ export interface DeploymentProvider {
   /** When true, `cast upgrade` writes the version on this deployment row, not the active row. */
   recordsVersionByDeploymentId?: boolean
 
+  /**
+   * `cast connect` rewrites this provider's registry URL through
+   * `CAST_PROVIDER_HTTP_BASE`. Fly stores the public fly.dev URL and
+   * checks the agent card over HTTP. Providers that open a local tunnel
+   * or proxy leave this unset.
+   */
+  usesProviderHttpBase?: boolean
+
   // Merged onto `cast deploy`. Prefix each description with the provider
   // name. Flags you do not declare are ignored when this provider runs.
   flags?: Record<string, unknown>

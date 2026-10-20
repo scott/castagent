@@ -4,7 +4,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
-import {cases} from './lib/cases.mjs'
+import {providerCases, loadProviders} from './lib/discover.mjs'
 import {assertNoToken, repoRoot, startProcSampler, withFixture} from './lib/harness.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
@@ -12,6 +12,83 @@ const summaryPath = process.env.SMOKE_SUMMARY
   ? path.resolve(process.env.SMOKE_SUMMARY)
   : path.join(here, 'smoke-summary.json')
 
+function printHelp() {
+  process.stdout.write(`Usage: node tests/e2e/run.mjs [--provider <name>] [--case <id>]
+
+Run every discovered provider, or limit the run.
+
+  --provider fly,sprites     one or more provider module names
+  --case fly.deploy          one or more case ids (provider.case)
+  fly.upgrade-failure        a positional id or provider name is the same filter
+
+Adding a provider is a new file in tests/e2e/providers/. See tests/e2e/README.md.
+`)
+}
+
+function selection(argv, cases) {
+  const providers = new Set()
+  const ids = new Set()
+  const args = argv.slice(2)
+  for (let i = 0; i < args.length; i++) {
+    const arg = args[i]
+    if (arg === '--help' || arg === '-h') {
+      printHelp()
+      process.exit(0)
+    }
+    const take = flag => {
+      const value = args[++i]
+      if (!value || value.startsWith('--')) {
+        process.stderr.write(`missing value for ${flag}\n`)
+        process.exit(2)
+      }
+      return value.split(',').map(item => item.trim()).filter(Boolean)
+    }
+    if (arg === '--provider' || arg === '-p') {
+      for (const name of take(arg)) providers.add(name)
+      continue
+    }
+    if (arg === '--case' || arg === '-c') {
+      for (const name of take(arg)) ids.add(name)
+      continue
+    }
+    if (arg.startsWith('--provider=')) {
+      for (const name of arg.slice('--provider='.length).split(',')) if (name.trim()) providers.add(name.trim())
+      continue
+    }
+    if (arg.startsWith('--case=')) {
+      for (const name of arg.slice('--case='.length).split(',')) if (name.trim()) ids.add(name.trim())
+      continue
+    }
+    if (arg.startsWith('-')) {
+      process.stderr.write(`unknown flag ${arg}\n`)
+      printHelp()
+      process.exit(2)
+    }
+    if (arg.includes('.')) ids.add(arg)
+    else providers.add(arg)
+  }
+  if (providers.size === 0 && ids.size === 0) return cases
+  const chosen = cases.filter(item => ids.has(item.id) || providers.has(item.provider))
+  const knownIds = new Set(cases.map(item => item.id))
+  const knownProviders = new Set(cases.map(item => item.provider))
+  const unknown = []
+  for (const id of ids) if (!knownIds.has(id)) unknown.push(id)
+  for (const name of providers) if (!knownProviders.has(name)) unknown.push(name)
+  if (unknown.length > 0) {
+    process.stderr.write(`unknown case or provider: ${unknown.join(', ')}\n`)
+    process.stderr.write(`known: ${[...knownIds].sort().join(', ')}\n`)
+    process.exit(2)
+  }
+  return chosen
+}
+
+if (process.env.CI && (process.env.UPDATE_ENDINGS === '1' || process.env.UPDATE_SNAPSHOTS === '1')) {
+  process.stderr.write('refusing to update snapshots in CI\n')
+  process.exit(2)
+}
+
+const modules = await loadProviders()
+const cases = selection(process.argv, providerCases(modules))
 const started = Date.now()
 const results = []
 

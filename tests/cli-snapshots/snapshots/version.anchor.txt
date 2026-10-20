@@ -1,0 +1,45 @@
+# exit: 0
+# recorded: 1.10
+# stderr cat -A
+$
+# stdout cat -A
+Deploying smoke to sprites...$
+Deploying smoke to Sprites...$
+Ensuring sprite 'cast-smoke' exists...$
+Waiting for sprite to be ready...$
+Ensuring Python is installed...$
+Transferring agent files...$
+  Tar file size: <size>MB$
+  Transferring tar to sprite (streaming)...$
+  Extracting files...$
+Creating memory directory inside sprite...$
+Setting up Python environment...$
+Installing dependencies...$
+Starting agent service...$
+Waiting for the agent service to become ready...$
+$
+╔══════════════════════════════════════════════════════════════╗$
+║              Sprites Deployment Successful!                  ║$
+╚══════════════════════════════════════════════════════════════╝$
+$
+Agent: smoke$
+Sprite: cast-smoke$
+Provider: sprites$
+$
+To connect:$
+  cast connect smoke$
+cast connect starts a local sprite proxy and sends the deployment bearer token.$
+Sprites address: <fake-http>$
+That address needs Sprites org auth. A request without it returns 302 to the Sprites login page.$
+It is not a direct agent URL. Use cast connect.$
+$
+To view logs:$
+  cast logs smoke$
+  sprite exec -s cast-smoke -- cat /.sprite/logs/services/cast-agent.log$
+$
+To destroy:$
+  cast shutdown smoke$
+$
+Deployed smoke with deployment SHA: <sha>$
+Connect with: cast connect <sha>$
+$

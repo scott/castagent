@@ -17,6 +17,7 @@ export const flyProvider: DeploymentProvider = {
   key: 'fly',
   name: 'Fly.io',
   description: 'Distributed containers close to your users',
+  usesProviderHttpBase: true,
   cli: {
     command: 'flyctl',
     installUrl: 'https://fly.io/docs/hands-on/install-flyctl/',
