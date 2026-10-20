@@ -1,14 +1,65 @@
 import os
 import re
 import yaml
-from typing import List, Optional
+from typing import List, NamedTuple, Optional
 
-# PyYAML loads a plain `1.10` as the float 1.1. The scalar node still holds
-# the spelling from agent.yaml, which is what deploy records.
-_YAML_NUMBER_TAGS = (
-    "tag:yaml.org,2002:int",
-    "tag:yaml.org,2002:float",
-)
+# Version string both the runtime and `cast deploy` report when agent.yaml
+# has no usable top-level version. Deploy records this instead of a
+# releases.json version the running agent will not report.
+MISSING_AGENT_VERSION = "1.0"
+_NULL_TAG = "tag:yaml.org,2002:null"
+
+
+class AgentYamlVersion(NamedTuple):
+    """Top-level version text, and whether agent.yaml actually set it."""
+
+    version: str
+    explicit: bool
+
+
+def read_agent_yaml_version(text: str) -> AgentYamlVersion:
+    """Top-level `version` scalar, as text.
+
+    The spelling comes from the YAML scalar itself, so `1.10` stays `1.10`
+    and `2.0` stays `2.0`. Block scalars keep the parser's text with
+    surrounding whitespace removed, which drops the trailing newline `|`,
+    `>`, and `|+` add. Anchors, aliases, and tags resolve before that
+    spelling is read. A later duplicate `version` key wins. A YAML null
+    (`null`, `~`, empty, or an explicit `!!null` tag) is not a version.
+
+    This is the same rule as `readAgentYamlVersion` in
+    `typescript/cast-cli/src/lib/agent-version.ts`. The shared cases live
+    in `tests/fixtures/agent-yaml-version.json`.
+    """
+    spelling = _explicit_version_spelling(text)
+    if spelling is None:
+        return AgentYamlVersion(MISSING_AGENT_VERSION, False)
+    return AgentYamlVersion(spelling, True)
+
+
+def _explicit_version_spelling(text: str) -> Optional[str]:
+    """Source text of the last top-level version scalar, or None."""
+    node = yaml.compose(text, Loader=yaml.SafeLoader)
+    if not isinstance(node, yaml.MappingNode):
+        return None
+    saw = False
+    chosen: Optional[yaml.Node] = None
+    for key_node, value_node in node.value:
+        if not isinstance(key_node, yaml.ScalarNode) or key_node.value != "version":
+            continue
+        saw = True
+        chosen = value_node
+    if not saw or not isinstance(chosen, yaml.ScalarNode):
+        return None
+    # A YAML null's source is the token `null` or `~`. That token is not
+    # the version. A quoted "null" is a string and is kept.
+    if chosen.tag == _NULL_TAG:
+        return None
+    spelling = chosen.value
+    if not isinstance(spelling, str):
+        return None
+    trimmed = spelling.strip()
+    return trimmed or None
 
 
 class AgentConfigError(Exception):
@@ -32,15 +83,16 @@ class AgentConfig:
             # Parse the string so the error still has the source line after
             # the file is closed.
             loaded = yaml.safe_load(text)
+            version = read_agent_yaml_version(text).version
         except yaml.YAMLError as exc:
             raise AgentConfigError(_format_yaml_error(config_path, text, exc)) from exc
         if loaded is None:
-            return {}
+            loaded = {}
         if not isinstance(loaded, dict):
             raise AgentConfigError(
                 f"agent.yaml could not be validated ({config_path}): expected a mapping"
             )
-        _keep_numeric_version_spelling(text, loaded)
+        loaded["version"] = version
         return loaded
     
     @property
@@ -49,7 +101,10 @@ class AgentConfig:
     
     @property
     def version(self) -> str:
-        return self.config.get("version", "1.0")
+        value = self.config.get("version", MISSING_AGENT_VERSION)
+        if isinstance(value, str) and value:
+            return value
+        return MISSING_AGENT_VERSION
     
     @property
     def description(self) -> str:
@@ -201,44 +256,6 @@ class AgentConfig:
 
 _SKILL_FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\Z", re.DOTALL)
 _SKILL_MARKDOWN_NAMES = ("SKILL.md", "skill.md")
-
-
-def _keep_numeric_version_spelling(text: str, loaded: dict) -> None:
-    """Store a numeric top-level version as the text that was written.
-
-    Quoted versions and strings such as `1.0.0` already load as strings.
-    `version: null` stays null. Other numbers in the file are left alone.
-    """
-    value = loaded.get("version")
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return
-    spelling = _numeric_version_spelling(text)
-    if spelling is not None:
-        loaded["version"] = spelling
-
-
-def _numeric_version_spelling(text: str) -> Optional[str]:
-    """Source text of the last top-level version scalar when it is a number."""
-    try:
-        node = yaml.compose(text, Loader=yaml.SafeLoader)
-    except yaml.YAMLError:
-        return None
-    if not isinstance(node, yaml.MappingNode):
-        return None
-    spelling: Optional[str] = None
-    for key_node, value_node in node.value:
-        if not isinstance(key_node, yaml.ScalarNode) or key_node.value != "version":
-            continue
-        if (
-            isinstance(value_node, yaml.ScalarNode)
-            and value_node.tag in _YAML_NUMBER_TAGS
-            and isinstance(value_node.value, str)
-            and value_node.value != ""
-        ):
-            spelling = value_node.value
-        else:
-            spelling = None
-    return spelling
 
 
 def _yaml_error_line(text: str, mark: object) -> Optional[int]:
