@@ -25,7 +25,8 @@ Run every discovered provider, or limit the run.
   --list                     print matching case ids and exit
 
 --provider and --case combine with AND. Both flags together run only the
-named cases of the named providers.
+named cases of the named providers. A case that runs longer than
+SMOKE_CASE_TIMEOUT_MS (default 120000) fails with a timeout.
 
 Adding a provider is a new file in tests/e2e/providers/. See tests/e2e/README.md.
 `)
@@ -98,6 +99,19 @@ if (process.env.CI && (process.env.UPDATE_ENDINGS === '1' || process.env.UPDATE_
   process.exit(2)
 }
 
+function caseTimeoutMs() {
+  const raw = process.env.SMOKE_CASE_TIMEOUT_MS
+  if (raw == null || raw === '') return 120_000
+  const value = Number(raw)
+  if (!Number.isFinite(value) || value <= 0) {
+    process.stderr.write('SMOKE_CASE_TIMEOUT_MS must be a positive number of milliseconds\n')
+    process.exit(2)
+  }
+  return value
+}
+
+const timeoutMs = caseTimeoutMs()
+
 const modules = await loadProviders()
 setActiveTokens(providerTokens(modules))
 const cases = selection(process.argv, providerCases(modules))
@@ -107,6 +121,34 @@ if (process.argv.includes('--list')) {
 }
 const started = Date.now()
 const results = []
+
+async function runOne(item) {
+  const ac = new AbortController()
+  const timer = setTimeout(() => ac.abort(), timeoutMs)
+  let failure = null
+  try {
+    if (item.ownSampler) {
+      await item.run()
+    } else {
+      const sampler = startProcSampler()
+      let procHits = []
+      await withFixture(async fx => {
+        try {
+          await item.run(fx)
+        } finally {
+          procHits = sampler.stop()
+        }
+        assertNoToken(fx.requests(), procHits)
+      }, ac.signal)
+    }
+  } catch (error) {
+    failure = error
+  } finally {
+    clearTimeout(timer)
+  }
+  if (ac.signal.aborted) throw new Error(`case ${item.id} timed out after ${timeoutMs}ms`)
+  if (failure) throw failure
+}
 
 for (const item of cases) {
   const caseStarted = Date.now()
@@ -123,20 +165,7 @@ for (const item of cases) {
     continue
   }
   try {
-    if (item.ownSampler) {
-      await item.run()
-    } else {
-      const sampler = startProcSampler()
-      let procHits = []
-      await withFixture(async fx => {
-        try {
-          await item.run(fx)
-        } finally {
-          procHits = sampler.stop()
-        }
-        assertNoToken(fx.requests(), procHits)
-      })
-    }
+    await runOne(item)
     const durationMs = Date.now() - caseStarted
     results.push({id: item.id, provider: item.provider, case: item.name, status: 'pass', durationMs})
     process.stdout.write(`pass  ${item.id} (${durationMs}ms)\n`)

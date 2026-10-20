@@ -203,12 +203,37 @@ function linkShims(dir, names) {
 
 const tuiBundle = path.join(repoRoot, 'typescript/cast-tui/dist/index.js')
 const hiddenTuiBundle = `${tuiBundle}.e2e-hidden`
+const hiddenTuiOwner = `${hiddenTuiBundle}.owner`
 
-function restoreTuiBundleNow() {
+function readOwnerPid() {
+  if (!fs.existsSync(hiddenTuiOwner)) return null
+  const text = fs.readFileSync(hiddenTuiOwner, 'utf8').trim()
+  if (!/^\d+$/.test(text)) return null
+  const pid = Number(text)
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null
+  return pid
+}
+
+function pidAlive(pid) {
   try {
-    if (fs.existsSync(hiddenTuiBundle) && !fs.existsSync(tuiBundle)) {
-      fs.renameSync(hiddenTuiBundle, tuiBundle)
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error.code === 'EPERM'
+  }
+}
+
+function restoreTuiBundleNow(options = {}) {
+  try {
+    if (!fs.existsSync(hiddenTuiBundle) || fs.existsSync(tuiBundle)) return
+    const owner = readOwnerPid()
+    if (options.startup) {
+      if (owner !== null && pidAlive(owner)) return
+    } else if (!options.force && owner !== process.pid) {
+      return
     }
+    fs.renameSync(hiddenTuiBundle, tuiBundle)
+    fs.rmSync(hiddenTuiOwner, {force: true})
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     process.stderr.write(`e2e: could not restore ${tuiBundle}: ${message}\n`)
@@ -217,13 +242,21 @@ function restoreTuiBundleNow() {
 
 function hideTuiBundle() {
   if (!fs.existsSync(tuiBundle) || fs.existsSync(hiddenTuiBundle)) return false
-  fs.renameSync(tuiBundle, hiddenTuiBundle)
+  // The owner file lands first so a signal cannot observe the hidden bundle
+  // before the pid is recorded.
+  fs.writeFileSync(hiddenTuiOwner, `${process.pid}\n`)
+  try {
+    fs.renameSync(tuiBundle, hiddenTuiBundle)
+  } catch (error) {
+    fs.rmSync(hiddenTuiOwner, {force: true})
+    throw error
+  }
   return true
 }
 
 function restoreTuiBundle(hidden) {
   if (!hidden) return
-  restoreTuiBundleNow()
+  restoreTuiBundleNow({force: true})
 }
 
 function onSigint() {
@@ -245,19 +278,20 @@ let tuiGuardsInstalled = false
 
 // Call this from the smoke runner only. Provider shims import this module,
 // and a restore on their startup would put the bundle back while a case
-// still has it hidden. A SIGINT during a case skips `finally`, so the
-// runner restores on the signal and re-raises it. `exit` covers
-// process.exit. The same call repairs a leftover hidden bundle.
+// still has it hidden. The owner pid is recorded beside the hidden bundle.
+// Startup repairs it only when that pid is not alive, so a second runner
+// does not unhide a case that is still running. The owner's SIGINT,
+// SIGTERM, and exit handlers still put the file back.
 export function installTuiGuards() {
   if (tuiGuardsInstalled) return
   tuiGuardsInstalled = true
   process.on('SIGINT', onSigint)
   process.on('SIGTERM', onSigterm)
-  process.on('exit', restoreTuiBundleNow)
-  restoreTuiBundleNow()
+  process.on('exit', () => restoreTuiBundleNow())
+  restoreTuiBundleNow({startup: true})
 }
 
-export async function withFixture(fn) {
+export async function withFixture(fn, signal) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-e2e-home-'))
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-e2e-state-'))
   const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-e2e-bin-'))
@@ -302,7 +336,7 @@ export async function withFixture(fn) {
     setScenario: scenario => writeScenario(stateDir, scenario),
     resetCounts: () => resetCounts(stateDir),
     setRemoteState: value => writeRemoteState(home, AGENT, value),
-    cast: (args, input) => runCast(env, args, input),
+    cast: (args, input) => runCast(env, args, input, signal),
   }
   const hiddenTui = hideTuiBundle()
   try {
@@ -316,8 +350,12 @@ export async function withFixture(fn) {
   }
 }
 
-function runCast(env, args, input) {
+function runCast(env, args, input, signal) {
   return new Promise(resolve => {
+    if (signal && signal.aborted) {
+      resolve({code: 1, stdout: '', stderr: 'case timed out\n', timedOut: true})
+      return
+    }
     const child = spawn(process.execPath, [castBin, ...args], {
       cwd: repoRoot,
       env,
@@ -326,16 +364,25 @@ function runCast(env, args, input) {
     let stdout = ''
     let stderr = ''
     let timedOut = false
+    const kill = () => {
+      timedOut = true
+      child.kill('SIGKILL')
+    }
+    const timer = setTimeout(kill, 90_000)
+    if (signal) {
+      const onAbort = () => {
+        clearTimeout(timer)
+        kill()
+      }
+      signal.addEventListener('abort', onAbort, {once: true})
+      if (signal.aborted) onAbort()
+    }
     child.stdout.on('data', chunk => {
       stdout += chunk.toString()
     })
     child.stderr.on('data', chunk => {
       stderr += chunk.toString()
     })
-    const timer = setTimeout(() => {
-      timedOut = true
-      child.kill('SIGKILL')
-    }, 90_000)
     child.on('close', code => {
       clearTimeout(timer)
       resolve({code: code ?? 1, stdout, stderr, timedOut})

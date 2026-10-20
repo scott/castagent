@@ -7,6 +7,7 @@ import * as path from 'path'
 const root = path.resolve(__dirname, '../../..')
 const bundle = path.join(root, 'typescript/cast-tui/dist/index.js')
 const hidden = `${bundle}.e2e-hidden`
+const owner = `${hidden}.owner`
 
 function sleep(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms))
@@ -27,6 +28,7 @@ async function withBundle(fn: () => Promise<void>) {
     else if (!hadBundle) fs.rmSync(bundle, {force: true})
     if (hiddenOriginal) fs.writeFileSync(hidden, hiddenOriginal)
     else fs.rmSync(hidden, {force: true})
+    fs.rmSync(owner, {force: true})
   }
 }
 
@@ -42,8 +44,44 @@ describe('provider smoke TUI hide', () => {
       })
       expect(fs.existsSync(bundle)).to.equal(true)
       expect(fs.existsSync(hidden)).to.equal(false)
+      expect(fs.existsSync(owner)).to.equal(false)
       expect(fs.readFileSync(bundle).equals(bytes)).to.equal(true)
       expect(stdout).to.include('sprites.deploy')
+    })
+  })
+
+  it('restores a hidden bundle whose owner pid has exited', async () => {
+    await withBundle(async () => {
+      const bytes = fs.readFileSync(bundle)
+      const child = spawn(process.execPath, ['-e', 'setTimeout(() => {}, 30000)'], {stdio: 'ignore'})
+      const pid = child.pid
+      if (!pid) throw new Error('sleeper did not start')
+      child.kill('SIGKILL')
+      await new Promise(resolve => child.on('close', resolve))
+      fs.renameSync(bundle, hidden)
+      fs.writeFileSync(owner, `${pid}\n`)
+      execFileSync(process.execPath, ['tests/e2e/run.mjs', '--list'], {cwd: root, encoding: 'utf8'})
+      expect(fs.existsSync(bundle)).to.equal(true)
+      expect(fs.existsSync(hidden)).to.equal(false)
+      expect(fs.existsSync(owner)).to.equal(false)
+      expect(fs.readFileSync(bundle).equals(bytes)).to.equal(true)
+    })
+  })
+
+  it('leaves the bundle hidden while the owner pid is still alive', async () => {
+    await withBundle(async () => {
+      const bytes = fs.readFileSync(bundle)
+      fs.renameSync(bundle, hidden)
+      fs.writeFileSync(owner, `${process.pid}\n`)
+      const stdout = execFileSync(process.execPath, ['tests/e2e/run.mjs', '--list'], {
+        cwd: root,
+        encoding: 'utf8',
+      })
+      expect(fs.existsSync(bundle)).to.equal(false)
+      expect(fs.existsSync(hidden)).to.equal(true)
+      expect(fs.readFileSync(hidden).equals(bytes)).to.equal(true)
+      expect(fs.readFileSync(owner, 'utf8').trim()).to.equal(String(process.pid))
+      expect(stdout).to.include('digitalocean.connect')
     })
   })
 
@@ -85,6 +123,7 @@ describe('provider smoke TUI hide', () => {
         })
         expect(fs.existsSync(bundle)).to.equal(true)
         expect(fs.existsSync(hidden)).to.equal(false)
+        expect(fs.existsSync(owner)).to.equal(false)
         expect(fs.readFileSync(bundle).equals(bytes)).to.equal(true)
         expect(result.signal === 'SIGINT' || result.code === 130).to.equal(true)
       } finally {

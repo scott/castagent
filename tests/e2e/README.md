@@ -29,11 +29,11 @@ node tests/e2e/run.mjs --provider fly --case fly.deploy,fly.connect
 
 Each case uses a temporary `HOME`, so Python user-site packages would otherwise disappear. The runner keeps the `python3` that was on `PATH` when it started, and puts that interpreter's site packages on `PYTHONPATH`. `pip install --user` locally and `python3 -m pip install` in CI both work. CI also installs `libsecret-1-0` so the keytar module can load. With no Secret Service, Cast stores the deployment token in the temporary home.
 
-The process writes `tests/e2e/smoke-summary.json` (or `$SMOKE_SUMMARY`) and exits non-zero when a case fails.
+The process writes `tests/e2e/smoke-summary.json` (or `$SMOKE_SUMMARY`) and exits non-zero when a case fails. Each case fails on its own if it runs longer than `SMOKE_CASE_TIMEOUT_MS` milliseconds (default 120000). The message is `case <id> timed out after <ms>ms`.
 
 ## CLI endings
 
-Each case compares the CLI tail with `tests/e2e/endings/<id>.txt`. Ending files are `cat -A` style: `$` marks the end of each line, `^I` is a tab, and `^M` is a carriage return. Paths, ports, deployment SHAs, tar sizes, and key fingerprints are normalized before the comparison. While a case runs, the harness renames `typescript/cast-tui/dist/index.js` out of the way and puts it back afterwards, including on SIGINT and SIGTERM. A later run also puts it back if a previous run left `index.js.e2e-hidden` and no `index.js`. Connect then always prints the missing-OpenTUI warning, whether or not the TUI was built.
+Each case compares the CLI tail with `tests/e2e/endings/<id>.txt`. Ending files are `cat -A` style: `$` marks the end of each line, `^I` is a tab, and `^M` is a carriage return. Paths, ports, deployment SHAs, tar sizes, and key fingerprints are normalized before the comparison. While a case runs, the harness renames `typescript/cast-tui/dist/index.js` out of the way, writes its pid to `index.js.e2e-hidden.owner`, and puts the bundle back afterwards, including on SIGINT and SIGTERM. A later run puts the bundle back only when that owner pid is not alive. Connect then always prints the missing-OpenTUI warning, whether or not the TUI was built.
 
 Rewriting those files is explicit and local:
 
