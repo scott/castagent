@@ -5,7 +5,7 @@ import path from 'node:path'
 import {createRequire} from 'node:module'
 import {fileURLToPath} from 'node:url'
 import {startFakeHttp} from './http.mjs'
-import {FAKE_TOKENS, readRequests, readWorld, resetCounts, writeScenario} from './state.mjs'
+import {readRequests, readWorld, resetCounts, writeScenario} from './state.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 export const repoRoot = path.resolve(here, '../../..')
@@ -15,10 +15,15 @@ const require = createRequire(path.join(repoRoot, 'typescript/cast-cli/package.j
 const Database = require('better-sqlite3')
 
 export const AGENT = 'smoke'
-export const TOKENS = {
-  SPRITES_TOKEN: FAKE_TOKENS.SPRITES_TOKEN,
-  FLY_API_TOKEN: FAKE_TOKENS.FLY_API_TOKEN,
-  DIGITALOCEAN_ACCESS_TOKEN: FAKE_TOKENS.DIGITALOCEAN_ACCESS_TOKEN,
+
+let activeTokens = {}
+
+export function setActiveTokens(tokens) {
+  activeTokens = tokens && typeof tokens === 'object' ? tokens : {}
+}
+
+export function currentTokens() {
+  return activeTokens
 }
 
 const ENV_ALLOW = [
@@ -43,7 +48,7 @@ function allowedEnv(extra) {
   return {...env, ...extra}
 }
 
-const SHIMS = ['sprite', 'flyctl', 'doctl', 'docker', 'ssh', 'gzip', 'bun']
+const BUILTIN_SHIMS = ['gzip', 'bun']
 
 function discoverPython() {
   try {
@@ -98,7 +103,10 @@ export function assertEnding(id, stdout, stderr, home) {
     '',
   ].join('\n')
   const file = path.join(repoRoot, 'tests/e2e/endings', `${id}.txt`)
-  if (process.env.UPDATE_ENDINGS === '1') {
+  if (process.env.UPDATE_ENDINGS === '1' || process.env.UPDATE_SNAPSHOTS === '1') {
+    if (process.env.CI) {
+      throw new Error('refusing to update snapshots in CI. Run UPDATE_ENDINGS=1 node tests/e2e/run.mjs locally and commit the files.')
+    }
     fs.mkdirSync(path.dirname(file), {recursive: true})
     fs.writeFileSync(file, actual)
     return
@@ -148,9 +156,14 @@ function agentYaml(name, version) {
 }
 
 function writeAgent(home, version) {
+  return writeAgentYaml(home, agentYaml(AGENT, version))
+}
+
+function writeAgentYaml(home, yaml) {
   const dir = path.join(home, '.cast', 'agents', AGENT)
   fs.mkdirSync(dir, {recursive: true})
-  fs.writeFileSync(path.join(dir, 'agent.yaml'), agentYaml(AGENT, version))
+  const text = yaml.endsWith('\n') ? yaml : `${yaml}\n`
+  fs.writeFileSync(path.join(dir, 'agent.yaml'), text)
   return dir
 }
 
@@ -178,9 +191,9 @@ function seedRelease(home, version) {
   fs.writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`)
 }
 
-function linkShims(dir) {
+function linkShims(dir, names) {
   fs.mkdirSync(dir, {recursive: true})
-  for (const name of SHIMS) {
+  for (const name of names) {
     const dest = path.join(dir, name)
     if (!fs.existsSync(dest)) fs.symlinkSync(shimPath, dest)
   }
@@ -188,15 +201,111 @@ function linkShims(dir) {
   if (!fs.existsSync(nodeLink)) fs.symlinkSync(process.execPath, nodeLink)
 }
 
-export async function withFixture(fn) {
+const tuiBundle = path.join(repoRoot, 'typescript/cast-tui/dist/index.js')
+const hiddenTuiBundle = `${tuiBundle}.e2e-hidden`
+const hiddenTuiOwner = `${hiddenTuiBundle}.owner`
+
+function readOwnerPid() {
+  if (!fs.existsSync(hiddenTuiOwner)) return null
+  const text = fs.readFileSync(hiddenTuiOwner, 'utf8').trim()
+  if (!/^\d+$/.test(text)) return null
+  const pid = Number(text)
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null
+  return pid
+}
+
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error.code === 'EPERM'
+  }
+}
+
+function restoreTuiBundleNow(options = {}) {
+  try {
+    if (!fs.existsSync(hiddenTuiBundle) || fs.existsSync(tuiBundle)) return
+    const owner = readOwnerPid()
+    if (options.startup) {
+      if (owner !== null && pidAlive(owner)) return
+    } else if (!options.force && owner !== process.pid) {
+      return
+    }
+    fs.renameSync(hiddenTuiBundle, tuiBundle)
+    fs.rmSync(hiddenTuiOwner, {force: true})
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    process.stderr.write(`e2e: could not restore ${tuiBundle}: ${message}\n`)
+  }
+}
+
+function hideTuiBundle() {
+  if (!fs.existsSync(tuiBundle) || fs.existsSync(hiddenTuiBundle)) return false
+  // The owner file lands first so a signal cannot observe the hidden bundle
+  // before the pid is recorded.
+  fs.writeFileSync(hiddenTuiOwner, `${process.pid}\n`)
+  try {
+    fs.renameSync(tuiBundle, hiddenTuiBundle)
+  } catch (error) {
+    fs.rmSync(hiddenTuiOwner, {force: true})
+    throw error
+  }
+  return true
+}
+
+function restoreTuiBundle(hidden) {
+  if (!hidden) return
+  restoreTuiBundleNow({force: true})
+}
+
+function onSigint() {
+  stopAndReraise('SIGINT')
+}
+
+function onSigterm() {
+  stopAndReraise('SIGTERM')
+}
+
+function stopAndReraise(signal) {
+  restoreTuiBundleNow()
+  process.removeListener('SIGINT', onSigint)
+  process.removeListener('SIGTERM', onSigterm)
+  process.kill(process.pid, signal)
+}
+
+let tuiGuardsInstalled = false
+
+// Call this from the smoke runner only. Provider shims import this module,
+// and a restore on their startup would put the bundle back while a case
+// still has it hidden. The owner pid is recorded beside the hidden bundle.
+// Startup repairs it only when that pid is not alive, so a second runner
+// does not unhide a case that is still running. The owner's SIGINT,
+// SIGTERM, and exit handlers still put the file back.
+export function installTuiGuards() {
+  if (tuiGuardsInstalled) return
+  tuiGuardsInstalled = true
+  process.on('SIGINT', onSigint)
+  process.on('SIGTERM', onSigterm)
+  process.on('exit', () => restoreTuiBundleNow())
+  restoreTuiBundleNow({startup: true})
+}
+
+export async function withFixture(fn, signal) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-e2e-home-'))
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-e2e-state-'))
   const shimDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-e2e-bin-'))
   fs.writeFileSync(path.join(stateDir, 'world.json'), '{}\n')
   fs.writeFileSync(path.join(stateDir, 'scenario.json'), '{}\n')
   fs.chmodSync(shimPath, 0o755)
-  linkShims(shimDir)
-  const http = await startFakeHttp(stateDir, TOKENS.DIGITALOCEAN_ACCESS_TOKEN)
+  const {loadProviders, providerEnvTokens, providerHttpHandlers, providerShims, providerTokens} = await import('./discover.mjs')
+  const modules = await loadProviders()
+  const tokens = providerTokens(modules)
+  const envTokens = providerEnvTokens(modules)
+  setActiveTokens(tokens)
+  fs.writeFileSync(path.join(stateDir, 'tokens.json'), JSON.stringify(tokens))
+  linkShims(shimDir, [...BUILTIN_SHIMS, ...providerShims(modules)])
+  const http = await startFakeHttp(stateDir, tokens, providerHttpHandlers(modules))
   const env = allowedEnv({
     HOME: home,
     USERPROFILE: home,
@@ -204,9 +313,7 @@ export async function withFixture(fn) {
     CAST_PROVIDER_HTTP_BASE: http.base,
     CAST_E2E_STATE: stateDir,
     CAST_E2E_HTTP_BASE: http.base,
-    SPRITES_TOKEN: TOKENS.SPRITES_TOKEN,
-    FLY_API_TOKEN: TOKENS.FLY_API_TOKEN,
-    DIGITALOCEAN_ACCESS_TOKEN: TOKENS.DIGITALOCEAN_ACCESS_TOKEN,
+    ...envTokens,
     NO_COLOR: '1',
     FORCE_COLOR: '0',
     CI: '1',
@@ -220,6 +327,7 @@ export async function withFixture(fn) {
     base: http.base,
     env,
     writeAgent: version => writeAgent(home, version),
+    writeAgentYaml: yaml => writeAgentYaml(home, yaml),
     seedRelease: version => seedRelease(home, version),
     rows: () => liveRows(home),
     liveRows: () => liveRows(home).filter(row => !row.deleted_at),
@@ -228,11 +336,13 @@ export async function withFixture(fn) {
     setScenario: scenario => writeScenario(stateDir, scenario),
     resetCounts: () => resetCounts(stateDir),
     setRemoteState: value => writeRemoteState(home, AGENT, value),
-    cast: (args, input) => runCast(env, args, input),
+    cast: (args, input) => runCast(env, args, input, signal),
   }
+  const hiddenTui = hideTuiBundle()
   try {
     await fn(fx)
   } finally {
+    restoreTuiBundle(hiddenTui)
     await http.close()
     fs.rmSync(home, {recursive: true, force: true})
     fs.rmSync(stateDir, {recursive: true, force: true})
@@ -240,8 +350,12 @@ export async function withFixture(fn) {
   }
 }
 
-function runCast(env, args, input) {
+function runCast(env, args, input, signal) {
   return new Promise(resolve => {
+    if (signal && signal.aborted) {
+      resolve({code: 1, stdout: '', stderr: 'case timed out\n', timedOut: true})
+      return
+    }
     const child = spawn(process.execPath, [castBin, ...args], {
       cwd: repoRoot,
       env,
@@ -250,16 +364,25 @@ function runCast(env, args, input) {
     let stdout = ''
     let stderr = ''
     let timedOut = false
+    const kill = () => {
+      timedOut = true
+      child.kill('SIGKILL')
+    }
+    const timer = setTimeout(kill, 90_000)
+    if (signal) {
+      const onAbort = () => {
+        clearTimeout(timer)
+        kill()
+      }
+      signal.addEventListener('abort', onAbort, {once: true})
+      if (signal.aborted) onAbort()
+    }
     child.stdout.on('data', chunk => {
       stdout += chunk.toString()
     })
     child.stderr.on('data', chunk => {
       stderr += chunk.toString()
     })
-    const timer = setTimeout(() => {
-      timedOut = true
-      child.kill('SIGKILL')
-    }, 90_000)
     child.on('close', code => {
       clearTimeout(timer)
       resolve({code: code ?? 1, stdout, stderr, timedOut})
@@ -273,9 +396,9 @@ function runCast(env, args, input) {
   })
 }
 
-export function startProcSampler() {
+export function startProcSampler(tokens = activeTokens) {
   const hits = []
-  const values = Object.entries(TOKENS)
+  const values = Object.entries(tokens || {})
   const timer = setInterval(() => {
     let entries = []
     try {

@@ -62,7 +62,7 @@ no deployment was found. Use `--provider docker` to run on this machine.
 A successful Docker deploy stores the SHA printed by `cast deploy`.
 `cast registry` lists that id, and `cast connect <sha>` finds it.
 
-`CAST_PROVIDER_HTTP_BASE` is a loopback-only testing override (`127.0.0.1`, `::1`, or `localhost`). When it is set, Droplet calls to the DigitalOcean API and Fly agent-card checks use that origin and keep the official path and query. Cast stores the official provider URL, not the override. MicroVM calls to `api.digitalocean.com` keep the official host. Provider CLIs stay on `PATH`. Leave the variable unset for a normal deploy. Any other host is an error.
+`CAST_PROVIDER_HTTP_BASE` is a loopback-only testing override (literal `127.0.0.1` or `::1`). `localhost` is rejected because it is resolved through the hosts file. When it is set, Droplet calls to the DigitalOcean API and Fly agent-card checks use that origin and keep the official path and query. Fly checks the value before it creates an app. `cast connect` rewrites the stored URL only for Fly. Cast stores the official provider URL, not the override. MicroVM calls to `api.digitalocean.com` keep the official host. Provider CLIs stay on `PATH`. Leave the variable unset for a normal deploy. Any other host is an error.
 
 Each provider has its own CLI auth (`railway login`, `flyctl auth login`,
 `doctl auth init`, `sprite login`). `cast deploy` walks you through any

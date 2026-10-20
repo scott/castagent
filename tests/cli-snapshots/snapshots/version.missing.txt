@@ -1,0 +1,4 @@
+# exit: 0
+# recorded: 1.0
+# version lines, cat -A
+Warning: agent.yaml has no version. Recorded 1.0. Add a version to agent.yaml or pass --version to choose.$

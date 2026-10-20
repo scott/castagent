@@ -1,0 +1,4 @@
+# exit: 0
+# recorded: true
+# version lines, cat -A
+Warning: agent.yaml version "true" is not a semantic version (MAJOR.MINOR or MAJOR.MINOR.PATCH). Recorded true.$

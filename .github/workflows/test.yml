@@ -144,11 +144,13 @@ jobs:
         # is not in this step. That suite is the required session-python
         # job, and it runs from the repo root.
         run: |
+          mkdir -p test-results
           python -m pytest tests/python tests \
             --cov=cast \
             --cov-report=xml \
             --cov-report=html \
             --cov-report=term-missing \
+            --junitxml=test-results/pytest.xml \
             -v
         working-directory: python
 
@@ -196,6 +198,17 @@ jobs:
             python/test-results/ (if generated)
           retention-days: 14
 
+      - name: Upload head unit results for compare
+        if: always() && github.event_name == 'pull_request' && matrix.node == 20 && matrix.python == '3.12'
+        uses: actions/upload-artifact@v4
+        with:
+          name: compare-head-unit
+          path: |
+            test-results/mocha.json
+            python/test-results/pytest.xml
+          if-no-files-found: warn
+          retention-days: 7
+
   # ============================================================================
   # Session storage
   # The Python coverage step runs python/tests (including
@@ -222,7 +235,18 @@ jobs:
         run: pip install pytest pyyaml langchain-core
 
       - name: Run session storage tests
-        run: PYTHONPATH=python python -m pytest tests/python/unit/test_sessions.py tests/python/unit/test_session_topic.py -q
+        run: |
+          mkdir -p test-results
+          PYTHONPATH=python python -m pytest tests/python/unit/test_sessions.py tests/python/unit/test_session_topic.py --junitxml=test-results/pytest-session.xml -q
+
+      - name: Upload head session results for compare
+        if: always() && github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: compare-head-session
+          path: test-results/pytest-session.xml
+          if-no-files-found: warn
+          retention-days: 7
 
   # ============================================================================
   # Quality Checks Job
@@ -305,6 +329,7 @@ jobs:
   provider-smoke:
     name: Provider smoke
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -341,6 +366,10 @@ jobs:
       - name: Run mocked provider smoke
         run: node tests/e2e/run.mjs
 
+      - name: Run CLI output snapshots
+        if: always()
+        run: node tests/cli-snapshots/run.mjs
+
       - name: Upload smoke summary
         if: always()
         uses: actions/upload-artifact@v4
@@ -349,14 +378,183 @@ jobs:
           path: tests/e2e/smoke-summary.json
           if-no-files-found: warn
 
+      - name: Upload CLI snapshot summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: snapshot-summary
+          path: tests/cli-snapshots/snapshot-summary.json
+          if-no-files-found: warn
+
   # ============================================================================
   # Coverage Summary and PR Comment
   # ============================================================================
+  # ============================================================================
+  # PR head versus main-tip failing-test comparison
+  # One Node and one Python. node_modules is reused when lockfiles match.
+  # Coverage instrumentation is not repeated here.
+  # ============================================================================
+  failure-compare:
+    name: PR vs main
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs: [test-coverage, provider-smoke, session-python]
+    if: "always() && github.event_name == 'pull_request' && !cancelled()"
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      - name: Download head unit results
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: compare-head-unit
+          path: compare-head-unit
+
+      - name: Download head session results
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: compare-head-session
+          path: compare-head-session
+
+      - name: Download provider smoke summary
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: smoke-summary
+          path: smoke-summary
+
+      - name: Download CLI snapshot summary
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: snapshot-summary
+          path: snapshot-summary
+
+      - name: Stage head results
+        run: |
+          mkdir -p compare-head compare-head-unit compare-head-session smoke-summary snapshot-summary
+          find compare-head-unit compare-head-session smoke-summary snapshot-summary -type f -print || true
+          cp -f compare-head-unit/test-results/mocha.json compare-head/mocha.json 2>/dev/null || cp -f compare-head-unit/mocha.json compare-head/mocha.json 2>/dev/null || true
+          cp -f compare-head-unit/python/test-results/pytest.xml compare-head/pytest.xml 2>/dev/null || cp -f compare-head-unit/pytest.xml compare-head/pytest.xml 2>/dev/null || true
+          cp -f compare-head-session/test-results/pytest-session.xml compare-head/pytest-session.xml 2>/dev/null || cp -f compare-head-session/pytest-session.xml compare-head/pytest-session.xml 2>/dev/null || true
+          cp -f smoke-summary/smoke-summary.json compare-head/smoke-summary.json 2>/dev/null || true
+          cp -f snapshot-summary/snapshot-summary.json compare-head/snapshot-summary.json 2>/dev/null || true
+          find compare-head -type f -printf '%p %s\n'
+
+      - name: Classify head failures
+        id: classify
+        run: node scripts/compare-failures.mjs --head compare-head --skip-base
+        env:
+          COMPARE_SUMMARY: compare-summary.json
+          COMPARE_REQUIRE_ARTIFACTS: "1"
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+
+      - name: Setup Python
+        if: steps.classify.outputs.need_base == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install libsecret
+        if: steps.classify.outputs.need_base == 'true'
+        run: sudo apt-get update && sudo apt-get install -y libsecret-1-0
+
+      - name: Install TypeScript dependencies
+        if: steps.classify.outputs.need_base == 'true'
+        run: npm install
+
+      - name: Install TypeScript workspace dependencies
+        if: steps.classify.outputs.need_base == 'true'
+        run: npm install
+        working-directory: typescript
+
+      - name: Install docs-site dependencies
+        if: steps.classify.outputs.need_base == 'true'
+        run: npm --prefix docs-site ci
+
+      - name: Install Bun
+        if: steps.classify.outputs.need_base == 'true'
+        run: |
+          npm install --prefix "$RUNNER_TEMP/bun" bun@1.4.3
+          echo "$RUNNER_TEMP/bun/node_modules/.bin" >> "$GITHUB_PATH"
+
+      - name: Rerun head failures on the base branch
+        if: steps.classify.outputs.need_base == 'true'
+        run: node scripts/compare-failures.mjs --head compare-head --rerun-base
+        env:
+          COMPARE_SUMMARY: compare-summary.json
+          GITHUB_BASE_REF: ${{ github.base_ref }}
+
+      - name: Update the coverage comment
+        if: always()
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const marker = '<!-- coverage-bot -->';
+            let compareLine = 'PR vs main: unavailable';
+            try {
+              const compared = JSON.parse(fs.readFileSync('compare-summary.json', 'utf8'));
+              const fresh = (compared.newFailures || []).length;
+              const existing = (compared.alreadyFailing || []).length;
+              compareLine = compared.ok
+                ? `PR vs main: no new failures (${existing} already failing on main)`
+                : `PR vs main: fail (${fresh} new, ${existing} already failing on main)`;
+            } catch (error) {
+              core.warning(`PR versus main summary was not available: ${error.message}`);
+              compareLine = 'PR vs main: fail (compare did not finish)';
+            }
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+              per_page: 100,
+            });
+            const existing = comments.find(comment => comment.body && comment.body.includes(marker));
+            if (!existing) {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body: `${marker}\n${compareLine}\n`,
+              });
+              return;
+            }
+            const body = /^PR vs main:.*$/m.test(existing.body)
+              ? existing.body.replace(/^PR vs main:.*$/m, compareLine)
+              : `${existing.body.replace(/\s*$/, '')}\n${compareLine}\n`;
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: existing.id,
+              body,
+            });
+
+      - name: Upload compare summary
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: compare-summary
+          path: compare-summary.json
+          if-no-files-found: warn
+
   coverage-summary:
     name: Coverage Summary
     runs-on: ubuntu-latest
     needs: [test-coverage, provider-smoke]
-    if: always() && github.event_name == 'pull_request'
+    if: "always() && github.event_name == 'pull_request' && !cancelled()"
     steps:
       - name: Checkout code
         uses: actions/checkout@v6
@@ -382,6 +580,22 @@ jobs:
         with:
           name: smoke-summary
           path: smoke-summary
+
+      - name: Download CLI snapshot summary
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: snapshot-summary
+          path: snapshot-summary
+
+      - name: Download PR versus main summary
+        if: always()
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: compare-summary
+          path: compare-summary
 
       - name: Generate coverage summary
         if: always()
@@ -446,7 +660,39 @@ jobs:
             } catch (error) {
               core.warning(`Provider smoke summary was not available: ${error.message}`);
             }
-            summary += `\n${smokeLine}\n`;
+            let snapshotLine = 'CLI snapshots: unavailable';
+            try {
+              const snaps = JSON.parse(fs.readFileSync('snapshot-summary/snapshot-summary.json', 'utf8'));
+              const passed = (snaps.cases || []).filter(item => item.status === 'pass').length;
+              const failed = (snaps.cases || []).filter(item => item.status === 'fail').length;
+              snapshotLine = `CLI snapshots: ${snaps.ok ? 'pass' : 'fail'} (${passed} passed, ${failed} failed)`;
+            } catch (error) {
+              core.warning(`CLI snapshot summary was not available: ${error.message}`);
+            }
+
+            let compareLine = 'PR vs main: running';
+            try {
+              const compared = JSON.parse(fs.readFileSync('compare-summary/compare-summary.json', 'utf8'));
+              const fresh = (compared.newFailures || []).length;
+              const existing = (compared.alreadyFailing || []).length;
+              compareLine = compared.ok
+                ? `PR vs main: no new failures (${existing} already failing on main)`
+                : `PR vs main: fail (${fresh} new, ${existing} already failing on main)`;
+            } catch (error) {
+              core.warning(`PR versus main summary was not ready: ${error.message}`);
+            }
+            if (compareLine === 'PR vs main: running') {
+              const { data: prior } = await github.rest.issues.listComments({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                per_page: 100,
+              });
+              const earlier = prior.find(comment => comment.body && comment.body.includes(marker));
+              const kept = earlier && earlier.body.match(/^PR vs main:.*$/m);
+              if (kept && !/running|unavailable/.test(kept[0])) compareLine = kept[0];
+            }
+            summary += `\n${smokeLine}\n${snapshotLine}\n${compareLine}\n`;
 
             const body = `${marker}\n${summary}`;
 

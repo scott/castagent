@@ -19,6 +19,7 @@ import {
   isShaPattern,
   providerHttpUrl,
   readAgentModel,
+  readProviderHttpBase,
   saveDeployment,
   secretValues,
   stageCastRuntime,
@@ -656,6 +657,9 @@ export async function deployFlyAgent(input: {
   builder?: FlyBuilderOptions
   host: FlyHost
 }, deps: FlyDeployDeps = defaultFlyDeployDeps()): Promise<void> {
+  // Reject a bad testing override before flyctl creates an app, volume, or machine.
+  // probeFlyAgentCard swallows that error and would otherwise look like a slow health failure.
+  readProviderHttpBase()
   const {agentName, agentPath, host} = input
   const builder = input.builder ?? {}
   if (!fs.existsSync(agentPath)) {

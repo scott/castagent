@@ -1,0 +1,4 @@
+# exit: 0
+# recorded: 1.10
+# version lines, cat -A
+$

@@ -111,9 +111,12 @@ export default class Connect extends Command {
       this.warn(`No auth token found for agent '${agentName}'. Connecting without authentication...`)
     }
 
-    // The registry URL stays the official provider URL. A loopback testing
-    // override rewrites only this request, and never a tunnel that is already local.
-    const requestUrl = providerRequestUrl(deploymentUrl)
+    // The registry URL stays the official provider URL. Only a provider that
+    // opts in (Fly's public agent card) is rewritten through the loopback
+    // testing override. A tunnel or proxy URL is already the address to use.
+    const requestUrl = registered?.usesProviderHttpBase
+      ? providerRequestUrl(deploymentUrl)
+      : deploymentUrl
 
     // Verify connection before launching TUI
     try {

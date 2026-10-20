@@ -190,8 +190,10 @@ export function getAgentPath(agentName: string): string {
  * `CAST_PROVIDER_HTTP_BASE` replaces the origin of an official provider URL
  * and keeps the path and query. Unset, the official URL is used.
  * A future provider calls `providerHttpUrl(officialUrl)` at each request.
- * The value must be an http or https origin of 127.0.0.1, ::1, or localhost,
- * with no user, path, query, or hash. Any other host throws.
+ * The value must be an http or https origin of literal 127.0.0.1 or ::1,
+ * with no user, path, query, or hash. `localhost` is rejected: it is
+ * resolved through the hosts file and is not a literal loopback address.
+ * Any other host throws.
  * Example: `CAST_PROVIDER_HTTP_BASE=http://127.0.0.1:9` turns
  * `https://api.digitalocean.com/v2/volumes` into `http://127.0.0.1:9/v2/volumes`.
  * Do not store the result. The registry keeps the official provider URL.
@@ -199,11 +201,11 @@ export function getAgentPath(agentName: string): string {
  * MicroVM calls to api.digitalocean.com do not.
  * Provider CLIs (`sprite`, `flyctl`, `doctl`) stay on `PATH`.
  */
-export const PROVIDER_HTTP_BASE_ERROR = 'CAST_PROVIDER_HTTP_BASE must be an http or https loopback origin (127.0.0.1, ::1, or localhost) with no path, query, user, or hash'
+export const PROVIDER_HTTP_BASE_ERROR = 'CAST_PROVIDER_HTTP_BASE must be an http or https loopback origin (127.0.0.1 or ::1) with no path, query, user, or hash'
 
 export function isLoopbackHost(hostname: string): boolean {
   const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
-  return host === '127.0.0.1' || host === '::1' || host === 'localhost'
+  return host === '127.0.0.1' || host === '::1'
 }
 
 export function readProviderHttpBase(): URL | null {

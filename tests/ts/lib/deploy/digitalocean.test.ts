@@ -2304,9 +2304,11 @@ describe('DigitalOcean Deploy Provider', () => {
         expect(deployUtils.providerHttpUrl(official)).to.equal('http://127.0.0.1:9/v2/volumes?per_page=1')
         expect(deployUtils.providerRequestUrl('http://127.0.0.1:4000')).to.equal('http://127.0.0.1:4000')
         expect(deployUtils.providerRequestUrl('https://cast-mail.fly.dev')).to.equal('http://127.0.0.1:9')
-        process.env.CAST_PROVIDER_HTTP_BASE = 'http://localhost:9'
-        expect(deployUtils.providerHttpUrl('https://cast-mail.fly.dev/.well-known/agent.json'))
-          .to.equal('http://localhost:9/.well-known/agent.json')
+        for (const value of ['http://localhost:9', 'http://localhost', 'https://localhost:9']) {
+          process.env.CAST_PROVIDER_HTTP_BASE = value
+          expect(() => deployUtils.readProviderHttpBase(), value).to.throw(/127\.0\.0\.1 or ::1/)
+          expect(() => deployUtils.providerHttpUrl(official), value).to.throw(/127\.0\.0\.1 or ::1/)
+        }
         process.env.CAST_PROVIDER_HTTP_BASE = 'http://[::1]:9'
         expect(deployUtils.providerHttpUrl('https://api.digitalocean.com/v2/volumes'))
           .to.equal('http://[::1]:9/v2/volumes')
