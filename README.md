@@ -633,6 +633,14 @@ npm run build:cli
 npm run build:tui
 ```
 
+### Linting
+
+```bash
+npm run lint
+```
+
+`npm run lint` runs ESLint on `typescript/cast-cli/src`. The flat config enables one type-aware rule, `@typescript-eslint/no-floating-promises`, as an error. `npm run lint` inside `typescript/cast-cli` is the same check (`eslint . --ext .ts`). ESLint 10 needs Node.js 20.19 or newer. The Quality Checks job already uses Node 20.
+
 ### Testing
 
 ```bash
@@ -654,7 +662,7 @@ Every push to `main` and every pull request runs the **Test Coverage** workflow 
 
 - **TypeScript tests with coverage** — Node 18.x and 20.x in parallel, with `nyc` instrumentation and `tsc --noEmit` type checking.
 - **Python tests with coverage** — Python 3.11 and 3.12. The Python step installs the package and its test extras from `python/pyproject.toml` with `pip install -e ".[test]"`. `pyyaml` and `langchain-core` are installed earlier for the TypeScript suite. A collection error or a failing test fails the job.
-- **Quality checks** — `tsc --noEmit`, `ruff`/`flake8` linting, and `mypy` type checking on the same Python 3.11 + Node 20 runner.
+- **Quality checks** — `npm run lint` (`@typescript-eslint/no-floating-promises` on `typescript/cast-cli/src`), `tsc --noEmit`, `ruff`/`flake8` linting, and `mypy` type checking on the same Python 3.11 + Node 20 runner.
 - **Coverage Summary** — downloads the matrix artifacts and posts a sticky PR comment summarising per-language coverage runs. The comment is updated in place on subsequent runs (it is identified by an HTML marker, so only one coverage comment accumulates per PR).
 - **Coverage Threshold Check** — enforces the `COVERAGE_THRESHOLD` env var (default 70%). Skipped on PRs by default; opt in by including `[enforce-coverage]` in the PR title or commit message, or by pushing to `main`.
 - **Build Verification** — runs `npm run build` to confirm the TypeScript projects still produce their `dist/` artifacts.
