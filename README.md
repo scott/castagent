@@ -313,7 +313,7 @@ The Builder Agent will:
 
 The Builder stores a model, tools, and permissions only in the documented `agent.yaml` shape: `brain.model`, `tools.builtin`, and `harness.permissions`. A flat `tools` list, a top-level `model`, a top-level `permissions` block, or a top-level `memory` block is rejected and the file is left unchanged. The Builder then says those settings were not applied. Permission levels are `always-allow`, `ask`, and `deny`. Model ids must be in the catalog, including the id `recommend_model` returns. Each undo-log entry gets its own id.
 
-Pipe a description when stdin is not a terminal. Cast writes the scaffold without opening the TUI. A `Name: my-agent` label sets the agent name. Otherwise Cast derives one from the description:
+Pipe a description when stdin is not a terminal. Cast writes the scaffold without opening the TUI. A `Name: my-agent` label sets the agent name. Otherwise Cast derives one from the description. If the builder fails, `cast new` prints the builder's own error, including when the builder exits before it reads the description:
 
 ```bash
 echo "Summarises incoming email and drafts replies." | cast new

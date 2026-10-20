@@ -186,21 +186,27 @@ export default class New extends Command {
   }
 
   private async createFromStdin(): Promise<void> {
-    const description = this.readPipedDescription()
+    const description = await this.readPipedDescription()
     this.checkVenv()
     const created = this.createAgentFromDescription(description)
     this.log(`Created agent '${created.name}' at ${created.path}`)
     this.log(`Run 'cast dev ${created.name}' to start it.`)
   }
 
-  private readPipedDescription(): string {
-    let raw = ''
+  private async readPipedDescription(): Promise<string> {
+    // `run` already touched `process.stdin` to see if it is a TTY. After
+    // that, `readFileSync(0)` throws EAGAIN once the description is larger
+    // than the pipe buffer. The stdin stream waits for the rest.
+    const chunks: Buffer[] = []
     try {
-      raw = fs.readFileSync(0, 'utf8')
+      for await (const chunk of process.stdin) {
+        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+      }
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : String(err)
       this.error(`Failed to read stdin: ${message}`)
     }
+    const raw = Buffer.concat(chunks).toString('utf8')
     if (!raw.trim()) {
       this.error('No description on stdin. Pipe a description, for example: echo "Summarises incoming email and drafts replies." | cast new')
     }
@@ -219,8 +225,13 @@ export default class New extends Command {
       },
     })
 
-    if (result.error) {
-      this.error(`Failed to create agent: ${result.error.message}`)
+    // A builder that exits before reading the description (an import
+    // error, a config error) closes stdin while this write is still in
+    // flight. spawnSync then sets EPIPE, and also keeps the builder's
+    // status and stderr. The pipe error is not the failure to report.
+    const errno = result.error as NodeJS.ErrnoException | undefined
+    if (errno && errno.code !== 'EPIPE') {
+      this.error(`Failed to create agent: ${errno.message}`)
     }
     if (result.status !== 0) {
       const detail = `${result.stderr || result.stdout || 'Failed to create agent'}`.trim()
