@@ -439,18 +439,54 @@ describe('ensureDockerfile', () => {
     expect(content).to.equal('FROM custom:latest\n')
   })
 
+  it('replaces a generated Dockerfile that installs gcc and does not copy cast', () => {
+    const dockerfilePath = path.join(tempDir, 'Dockerfile')
+    const old = `FROM python:3.11-slim-bookworm AS builder
+WORKDIR /build
+RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
+FROM python:3.11-slim-bookworm
+WORKDIR /app
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+ENV PYTHONPATH=/usr/local
+CMD ["python", "-m", "cast.runtime"]
+`
+    fs.writeFileSync(dockerfilePath, old)
+    ensureDockerfile(tempDir)
+    const dockerfile = fs.readFileSync(dockerfilePath, 'utf8')
+    expect(dockerfile).to.not.equal(old)
+    expect(dockerfile).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
+    expect(dockerfile).to.include('PYTHONPATH=/usr/local')
+    expect(dockerfile).to.not.include('COPY .cast-runtime/cast')
+  })
+
+  it('does not replace a Dockerfile that copies the cast package', () => {
+    const dockerfilePath = path.join(tempDir, 'Dockerfile')
+    const castFile = `FROM python:3.11-slim-bookworm AS builder
+RUN apt-get update && apt-get install -y gcc
+FROM python:3.11-slim-bookworm
+COPY .cast-runtime/cast /app/cast
+ENV PYTHONPATH=/app
+CMD ["python", "-m", "cast.runtime"]
+`
+    fs.writeFileSync(dockerfilePath, castFile)
+    ensureDockerfile(tempDir)
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal(castFile)
+  })
+
   it('does not write a private requirements list', () => {
     ensureDockerfile(tempDir)
     expect(fs.existsSync(path.join(tempDir, 'requirements.txt'))).to.equal(false)
   })
 
-  it('installs git in the runtime stage', () => {
+  it('installs git without gcc or a compiler stage', () => {
     ensureDockerfile(tempDir)
     const dockerfile = fs.readFileSync(path.join(tempDir, 'Dockerfile'), 'utf8')
     const runtime = runtimeStage(dockerfile)
     expect(runtime).to.match(/apt-get install -y --no-install-recommends git\b/)
     expect(runtime).to.match(/rm -rf \/var\/lib\/apt\/lists\/\*/)
-    expect(runtime).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
+    expect(dockerfile).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
+    expect(dockerfile).to.not.include('AS builder')
+    expect(dockerfile).to.include('# cast-generated-dockerfile')
     expect(dockerfileInstallsRuntimeGit(dockerfile)).to.equal(true)
   })
 })
@@ -478,7 +514,8 @@ describe('ensureCastRuntimeDockerfile', () => {
       const runtime = runtimeStage(dockerfile)
       expect(runtime).to.match(/apt-get install -y --no-install-recommends git\b/)
       expect(runtime).to.match(/rm -rf \/var\/lib\/apt\/lists\/\*/)
-      expect(runtime).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
+      expect(dockerfile).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
+      expect(dockerfile).to.not.include('AS builder')
       expect(dockerfileInstallsRuntimeGit(dockerfile)).to.equal(true)
       expect(requirements).to.not.match(/^cast\b/m)
       expect(requirements).to.include('GitPython')
@@ -527,6 +564,7 @@ CMD ["python", "-m", "cast.runtime"]
     expect(dockerfile).to.not.equal(builderOnly)
     expect(runtimeStage(dockerfile)).to.match(/apt-get install -y --no-install-recommends git\b/)
     expect(runtimeStage(dockerfile)).to.match(/rm -rf \/var\/lib\/apt\/lists\/\*/)
+    expect(dockerfile).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
     expect(dockerfile).to.include('COPY .cast-runtime/cast /app/cast')
   })
 
@@ -553,6 +591,7 @@ CMD ["python", "-m", "cast.runtime"]
     expect(dockerfile).to.not.equal(recommended)
     expect(runtime).to.match(/apt-get install -y --no-install-recommends git\b/)
     expect(runtime).to.match(/rm -rf \/var\/lib\/apt\/lists\/\*/)
+    expect(dockerfile).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
   })
 
   it('replaces a generated Dockerfile that installs git and leaves the apt lists', () => {
@@ -578,9 +617,9 @@ CMD ["python", "-m", "cast.runtime"]
     expect(runtime).to.match(/rm -rf \/var\/lib\/apt\/lists\/\*/)
   })
 
-  it('keeps a generated Dockerfile that installs git without recommended packages', () => {
+  it('replaces a generated Dockerfile that still installs gcc in the builder', () => {
     const dockerfilePath = path.join(agentDir, 'Dockerfile')
-    const current = `FROM python:3.11-slim-bookworm AS builder
+    const withCompiler = `FROM python:3.11-slim-bookworm AS builder
 
 WORKDIR /build
 RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
@@ -593,9 +632,66 @@ ENV PYTHONPATH=/app
 # keep-tui-sentinel
 CMD ["python", "-m", "cast.runtime"]
 `
+    fs.writeFileSync(dockerfilePath, withCompiler)
+    ensureCastRuntimeDockerfile(agentDir)
+    const dockerfile = fs.readFileSync(dockerfilePath, 'utf8')
+    expect(dockerfile).to.not.equal(withCompiler)
+    expect(dockerfile).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
+    expect(dockerfile).to.match(/apt-get install -y --no-install-recommends git\b/)
+    expect(dockerfile).to.include('COPY .cast-runtime/cast /app/cast')
+  })
+
+  it('replaces the legacy single-stage Dockerfile that installs gcc and git together', () => {
+    const dockerfilePath = path.join(agentDir, 'Dockerfile')
+    const legacy = `FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \\
+    gcc \\
+    git \\
+    && rm -rf /var/lib/apt/lists/*
+
+COPY .cast-runtime/cast /app/cast
+ENV PYTHONPATH=/app
+CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "8080", "--host", "0.0.0.0"]
+`
+    fs.writeFileSync(dockerfilePath, legacy)
+    ensureCastRuntimeDockerfile(agentDir)
+    const dockerfile = fs.readFileSync(dockerfilePath, 'utf8')
+    expect(dockerfile).to.not.equal(legacy)
+    expect(dockerfile).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
+    expect(dockerfile).to.match(/apt-get install -y --no-install-recommends git\b/)
+    expect(dockerfile).to.match(/rm -rf \/var\/lib\/apt\/lists\/\*/)
+    expect(dockerfile).to.include('COPY .cast-runtime/cast /app/cast')
+  })
+
+  it('keeps a generated Dockerfile that installs git without a compiler', () => {
+    const dockerfilePath = path.join(agentDir, 'Dockerfile')
+    const current = `FROM python:3.11-slim-bookworm
+# cast-generated-dockerfile
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+
+COPY .cast-runtime/cast /app/cast
+ENV PYTHONPATH=/app
+# keep-tui-sentinel
+CMD ["python", "-m", "cast.runtime"]
+`
     fs.writeFileSync(dockerfilePath, current)
     ensureCastRuntimeDockerfile(agentDir)
     expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal(current)
+  })
+
+  it('leaves a custom Dockerfile that installs gcc', () => {
+    const dockerfilePath = path.join(agentDir, 'Dockerfile')
+    const custom = 'FROM custom:latest\nRUN apt-get install -y gcc\nCMD ["python", "-m", "cast.runtime"]\n'
+    fs.writeFileSync(dockerfilePath, custom)
+    ensureCastRuntimeDockerfile(agentDir)
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal(custom)
   })
 })
 

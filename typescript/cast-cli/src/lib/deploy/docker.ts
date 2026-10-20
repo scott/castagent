@@ -20,8 +20,8 @@ import {
   createDockerignore,
   storeAuthToken,
   saveDeployment,
+  ensureCastRuntimeDockerfile,
 } from './deploy-utils'
-import {runtimeDockerfileCmd} from '../runtime-args'
 import {writeRequirementsTxt} from './requirements'
 
 // Helper to run a shell command and return its exit code
@@ -396,10 +396,11 @@ export default class DockerDeploy extends Command {
 
     fs.cpSync(castPackageSource, castRuntimeDir, {recursive: true})
 
-    // Generate deployment files
+    // Generate deployment files. A custom Dockerfile is left in place.
+    // --no-build keeps an existing file, including a stale generated one.
     const dockerfilePath = path.join(agentPath, 'Dockerfile')
-    if (!fs.existsSync(dockerfilePath) || !flags['no-build']) {
-      this.createDockerfile(agentPath)
+    if (!flags['no-build'] || !fs.existsSync(dockerfilePath)) {
+      ensureCastRuntimeDockerfile(agentPath)
     }
 
     this.createDockerignore(agentPath)
@@ -523,40 +524,6 @@ export default class DockerDeploy extends Command {
       .map((row: {volume_id?: string | null}) => row.volume_id)
     await removeDockerMemoryVolumes(agentName, recorded, dockerRunner())
     await removeDockerImage(agentName, dockerRunner())
-  }
-
-  private createDockerfile(agentPath: string): void {
-    const dockerfile = `FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy and install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy cast runtime package
-COPY .cast-runtime/cast /app/cast
-
-# Copy agent files
-COPY . /app/agent/
-
-# Set environment variables
-ENV CAST_AGENT_PATH=/app/agent
-ENV PYTHONPATH=/app
-
-# Expose A2A HTTP server port
-EXPOSE 8080
-
-# Run agent A2A server
-${runtimeDockerfileCmd()}
-`
-    fs.writeFileSync(path.join(agentPath, 'Dockerfile'), dockerfile)
   }
 
   private createDockerignore(agentPath: string): void {

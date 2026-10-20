@@ -252,9 +252,12 @@ The deployment is a single Docker image that contains:
   packages.
 - The git binary, installed with `apt-get install -y --no-install-recommends git`.
   The same step deletes the apt package lists. The runtime imports GitPython
-  before the server binds, and that import fails when git is missing.
+  before the server binds. GitPython 3.2.1 raises ImportError when the git
+  binary is missing.
   Recommended packages such as openssh-client, xauth, less, and patch stay out of the image.
   perl stays, because git depends on it.
+  gcc is not installed. langgraph, langchain, httpx, starlette, uvicorn, and
+  PyYAML install from wheels on python:3.11-slim.
 - For DigitalOcean with `--with-tui`: the `cast-tui` binary + Bun, so you
   can SSH into the droplet and run `cast-tui` inside the container.
 
@@ -295,7 +298,7 @@ Docker, Fly, Sprites, Droplets, MicroVMs, and Railway install that file with
 not keep its own package list. `--provider local` writes the file and then
 stops, because that provider is not implemented and does not run pip.
 
-Droplet, MicroVM, and Fly images copy that same package to `/app/cast` and set
+Docker, Droplet, MicroVM, and Fly images copy that same package to `/app/cast` and set
 `PYTHONPATH=/app`. Their `requirements.txt` is the same file and also omits
 `cast`. Fly deploy then waits until
 `https://cast-<agent>.fly.dev/.well-known/agent.json` returns the agent
@@ -304,12 +307,13 @@ fails the deploy and Cast does not print a success banner. A current
 log line `Error loading agent config` fails that check while the machine
 is still started or starting.
 
-The runtime stage installs git with
-`--no-install-recommends` and removes the apt lists. gcc stays in the
-builder stage. A generated Dockerfile that still points `PYTHONPATH` at
-`/usr/local`, or whose runtime stage omits
+The image installs git with
+`--no-install-recommends` and removes the apt lists. It does not install
+gcc. langgraph, langchain, httpx, starlette, uvicorn, and PyYAML install
+from wheels on python:3.11-slim. A generated Dockerfile that still
+installs gcc, still points `PYTHONPATH` at `/usr/local`, or omits
 `apt-get install -y --no-install-recommends git` and the apt list cleanup,
-is replaced on the next deploy.
+is replaced on the next deploy. A custom Dockerfile is left in place.
 
 `cast deploy --provider docker` and `cast deploy --provider digitalocean`
 wait until the container is still running and the runtime has printed

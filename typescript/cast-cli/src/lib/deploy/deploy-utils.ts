@@ -509,38 +509,74 @@ export async function forgetDeploymentTokens(
 export function ensureDockerfile(agentPath: string): void {
   const dockerfilePath = path.join(agentPath, 'Dockerfile')
   if (!fs.existsSync(dockerfilePath)) {
-    // Multi-stage Docker build:
-    // - Stage 1 (builder): gcc, for Python packages with C extensions.
-    //   gcc is about 250 MB and is not copied into the runtime image.
-    // - Stage 2 (runtime): installed packages and git. GitPython imports
-    //   the git binary before the server binds.
-    const dockerfile = `FROM python:3.11-slim-bookworm AS builder
+    fs.writeFileSync(dockerfilePath, renderAgentDockerfile())
+  } else {
+    const current = fs.readFileSync(dockerfilePath, 'utf8')
+    // Railway does not stage the Cast package. Refresh only a generated
+    // file that still installs a compiler or skips the slim git install,
+    // and leave a Cast-copying Dockerfile for ensureCastRuntimeDockerfile.
+    if (
+      isGeneratedAgentDockerfile(current)
+      && !dockerfileCopiesCastPackage(current)
+      && (dockerfileInstallsGcc(current) || !dockerfileInstallsRuntimeGit(current))
+    ) {
+      fs.writeFileSync(dockerfilePath, renderAgentDockerfile())
+    }
+  }
+}
 
-WORKDIR /build
+const GENERATED_DOCKERFILE_MARKER = '# cast-generated-dockerfile'
+const LEGACY_BUILDER_MARKER = 'FROM python:3.11-slim-bookworm AS builder'
 
-# Copy requirements and install dependencies
-COPY requirements.txt .
-RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/* \\
-    && pip install --no-cache-dir -r requirements.txt
+export interface AgentDockerfileOptions {
+  /**
+   * Copy `.cast-runtime/cast` to `/app/cast` and set `PYTHONPATH=/app`.
+   * Docker, Fly, Droplets, and MicroVMs do this. Railway's first-time
+   * file does not, because that deploy does not stage the package.
+   */
+  copyCastPackage?: boolean
+}
 
-# Runtime stage. gcc stays in the builder. git is installed here
-# with --no-install-recommends, and the apt lists are removed.
-FROM python:3.11-slim-bookworm
+/**
+ * Generated agent image. Docker, Fly, Railway, Droplets, and MicroVMs
+ * all call this helper. A new provider should call it too, instead of
+ * pasting another Dockerfile.
+ *
+ * Git stays. GitPython 3.2.1 raises ImportError at import when the git
+ * binary is missing, and the runtime imports GitPython while loading tools.
+ * gcc does not. The declared packages, including langgraph, langchain,
+ * httpx, starlette, uvicorn, and PyYAML, install from wheels on
+ * python:3.11-slim.
+ */
+export function renderAgentDockerfile(options: AgentDockerfileOptions = {}): string {
+  const copyCastPackage = options.copyCastPackage === true
+  const castBlock = copyCastPackage
+    ? `# The Cast package is copied from the build context, not installed from requirements.txt.
+COPY .cast-runtime/cast /app/cast
+
+`
+    : ''
+  const pythonPath = copyCastPackage ? '/app' : '/usr/local'
+  return `FROM python:3.11-slim-bookworm
+${GENERATED_DOCKERFILE_MARKER}
 
 WORKDIR /app
 
+# GitPython raises ImportError at import when the git binary is missing.
+# The runtime imports GitPython while loading its tools.
+# Packages install from wheels, so this image does not install a compiler.
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
-# Copy installed Python packages from builder stage
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy agent files
+${castBlock}# Copy agent files
 COPY . /app/agent/
 
 # Set environment variables
 ENV CAST_AGENT_PATH=/app/agent
-ENV PYTHONPATH=/usr/local
+ENV PYTHONPATH=${pythonPath}
 
 # Expose port
 EXPOSE 8080
@@ -548,56 +584,15 @@ EXPOSE 8080
 # Run agent
 ${runtimeDockerfileCmd()}
 `
-    fs.writeFileSync(dockerfilePath, dockerfile)
-  }
 }
 
-const GENERATED_DOCKERFILE_MARKER = 'FROM python:3.11-slim-bookworm AS builder'
-
 /**
- * Image used by DigitalOcean Droplets and MicroVMs.
+ * Image used by Docker, Fly, DigitalOcean Droplets, and MicroVMs.
  * `cast` is copied onto PYTHONPATH. It is not a requirements.txt entry,
  * because pip would look for a different package of that name.
  */
 export function castRuntimeDockerfile(): string {
-  return `FROM python:3.11-slim-bookworm AS builder
-
-WORKDIR /build
-
-# Copy requirements and install dependencies
-COPY requirements.txt .
-RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/* \\
-    && pip install --no-cache-dir -r requirements.txt
-
-# Runtime stage. gcc stays in the builder. git is installed here with
-# --no-install-recommends, and the apt lists are removed. GitPython
-# exits when the git binary is missing.
-FROM python:3.11-slim-bookworm
-
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-
-# Copy installed Python packages from the builder stage
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-
-# The Cast package is copied from the build context, not installed from requirements.txt.
-COPY .cast-runtime/cast /app/cast
-
-# Copy agent files
-COPY . /app/agent/
-
-# Set environment variables
-ENV CAST_AGENT_PATH=/app/agent
-ENV PYTHONPATH=/app
-
-# Expose port
-EXPOSE 8080
-
-# Run agent
-${runtimeDockerfileCmd()}
-`
+  return renderAgentDockerfile({copyCastPackage: true})
 }
 
 export function dockerfileCopiesCastPackage(content: string): boolean {
@@ -605,36 +600,52 @@ export function dockerfileCopiesCastPackage(content: string): boolean {
 }
 
 export function isGeneratedAgentDockerfile(content: string): boolean {
-  return content.includes(GENERATED_DOCKERFILE_MARKER) && content.includes('cast.runtime')
+  if (!content.includes('cast.runtime')) return false
+  if (content.includes(GENERATED_DOCKERFILE_MARKER)) return true
+  if (content.includes(LEGACY_BUILDER_MARKER)) return true
+  const flat = flattenDockerfile(content)
+  return content.includes('# Install system dependencies')
+    && /apt-get install\b[^\n]*\bgcc\b/.test(flat)
+    && /apt-get install\b[^\n]*\bgit\b/.test(flat)
+}
+
+function flattenDockerfile(content: string): string {
+  return content.replace(/\\\n/g, ' ')
 }
 
 /**
- * Git installed beside gcc in the builder stage is discarded with that
- * stage. The runtime stage installs git with --no-install-recommends and
- * removes the apt lists, so recommended packages stay out of the image.
+ * git is installed with --no-install-recommends and the apt lists are
+ * removed, so recommended packages stay out of the image.
  */
 export function dockerfileInstallsRuntimeGit(content: string): boolean {
   const stages = content.split(/\n(?=FROM\s)/)
-  const runtime = (stages[stages.length - 1] ?? content).replace(/\\\n/g, ' ')
+  const runtime = flattenDockerfile(stages[stages.length - 1] ?? content)
   return /apt-get install -y --no-install-recommends\b[^\n]*\bgit\b/.test(runtime)
     && /rm -rf \/var\/lib\/apt\/lists\/\*/.test(runtime)
 }
 
+function dockerfileInstallsGcc(content: string): boolean {
+  return /apt-get install\b[^\n]*\bgcc\b/.test(flattenDockerfile(content))
+}
+
+function isCurrentCastRuntimeDockerfile(content: string): boolean {
+  return dockerfileCopiesCastPackage(content)
+    && /PYTHONPATH=\/app(?:\s|$)/.test(content)
+    && dockerfileInstallsRuntimeGit(content)
+    && !dockerfileInstallsGcc(content)
+}
+
 /**
- * Write the Droplet and MicroVM Dockerfile, or replace a previously
- * generated file that omitted the Cast package or a runtime git install
- * that skips recommended packages and apt lists. A custom Dockerfile
- * is left in place.
+ * Write the shared agent Dockerfile, or replace a previously generated
+ * file that omitted the Cast package, still installs gcc, or whose git
+ * install pulls recommended packages or leaves the apt lists. A custom
+ * Dockerfile is left in place.
  */
 export function ensureCastRuntimeDockerfile(agentPath: string): void {
   ensureDockerfile(agentPath)
   const dockerfilePath = path.join(agentPath, 'Dockerfile')
   const current = fs.readFileSync(dockerfilePath, 'utf8')
-  if (
-    dockerfileCopiesCastPackage(current)
-    && /PYTHONPATH=\/app(?:\s|$)/.test(current)
-    && dockerfileInstallsRuntimeGit(current)
-  ) return
+  if (isCurrentCastRuntimeDockerfile(current)) return
   if (!isGeneratedAgentDockerfile(current)) return
   fs.writeFileSync(dockerfilePath, castRuntimeDockerfile())
 }
