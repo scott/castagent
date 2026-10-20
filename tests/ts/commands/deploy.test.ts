@@ -982,14 +982,49 @@ describe('Deploy Command - recorded release version', () => {
     })
   })
 
+  async function expectBlockVersion(agentName: string, yaml: string, version: string): Promise<void> {
+    stubReleasePython('9.9')
+    const {recorded, logs} = await deployRecorded(agentName, yaml, 'latest')
+    expect(recorded).to.equal(version)
+    expect(recorded).to.not.include('\n')
+    expect(logs.filter(entry => entry.startsWith('Warning:'))).to.deep.equal([])
+  }
+
   it('records the trimmed text of a literal block version', async () => {
     const agentName = `deploy-block-version-${Date.now()}`
     await withAgent(agentName, async () => {
-      stubReleasePython('9.9')
-      const yaml = 'name: block\nversion: |\n  1.4.5\ndescription: stay\n'
-      const {recorded, logs} = await deployRecorded(agentName, yaml, 'latest')
-      expect(recorded).to.equal('1.4.5')
-      expect(logs.filter(entry => entry.startsWith('Warning:'))).to.deep.equal([])
+      await expectBlockVersion(agentName, 'name: block\nversion: |\n  1.4.5\ndescription: stay\n', '1.4.5')
+    })
+  })
+
+  for (const header of ['|-', '|+', '>', '>-', '|2']) {
+    it(`records a ${header} block scalar version as 1.4.5`, async () => {
+      const slug = header.replace(/[^a-z0-9]/gi, 'x')
+      const agentName = `deploy-block-${slug}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      await withAgent(agentName, async () => {
+        await expectBlockVersion(agentName, `name: block\nversion: ${header}\n  1.4.5\ndescription: stay\n`, '1.4.5')
+      })
+    })
+  }
+
+  it('records only the first line of a multi-line literal block version', async () => {
+    const agentName = `deploy-block-multiline-${Date.now()}`
+    await withAgent(agentName, async () => {
+      await expectBlockVersion(agentName, 'name: block\nversion: |\n  1.4.5\n  extra\ndescription: stay\n', '1.4.5')
+    })
+  })
+
+  it('records only the first line of a multi-line folded block version', async () => {
+    const agentName = `deploy-block-folded-${Date.now()}`
+    await withAgent(agentName, async () => {
+      await expectBlockVersion(agentName, 'name: block\nversion: >\n  1.4.5\n  extra\ndescription: stay\n', '1.4.5')
+    })
+  })
+
+  it('records a plain 1.10 version without turning it into 1.1', async () => {
+    const agentName = `deploy-plain-110-${Date.now()}`
+    await withAgent(agentName, async () => {
+      await expectBlockVersion(agentName, 'name: plain\nversion: 1.10\n', '1.10')
     })
   })
 

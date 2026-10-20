@@ -86,7 +86,8 @@ function buildDeployFlags(): Record<string, any> {
  * releases.json `current` is the newest release, which can be newer
  * than the files left in the directory after a failed upgrade.
  * An empty field, a YAML null (`null`, `~`), or an unreadable field returns null.
- * A `|` block scalar is its trimmed text. A leading byte-order mark is ignored.
+ * A block scalar (`|` or `>`, optional chomp and indent) is its first
+ * non-empty line, trimmed. A leading byte-order mark is ignored.
  */
 function readAgentDirReleaseVersion(agentPath: string): string | null {
   const yamlPath = path.join(agentPath, 'agent.yaml')
@@ -99,11 +100,8 @@ function readAgentDirReleaseVersion(agentPath: string): string | null {
   if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
   const lines = text.split(/\r?\n/)
   for (let index = 0; index < lines.length; index++) {
-    const block = literalBlockVersion(lines, index)
-    if (block !== undefined) {
-      const trimmed = block.trim()
-      return trimmed.length > 0 ? trimmed : null
-    }
+    const block = blockVersion(lines, index)
+    if (block !== undefined) return block.length > 0 ? block : null
     const value = topLevelVersionScalar(lines[index])
     if (value === undefined) continue
     const trimmed = value.trim()
@@ -112,24 +110,25 @@ function readAgentDirReleaseVersion(agentPath: string): string | null {
   return null
 }
 
-const LITERAL_BLOCK_VERSION = /^version[ \t]*:[ \t]*\|[ \t]*(?:#.*)?$/
+// `|` or `>`, then an optional indent digit 1-9 and chomp (`-` or `+`)
+// in either order. A trailing comment is ignored. The recorded value is
+// the first non-empty content line, so a multi-line block cannot store
+// a newline.
+const BLOCK_VERSION = /^version[ \t]*:[ \t]*[|>](?:[1-9][+-]?|[+-][1-9]?)?[ \t]*(?:#.*)?$/
 
-function literalBlockVersion(lines: string[], index: number): string | undefined {
-  if (!LITERAL_BLOCK_VERSION.test(lines[index] ?? '')) return undefined
-  const content: string[] = []
+function blockVersion(lines: string[], index: number): string | undefined {
+  if (!BLOCK_VERSION.test(lines[index] ?? '')) return undefined
   let indent = -1
   for (let cursor = index + 1; cursor < lines.length; cursor++) {
     const line = lines[cursor]
-    if (line.trim() === '') {
-      content.push('')
-      continue
-    }
+    if (line.trim() === '') continue
     const leading = /^ */.exec(line)?.[0].length ?? 0
     if (leading === 0 || (indent !== -1 && leading < indent)) break
     if (indent === -1) indent = leading
-    content.push(line.slice(indent))
+    const text = line.slice(indent).trim()
+    if (text.length > 0) return text
   }
-  return content.join('\n')
+  return ''
 }
 
 function isYamlNullToken(value: string): boolean {
