@@ -8,6 +8,7 @@ import inspect
 import shutil
 import subprocess
 import sys
+import sysconfig
 from importlib.metadata import entry_points
 from pathlib import Path
 
@@ -25,11 +26,14 @@ def _script_path(name: str) -> str:
     found = shutil.which(name)
     if found:
         return found
-    candidate = Path(sys.executable).resolve().parent / name
+    # sys.executable in a venv is a symlink. Resolving it lands in the
+    # system interpreter directory, which does not contain these scripts.
+    scripts = sysconfig.get_path("scripts")
+    candidate = Path(scripts) / name
     if candidate.is_file():
         return str(candidate)
     pytest.fail(
-        f"{name} console script was not found on PATH or next to {sys.executable}"
+        f"{name} console script was not found on PATH or in {scripts}"
     )
 
 
