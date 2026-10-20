@@ -127,13 +127,15 @@ jobs:
       # Python Tests
       # =========================================================================
       - name: Install Python test dependencies
+        # Runtime dependencies and test extras (pytest, pytest-cov,
+        # pytest-asyncio, pytest-mock, httpx) come from pyproject.toml.
+        # CI installs this file, not python/requirements.lock.
         run: |
           pip install --upgrade pip
-          pip install pytest pytest-cov pytest-asyncio pytest-mock httpx
+          pip install -e ".[test]"
         working-directory: python
 
       - name: Run Python tests with coverage
-        # test_host_tui_launcher.py skips when langgraph is missing.
         # A collection error or a failing test fails this job.
         # Session storage is not in this step. That suite is the
         # required session-python job, and it runs from the repo root.
@@ -210,8 +212,8 @@ jobs:
 
       - name: Install pytest
         # Topic tests import PyYAML through AgentConfig and langchain-core
-        # for the completion messages. Both are missing from pyproject.toml
-        # (issue #24). Install them here so this job can stay required.
+        # for the completion messages. Those packages are declared in
+        # python/pyproject.toml. This job installs the subset it imports.
         run: pip install pytest pyyaml langchain-core
 
       - name: Run session storage tests

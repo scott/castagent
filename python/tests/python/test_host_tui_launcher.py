@@ -19,10 +19,6 @@ import pytest
 # Add the cast package to the path
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", ".."))
 
-# cast.runtime imports langgraph through the agent runtime. langgraph is not
-# declared in pyproject.toml, so skip this module when it is missing.
-pytest.importorskip("langgraph")
-
 from cast.runtime import A2AServer
 from unittest.mock import MagicMock
 
@@ -56,7 +52,12 @@ class TestAgent:
             "skills": [],
         }
     
-    async def process_message(self, text: str) -> str:
+    async def process_message(
+        self,
+        text: str,
+        session_id: Optional[str] = None,
+        history: Optional[list] = None,
+    ) -> str:
         self.call_count += 1
         self.last_message = text
         return f"You said: {text}"

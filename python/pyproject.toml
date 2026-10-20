@@ -7,6 +7,13 @@ license = {text = "Apache-2.0"}
 requires-python = ">=3.11"
 dependencies = [
   "GitPython>=3.2.1",
+  "langchain-core>=1.6.12",
+  "langchain-openai>=1.7.2",
+  "langgraph>=1.2.16",
+  "PyYAML>=6.0.3",
+  "starlette>=1.9.0",
+  "typing-extensions>=4.16.0",
+  "uvicorn>=0.54.0",
 ]
 
 [project.optional-dependencies]
