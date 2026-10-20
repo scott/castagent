@@ -626,6 +626,7 @@ describe('shutdown command', () => {
         warnings.push(String(line))
       })
       sandbox.stub(console, 'log').callsFake(() => {})
+      sandbox.stub(axios, 'get').resolves({status: 200, data: {microvms: []}})
       const registryDeletes = sandbox.stub(axios, 'delete').resolves({status: 403, data: {message: 'permission denied'}})
 
       try {

@@ -176,6 +176,8 @@ export function deploymentEnv(opts: {
 }
 
 export const MICROVM_CREATE_URL = 'https://api.digitalocean.com/v2/microvms'
+const REGISTRY_SUBSCRIPTION_URL = 'https://api.digitalocean.com/v2/registry/subscription'
+const MICROVM_LIST_URL = 'https://api.digitalocean.com/v2/microvms?per_page=200'
 
 /**
  * Create body for POST /v2/microvms. Environment values travel in this
@@ -235,8 +237,9 @@ export interface RegistryRepositoryList {
 }
 
 /**
- * `included_repositories` from `doctl registry get -o json`.
- * Professional plans report 0, which means the plan does not cap repositories.
+ * `subscription.tier.included_repositories` from GET /v2/registry/subscription.
+ * `doctl registry get` does not include the tier. Professional plans report 0,
+ * which means the plan does not cap repositories.
  */
 export function parseRegistryRepositoryLimit(raw: string): number | undefined {
   let parsed: unknown
@@ -245,30 +248,11 @@ export function parseRegistryRepositoryLimit(raw: string): number | undefined {
   } catch {
     return undefined
   }
-  const found = findIncludedRepositories(parsed)
-  if (found === undefined || !Number.isInteger(found) || found <= 0) return undefined
+  if (!parsed || typeof parsed !== 'object') return undefined
+  const tier = (parsed as {subscription?: {tier?: {included_repositories?: unknown}}}).subscription?.tier
+  const found = tier?.included_repositories
+  if (typeof found !== 'number' || !Number.isInteger(found) || found <= 0) return undefined
   return found
-}
-
-function findIncludedRepositories(node: unknown, depth = 0): number | undefined {
-  if (depth > 6 || node == null) return undefined
-  if (Array.isArray(node)) {
-    for (const item of node) {
-      const found = findIncludedRepositories(item, depth + 1)
-      if (found !== undefined) return found
-    }
-    return undefined
-  }
-  if (typeof node !== 'object') return undefined
-  const record = node as Record<string, unknown>
-  if (typeof record.included_repositories === 'number') return record.included_repositories
-  for (const key of ['subscription', 'tier', 'registry']) {
-    if (key in record) {
-      const found = findIncludedRepositories(record[key], depth + 1)
-      if (found !== undefined) return found
-    }
-  }
-  return undefined
 }
 
 /** Repositories from `doctl registry repository list-v2 -o json`, or the API list shape. */
@@ -718,6 +702,8 @@ export async function removeFailedMicrovmArtifacts(opts: {
   deploymentSha?: string
   removeTokens: boolean
   deleteRepository?: boolean
+  /** MicroVM ids this attempt already removed. They do not keep the repository. */
+  ignoreMicrovmIds?: readonly string[]
   warn?: (message: string) => void
   log?: (message: string) => void
 }): Promise<void> {
@@ -741,7 +727,7 @@ export async function removeFailedMicrovmArtifacts(opts: {
         warn(`Failed to delete registry tag from the failed deploy: ${withoutSecret(message, opts.token)}`)
       }
       if (tagGone && opts.deleteRepository) {
-        await deleteCastAgentRepository(opts.token, opts.agentName, opts.ociRef, {log, warn})
+        await deleteCastAgentRepository(opts.token, opts.agentName, opts.ociRef, {log, warn}, opts.ignoreMicrovmIds)
       }
     }
   }
@@ -814,6 +800,8 @@ interface RegistryCleanupOutput {
 /**
  * Delete `cast-<agent>` and nothing else. A failure is a warning that names
  * that repository. Callers keep going.
+ * `ignoreMicrovmIds` are MicroVMs this shutdown already removed. Any other
+ * live MicroVM whose image uses this repository keeps it.
  */
 export async function deleteCastAgentRepository(
   token: string,
@@ -823,11 +811,25 @@ export async function deleteCastAgentRepository(
     log: message => console.log(message),
     warn: message => console.warn(message),
   },
+  ignoreMicrovmIds: readonly string[] = [],
 ): Promise<void> {
   const repository = castAgentRepositoryName(agentName)
   const url = registryRepositoryDeleteUrl(agentName, ociRef)
   if (!repository || !url || !url.endsWith(`/repositories/${encodeURIComponent(repository)}`)) return
   if (!url.startsWith('https://api.digitalocean.com/v2/registries/')) return
+  const parsed = parsePushedRegistryTag(ociRef)
+  if (!parsed || parsed.repository !== repository) return
+  try {
+    const inUse = await anotherLiveMicrovmUsesRepository(token, parsed.registry, repository, new Set(ignoreMicrovmIds))
+    if (inUse) {
+      output.warn(`Left registry repository '${repository}' in place. Another MicroVM still uses an image from that repository.`)
+      return
+    }
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    output.warn(`Left registry repository '${repository}' in place. Could not list live MicroVMs: ${withoutSecret(message, token)}`)
+    return
+  }
   try {
     const response = await axios.delete(url, {
       headers: {
@@ -838,7 +840,7 @@ export async function deleteCastAgentRepository(
       maxRedirects: 0,
       validateStatus: () => true,
     })
-    if (response.status === 204 || response.status === 200) {
+    if (response.status >= 200 && response.status < 300) {
       output.log(`Deleted registry repository '${repository}'.`)
       return
     }
@@ -909,6 +911,81 @@ interface MicrovmDeploymentRow {
   volume_config?: string | null
 }
 
+function microvmListPage(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 2000) return undefined
+  const absolute = value.startsWith('/') ? `https://api.digitalocean.com${value}` : value
+  let parsed: URL
+  try {
+    parsed = new URL(absolute)
+  } catch {
+    return undefined
+  }
+  if (parsed.protocol !== 'https:' || parsed.hostname !== 'api.digitalocean.com') return undefined
+  if (parsed.username || parsed.password || (parsed.port && parsed.port !== '443')) return undefined
+  if (parsed.pathname !== '/v2/microvms') return undefined
+  return parsed.toString()
+}
+
+function microvmIdOf(vm: unknown): string | undefined {
+  if (!vm || typeof vm !== 'object') return undefined
+  const id = (vm as {id?: unknown}).id
+  if (typeof id === 'string' && id.length > 0) return id
+  if (typeof id === 'number') return String(id)
+  return undefined
+}
+
+function microvmOciRef(vm: unknown): string | undefined {
+  if (!vm || typeof vm !== 'object') return undefined
+  const ref = (vm as {source?: {oci_ref?: unknown}}).source?.oci_ref
+  return typeof ref === 'string' ? ref : undefined
+}
+
+/** Follow GET /v2/microvms. A partial list is a failure so the repository stays. */
+async function listAccountMicrovms(token: string): Promise<unknown[]> {
+  const collected: unknown[] = []
+  let url: string | undefined = MICROVM_LIST_URL
+  for (let page = 0; page < 20 && url; page++) {
+    const response = await axios.get(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+      timeout: 60000,
+      maxRedirects: 0,
+      validateStatus: () => true,
+    })
+    if (response.status < 200 || response.status >= 300) {
+      throw new Error(registryErrorText(response.data, response.status))
+    }
+    const data = response.data as {microvms?: unknown; links?: {pages?: {next?: unknown}}}
+    if (!Array.isArray(data?.microvms)) throw new Error('MicroVM list did not include a microvms array.')
+    collected.push(...data.microvms)
+    const next = data.links?.pages?.next
+    if (next == null || next === '') return collected
+    const parsed = microvmListPage(next)
+    if (!parsed) throw new Error('MicroVM list returned an unexpected next page.')
+    url = parsed
+  }
+  throw new Error('MicroVM list did not finish within 20 pages.')
+}
+
+async function anotherLiveMicrovmUsesRepository(
+  token: string,
+  registry: string,
+  repository: string,
+  ignoreIds: ReadonlySet<string>,
+): Promise<boolean> {
+  const vms = await listAccountMicrovms(token)
+  return vms.some(vm => {
+    const id = microvmIdOf(vm)
+    if (id && ignoreIds.has(id)) return false
+    const image = microvmOciRef(vm)
+    if (!image) return false
+    const parsed = parsePushedRegistryTag(image)
+    return parsed?.registry === registry && parsed.repository === repository
+  })
+}
+
 function otherMicrovmRemains(recorded: MicrovmDeploymentRow[], destroyed: MicrovmDeploymentRow[]): boolean {
   const ids = new Set(destroyed.map(row => row.id).filter((id): id is string => typeof id === 'string' && id.length > 0))
   const volumes = new Set(destroyed.map(row => row.volume_id).filter((id): id is string => typeof id === 'string' && id.length > 0))
@@ -921,9 +998,10 @@ function otherMicrovmRemains(recorded: MicrovmDeploymentRow[], destroyed: Microv
 
 /**
  * After the last MicroVM for this agent is gone, delete the one repository
- * Cast created for it. Another live MicroVM keeps the repository, because
- * its image is still there. A failed tag delete also keeps it: the tag is
- * still in use. Other repository names are never requested.
+ * Cast created for it. Another local MicroVM keeps the repository, and so
+ * does any other live MicroVM on the account whose image uses it. A failed
+ * tag delete also keeps it: the tag is still in use. Other repository names
+ * are never requested.
  */
 async function deleteShutdownAgentRepository(
   token: string,
@@ -934,12 +1012,15 @@ async function deleteShutdownAgentRepository(
 ): Promise<void> {
   if (otherMicrovmRemains(recorded, destroyed)) return
   if (cleaned.some(item => item.status === 'failed')) return
+  const ignoreMicrovmIds = destroyed
+    .map(row => row.volume_id)
+    .filter((id): id is string => typeof id === 'string' && id.length > 0)
   const seen = new Set<string>()
   for (const item of cleaned) {
     if ((item.status !== 'deleted' && item.status !== 'missing') || !item.ociRef || !item.repository) continue
     if (seen.has(item.repository)) continue
     seen.add(item.repository)
-    await deleteCastAgentRepository(token, agentName, item.ociRef)
+    await deleteCastAgentRepository(token, agentName, item.ociRef, undefined, ignoreMicrovmIds)
   }
 }
 
@@ -998,6 +1079,7 @@ export default class MicrovmDeploy extends Command {
       throw new Error('DigitalOcean API token not found. Set DIGITALOCEAN_ACCESS_TOKEN or run doctl auth init.')
     }
     const cleaned: RegistryTagCleanup[] = []
+    const destroyed: MicrovmDeploymentRow[] = []
     for (const row of deployments) {
       const id = row.volume_id
       if (!id) continue
@@ -1011,9 +1093,10 @@ export default class MicrovmDeploy extends Command {
       } else {
         console.log(`MicroVM '${id}' has been destroyed.`)
       }
+      destroyed.push(row)
       cleaned.push(await deleteShutdownRegistryTag(token, agentName, row.volume_config))
     }
-    await deleteShutdownAgentRepository(token, agentName, recorded, deployments, cleaned)
+    await deleteShutdownAgentRepository(token, agentName, recorded, destroyed, cleaned)
   }
 
   static async upgrade(agentName: string, deployment: any, log: (message: string) => void = console.log): Promise<void> {
@@ -1199,6 +1282,7 @@ export default class MicrovmDeploy extends Command {
           deploymentSha,
           removeTokens: !edgeAuthOnly,
           deleteRepository: !otherMicrovm,
+          ignoreMicrovmIds: created?.id ? [created.id] : undefined,
           warn: message => this.warn(message),
           log: message => this.log(message),
         })
@@ -1373,8 +1457,19 @@ async function registryDockerEnv(configDir: string): Promise<NodeJS.ProcessEnv> 
 async function assertRegistryRepositoryCapacity(token: string, registry: string, repository: string): Promise<void> {
   let limit: number | undefined
   try {
-    const got = await doctl(token, ['registry', 'get', '--output', 'json'])
-    if (got.exitCode === 0) limit = parseRegistryRepositoryLimit(got.stdout)
+    const response = await axios.get(REGISTRY_SUBSCRIPTION_URL, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: 'application/json',
+      },
+      timeout: 60000,
+      maxRedirects: 0,
+      validateStatus: () => true,
+    })
+    if (response.status >= 200 && response.status < 300) {
+      const body = typeof response.data === 'string' ? response.data : JSON.stringify(response.data)
+      limit = parseRegistryRepositoryLimit(body)
+    }
   } catch {
     return
   }

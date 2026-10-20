@@ -1,4 +1,5 @@
 import {expect} from 'chai'
+import axios from 'axios'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
@@ -93,6 +94,8 @@ describe('MicroVM doctl argv', () => {
       calls.length = 0
       sandbox.stub(console, 'log')
       sandbox.stub(console, 'warn')
+      sandbox.stub(axios, 'get').resolves({status: 200, data: {microvms: []}})
+      sandbox.stub(axios, 'delete').resolves({status: 204, data: ''})
       sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = [], options?: {env?: NodeJS.ProcessEnv}) => {
         calls.push({command, args, env: options?.env})
         return {exitCode: 0, stdout: '', stderr: ''}

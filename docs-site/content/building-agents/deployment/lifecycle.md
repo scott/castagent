@@ -113,10 +113,13 @@ running. That shutdown also deletes the container registry tag stored
 for the MicroVM. The tag for another MicroVM stays, and so does the
 shared `cast-<agent>` repository. When the shutdown removes the last
 MicroVM for the agent, Cast deletes the `cast-<agent>` repository it
-created. Other repositories in the same registry stay, including ones
-Cast did not create for this agent. If the tag delete or the repository
-delete fails, Cast warns and names the tag or repository that is still
-in the registry, then finishes the rest of shutdown.
+created. Before that delete, Cast lists the live MicroVMs on the account
+and leaves the repository in place, with a warning that names it, when
+another MicroVM's image uses that repository. Other repositories in the
+same registry stay, including ones Cast did not create for this agent.
+If the tag delete or the repository delete fails, Cast warns and names
+the tag or repository that is still in the registry, then finishes the
+rest of shutdown.
 
 When shutdown deletes an auth token, the log names the place it was
 removed from. A token taken from the system keychain is reported as
@@ -141,7 +144,8 @@ attempt, so a missing `ssh` or `ssh-keygen` does not leave
 `~/.cast/tokens/deployments/<sha>.token` behind. A failed MicroVM deploy
 does the same for the token file it wrote, and it deletes the container
 registry tag it pushed, when the MicroVM itself was deleted. When no
-other MicroVM of that agent remains, Cast also deletes the `cast-<agent>`
+other MicroVM of that agent remains, and no other live MicroVM on the
+account uses an image from it, Cast also deletes the `cast-<agent>`
 repository it created. If that MicroVM is still on the account, Cast
 records the deployment and leaves the tag, repository, and token in place.
 

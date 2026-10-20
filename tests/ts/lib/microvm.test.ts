@@ -338,9 +338,34 @@ describe('DigitalOcean MicroVM helpers', () => {
   })
 
   it('reads the repository limit and names only empty cast repositories', () => {
-    expect(parseRegistryRepositoryLimit('[{"name":"cast","subscription":{"tier":{"included_repositories":5}}}]')).to.equal(5)
-    expect(parseRegistryRepositoryLimit('{"registry":{"subscription":{"tier":{"included_repositories":1}}}}')).to.equal(1)
-    expect(parseRegistryRepositoryLimit('[{"name":"cast","subscription":{"tier":{"included_repositories":0}}}]')).to.equal(undefined)
+    expect(parseRegistryRepositoryLimit(JSON.stringify({
+      subscription: {
+        created_at: '2020-01-23T21:19:12Z',
+        updated_at: '2020-11-05T15:53:24Z',
+        tier: {
+          name: 'Basic',
+          slug: 'basic',
+          included_repositories: 5,
+          included_storage_bytes: 5368709120,
+          allow_storage_overage: true,
+          monthly_price_in_cents: 500,
+        },
+      },
+    }))).to.equal(5)
+    expect(parseRegistryRepositoryLimit(JSON.stringify({
+      subscription: {tier: {name: 'Starter', slug: 'starter', included_repositories: 1}},
+    }))).to.equal(1)
+    expect(parseRegistryRepositoryLimit(JSON.stringify({
+      subscription: {tier: {name: 'Professional', slug: 'professional', included_repositories: 0}},
+    }))).to.equal(undefined)
+    expect(parseRegistryRepositoryLimit(JSON.stringify([{
+      name: 'cast',
+      region: 'nyc3',
+      created_at: '2020-01-23T21:19:12Z',
+      storage_usage_bytes: 0,
+      storage_usage_bytes_updated_at: '2020-01-23T21:19:12Z',
+      uuid: '8f3c1c2e-0000-4000-8000-000000000001',
+    }]))).to.equal(undefined)
     expect(parseRegistryRepositoryLimit('not-json')).to.equal(undefined)
     const listed = parseRegistryRepositoryList(JSON.stringify({
       meta: {total: 5},
@@ -517,6 +542,8 @@ describe('failed MicroVM deploy cleanup', () => {
     deployments?: Array<{id: string; provider?: string}>
     registryGet?: string
     repositoryList?: string
+    subscription?: unknown
+    liveMicrovms?: unknown
     pushStderr?: string
     repositoryDeleteStatus?: number
     repositoryDeleteMessage?: string
@@ -572,6 +599,24 @@ describe('failed MicroVM deploy cleanup', () => {
         return ok('')
       }
       return {exitCode: 1, stdout: '', stderr: `unexpected doctl ${rest.join(' ')}`}
+    })
+    sandbox.stub(axios, 'get').callsFake(async (url: unknown, config?: any) => {
+      const target = String(url)
+      expect(target).to.not.include('dop_test')
+      expect(config?.headers?.Authorization).to.equal('Bearer dop_test')
+      calls.push(['axios', 'GET', target])
+      if (target === 'https://api.digitalocean.com/v2/registry/subscription') {
+        return {
+          status: 200,
+          data: opts.subscription ?? {
+            subscription: {tier: {name: 'Professional', slug: 'professional', included_repositories: 0}},
+          },
+        }
+      }
+      if (target.startsWith('https://api.digitalocean.com/v2/microvms')) {
+        return {status: 200, data: opts.liveMicrovms ?? {microvms: []}}
+      }
+      throw new Error(`unexpected GET ${target}`)
     })
     sandbox.stub(axios, 'delete').callsFake(async (url: unknown, config?: any) => {
       expect(String(url)).to.not.include('dop_test')
@@ -698,6 +743,24 @@ describe('failed MicroVM deploy cleanup', () => {
     expect(repositoryDeleteUrls(result.calls)).to.deep.equal([])
   })
 
+  it('does not delete the repository when another live MicroVM uses that image', async () => {
+    const result = await runDeploy({
+      mode: 'probe-401',
+      liveMicrovms: {
+        microvms: [{
+          id: 'vm-elsewhere',
+          source: {oci_ref: 'registry.digitalocean.com/cast/cast-mv-cleanup-agent:from-another-machine'},
+        }],
+      },
+    })
+    expect(result.error?.message).to.include('The MicroVM was deleted.')
+    expect(repositoryDeleteUrls(result.calls)).to.deep.equal([])
+    expect(result.warnings).to.deep.equal([
+      "Left registry repository 'cast-mv-cleanup-agent' in place. Another MicroVM still uses an image from that repository.",
+    ])
+    expect(fs.existsSync(agentTokenPath())).to.equal(false)
+  })
+
   it('warns with the leftover repository when cleanup fails and still removes the token files', async () => {
     const result = await runDeploy({mode: 'probe-401', repositoryDeleteStatus: 403, repositoryDeleteMessage: 'permission denied'})
     expect(result.error?.message).to.include('The MicroVM was deleted.')
@@ -722,7 +785,28 @@ describe('failed MicroVM deploy cleanup', () => {
   it('stops before the image build when the registry repository limit is already reached', async () => {
     const result = await runDeploy({
       mode: 'success',
-      registryGet: JSON.stringify([{name: 'cast', subscription: {tier: {included_repositories: 5}}}]),
+      registryGet: JSON.stringify([{
+        name: 'cast',
+        region: 'nyc3',
+        created_at: '2020-01-23T21:19:12Z',
+        storage_usage_bytes: 0,
+        storage_usage_bytes_updated_at: '2020-01-23T21:19:12Z',
+        uuid: '8f3c1c2e-0000-4000-8000-000000000001',
+      }]),
+      subscription: {
+        subscription: {
+          created_at: '2020-01-23T21:19:12Z',
+          updated_at: '2020-11-05T15:53:24Z',
+          tier: {
+            name: 'Basic',
+            slug: 'basic',
+            included_repositories: 5,
+            included_storage_bytes: 5368709120,
+            allow_storage_overage: true,
+            monthly_price_in_cents: 500,
+          },
+        },
+      },
       repositoryList: JSON.stringify([
         {name: 'gandermd', tag_count: 4, manifest_count: 4},
         {name: 'cast-demo-agent', tag_count: 2, manifest_count: 2},
@@ -738,6 +822,7 @@ describe('failed MicroVM deploy cleanup', () => {
     expect(result.error?.message).to.not.include('gandermd')
     expect(result.error?.message).to.not.include('cast-demo-agent')
     expect(result.calls.some(call => call[0] === 'docker' && call[1] === 'buildx')).to.equal(false)
+    expect(result.calls).to.deep.include(['axios', 'GET', 'https://api.digitalocean.com/v2/registry/subscription'])
     expect(repositoryDeleteUrls(result.calls)).to.deep.equal([])
     expect(result.calls.some(call => call.join(' ').includes('ssh-key'))).to.equal(false)
     expect(fs.existsSync(agentTokenPath())).to.equal(false)
@@ -746,7 +831,17 @@ describe('failed MicroVM deploy cleanup', () => {
   it('keeps deploying when this agent already has a repository at the limit', async () => {
     const result = await runDeploy({
       mode: 'success',
-      registryGet: JSON.stringify([{name: 'cast', subscription: {tier: {included_repositories: 5}}}]),
+      registryGet: JSON.stringify([{
+        name: 'cast',
+        region: 'nyc3',
+        created_at: '2020-01-23T21:19:12Z',
+        storage_usage_bytes: 0,
+        storage_usage_bytes_updated_at: '2020-01-23T21:19:12Z',
+        uuid: '8f3c1c2e-0000-4000-8000-000000000001',
+      }]),
+      subscription: {
+        subscription: {tier: {name: 'Basic', slug: 'basic', included_repositories: 5}},
+      },
       repositoryList: JSON.stringify([
         {name: 'gandermd', tag_count: 1},
         {name: 'cast-demo-agent', tag_count: 1},
@@ -836,6 +931,10 @@ describe('failed MicroVM deploy cleanup', () => {
       return {exitCode: 1, stdout: '', stderr: `unexpected ${command} ${rest.join(' ')}`}
     })
     const repositoryDeletes = sandbox.stub(axios, 'delete').rejects(new Error('refusing live DigitalOcean call'))
+    sandbox.stub(axios, 'get').resolves({
+      status: 200,
+      data: {subscription: {tier: {name: 'Professional', slug: 'professional', included_repositories: 0}}},
+    })
     sandbox.stub(axios, 'post').callsFake(async (url: unknown) => {
       if (String(url).includes('/v2/microvms')) {
         return {status: 201, data: JSON.parse(readyVm())}
@@ -901,6 +1000,10 @@ describe('failed MicroVM deploy cleanup', () => {
       return {exitCode: 1, stdout: '', stderr: `unexpected ${command} ${rest.join(' ')}`}
     })
     const repositoryDeletes = sandbox.stub(axios, 'delete').rejects(new Error('refusing live DigitalOcean call'))
+    sandbox.stub(axios, 'get').resolves({
+      status: 200,
+      data: {subscription: {tier: {name: 'Professional', slug: 'professional', included_repositories: 0}}},
+    })
     sandbox.stub(axios, 'post').callsFake(async (url: unknown) => {
       if (String(url).includes('/v2/microvms')) {
         return {status: 201, data: JSON.parse(readyVm())}
@@ -938,6 +1041,7 @@ describe('MicroVM shutdown registry tag', () => {
   let previousToken: string | undefined
   let logs: string[]
   let registryDeletes: sinon.SinonStub
+  let microvmLists: sinon.SinonStub
 
   function volumeConfig(tag: string, microvmId = 'vm-1'): string {
     return JSON.stringify({
@@ -958,6 +1062,13 @@ describe('MicroVM shutdown registry tag', () => {
     logs = []
     sandbox.stub(console, 'log').callsFake((line: unknown) => {
       logs.push(String(line))
+    })
+    microvmLists = sandbox.stub(axios, 'get').callsFake(async (url: unknown, config?: any) => {
+      expect(String(url)).to.equal('https://api.digitalocean.com/v2/microvms?per_page=200')
+      expect(String(url)).to.not.include('dop_test')
+      expect(String(url)).to.not.include('gandermd')
+      expect(config?.headers?.Authorization).to.equal('Bearer dop_test')
+      return {status: 200, data: {microvms: []}}
     })
     registryDeletes = sandbox.stub(axios, 'delete').callsFake(async (url: unknown, config?: any) => {
       expect(String(url)).to.not.include('dop_test')
@@ -1204,5 +1315,126 @@ describe('MicroVM shutdown registry tag', () => {
     expect(warnings).to.deep.equal([
       "Failed to delete registry repository 'cast-mv-shutdown-agent'. The repository is still in the registry: socket hang up",
     ])
+  })
+
+  it('treats HTTP 202 as a deleted registry repository', async () => {
+    const warnings: string[] = []
+    sandbox.stub(console, 'warn').callsFake((line: unknown) => {
+      warnings.push(String(line))
+    })
+    registryDeletes.callsFake(async (url: unknown, config?: any) => {
+      expect(String(url)).to.equal(agentRepositoryUrl)
+      expect(String(url)).to.not.include('dop_test')
+      expect(config?.headers?.Authorization).to.equal('Bearer dop_test')
+      return {status: 202, data: ''}
+    })
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123')},
+    ])
+    stubDoctl()
+    await MicrovmDeploy.destroy(agentName, {id: 'abc123', volume_id: 'vm-1'})
+    expect(deletedUrls()).to.deep.equal([agentRepositoryUrl])
+    expect(logs).to.include("Deleted registry repository 'cast-mv-shutdown-agent'.")
+    expect(warnings).to.deep.equal([])
+  })
+
+  it('does not count a deployment row with no MicroVM id as destroyed', async () => {
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123', 'vm-1')},
+      {id: 'cccccc', provider: 'microvm'},
+    ])
+    const calls = stubDoctl()
+    await MicrovmDeploy.destroy(agentName)
+    expect(tagDeletes(calls)).to.have.length(1)
+    expect(deletedUrls()).to.deep.equal([])
+    expect(microvmLists.called).to.equal(false)
+  })
+
+  it('leaves the repository when another live MicroVM uses that image', async () => {
+    const warnings: string[] = []
+    sandbox.stub(console, 'warn').callsFake((line: unknown) => {
+      warnings.push(String(line))
+    })
+    microvmLists.callsFake(async (url: unknown, config?: any) => {
+      expect(String(url)).to.equal('https://api.digitalocean.com/v2/microvms?per_page=200')
+      expect(String(url)).to.not.include('dop_test')
+      expect(config?.headers?.Authorization).to.equal('Bearer dop_test')
+      return {
+        status: 200,
+        data: {
+          microvms: [
+            {
+              id: 'vm-1',
+              source: {oci_ref: 'registry.digitalocean.com/cast/cast-a-b:abc123'},
+            },
+            {
+              id: 'vm-other',
+              source: {oci_ref: 'registry.digitalocean.com/cast/cast-a-b:from-another-machine'},
+            },
+            {
+              id: 'vm-gander',
+              source: {oci_ref: 'registry.digitalocean.com/cast/gandermd:latest'},
+            },
+          ],
+        },
+      }
+    })
+    const colliding = JSON.stringify({
+      microvmId: 'vm-1',
+      region: 'mkc1',
+      ociRef: 'registry.digitalocean.com/cast/cast-a-b:abc123',
+      authMode: 'dual',
+      cpu: 1,
+      memory: 2048,
+      idleTimeout: '15m',
+    })
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: colliding},
+    ])
+    const calls = stubDoctl()
+    await MicrovmDeploy.destroy('a.b', {id: 'abc123', volume_id: 'vm-1'})
+    expect(deletedUrls()).to.deep.equal([])
+    expect(calls.some(call => call.includes('gandermd'))).to.equal(false)
+    expect(calls.some(call => call.join(' ').includes('ssh-key'))).to.equal(false)
+    expect(warnings).to.deep.equal([
+      "Left registry repository 'cast-a-b' in place. Another MicroVM still uses an image from that repository.",
+    ])
+  })
+
+  it('warns and keeps the repository when the live MicroVM list fails', async () => {
+    const warnings: string[] = []
+    sandbox.stub(console, 'warn').callsFake((line: unknown) => {
+      warnings.push(String(line))
+    })
+    microvmLists.rejects(new Error('socket hang up'))
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123')},
+    ])
+    stubDoctl()
+    await MicrovmDeploy.destroy(agentName, {id: 'abc123', volume_id: 'vm-1'})
+    expect(deletedUrls()).to.deep.equal([])
+    expect(logs).to.include("MicroVM 'vm-1' has been destroyed.")
+    expect(warnings).to.deep.equal([
+      "Left registry repository 'cast-mv-shutdown-agent' in place. Could not list live MicroVMs: socket hang up",
+    ])
+  })
+
+  it('still deletes the repository when the only listed MicroVM is the one just destroyed', async () => {
+    microvmLists.callsFake(async () => ({
+      status: 200,
+      data: {
+        microvms: [{
+          id: 'vm-1',
+          source: {oci_ref: 'registry.digitalocean.com/cast/cast-mv-shutdown-agent:abc123'},
+        }],
+      },
+    }))
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123')},
+    ])
+    stubDoctl()
+    await MicrovmDeploy.destroy(agentName, {id: 'abc123', volume_id: 'vm-1'})
+    expect(deletedUrls()).to.deep.equal([agentRepositoryUrl])
+    expect(logs).to.include("Deleted registry repository 'cast-mv-shutdown-agent'.")
   })
 })
