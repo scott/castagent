@@ -82,7 +82,11 @@ changes show up as files on disk.
   deploy. Do not hand-edit. `requirements.txt` lists the Cast runtime's
   Python dependencies from `python/pyproject.toml` and any packages in
   `runtime.requirements`. When `pip freeze` or the built-in fallback names
-  the same package, the higher minimum is the one written. The compose file records the service name,
+  the same package, the higher minimum is the one written. A plain name or a
+  lower bound in `runtime.requirements` is raised to that floor. Extras, upper
+  bounds, markers, direct references, and hashes on the agent's line are kept.
+  A pin or upper bound that cannot meet the floor is kept, and deploy warns.
+  The compose file records the service name,
   published port, and memory volume. It does not contain the deployment
   bearer token or provider API keys. Deploy passes the bearer token and
   the API key for `brain.model` to the container as environment variables
