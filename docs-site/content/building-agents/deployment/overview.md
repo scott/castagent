@@ -86,7 +86,10 @@ The launch script goes to `sprite exec` on stdin and contains the
 deployment token plus the API key for `brain.model`. Other inference
 keys stay on the machine running `cast deploy`.
 Before the agent directory is packed, Cast writes `requirements.txt`
-and copies the `cast` package to `.cast-runtime/cast`. The package
+and copies the `cast` package to `.cast-runtime/cast`. The archive
+uses the Docker build-context exclusions, so `.cast/` (release tarballs,
+`releases.json`, and the undo log) stays on the machine running deploy.
+`.cast-runtime/` is packed with the agent. The package
 install on the sprite includes git, which GitPython imports before the
 server binds. The service log is
 `/.sprite/logs/services/cast-agent.log`. `cast logs` prints that file.

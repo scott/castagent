@@ -3,6 +3,7 @@ import {execFileSync, spawn} from 'child_process'
 import * as path from 'path'
 import * as fs from 'fs'
 import * as os from 'os'
+import * as tar from 'tar'
 import {keychain} from '../keychain'
 import {db} from '../sqlite'
 import {
@@ -19,6 +20,7 @@ import {
   generateDeploymentId,
   copyCastPackage,
   deploymentShaFromEnv,
+  dockerBuildContextExcluded,
   isShaPattern,
   type InferenceCatalogEntry,
 } from './deploy-utils'
@@ -495,6 +497,20 @@ function spriteVolumeConfigs(
   return configs
 }
 
+/**
+ * Pack an agent directory for a Sprites upload.
+ * A matching directory is not opened, so an unreadable file under `.cast/`
+ * does not fail the archive.
+ */
+export async function createSpriteAgentArchive(agentPath: string, tarPath: string): Promise<void> {
+  await tar.create({
+    gzip: true,
+    file: tarPath,
+    cwd: agentPath,
+    filter: (entryPath) => !dockerBuildContextExcluded(entryPath),
+  }, ['.'])
+}
+
 async function transferAgentFiles(agentPath: string, spriteName: string, hooks: SpriteLog): Promise<void> {
     // Create local tar
     const tarPath = path.join(os.tmpdir(), `cast-${path.basename(agentPath)}.tar.gz`)
@@ -505,14 +521,9 @@ async function transferAgentFiles(agentPath: string, spriteName: string, hooks: 
         fs.unlinkSync(tarPath)
       }
 
-      // Create tar of agent directory
-      // Note: We don't exclude files here as macOS tar (BSD) has limited exclude support.
-      // The main fix is the streaming transfer to avoid the string length limit.
-      // Large files should be cleaned up before deployment or will be handled by user.
-      execFileSync('tar', ['czf', tarPath, '-C', agentPath, '.'], {
-        encoding: 'utf8',
-        stdio: 'pipe',
-      })
+      // Same exclusions as a Docker build context. `.cast/` is local
+      // release state. `.cast-runtime/` is a separate directory and is packed.
+      await createSpriteAgentArchive(agentPath, tarPath)
 
       // Get file size to check if it's too large
       const tarStats = fs.statSync(tarPath)

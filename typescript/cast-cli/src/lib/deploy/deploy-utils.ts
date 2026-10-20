@@ -1502,6 +1502,114 @@ export async function deleteMemoryVolume(volumeConfig: VolumeConfig, agentName: 
 }
 
 /**
+ * Lines written to `.dockerignore` for a Docker build context.
+ * Sprites applies the same rules when it packs an upload.
+ * `.cast-runtime/` is a different directory and stays in the context.
+ *
+ * The Sprites matcher supports only plain filepath.Match patterns anchored
+ * at the root. Lines must not start with `!` or `/` and must not contain
+ * `**`, because the matcher doesn't implement those.
+ */
+export const DOCKER_BUILD_CONTEXT_IGNORE_LINES = [
+  '.git',
+  '.gitignore',
+  '*.tar',
+  '*.tar.gz',
+  '*.zip',
+  '__pycache__/',
+  '*.py[cod]',
+  '*.pyc',
+  '.DS_Store',
+  '.AppleDouble',
+  '.LSOverride',
+  '*.log',
+  '.env',
+  '.env.*',
+  'cast.db',
+  'cast.db-*',
+  '.cast/',
+  '.castignore',
+  '.cloud-init.yml',
+  '.dockerignore',
+] as const
+
+/** Strip a trailing slash. Docker's filepath.Clean does this; it is not "directories only". */
+function cleanIgnorePattern(pattern: string): string {
+  let cleaned = pattern
+  while (cleaned.endsWith('/')) cleaned = cleaned.slice(0, -1)
+  return cleaned
+}
+
+/**
+ * Go filepath.Match against one full path.
+ * `*` and `?` do not cross `/`. There is no `**`.
+ */
+function filepathMatch(pattern: string): (name: string) => boolean {
+  let body = ''
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern[i]
+    if (char === '*') {
+      body += '[^/]*'
+      continue
+    }
+    if (char === '?') {
+      body += '[^/]'
+      continue
+    }
+    if (char === '[') {
+      const end = pattern.indexOf(']', i + 1)
+      if (end > i + 1) {
+        body += pattern.slice(i, end + 1)
+        i = end
+        continue
+      }
+    }
+    if (char === '\\' && i + 1 < pattern.length) {
+      i += 1
+      body += pattern[i].replace(/[\\^$+?.()|{]/g, '\\$&')
+      continue
+    }
+    body += char.replace(/[\\^$+?.()|{]/g, '\\$&')
+  }
+  const expression = new RegExp(`^${body}$`)
+  return (name: string) => expression.test(name)
+}
+
+const DOCKER_BUILD_CONTEXT_RULES = DOCKER_BUILD_CONTEXT_IGNORE_LINES.map(line => filepathMatch(cleanIgnorePattern(line)))
+
+function contextRelativePath(entryPath: string): string {
+  let rel = entryPath.replace(/\\/g, '/')
+  while (rel.startsWith('./')) rel = rel.slice(2)
+  return rel.replace(/^\/+/, '').replace(/\/+$/, '')
+}
+
+function pathMatchesBuildContext(rel: string): boolean {
+  for (const matches of DOCKER_BUILD_CONTEXT_RULES) {
+    if (matches(rel)) return true
+  }
+  return false
+}
+
+/**
+ * True when a Docker build context would leave this path out.
+ * Each ignore line is cleaned (a trailing `/` is removed) and matched with
+ * filepath.Match against the full root-relative path. A matching directory
+ * excludes everything under it.
+ */
+export function dockerBuildContextExcluded(entryPath: string): boolean {
+  const rel = contextRelativePath(entryPath)
+  if (rel === '' || rel === '.') return false
+  let cursor = rel
+  while (cursor.length > 0) {
+    if (pathMatchesBuildContext(cursor)) return true
+    const slash = cursor.lastIndexOf('/')
+    if (slash <= 0) return false
+    cursor = cursor.slice(0, slash)
+  }
+  return false
+}
+
+/**
  * Creates a comprehensive .dockerignore file in the agent directory to
  * exclude non-runtime files from the Docker build context. This
  * significantly reduces image size by excluding .git, archives,
@@ -1511,26 +1619,6 @@ export async function deleteMemoryVolume(volumeConfig: VolumeConfig, agentName: 
  * the runtime needed at runtime.
  */
 export function createDockerignore(agentPath: string): void {
-  const content = `.git
-.gitignore
-*.tar
-*.tar.gz
-*.zip
-__pycache__/
-*.py[cod]
-*.pyc
-.DS_Store
-.AppleDouble
-.LSOverride
-*.log
-.env
-.env.*
-cast.db
-cast.db-*
-.cast/
-.castignore
-.cloud-init.yml
-.dockerignore
-`
+  const content = `${DOCKER_BUILD_CONTEXT_IGNORE_LINES.join('\n')}\n`
   fs.writeFileSync(path.join(agentPath, '.dockerignore'), content)
 }

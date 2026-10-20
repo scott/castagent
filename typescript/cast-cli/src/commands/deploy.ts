@@ -83,7 +83,7 @@ function buildDeployFlags(): Record<string, any> {
 /**
  * Top-level `version` scalar in the agent directory's agent.yaml.
  * `cast release` writes that field, and the tarball deploys it.
- * releases.json `current` is the newest release, which can be newer
+ * releases.json `current` is the most recently created release, which can be newer
  * than the files left in the directory after a failed upgrade.
  * An empty field, a YAML null (`null`, `~`), or an unreadable field returns null.
  * A block scalar (`|` or `>`, optional chomp and indent) is its first
