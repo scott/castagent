@@ -83,9 +83,13 @@ changes show up as files on disk.
   Python dependencies from `python/pyproject.toml` and any packages in
   `runtime.requirements`. When `pip freeze` or the built-in fallback names
   the same package, the higher minimum is the one written. A plain name or a
-  lower bound in `runtime.requirements` is raised to that floor. Extras, upper
-  bounds, markers, direct references, and hashes on the agent's line are kept.
-  A pin or upper bound that cannot meet the floor is kept, and deploy warns.
+  lower bound in `runtime.requirements` is raised to that floor. Extras,
+  compatible upper bounds, and markers on the agent's line are kept. A direct
+  URL or VCS reference is kept, with one warning. `--hash` options are removed,
+  with one warning that hashes are not supported. A pin or upper bound that
+  cannot meet the floor fails the deploy before the image is built. The error
+  names the package, the agent's spec, and the required floor. A malformed
+  line fails the same way. URL userinfo is masked in errors and warnings.
   The compose file records the service name,
   published port, and memory volume. It does not contain the deployment
   bearer token or provider API keys. Deploy passes the bearer token and

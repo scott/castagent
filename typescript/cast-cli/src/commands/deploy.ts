@@ -6,7 +6,7 @@ import * as path from 'path'
 import * as readline from 'readline'
 import {loadAgentYaml} from '../lib/agent-yaml'
 import {checkCli, generateAuthToken, generateDeploymentSha} from '../lib/deploy/deploy-utils'
-import {stagePythonRequirements} from '../lib/deploy/requirements'
+import {beginRequirementWarnings, RequirementError, stagePythonRequirements} from '../lib/deploy/requirements'
 import {
   deploymentProviderKeys,
   deploymentProviderLoadErrors,
@@ -595,6 +595,8 @@ export default class Deploy extends Command {
       }
 
       // Every provider installs this file. Declared minimums come from pyproject.toml.
+      // A pin that cannot meet the floor throws here, before the image build.
+      beginRequirementWarnings()
       stagePythonRequirements(agentPath)
 
       if (registered.prepare) {
@@ -648,6 +650,9 @@ export default class Deploy extends Command {
       if (error.oclif && error.oclif.exit !== undefined) {
         // Re-throw oclif errors (already formatted)
         throw error
+      }
+      if (error instanceof RequirementError) {
+        this.error(error.message)
       }
 
       this.error(

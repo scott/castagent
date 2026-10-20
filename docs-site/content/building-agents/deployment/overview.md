@@ -290,11 +290,16 @@ pre-release or dev pin sorts below the matching final release, so pip does not
 keep it under the floor. A post-release (`1.2.16-1`) sorts above that final
 release, and an epoch (`1!0.5`) sorts above a lower epoch. A line in the agent's
 `runtime.requirements` is kept as written, except a plain name or a lower bound
-below the floor, which is raised. Extras, upper bounds, environment markers,
-direct URL or VCS references, and hashes stay on the line. A marker does not
-remove the unconditional floor. Package names match after PEP 503
-normalization. A pin or upper bound that cannot meet the floor is kept, and
-deploy prints a warning. GitPython stays at 3.2.1 or newer, which the runtime
+below the floor, which is raised. Extras, compatible upper bounds, and
+environment markers stay on the line. A marker does not remove the
+unconditional floor. A direct URL or VCS reference is kept, with one warning,
+because it cannot be checked against the floor. `--hash` options are removed,
+and deploy prints one warning that hashes are not supported. Package names
+match after PEP 503 normalization. A pin or upper bound that cannot meet the
+floor fails the deploy before the image is built. The error names the package,
+the agent's spec, and the required floor, and it says to raise the bound or
+remove the line. A malformed line fails the same way. URL userinfo is masked
+in that error and in warnings. GitPython stays at 3.2.1 or newer, which the runtime
 imports at startup. The `cast` package itself is omitted because the image
 copies that source tree in directly.
 

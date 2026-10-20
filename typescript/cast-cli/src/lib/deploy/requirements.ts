@@ -169,13 +169,19 @@ function preKey(version: ParsedVersion): number {
   return MISSING_HIGH
 }
 
+/**
+ * PEP 440 local segments: numeric compares as an integer and sorts above
+ * alphanumeric. Alphanumeric compares case-insensitively. `1.0+1` > `1.0+a`.
+ */
 function compareLocalPart(left: string, right: string): number {
   const leftNum = /^\d+$/.test(left)
   const rightNum = /^\d+$/.test(right)
   if (leftNum && rightNum) return Number(left) - Number(right)
-  if (leftNum !== rightNum) return leftNum ? -1 : 1
-  if (left === right) return 0
-  return left < right ? -1 : 1
+  if (leftNum !== rightNum) return leftNum ? 1 : -1
+  const a = left.toLowerCase()
+  const b = right.toLowerCase()
+  if (a === b) return 0
+  return a < b ? -1 : 1
 }
 
 function compareLocal(left: string[] | null, right: string[] | null): number {
@@ -410,7 +416,7 @@ function allowsBelowFloor(parsed: ParsedRequirement, floor: string): boolean {
   })
 }
 
-/** Raise >= clauses below the floor. Other clauses, markers, and hashes stay. */
+/** Raise >= clauses below the floor. Other clauses and markers stay. */
 function raiseLowerBound(spec: string, floor: string): string {
   const trimmed = spec.trim()
   const cut = findCut(trimmed)
@@ -455,22 +461,121 @@ function withExtras(line: string, extras: string): string {
   return `${match[1]}[${extras}]${trimmed.slice(restAt)}`
 }
 
-function conflictWarning(requirement: string, floorLine: string): string {
-  return `Warning: runtime requirement "${requirement}" conflicts with ${floorLine}. Keeping the agent's line.`
+/** A pin or upper bound that cannot meet the floor. Deploy stops before the image build. */
+export class RequirementError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'RequirementError'
+  }
+}
+
+/** Hide `user:token` in any URL before it reaches stderr or CI logs. `https://***@host/...`. */
+export function maskUrlUserinfo(text: string): string {
+  return text.replace(/([a-z][a-z0-9+.-]*:\/\/)[^/\s@]+@/gi, '$1***@')
+}
+
+function failRequirement(message: string): never {
+  throw new RequirementError(maskUrlUserinfo(message))
+}
+
+function floorConflict(name: string, agentSpec: string, floorLine: string): never {
+  failRequirement(
+    `Runtime requirement for ${name} cannot meet the required floor. ` +
+    `The agent specifies "${agentSpec}" and the required floor is ${floorLine}. ` +
+    `Raise the pin or upper bound to at least that floor, or remove the line from runtime.requirements.`
+  )
+}
+
+function malformedRequirement(line: string): never {
+  failRequirement(
+    `Invalid runtime requirement "${line}". The line is malformed. ` +
+    `Fix it in runtime.requirements.`
+  )
+}
+
+/**
+ * Drop `--hash` / `--hash=` options. Leaving one on any line turns on
+ * pip require-hashes mode, and the floor lines have no hashes, so install fails.
+ */
+function stripHashOptions(input: string): {line: string; stripped: boolean} {
+  let quote: string | null = null
+  let out = ''
+  let stripped = false
+  for (let i = 0; i < input.length; i++) {
+    const ch = input[i]
+    if (quote) {
+      out += ch
+      if (ch === quote && input[i - 1] !== '\\') quote = null
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch
+      out += ch
+      continue
+    }
+    const atHash = (i === 0 || /\s/.test(input[i - 1])) && input.startsWith('--hash', i)
+    if (!atHash) {
+      out += ch
+      continue
+    }
+    stripped = true
+    i += '--hash'.length
+    if (input[i] === '=') {
+      i += 1
+      while (i < input.length && !/\s/.test(input[i])) i++
+    } else {
+      while (i < input.length && /\s/.test(input[i])) i++
+      if (input[i] === '"' || input[i] === "'") {
+        const quoteChar = input[i]
+        i += 1
+        while (i < input.length && input[i] !== quoteChar) i++
+        if (i < input.length) i += 1
+      } else {
+        while (i < input.length && !/\s/.test(input[i])) i++
+      }
+    }
+    i -= 1
+  }
+  return {line: out.replace(/[ \t]{2,}/g, ' ').trim(), stripped}
+}
+
+const HASH_WARNING = 'Warning: --hash options are not supported in deploy requirements and were removed.'
+
+function directReferenceWarning(requirement: string, existing: string | null, alongside: boolean): string {
+  if (existing && alongside) {
+    return `Warning: runtime requirement "${requirement}" is a direct reference and cannot be checked against ${existing}. Keeping the agent's line and ${existing}.`
+  }
+  if (existing) {
+    return `Warning: runtime requirement "${requirement}" is a direct reference and cannot be checked against ${existing}. Keeping the agent's line.`
+  }
+  return `Warning: runtime requirement "${requirement}" is a direct reference and cannot be checked against a version floor. Keeping the agent's line.`
 }
 
 /**
  * Merge one agent `runtime.requirements` line.
  * A plain name keeps the floor. A lower bound below the floor is raised.
- * Extras, upper bounds, markers, direct references, and hashes stay.
- * A constraint that cannot meet the floor is kept, and `warn` is called.
+ * Extras, compatible upper bounds, and markers stay.
+ * A direct URL or VCS reference is kept, with one warning.
+ * A pin or upper bound that cannot meet the floor throws.
  * A marker line is added beside the unconditional floor.
+ * `--hash` options are removed before the merge.
  */
-function applyRuntimeRequirement(lines: string[], spec: string, warn: (message: string) => void): void {
-  const trimmed = spec.trim()
+function applyRuntimeRequirement(
+  lines: string[],
+  spec: string,
+  warn: (message: string) => void,
+  onHashes: () => void,
+): void {
+  const {line: withoutHashes, stripped} = stripHashOptions(spec.trim())
+  if (stripped) onHashes()
+  const trimmed = stripInlineComment(withoutHashes).trim()
+  if (!trimmed) return
+  if (trimmed.endsWith('\\')) malformedRequirement(trimmed)
+
   const parsed = parseRequirement(trimmed)
   if (!parsed.canonical || parsed.canonical === 'cast') return
   if (trimmed.toLowerCase().includes('castagent')) return
+  if (parsed.opaque) malformedRequirement(trimmed)
 
   const index = lines.findIndex(line =>
     canonicalRequirementName(line) === parsed.canonical && parseRequirement(line).marker === null
@@ -484,10 +589,10 @@ function applyRuntimeRequirement(lines: string[], spec: string, warn: (message: 
 
   if (parsed.marker !== null) {
     let line = trimmed
-    if (parsed.url && existing) {
-      warn(`Warning: runtime requirement "${trimmed}" is a direct reference. Keeping the agent's line and ${existing}.`)
-    } else if (floor && (parsed.opaque || conflictsWithFloor(parsed, floor))) {
-      warn(conflictWarning(trimmed, existing || floor))
+    if (parsed.url) {
+      warn(directReferenceWarning(trimmed, existing, true))
+    } else if (floor && conflictsWithFloor(parsed, floor)) {
+      floorConflict(parsed.name, trimmed, existing || floor)
     } else if (floor && allowsBelowFloor(parsed, floor)) {
       line = raiseLowerBound(trimmed, floor)
     }
@@ -496,20 +601,12 @@ function applyRuntimeRequirement(lines: string[], spec: string, warn: (message: 
   }
 
   if (parsed.url) {
-    if (existing) {
-      warn(`Warning: runtime requirement "${trimmed}" is a direct reference. Keeping it in place of ${existing}.`)
-    }
+    warn(directReferenceWarning(trimmed, existing, false))
     put(trimmed)
     return
   }
 
-  if (parsed.opaque) {
-    if (existing) warn(conflictWarning(trimmed, existing))
-    put(trimmed)
-    return
-  }
-
-  if (parsed.specs.length === 0 && !parsed.hashes) {
+  if (parsed.specs.length === 0) {
     if (!existing) {
       lines.push(trimmed)
       return
@@ -519,9 +616,7 @@ function applyRuntimeRequirement(lines: string[], spec: string, warn: (message: 
   }
 
   if (floor && conflictsWithFloor(parsed, floor)) {
-    warn(conflictWarning(trimmed, existing || floor))
-    put(trimmed)
-    return
+    floorConflict(parsed.name, trimmed, existing || floor)
   }
 
   if (floor && allowsBelowFloor(parsed, floor)) {
@@ -620,6 +715,21 @@ export function parseRuntimeRequirements(agentYaml: string): string[] {
     .map(item => item.trim())
 }
 
+// One CLI process is one deploy, and deploy writes this file before the provider
+// writes it again. The same warning text is printed once until the next deploy.
+const warnedThisProcess = new Set<string>()
+
+function warnOnce(message: string): void {
+  if (warnedThisProcess.has(message)) return
+  warnedThisProcess.add(message)
+  console.warn(message)
+}
+
+/** Call at the start of deploy or upgrade so a later deploy can warn again. */
+export function beginRequirementWarnings(): void {
+  warnedThisProcess.clear()
+}
+
 export function renderRequirementsFile(input: {
   frozen: string
   pyprojectSource?: string
@@ -630,10 +740,19 @@ export function renderRequirementsFile(input: {
   const lines = filterRequirementLines(frozen ? input.frozen : FALLBACK_REQUIREMENTS)
   const pyprojectDeps = input.pyprojectSource ? parsePyprojectDependencies(input.pyprojectSource) : []
   for (const dep of pyprojectDeps) upsertRequirement(lines, dep)
-  const warn = input.warn ?? ((message: string) => {
-    console.warn(message)
-  })
-  for (const dep of parseRuntimeRequirements(input.agentYaml || '')) applyRuntimeRequirement(lines, dep, warn)
+  const emit = input.warn ?? warnOnce
+  const warn = (message: string) => {
+    emit(maskUrlUserinfo(message))
+  }
+  let announcedHashes = false
+  const onHashes = () => {
+    if (announcedHashes) return
+    announcedHashes = true
+    warn(HASH_WARNING)
+  }
+  for (const dep of parseRuntimeRequirements(input.agentYaml || '')) {
+    applyRuntimeRequirement(lines, dep, warn, onHashes)
+  }
   if (!lines.some(line => canonicalRequirementName(line) === 'gitpython' && parseRequirement(line).marker === null)) {
     lines.push(GITPYTHON_REQUIREMENT)
   }

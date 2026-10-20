@@ -3,16 +3,19 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import {
+  beginRequirementWarnings,
   canonicalRequirementName,
   compareVersions,
   FALLBACK_REQUIREMENTS,
   filterRequirementLines,
   findRequirementsProjectRoot,
   GITPYTHON_REQUIREMENT,
+  maskUrlUserinfo,
   parsePyprojectDependencies,
   parseRuntimeRequirements,
   readFrozenRequirements,
   renderRequirementsFile,
+  RequirementError,
   requirementLowerBound,
   stagePythonRequirements,
   upsertRequirement,
@@ -406,23 +409,37 @@ describe('runtime requirement lines', () => {
     expect(warnings).to.deep.equal([])
   })
 
-  it('keeps an upper bound below the floor and warns', () => {
+  it('fails when an upper bound cannot meet the floor', () => {
     const line = 'uvicorn>=0.30,<0.50'
-    const {text, warnings} = renderAgent([line])
-    expect(named(text, 'uvicorn')).to.deep.equal([line])
-    expect(text).to.not.include('uvicorn>=0.54.0')
-    expect(warnings).to.have.length(1)
-    expect(warnings[0]).to.include(line)
-    expect(warnings[0]).to.include('uvicorn>=0.54.0')
+    expect(() => renderAgent([line])).to.throw(RequirementError, new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')))
+    try {
+      renderAgent([line])
+      expect.fail('deploy should fail')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      expect(message).to.include('uvicorn')
+      expect(message).to.include(line)
+      expect(message).to.include('uvicorn>=0.54.0')
+      expect(message).to.include('Raise the pin or upper bound')
+      expect(message).to.not.match(/conflict/i)
+    }
+    const marked = 'uvicorn>=0.30,<0.50; python_version>="3.9"'
+    expect(() => renderAgent([marked])).to.throw(RequirementError, /uvicorn>=0\.30,<0\.50/)
   })
 
-  it('keeps an exact pin below the floor and warns', () => {
+  it('fails when an exact pin cannot meet the floor', () => {
     const line = 'requests==2.31.0'
-    const {text, warnings} = renderAgent([line])
-    expect(named(text, 'requests')).to.deep.equal([line])
-    expect(text).to.not.include('requests>=2.33.1')
-    expect(warnings).to.have.length(1)
-    expect(warnings[0]).to.include(line)
+    try {
+      renderAgent([line])
+      expect.fail('deploy should fail')
+    } catch (error) {
+      expect(error).to.be.instanceOf(RequirementError)
+      const message = error instanceof Error ? error.message : ''
+      expect(message).to.include('requests')
+      expect(message).to.include(line)
+      expect(message).to.include('requests>=2.33.1')
+      expect(message).to.include('runtime.requirements')
+    }
   })
 
   it('keeps an exact pin that meets the floor', () => {
@@ -440,17 +457,28 @@ describe('runtime requirement lines', () => {
     expect(warnings[0]).to.include(line)
   })
 
-  it('keeps hashes on the agent line', () => {
-    const met = 'requests==2.33.1 --hash=sha256:abc123'
-    const metRender = renderAgent([met])
-    expect(named(metRender.text, 'requests')).to.deep.equal([met])
-    expect(metRender.warnings).to.deep.equal([])
+  it('strips hash options and keeps the floor when the line has no version', () => {
+    const met = renderAgent(['requests==2.33.1 --hash=sha256:abc123', 'PyYAML==6.0.3 --hash=sha256:def456'])
+    expect(named(met.text, 'requests')).to.deep.equal(['requests==2.33.1'])
+    expect(named(met.text, 'PyYAML')).to.deep.equal(['PyYAML==6.0.3'])
+    expect(met.text).to.not.include('--hash')
+    expect(met.warnings).to.deep.equal([
+      'Warning: --hash options are not supported in deploy requirements and were removed.',
+    ])
 
-    const below = 'requests==2.31.0 --hash=sha256:abc123'
-    const belowRender = renderAgent([below])
-    expect(named(belowRender.text, 'requests')).to.deep.equal([below])
-    expect(belowRender.text).to.not.include('requests>=2.33.1')
-    expect(belowRender.warnings).to.have.length(1)
+    const bare = renderAgent(['requests --hash=sha256:abc123'])
+    expect(named(bare.text, 'requests')).to.deep.equal(['requests>=2.33.1'])
+    expect(bare.text).to.not.include('--hash')
+    expect(bare.warnings).to.deep.equal([
+      'Warning: --hash options are not supported in deploy requirements and were removed.',
+    ])
+
+    const spaced = renderAgent(['uvicorn[standard] --hash sha256:abc123'])
+    expect(named(spaced.text, 'uvicorn')).to.deep.equal(['uvicorn[standard]>=0.54.0'])
+    expect(spaced.text).to.not.include('--hash')
+    expect(spaced.warnings).to.have.length(1)
+
+    expect(() => renderAgent(['requests==2.31.0 --hash=sha256:abc123'])).to.throw(RequirementError, /requests==2\.31\.0/)
   })
 
   it('keeps a marker line and the unconditional floor', () => {
@@ -539,11 +567,105 @@ describe('runtime requirement lines', () => {
     })
     expect(named(frozenRaised, 'x')).to.deep.equal(['x>=1!0.1'])
 
-    const userBelow = renderAgent(['x==0.5'], {
+    expect(() => renderAgent(['x==0.5'], {
       pyprojectSource: '[project]\ndependencies = ["x>=1!0.1"]\n',
-    })
-    expect(named(userBelow.text, 'x')).to.deep.equal(['x==0.5'])
-    expect(userBelow.warnings).to.have.length(1)
+    })).to.throw(RequirementError, /required floor is x>=1!0\.1/)
+
+    expect(() => renderAgent(['x==1!0.5'], {
+      pyprojectSource: '[project]\ndependencies = ["x>=1!1.0"]\n',
+    })).to.throw(RequirementError, /x==1!0\.5/)
+  })
+
+  it('sorts numeric local segments above alphanumeric ones', () => {
+    expect(compareVersions('1.0+1', '1.0+a')).to.be.greaterThan(0)
+    expect(compareVersions('1.0+a', '1.0+1')).to.be.lessThan(0)
+    expect(compareVersions('1.0+abc', '1.0+ABC')).to.equal(0)
+    expect(compareVersions('1.0+a', '1.0+b')).to.be.lessThan(0)
+    expect(compareVersions('1.0+1', '1.0')).to.be.greaterThan(0)
+    expect(compareVersions('1.0+1.0', '1.0+1')).to.be.greaterThan(0)
+    expect(compareVersions('1.0+1.a', '1.0+1.2')).to.be.lessThan(0)
+  })
+
+  it('masks URL userinfo in warnings and errors', () => {
+    const line = 'langgraph @ git+https://user:TOKEN@github.com/example/langgraph.git@main'
+    const {text, warnings} = renderAgent([line])
+    expect(named(text, 'langgraph')).to.deep.equal([line])
+    expect(warnings).to.have.length(1)
+    expect(warnings[0]).to.include('git+https://***@github.com/example/langgraph.git@main')
+    expect(warnings[0]).to.not.include('TOKEN')
+    expect(warnings[0]).to.not.include('user:')
+    expect(maskUrlUserinfo('https://user:TOKEN@host/path')).to.equal('https://***@host/path')
+
+    const malformed = 'requests>=1.0 https://user:TOKEN@host/secret'
+    try {
+      renderAgent([malformed])
+      expect.fail('malformed line should fail')
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      expect(message).to.include('https://***@host/secret')
+      expect(message).to.include(malformed.split(' ')[0])
+      expect(message).to.not.include('TOKEN')
+      expect(message).to.not.match(/conflict/i)
+    }
+  })
+
+  it('rejects a malformed requirement instead of calling it a conflict', () => {
+    expect(() => renderAgent(['requests>='])).to.throw(RequirementError, /requests>=/)
+    expect(() => renderAgent(['requests>=1.0\\'])).to.throw(RequirementError, /requests>=1\.0\\/)
+    try {
+      renderAgent(['requests>='])
+    } catch (error) {
+      const message = error instanceof Error ? error.message : ''
+      expect(message).to.include('malformed')
+      expect(message).to.include('requests>=')
+      expect(message).to.not.match(/conflict/i)
+    }
+  })
+
+  it('prints each warning once per deploy', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-req-warn-'))
+    const agent = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-req-agent-'))
+    const messages: string[] = []
+    const original = console.warn
+    console.warn = ((message?: unknown) => {
+      messages.push(String(message))
+    }) as typeof console.warn
+    try {
+      fs.mkdirSync(path.join(root, 'python'))
+      fs.writeFileSync(path.join(root, 'python', 'pyproject.toml'), '[project]\ndependencies = []\n')
+      fs.writeFileSync(
+        path.join(agent, 'agent.yaml'),
+        'runtime:\n  requirements:\n    - "pkg @ git+https://example.com/once-per-deploy.git"\n',
+      )
+      beginRequirementWarnings()
+      writeRequirementsTxt(root, agent)
+      writeRequirementsTxt(root, agent)
+      const first = messages.filter(message => message.includes('once-per-deploy'))
+      expect(first).to.have.length(1)
+      expect(first[0]).to.include('direct reference')
+      beginRequirementWarnings()
+      writeRequirementsTxt(root, agent)
+      expect(messages.filter(message => message.includes('once-per-deploy'))).to.have.length(2)
+    } finally {
+      console.warn = original
+      fs.rmSync(root, {recursive: true, force: true})
+      fs.rmSync(agent, {recursive: true, force: true})
+    }
+  })
+
+  it('does not write requirements.txt when the pin cannot meet the floor', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-req-fail-'))
+    const agent = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-req-fail-agent-'))
+    try {
+      fs.mkdirSync(path.join(root, 'python'))
+      fs.writeFileSync(path.join(root, 'python', 'pyproject.toml'), '[project]\ndependencies = []\n')
+      fs.writeFileSync(path.join(agent, 'agent.yaml'), 'runtime:\n  requirements:\n    - "requests==2.31.0"\n')
+      expect(() => writeRequirementsTxt(root, agent)).to.throw(RequirementError, /requests==2\.31\.0/)
+      expect(fs.existsSync(path.join(agent, 'requirements.txt'))).to.equal(false)
+    } finally {
+      fs.rmSync(root, {recursive: true, force: true})
+      fs.rmSync(agent, {recursive: true, force: true})
+    }
   })
 
   it('ignores a directory that only has python/pyproject.toml', () => {

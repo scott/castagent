@@ -27,6 +27,7 @@ import {
   upgradeRefusedAsCurrent,
   upgradeSpritesDeployment,
 } from '../lib/deploy/upgrades'
+import {beginRequirementWarnings, RequirementError} from '../lib/deploy/requirements'
 import type {UpgradeContext} from '../lib/deploy/types'
 
 export default class Upgrade extends Command {
@@ -209,6 +210,7 @@ export default class Upgrade extends Command {
         error: (message: string): never => this.error(message),
         confirm: message => this.confirm(message),
       }
+      beginRequirementWarnings()
       await registered.upgrade(ctx)
 
       let versionToStore = version
@@ -231,6 +233,9 @@ export default class Upgrade extends Command {
     } catch (error: any) {
       if (error.oclif && error.oclif.exit !== undefined) {
         throw error
+      }
+      if (error instanceof RequirementError) {
+        this.error(error.message)
       }
 
       const text = error instanceof Error ? error.message : String(error)
