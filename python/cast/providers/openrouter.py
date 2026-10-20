@@ -129,8 +129,10 @@ class OpenRouterProvider:
             model_name = "anthropic/claude-opus-4.5"  # Latest Opus 4.5
         elif model_name.lower().startswith("anthropic/claude-opus") and "4.6" in model_name:
             model_name = "anthropic/claude-opus-4.5"
-        # Normalize old-style model names: claude-3-7-sonnet -> claude-3.7-sonnet
-        elif re.match(r"claude-\d-\d-sonnet", model_name):
+        # Normalize old-style ids: claude-3-7-sonnet -> claude-3.7-sonnet.
+        # re.match is start-anchored, so it misses a provider prefix
+        # (anthropic/claude-3-7-sonnet) left after stripping openrouter/.
+        elif re.search(r"(?:^|/)claude-\d-\d-", model_name):
             model_name = model_name.replace("claude-3-5-", "claude-3.5-")
             model_name = model_name.replace("claude-3-7-", "claude-3.7-")
 
