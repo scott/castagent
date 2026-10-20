@@ -1,13 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-export const FAKE_TOKENS = {
-  SPRITES_TOKEN: 'org-e2e/11111111-1111-4111-8111-111111111111/tokene2e/sprites-secret-e2e-9f3a7c',
-  SPRITE_TOKEN: 'org-e2e/11111111-1111-4111-8111-111111111111/tokene2e/sprites-secret-e2e-9f3a7c',
-  FLY_API_TOKEN: 'fly-secret-e2e-9f3a7c',
-  DIGITALOCEAN_ACCESS_TOKEN: 'dop_v1_e2e_9f3a7c_do_not_use',
-}
-
 export function emptyWorld() {
   return {
     sprites: {},
@@ -94,10 +87,10 @@ export function resetCounts(dir) {
   })
 }
 
-export function tokenNamesIn(text) {
+export function tokenNamesIn(text, tokens) {
   const hits = []
-  for (const [name, value] of Object.entries(FAKE_TOKENS)) {
-    if (value && value.length >= 8 && text.includes(value)) hits.push(name)
+  for (const [name, value] of Object.entries(tokens || {})) {
+    if (typeof value === 'string' && value.length >= 8 && text.includes(value)) hits.push(name)
   }
   return hits
 }
@@ -107,7 +100,7 @@ export function recordRequest(dir, entry) {
   const remote = typeof entry.remote === 'string' ? entry.remote : ''
   const urlPath = typeof entry.path === 'string' ? entry.path : ''
   const blob = `${entry.bin || ''} ${entry.method || ''} ${urlPath} ${argv.join(' ')} ${remote}`
-  const tokenInArgv = tokenNamesIn(blob)
+  const tokenInArgv = tokenNamesIn(blob, readJson(path.join(dir, 'tokens.json'), {}))
   const row = {
     bin: entry.bin || '',
     method: entry.method || '',

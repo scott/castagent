@@ -21,10 +21,12 @@ same change.
 
 One of these is enough to call a fix verified:
 
-- A test that failed before the change and passes after it.
-- The provider smoke suite is green. It runs `cast` against local fakes of
-  Sprites, Fly, and DigitalOcean. It does not call those APIs and it does not
-  use secrets.
+- A test that failed before the change and passes after it. Say which test.
+  Smoke staying green is not evidence for a fix that needs that
+  before-and-after test.
+- The provider smoke suite is green, and the change is one those cases
+  cover. It runs `cast` against local fakes of Sprites, Fly, and
+  DigitalOcean. It does not call those APIs and it does not use secrets.
 - A CLI snapshot diff that a reviewer read. Snapshots change only when you
   run the update command locally and commit the new file. CI does not rewrite
   them.
@@ -51,12 +53,13 @@ npm test
 cd python && python -m pytest tests/python tests -q
 ```
 
-Provider smoke. `--provider` and `--case` limit the run.
+Provider smoke. `--provider` and `--case` together keep cases that match both.
 
 ```bash
 node tests/e2e/run.mjs
 node tests/e2e/run.mjs --provider fly
 node tests/e2e/run.mjs --case sprites.rollback
+node tests/e2e/run.mjs --provider fly --case fly.deploy
 ```
 
 CLI snapshots, including the agent.yaml version messages:
@@ -72,10 +75,10 @@ UPDATE_SNAPSHOTS=1 node tests/cli-snapshots/run.mjs
 UPDATE_ENDINGS=1 node tests/e2e/run.mjs
 ```
 
-Compare this checkout with the merge base. The script reuses `node_modules`
-when the lockfiles match and rebuilds the CLI and the TUI in each tree.
-CI installs the docs-site dependencies and Bun first, so the extractor
-test and the TUI error-handling tests run the same way as the unit job.
+Compare this checkout with the base branch. CI reuses the pull request's
+unit, smoke, and snapshot results. It checks out the base only when the
+pull request has failures, and then it reruns those ids. Locally, `--run`
+does the same with a fresh head run.
 
 ```bash
 node scripts/compare-failures.mjs --run

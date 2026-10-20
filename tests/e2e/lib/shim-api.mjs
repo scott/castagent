@@ -1,5 +1,6 @@
+import fs from 'node:fs'
 import path from 'node:path'
-import {faultHit, readWorld, recordRequest, updateWorld} from './state.mjs'
+import {faultHit, readJson, readWorld, recordRequest, updateWorld} from './state.mjs'
 
 export function createShimApi() {
   const stateDir = process.env.CAST_E2E_STATE
@@ -12,12 +13,10 @@ export function createShimApi() {
   const joined = args.join(' ')
 
   function envFlags() {
-    return {
-      SPRITE_TOKEN: Boolean(process.env.SPRITE_TOKEN),
-      SPRITES_TOKEN: Boolean(process.env.SPRITES_TOKEN),
-      FLY_API_TOKEN: Boolean(process.env.FLY_API_TOKEN),
-      DIGITALOCEAN_ACCESS_TOKEN: Boolean(process.env.DIGITALOCEAN_ACCESS_TOKEN),
-    }
+    const tokens = readJson(path.join(stateDir, 'tokens.json'), {})
+    const flags = {}
+    for (const name of Object.keys(tokens)) flags[name] = Boolean(process.env[name])
+    return flags
   }
 
   function remoteOf(argv) {

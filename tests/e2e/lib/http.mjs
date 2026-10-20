@@ -9,9 +9,11 @@ function send(res, status, body) {
   res.end(payload)
 }
 
-function bearerOk(req, accessToken) {
+function bearerOk(req, tokens) {
   const header = req.headers.authorization || ''
-  return accessToken.length > 0 && header === `Bearer ${accessToken}`
+  if (!header.startsWith('Bearer ')) return false
+  const presented = header.slice('Bearer '.length)
+  return Object.values(tokens || {}).some(value => typeof value === 'string' && value.length > 0 && presented === value)
 }
 
 async function readBody(req) {
@@ -25,7 +27,7 @@ async function readBody(req) {
   }
 }
 
-export function startFakeHttp(stateDir, accessToken = '', handlers = []) {
+export function startFakeHttp(stateDir, tokens = {}, handlers = []) {
   const server = http.createServer(async (req, res) => {
     try {
       const url = new URL(req.url || '/', 'http://127.0.0.1')
@@ -38,11 +40,11 @@ export function startFakeHttp(stateDir, accessToken = '', handlers = []) {
         path: `${url.pathname}${url.search}`,
         argv: note ? [note] : [],
         remote: note,
-        env: {authorizationBearer: bearerOk(req, accessToken)},
+        env: {authorizationBearer: bearerOk(req, tokens)},
       })
       const ctx = {
         stateDir,
-        accessToken,
+        tokens,
         method,
         url,
         body,

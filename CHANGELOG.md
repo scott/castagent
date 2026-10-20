@@ -13,8 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- `CAST_PROVIDER_HTTP_BASE` accepts only literal `127.0.0.1` and `::1`. Fly checks that value before it creates an app, and `cast connect` rewrites the stored URL only for Fly. ([#398](https://github.com/scott/castagent/pull/398))
-- `CAST_PROVIDER_HTTP_BASE` is a loopback-only testing override for Droplet DigitalOcean API calls and Fly agent-card checks. The path and query stay the same. The override is not stored as the deployment URL. MicroVM calls to api.digitalocean.com are unchanged. Provider CLIs stay on `PATH`. ([#397](https://github.com/scott/castagent/pull/397))
+- `CAST_PROVIDER_HTTP_BASE` is a loopback-only testing override for Droplet DigitalOcean API calls and Fly agent-card checks. The value is literal `127.0.0.1` or `::1`. Fly checks it before creating an app, and `cast connect` rewrites the stored URL only for Fly. The path and query stay the same. The override is not stored as the deployment URL. MicroVM calls to api.digitalocean.com are unchanged. Provider CLIs stay on `PATH`. ([#397](https://github.com/scott/castagent/pull/397), [#398](https://github.com/scott/castagent/pull/398))
 - The agent image no longer includes gcc. Docker deploys now use `python:3.11-slim-bookworm` instead of `python:3.11-slim`. ([#391](https://github.com/scott/castagent/pull/391))
 
 ### Removed

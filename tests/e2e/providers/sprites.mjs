@@ -2,7 +2,6 @@ import {handleAgentHttp} from '../lib/agent-http.mjs'
 import {
   AGENT,
   assert,
-  assertAgentResources,
   assertEnding,
   assertExcludes,
   assertFailed,
@@ -21,6 +20,15 @@ import {
 import {countCreatesSince as countCreates} from '../lib/harness.mjs'
 
 export const shims = ['sprite']
+
+export const tokens = {
+  SPRITES_TOKEN: 'org-e2e/11111111-1111-4111-8111-111111111111/tokene2e/sprites-secret-e2e-9f3a7c',
+  SPRITE_TOKEN: 'org-e2e/11111111-1111-4111-8111-111111111111/tokene2e/sprites-secret-e2e-9f3a7c',
+}
+
+function assertSpriteResources(fx) {
+  assertIncludes(blob(fx), 'sprite create cast-smoke')
+}
 
 export async function handleShim(api) {
   if (api.bin !== 'sprite') return false
@@ -118,7 +126,7 @@ export const cases = [
       assert(row.remote_version_state == null, String(row.remote_version_state))
       assert(row.volume_id === 'cast-smoke-memory', String(row.volume_id))
       assert(String(row.deployment_url).startsWith('http://127.0.0.1'), String(row.deployment_url))
-      assertAgentResources(fx, 'sprites')
+      assertSpriteResources(fx)
       assertEnding('sprites.deploy', result.stdout, result.stderr, fx.home)
     },
   },

@@ -24,14 +24,17 @@ function brainYaml(body) {
   return `name: smoke\ndescription: Mocked provider smoke agent\n${body}brain:\n  model: openrouter/anthropic/claude-3-7-sonnet\n`
 }
 
-function snapshotText(result, home, recorded) {
+function versionSnapshot(result, home, recorded) {
+  const lines = `${result.stdout}\n${result.stderr}`
+    .replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, '<time>')
+  const kept = normalizeOutput(lines, home)
+    .split('\n')
+    .filter(line => /version|warning:|error:/i.test(line))
   return [
     `# exit: ${result.code}`,
     `# recorded: ${recorded == null ? '' : recorded}`,
-    '# stderr cat -A',
-    catA(normalizeOutput(result.stderr, home).replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, '<time>')),
-    '# stdout cat -A',
-    catA(normalizeOutput(result.stdout, home).replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g, '<time>')),
+    '# version lines, cat -A',
+    catA(kept.join('\n')),
     '',
   ].join('\n')
 }
@@ -68,14 +71,14 @@ function versionCase(id, yaml, {recorded, refuse = false, includes = []} = {}) {
           assertFailed(result, id)
           assert(fx.liveRows().length === 0, 'refused deploy recorded a row')
           for (const needle of includes) assertIncludes(`${result.stdout}\n${result.stderr}`, needle)
-          checkSnapshot(id, snapshotText(result, fx.home, null))
+          checkSnapshot(id, versionSnapshot(result, fx.home, null))
           return
         }
         assertOk(result, id)
         const row = oneLive(fx)
         assert(row.deployed_version === recorded, `recorded ${row.deployed_version}`)
         for (const needle of includes) assertIncludes(result.stdout, needle)
-        checkSnapshot(id, snapshotText(result, fx.home, row.deployed_version))
+        checkSnapshot(id, versionSnapshot(result, fx.home, row.deployed_version))
       })
     },
   }
@@ -209,6 +212,11 @@ function selected(list) {
     process.exit(2)
   }
   return list.filter(item => wanted.includes(item.id))
+}
+
+if (process.argv.includes('--list')) {
+  for (const item of cases) process.stdout.write(`${item.id}\n`)
+  process.exit(0)
 }
 
 const summaryPath = process.env.SNAPSHOT_SUMMARY

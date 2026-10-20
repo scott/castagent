@@ -3,9 +3,6 @@ import {DROPLET_ID, DROPLET_IP, SSH_KEY_ID, VOLUME_ID} from '../lib/ids.mjs'
 import {
   AGENT,
   assert,
-  assertAddOnlySshKeys,
-  assertAgentResources,
-  assertDoBearer,
   assertEnding,
   assertFailed,
   assertIncludes,
@@ -22,6 +19,44 @@ import {
 } from '../lib/assert.mjs'
 
 export const shims = ['doctl', 'docker', 'ssh']
+
+export const tokens = {
+  DIGITALOCEAN_ACCESS_TOKEN: 'dop_v1_e2e_9f3a7c_do_not_use',
+}
+
+function assertDropletResources(fx) {
+  const text = blob(fx)
+  assertIncludes(text, 'doctl compute droplet create cast-smoke')
+  const volumes = fx.requests().filter(req => req.bin === 'http' && req.method === 'POST' && req.path === '/v2/volumes')
+  assert(volumes.some(req => (req.argv || []).includes('cast-smoke')), `volume name is not the agent name\n${text}`)
+}
+
+function assertAddOnlySshKeys(fx) {
+  const requests = fx.requests()
+  const deletes = requests.filter(req =>
+    (req.method === 'DELETE' && String(req.path).startsWith('/v2/account/keys'))
+    || (req.bin === 'doctl' && (req.argv || []).includes('ssh-key') && (req.argv || []).includes('delete')),
+  )
+  assert(deletes.length === 0, `account SSH key was deleted or rewritten: ${JSON.stringify(deletes)}`)
+  const keyWrites = requests.filter(req =>
+    req.bin === 'http'
+    && String(req.path).startsWith('/v2/account/keys')
+    && req.method !== 'GET'
+    && req.method !== 'POST',
+  )
+  assert(keyWrites.length === 0, `account SSH key was modified: ${JSON.stringify(keyWrites)}`)
+  const posts = requests.filter(req => req.method === 'POST' && req.path === '/v2/account/keys')
+  assert(posts.length >= 1, 'expected one add of an account SSH key')
+  const violations = (fx.world().violations || []).filter(item => item.kind !== 'token-argv')
+  assert(violations.length === 0, `provider fake recorded a violation: ${JSON.stringify(violations)}`)
+}
+
+function assertDoBearer(fx) {
+  const api = fx.requests().filter(req => req.bin === 'http' && String(req.path).startsWith('/v2/'))
+  assert(api.length > 0, 'expected DigitalOcean API requests')
+  const missing = api.filter(req => !req.env || req.env.authorizationBearer !== true)
+  assert(missing.length === 0, `DigitalOcean request missing bearer: ${JSON.stringify(missing.map(req => req.path))}`)
+}
 
 function volumeRecord(volume) {
   return {
@@ -287,7 +322,7 @@ export const cases = [
       assert(row.deployed_version === '1.0.0', row.deployed_version)
       assert(row.volume_id === 'cast-smoke', String(row.volume_id))
       assert(row.deployment_url === 'https://203.0.113.10', String(row.deployment_url))
-      assertAgentResources(fx, 'digitalocean')
+      assertDropletResources(fx)
       assertAddOnlySshKeys(fx)
       assertDoBearer(fx)
       assertEnding('digitalocean.deploy', result.stdout, result.stderr, fx.home)

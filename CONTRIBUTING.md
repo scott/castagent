@@ -8,8 +8,8 @@ Live testing by hand is for a new kind of failure. When that happens, add the ca
 
 Evidence that a fix is verified is one of these, checked in the pull request:
 
-- A test that failed before the fix and passes after it. Say which test in the pull request.
-- The mocked provider smoke suite is green. It runs `cast` against local fakes. It does not call Sprites, Fly, or DigitalOcean and it does not use secrets.
+- A test that failed before the fix and passes after it. Say which test in the pull request. A green smoke suite is not a substitute when the fix needs that before-and-after test.
+- The mocked provider smoke suite is green, and the change is one the smoke cases cover. It runs `cast` against local fakes. It does not call Sprites, Fly, or DigitalOcean and it does not use secrets.
 - A CLI snapshot diff you reviewed. Updating a snapshot is a local command. CI never rewrites snapshots. The diff is the review.
 
 A green compare line means the pull request did not add failures. Tests that already fail on the merge base are listed separately and are not new.
@@ -32,12 +32,13 @@ npm test
 cd python && python -m pytest tests/python tests -q
 ```
 
-Provider smoke, one provider, or one case:
+Provider smoke, one provider, or one case. `--provider` and `--case` together run only cases that match both:
 
 ```bash
 node tests/e2e/run.mjs
 node tests/e2e/run.mjs --provider fly
 node tests/e2e/run.mjs --case sprites.rollback
+node tests/e2e/run.mjs --provider fly --case fly.deploy
 ```
 
 CLI snapshots. This command compares checked-in files. It does not update them:
@@ -56,7 +57,7 @@ UPDATE_ENDINGS=1 node tests/e2e/run.mjs
 
 CI exits immediately if either variable is set.
 
-PR versus main. This checks out the merge base, reuses `node_modules` when the lockfiles match, rebuilds the CLI and the TUI in each tree, and runs mocha without coverage, pytest, the provider smoke suite, and the CLI snapshots. CI also installs docs-site dependencies and Bun first, which is what the extractor test and the TUI error-handling tests need:
+PR versus main. CI reuses the mocha, pytest, smoke, and snapshot results already produced for the pull request. When those results have no failures, the base branch is not checked out. When they do, CI fetches the base tip with depth 1 and reruns only the failing ids. `node_modules` is reused when the lockfiles match. Docs-site dependencies and Bun are installed only for that rerun, because the extractor test and the TUI error-handling tests need them.
 
 ```bash
 node scripts/compare-failures.mjs --run

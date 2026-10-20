@@ -4,8 +4,8 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import {fileURLToPath} from 'node:url'
-import {providerCases, loadProviders} from './lib/discover.mjs'
-import {assertNoToken, repoRoot, startProcSampler, withFixture} from './lib/harness.mjs'
+import {loadProviders, providerCases, providerTokens} from './lib/discover.mjs'
+import {assertNoToken, repoRoot, setActiveTokens, startProcSampler, withFixture} from './lib/harness.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const summaryPath = process.env.SMOKE_SUMMARY
@@ -20,6 +20,10 @@ Run every discovered provider, or limit the run.
   --provider fly,sprites     one or more provider module names
   --case fly.deploy          one or more case ids (provider.case)
   fly.upgrade-failure        a positional id or provider name is the same filter
+  --list                     print matching case ids and exit
+
+--provider and --case combine with AND. Both flags together run only the
+named cases of the named providers.
 
 Adding a provider is a new file in tests/e2e/providers/. See tests/e2e/README.md.
 `)
@@ -35,6 +39,7 @@ function selection(argv, cases) {
       printHelp()
       process.exit(0)
     }
+    if (arg === '--list') continue
     const take = flag => {
       const value = args[++i]
       if (!value || value.startsWith('--')) {
@@ -68,7 +73,11 @@ function selection(argv, cases) {
     else providers.add(arg)
   }
   if (providers.size === 0 && ids.size === 0) return cases
-  const chosen = cases.filter(item => ids.has(item.id) || providers.has(item.provider))
+  const chosen = cases.filter(item => {
+    const providerOk = providers.size === 0 || providers.has(item.provider)
+    const idOk = ids.size === 0 || ids.has(item.id)
+    return providerOk && idOk
+  })
   const knownIds = new Set(cases.map(item => item.id))
   const knownProviders = new Set(cases.map(item => item.provider))
   const unknown = []
@@ -88,7 +97,12 @@ if (process.env.CI && (process.env.UPDATE_ENDINGS === '1' || process.env.UPDATE_
 }
 
 const modules = await loadProviders()
+setActiveTokens(providerTokens(modules))
 const cases = selection(process.argv, providerCases(modules))
+if (process.argv.includes('--list')) {
+  for (const item of cases) process.stdout.write(`${item.id}\n`)
+  process.exit(0)
+}
 const started = Date.now()
 const results = []
 

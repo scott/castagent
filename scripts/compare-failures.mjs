@@ -1,21 +1,24 @@
 #!/usr/bin/env node
-// Compare failing tests on this checkout with the merge base.
+// Compare failing tests on this checkout with the base branch.
 //
 //   node scripts/compare-failures.mjs --run
-//   node scripts/compare-failures.mjs --base <dir> --head <dir>
+//   node scripts/compare-failures.mjs --head <results-dir> --skip-base
+//   node scripts/compare-failures.mjs --head <results-dir> --rerun-base
+//   node scripts/compare-failures.mjs --base <results-dir> --head <results-dir>
 //
-// --run builds cast-cli in each tree and runs mocha (no coverage), pytest,
-// the provider smoke suite, and CLI snapshots. node_modules is reused when
-// the lockfiles match. A suite that does not exist in a tree records no
-// failures. A failure that also fails on the base is "already failing". A
-// failure that passes on the base is a new failure. The process exits 1
-// only when there is a new failure.
+// --run executes the head suites, then reruns only the failing ids on the
+// base branch. A head with no failures does not check out the base.
+// --skip-base classifies an existing head results dir and skips the base
+// when that dir has no failures. --rerun-base reruns only those ids.
+// Exit 1 only when the head has a failure the base does not.
 import {execFileSync, spawnSync} from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import {pathToFileURL} from 'node:url'
 
 const repoRoot = process.cwd()
+const REQUIRED_HEAD = ['mocha.json', 'pytest.xml', 'pytest-session.xml', 'smoke-summary.json', 'snapshot-summary.json']
 
 function argValue(flag) {
   const index = process.argv.indexOf(flag)
@@ -35,12 +38,36 @@ function stableTestPath(file) {
   return norm
 }
 
+function decodeXml(value) {
+  return String(value)
+    .replaceAll('&amp;', '&')
+    .replaceAll('&quot;', '"')
+    .replaceAll('&apos;', "'")
+    .replaceAll('&lt;', '<')
+    .replaceAll('&gt;', '>')
+}
+
+export function xmlAttributes(tag) {
+  const attrs = {}
+  const re = /\s([A-Za-z_:][\w:.-]*)\s*=\s*(?:"([^"]*)"|'([^']*)')/g
+  let match
+  while ((match = re.exec(` ${tag}`))) {
+    attrs[match[1]] = decodeXml(match[2] ?? match[3] ?? '')
+  }
+  return attrs
+}
+
 function mochaFailures(file) {
+  return mochaRecords(file).map(record => record.id)
+}
+
+function mochaRecords(file) {
   if (!fs.existsSync(file)) return []
   const data = JSON.parse(fs.readFileSync(file, 'utf8'))
   return (data.failures || []).map(test => {
     const title = test.fullTitle || test.title || 'untitled'
-    return `mocha:${stableTestPath(test.file)}::${title}`
+    const rel = stableTestPath(test.file)
+    return {id: `mocha:${rel}::${title}`, file: rel, title}
   })
 }
 
@@ -54,28 +81,63 @@ function mochaStats(file) {
   }
 }
 
-function pytestFailures(file) {
-  if (!fs.existsSync(file)) return []
-  const xml = fs.readFileSync(file, 'utf8')
-  const failures = []
-  for (const chunk of xml.split(/<testcase\b/).slice(1)) {
+export function pytestNodeId(file, classname, name) {
+  const moduleFile = file || fileFromClassname(classname)
+  if (!moduleFile) return ''
+  const module = path.basename(moduleFile, '.py')
+  const parts = String(classname || '').split('.').filter(Boolean)
+  const at = parts.lastIndexOf(module)
+  const tail = at === -1 ? [] : parts.slice(at + 1)
+  return [moduleFile, ...tail, name].filter(Boolean).join('::')
+}
+
+function fileFromClassname(classname) {
+  const parts = String(classname || '').split('.').filter(Boolean)
+  while (parts.length > 0 && /^[A-Z]/.test(parts[parts.length - 1])) parts.pop()
+  if (parts.length === 0) return ''
+  return `${parts.join('/')}.py`
+}
+
+export function pytestRecordsFromXml(xml) {
+  const records = []
+  for (const chunk of String(xml).split(/<testcase\b/).slice(1)) {
     const tagEnd = chunk.indexOf('>')
     const tag = tagEnd === -1 ? chunk : chunk.slice(0, tagEnd)
-    const name = /name="([^"]*)"/.exec(tag)?.[1] || ''
-    const classname = /classname="([^"]*)"/.exec(tag)?.[1] || ''
+    const attrs = xmlAttributes(tag)
+    const name = attrs.name || ''
+    const classname = attrs.classname || ''
     const bodyEnd = chunk.indexOf('</testcase>')
     const body = bodyEnd === -1 ? chunk : chunk.slice(0, bodyEnd)
-    if (body.includes('<failure') || body.includes('<error')) {
-      failures.push(`pytest:${classname}::${name}`)
-    }
+    if (!body.includes('<failure') && !body.includes('<error')) continue
+    records.push({
+      id: `pytest:${classname}::${name}`,
+      classname,
+      name,
+      file: attrs.file || fileFromClassname(classname),
+      nodeId: pytestNodeId(attrs.file || '', classname, name),
+    })
   }
-  return failures
+  return records
+}
+
+export function pytestFailures(file) {
+  if (!fs.existsSync(file)) return []
+  return pytestRecordsFromXml(fs.readFileSync(file, 'utf8')).map(record => record.id)
+}
+
+function pytestRecords(file) {
+  if (!fs.existsSync(file)) return []
+  return pytestRecordsFromXml(fs.readFileSync(file, 'utf8'))
 }
 
 function smokeFailures(file) {
+  return smokeRecords(file).map(record => record.id)
+}
+
+function smokeRecords(file) {
   if (!fs.existsSync(file)) return []
   const data = JSON.parse(fs.readFileSync(file, 'utf8'))
-  return (data.cases || []).filter(item => item.status === 'fail').map(item => `smoke:${item.id}`)
+  return (data.cases || []).filter(item => item.status === 'fail').map(item => ({id: `smoke:${item.id}`, caseId: item.id}))
 }
 
 function smokeStats(file) {
@@ -90,9 +152,13 @@ function smokeStats(file) {
 }
 
 function snapshotFailures(file) {
+  return snapshotRecords(file).map(record => record.id)
+}
+
+function snapshotRecords(file) {
   if (!fs.existsSync(file)) return []
   const data = JSON.parse(fs.readFileSync(file, 'utf8'))
-  return (data.cases || []).filter(item => item.status === 'fail').map(item => `snapshot:${item.id}`)
+  return (data.cases || []).filter(item => item.status === 'fail').map(item => ({id: `snapshot:${item.id}`, caseId: item.id}))
 }
 
 export function compareSets(baseIds, headIds) {
@@ -116,6 +182,16 @@ function collect(dir) {
     ids,
     mocha: mochaStats(path.join(dir, 'mocha.json')),
     smoke: smokeStats(path.join(dir, 'smoke-summary.json')),
+  }
+}
+
+function headRecords(dir) {
+  return {
+    mocha: mochaRecords(path.join(dir, 'mocha.json')),
+    pytest: pytestRecords(path.join(dir, 'pytest.xml')),
+    session: pytestRecords(path.join(dir, 'pytest-session.xml')),
+    smoke: smokeRecords(path.join(dir, 'smoke-summary.json')),
+    snapshots: snapshotRecords(path.join(dir, 'snapshot-summary.json')),
   }
 }
 
@@ -175,7 +251,7 @@ function prepareTree(root) {
   if (status !== 0) throw new Error(`providers.json failed in ${root}`)
 }
 
-function installHead(root) {
+function installTree(root) {
   if (run('npm', ['install'], {cwd: root}) !== 0) throw new Error('npm install failed')
   if (run('npm', ['install'], {cwd: path.join(root, 'typescript')}) !== 0) {
     throw new Error('typescript npm install failed')
@@ -202,12 +278,25 @@ function recordAbsentSuite(root, entry, summary, label) {
   return true
 }
 
+function runMocha(root, outFile, extraArgs) {
+  const mochaBin = path.join(root, 'node_modules', 'mocha', 'bin', 'mocha.js')
+  const bin = fs.existsSync(mochaBin) ? process.execPath : 'npx'
+  const report = ['--reporter', 'json', '--reporter-option', `output=${outFile}`, '--forbid-only', '--exit']
+  const args = fs.existsSync(mochaBin)
+    ? [mochaBin, ...report, ...extraArgs]
+    : ['mocha', ...report, ...extraArgs]
+  capture(bin, args, {cwd: root}, `${outFile}.stdout`)
+  if (!fs.existsSync(outFile) || fs.statSync(outFile).size === 0) {
+    throw new Error(`mocha produced no JSON in ${root}`)
+  }
+  JSON.parse(fs.readFileSync(outFile, 'utf8'))
+}
+
 function runSuites(root, outDir) {
   fs.mkdirSync(outDir, {recursive: true})
   const wanted = suitesToRun()
   prepareTree(root)
-  // Connect endings record the missing-OpenTUI warning. Smoke and snapshots
-  // run before the TUI build so that warning still matches.
+  if (wanted.has('mocha')) buildTui(root)
   if (wanted.has('smoke')) {
     const summary = path.join(outDir, 'smoke-summary.json')
     if (!recordAbsentSuite(root, 'tests/e2e/run.mjs', summary, 'provider smoke')) {
@@ -237,80 +326,200 @@ function runSuites(root, outDir) {
     }
   }
   if (wanted.has('mocha')) {
-    buildTui(root)
-    const mochaJson = path.join(outDir, 'mocha.json')
-    const mochaBin = path.join(root, 'node_modules', 'mocha', 'bin', 'mocha.js')
-    const bin = fs.existsSync(mochaBin) ? process.execPath : 'npx'
-    const report = ['--reporter', 'json', '--reporter-option', `output=${mochaJson}`, '--forbid-only', '--exit']
-    const args = fs.existsSync(mochaBin)
-      ? [mochaBin, ...report, ...mochaArgs()]
-      : ['mocha', ...report, ...mochaArgs()]
-    // The JSON reporter writes mocha.json itself. Stdout also contains prompts
-    // from commands under test, so it is not the report.
-    capture(bin, args, {cwd: root}, path.join(outDir, 'mocha.stdout'))
-    if (!fs.existsSync(mochaJson) || fs.statSync(mochaJson).size === 0) {
-      throw new Error(`mocha produced no JSON in ${root}`)
-    }
-    JSON.parse(fs.readFileSync(mochaJson, 'utf8'))
+    runMocha(root, path.join(outDir, 'mocha.json'), mochaArgs())
   }
 }
 
-function mergeBase() {
+function escapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+function emptyJson(file, body) {
+  fs.mkdirSync(path.dirname(file), {recursive: true})
+  fs.writeFileSync(file, `${JSON.stringify(body)}\n`)
+}
+
+function listedIds(root, script) {
+  if (!fs.existsSync(path.join(root, script))) return null
+  const result = spawnSync(process.execPath, [script, '--list'], {cwd: root, encoding: 'utf8'})
+  if ((result.status ?? 1) !== 0) return new Set()
+  return new Set(result.stdout.split('\n').map(line => line.trim()).filter(Boolean))
+}
+
+function rerunMocha(root, outDir, records) {
+  const present = records.filter(record => record.file && fs.existsSync(path.join(root, record.file)))
+  const outFile = path.join(outDir, 'mocha.json')
+  if (present.length === 0) {
+    emptyJson(outFile, {stats: {passes: 0, failures: 0, pending: 0}, failures: []})
+    return
+  }
+  prepareTree(root)
+  buildTui(root)
+  const files = [...new Set(present.map(record => record.file))]
+  const pattern = `^(?:${present.map(record => escapeRegExp(record.title)).join('|')})$`
+  runMocha(root, outFile, [...files, '--grep', pattern])
+}
+
+function resolvePytest(root, record) {
+  if (!record.file || !record.nodeId) return null
+  if (fs.existsSync(path.join(root, record.file))) return {cwd: root, nodeId: record.nodeId}
+  if (fs.existsSync(path.join(root, 'python', record.file))) {
+    return {cwd: path.join(root, 'python'), nodeId: record.nodeId}
+  }
+  return null
+}
+
+function rerunPytest(root, outDir, records, xmlName) {
+  const xml = path.join(outDir, xmlName)
+  const groups = new Map()
+  for (const record of records) {
+    const resolved = resolvePytest(root, record)
+    if (!resolved) continue
+    if (!groups.has(resolved.cwd)) groups.set(resolved.cwd, [])
+    groups.get(resolved.cwd).push(resolved.nodeId)
+  }
+  if (groups.size === 0) {
+    fs.writeFileSync(xml, '<testsuite></testsuite>\n')
+    return
+  }
+  if (run('python3', ['-m', 'pip', 'install', '-e', `${path.join(root, 'python')}[test]`, 'langchain-openai', 'langchain-core', 'pyyaml'], {cwd: root}) !== 0) {
+    throw new Error(`python install failed in ${root}`)
+  }
+  const parts = ['<testsuites>']
+  let index = 0
+  for (const [cwd, nodeIds] of groups) {
+    const piece = path.join(outDir, `${xmlName}.${index}.xml`)
+    index += 1
+    const env = {...process.env, PYTHONPATH: path.join(root, 'python')}
+    run('python3', ['-m', 'pytest', ...nodeIds, '--junitxml', piece, '-q'], {cwd, env})
+    if (!fs.existsSync(piece)) throw new Error(`pytest did not write ${piece}`)
+    parts.push(fs.readFileSync(piece, 'utf8'))
+  }
+  parts.push('</testsuites>')
+  fs.writeFileSync(xml, parts.join('\n'))
+}
+
+function rerunSmoke(root, outDir, records) {
+  const summary = path.join(outDir, 'smoke-summary.json')
+  const known = listedIds(root, 'tests/e2e/run.mjs')
+  if (known === null) {
+    recordAbsentSuite(root, 'tests/e2e/run.mjs', summary, 'provider smoke')
+    return
+  }
+  const ids = records.map(record => record.caseId).filter(id => known.has(id))
+  if (ids.length === 0) {
+    emptyJson(summary, {ok: true, cases: []})
+    return
+  }
+  buildCli(root)
+  const status = run('node', ['tests/e2e/run.mjs', '--case', ids.join(',')], {
+    cwd: root,
+    env: {...process.env, SMOKE_SUMMARY: summary},
+  })
+  if (!fs.existsSync(summary)) throw new Error(`smoke summary missing (exit ${status})`)
+}
+
+function rerunSnapshots(root, outDir, records) {
+  const summary = path.join(outDir, 'snapshot-summary.json')
+  const known = listedIds(root, 'tests/cli-snapshots/run.mjs')
+  if (known === null) {
+    recordAbsentSuite(root, 'tests/cli-snapshots/run.mjs', summary, 'CLI snapshots')
+    return
+  }
+  const ids = records.map(record => record.caseId).filter(id => known.has(id))
+  if (ids.length === 0) {
+    emptyJson(summary, {ok: true, cases: []})
+    return
+  }
+  buildCli(root)
+  const status = run('node', ['tests/cli-snapshots/run.mjs', '--case', ids.join(',')], {
+    cwd: root,
+    env: {...process.env, SNAPSHOT_SUMMARY: summary},
+  })
+  if (!fs.existsSync(summary)) throw new Error(`snapshot summary missing (exit ${status})`)
+}
+
+function rerunFailures(root, outDir, records) {
+  fs.mkdirSync(outDir, {recursive: true})
+  const needsCli = records.smoke.length > 0 || records.snapshots.length > 0
+  if (needsCli) buildCli(root)
+  if (records.mocha.length > 0) {
+    buildCli(root)
+    rerunMocha(root, outDir, records.mocha)
+  } else {
+    emptyJson(path.join(outDir, 'mocha.json'), {stats: {passes: 0, failures: 0, pending: 0}, failures: []})
+  }
+  rerunPytest(root, outDir, records.pytest, 'pytest.xml')
+  rerunPytest(root, outDir, records.session, 'pytest-session.xml')
+  if (records.smoke.length > 0) rerunSmoke(root, outDir, records.smoke)
+  else emptyJson(path.join(outDir, 'smoke-summary.json'), {ok: true, cases: []})
+  if (records.snapshots.length > 0) rerunSnapshots(root, outDir, records.snapshots)
+  else emptyJson(path.join(outDir, 'snapshot-summary.json'), {ok: true, cases: []})
+}
+
+function fetchBaseSha() {
   const explicit = argValue('--base-ref') || process.env.COMPARE_BASE_REF || ''
   if (explicit && /^[0-9a-f]{7,40}$/i.test(explicit)) return explicit
-  const ref = explicit || process.env.GITHUB_BASE_REF || 'main'
-  const remote = ref.startsWith('origin/') ? ref : `origin/${ref}`
-  try {
-    execFileSync('git', ['rev-parse', '--verify', remote], {cwd: repoRoot, stdio: 'ignore'})
-  } catch {
-    execFileSync('git', ['fetch', 'origin', ref.replace(/^origin\//, '')], {cwd: repoRoot, stdio: 'inherit'})
-  }
-  return execFileSync('git', ['merge-base', 'HEAD', remote], {cwd: repoRoot, encoding: 'utf8'}).trim()
+  const ref = (explicit || process.env.GITHUB_BASE_REF || 'main').replace(/^origin\//, '')
+  execFileSync('git', ['fetch', '--no-tags', '--depth=1', 'origin', ref], {cwd: repoRoot, stdio: 'inherit'})
+  return execFileSync('git', ['rev-parse', '--verify', 'FETCH_HEAD'], {cwd: repoRoot, encoding: 'utf8'}).trim()
 }
 
-function runBoth() {
-  const baseSha = mergeBase()
+function prepareBase(baseRoot) {
+  const locks = ['package-lock.json', 'typescript/package-lock.json', 'docs-site/package-lock.json']
+  const reusable = locks.every(rel => sameFile(path.join(repoRoot, rel), path.join(baseRoot, rel)))
+  if (reusable) {
+    process.stdout.write('lockfiles match; reusing node_modules\n')
+    linkNodeModules(repoRoot, baseRoot)
+    return
+  }
+  process.stdout.write('lockfiles differ; installing dependencies on the base\n')
+  installTree(baseRoot)
+}
+
+function withBase(fn) {
+  const sha = fetchBaseSha()
   const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-compare-'))
   const baseRoot = path.join(work, 'base')
-  const headOut = path.join(work, 'head')
-  const baseOut = path.join(work, 'base-out')
-  process.stdout.write(`merge base ${baseSha}\n`)
-  execFileSync('git', ['worktree', 'add', '--detach', baseRoot, baseSha], {cwd: repoRoot, stdio: 'inherit'})
+  process.stdout.write(`base ${sha} (shallow fetch)\n`)
+  execFileSync('git', ['worktree', 'add', '--detach', baseRoot, sha], {cwd: repoRoot, stdio: 'inherit'})
   try {
-    const locks = ['package-lock.json', 'typescript/package-lock.json', 'docs-site/package-lock.json']
-    const reusable = locks.every(rel => sameFile(path.join(repoRoot, rel), path.join(baseRoot, rel)))
-    if (reusable) {
-      process.stdout.write('lockfiles match; reusing node_modules\n')
-      linkNodeModules(repoRoot, baseRoot)
-    } else {
-      process.stdout.write('lockfiles differ; installing dependencies on the base\n')
-      installHead(baseRoot)
+    prepareBase(baseRoot)
+    return fn(baseRoot, sha)
+  } finally {
+    try {
+      execFileSync('git', ['worktree', 'remove', '--force', baseRoot], {cwd: repoRoot, stdio: 'ignore'})
+    } catch {
+      fs.rmSync(baseRoot, {recursive: true, force: true})
     }
-    buildCli(repoRoot)
-    buildCli(baseRoot)
-    process.stdout.write('running suites on head\n')
-    runSuites(repoRoot, headOut)
-    process.stdout.write('running suites on merge base\n')
-    runSuites(baseRoot, baseOut)
-    return {headOut, baseOut, baseSha, work}
-  } catch (error) {
-    execFileSync('git', ['worktree', 'remove', '--force', baseRoot], {cwd: repoRoot, stdio: 'ignore'})
-    throw error
   }
 }
 
-function writeSummary(baseDir, headDir, baseSha) {
-  const base = collect(baseDir)
+function requireHead(dir) {
+  if (process.env.COMPARE_REQUIRE_ARTIFACTS !== '1') return
+  const missing = REQUIRED_HEAD.filter(name => !fs.existsSync(path.join(dir, name)))
+  if (missing.length > 0) throw new Error(`head results missing ${missing.join(', ')}`)
+}
+
+function markOutput(needed) {
+  if (!process.env.GITHUB_OUTPUT) return
+  fs.appendFileSync(process.env.GITHUB_OUTPUT, `need_base=${needed ? 'true' : 'false'}\n`)
+}
+
+function writeSummary(baseDir, headDir, baseSha, timings) {
+  const base = baseDir ? collect(baseDir) : {ids: [], mocha: {passes: 0, failures: 0, pending: 0}, smoke: {passes: 0, failures: 0, skipped: 0}}
   const head = collect(headDir)
   const compared = compareSets(base.ids, head.ids)
   const summary = {
     ok: compared.newFailures.length === 0,
     baseSha: baseSha || null,
+    baseSkipped: Boolean(timings.baseSkipped),
     newFailures: compared.newFailures,
     alreadyFailing: compared.alreadyFailing,
     fixed: compared.fixed,
     head: {mocha: head.mocha, smoke: head.smoke, failures: head.ids.length},
     base: {mocha: base.mocha, smoke: base.smoke, failures: base.ids.length},
+    timings,
   }
   const dest = process.env.COMPARE_SUMMARY
     ? path.resolve(process.env.COMPARE_SUMMARY)
@@ -332,44 +541,106 @@ function writeSummary(baseDir, headDir, baseSha) {
     process.stdout.write('fixed since main:\n')
     for (const id of summary.fixed) process.stdout.write(`  ${id}\n`)
   }
+  process.stdout.write(`compare timing: head ${timings.headMs}ms, base ${timings.baseMs}ms, total ${timings.totalMs}ms, baseSkipped ${timings.baseSkipped}\n`)
   process.stdout.write(`summary ${dest}\n`)
   return summary
 }
 
-function cleanupWorktree(baseRoot) {
-  if (!baseRoot) return
-  try {
-    execFileSync('git', ['worktree', 'remove', '--force', baseRoot], {cwd: repoRoot, stdio: 'ignore'})
-  } catch {
-    fs.rmSync(baseRoot, {recursive: true, force: true})
+function classify(headDir, started, skipBase) {
+  requireHead(headDir)
+  const head = collect(headDir)
+  if (head.ids.length === 0) {
+    markOutput(false)
+    const totalMs = Date.now() - started
+    return writeSummary(null, headDir, null, {
+      headReused: !hasFlag('--run'),
+      baseSkipped: true,
+      headMs: totalMs,
+      baseMs: 0,
+      totalMs,
+    })
   }
+  if (skipBase) {
+    markOutput(true)
+    process.stdout.write(`head has ${head.ids.length} failure(s); base rerun still required\n`)
+    for (const id of head.ids) process.stdout.write(`  ${id}\n`)
+    return {ok: false, pendingBase: true}
+  }
+  const records = headRecords(headDir)
+  const baseStarted = Date.now()
+  let sha = ''
+  let baseOut = ''
+  withBase((baseRoot, baseSha) => {
+    sha = baseSha
+    baseOut = path.join(path.dirname(baseRoot), 'base-out')
+    rerunFailures(baseRoot, baseOut, records)
+  })
+  const totalMs = Date.now() - started
+  return writeSummary(baseOut, headDir, sha, {
+    headReused: !hasFlag('--run'),
+    baseSkipped: false,
+    headMs: baseStarted - started,
+    baseMs: Date.now() - baseStarted,
+    totalMs,
+  })
 }
 
-if (hasFlag('--help') || hasFlag('-h')) {
-  process.stdout.write(`Usage:
+function main() {
+  if (hasFlag('--help') || hasFlag('-h')) {
+    process.stdout.write(`Usage:
   node scripts/compare-failures.mjs --run [--only mocha,pytest,smoke,snapshots] [--mocha-files a.test.ts]
+  node scripts/compare-failures.mjs --head <results-dir> --skip-base
+  node scripts/compare-failures.mjs --head <results-dir> --rerun-base
   node scripts/compare-failures.mjs --base <results-dir> --head <results-dir>
 
-Results dirs contain mocha.json, pytest.xml, pytest-session.xml, smoke-summary.json, and snapshot-summary.json.
-Missing files are treated as empty. Exit 1 when the head has a failure the base does not.
+--skip-base writes the summary when the head has no failures and sets
+need_base in GITHUB_OUTPUT otherwise. --rerun-base checks out the base
+branch tip with a depth-1 fetch and reruns only the head's failing ids.
+Exit 1 when the head has a failure the base does not.
 `)
-  process.exit(0)
+    return {ok: true}
+  }
+  const started = Date.now()
+  if (hasFlag('--run')) {
+    const work = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-compare-'))
+    const headOut = path.join(work, 'head')
+    buildCli(repoRoot)
+    process.stdout.write('running suites on head\n')
+    runSuites(repoRoot, headOut)
+    const summary = classify(headOut, started, false)
+    return summary.pendingBase ? {ok: false} : summary
+  }
+  const headDir = argValue('--head')
+  if (headDir && hasFlag('--skip-base')) {
+    const summary = classify(path.resolve(headDir), started, true)
+    return summary.pendingBase ? {ok: true, pendingBase: true} : summary
+  }
+  if (headDir && hasFlag('--rerun-base')) {
+    return classify(path.resolve(headDir), started, false)
+  }
+  if (argValue('--base') && headDir) {
+    const totalMs = Date.now() - started
+    return writeSummary(path.resolve(argValue('--base')), path.resolve(headDir), argValue('--base-ref'), {
+      headReused: true,
+      baseSkipped: false,
+      headMs: 0,
+      baseMs: 0,
+      totalMs,
+    })
+  }
+  process.stderr.write('pass --run, --head with --skip-base or --rerun-base, or --base and --head\n')
+  return {ok: false, usage: true}
 }
 
-let summary
-if (hasFlag('--run')) {
-  let baseRoot = ''
+const isDirect = process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href
+if (isDirect) {
   try {
-    const ran = runBoth()
-    baseRoot = path.join(path.dirname(ran.headOut), 'base')
-    summary = writeSummary(ran.baseOut, ran.headOut, ran.baseSha)
-  } finally {
-    cleanupWorktree(baseRoot)
+    const summary = main()
+    if (summary.usage) process.exit(2)
+    if (summary.pendingBase) process.exit(0)
+    process.exit(summary.ok ? 0 : 1)
+  } catch (error) {
+    process.stderr.write(`${error instanceof Error ? error.stack || error.message : String(error)}\n`)
+    process.exit(1)
   }
-} else if (argValue('--base') && argValue('--head')) {
-  summary = writeSummary(path.resolve(argValue('--base')), path.resolve(argValue('--head')), argValue('--base-ref'))
-} else {
-  process.stderr.write('pass --run, or --base and --head\n')
-  process.exit(2)
 }
-process.exit(summary.ok ? 0 : 1)

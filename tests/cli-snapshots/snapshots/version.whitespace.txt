@@ -1,7 +1,4 @@
 # exit: 2
 # recorded: 
-# stderr cat -A
+# version lines, cat -A
  ›   Error: agent.yaml version "1.4.5\nextra" contains whitespace. Use a single-line quoted version, for example version: "1.4.5".$
-$
-# stdout cat -A
-$

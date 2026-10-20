@@ -50,44 +50,6 @@ export function assertNoLive(fx) {
   assert(rows.length === 0, `expected no live registry row, got ${JSON.stringify(rows)}`)
 }
 
-export function assertAgentResources(fx, provider) {
-  const text = blob(fx)
-  if (provider === 'sprites') assertIncludes(text, 'sprite create cast-smoke')
-  if (provider === 'fly') assertIncludes(text, 'flyctl apps create cast-smoke')
-  if (provider === 'digitalocean') {
-    assertIncludes(text, 'doctl compute droplet create cast-smoke')
-    const volumes = fx.requests().filter(req => req.bin === 'http' && req.method === 'POST' && req.path === '/v2/volumes')
-    assert(volumes.some(req => (req.argv || []).includes('cast-smoke')), `volume name is not the agent name\n${text}`)
-  }
-}
-
-export function assertAddOnlySshKeys(fx) {
-  const requests = fx.requests()
-  const deletes = requests.filter(req =>
-    (req.method === 'DELETE' && String(req.path).startsWith('/v2/account/keys'))
-    || (req.bin === 'doctl' && (req.argv || []).includes('ssh-key') && (req.argv || []).includes('delete')),
-  )
-  assert(deletes.length === 0, `account SSH key was deleted or rewritten: ${JSON.stringify(deletes)}`)
-  const keyWrites = requests.filter(req =>
-    req.bin === 'http'
-    && String(req.path).startsWith('/v2/account/keys')
-    && req.method !== 'GET'
-    && req.method !== 'POST',
-  )
-  assert(keyWrites.length === 0, `account SSH key was modified: ${JSON.stringify(keyWrites)}`)
-  const posts = requests.filter(req => req.method === 'POST' && req.path === '/v2/account/keys')
-  assert(posts.length >= 1, 'expected one add of an account SSH key')
-  const violations = (fx.world().violations || []).filter(item => item.kind !== 'token-argv')
-  assert(violations.length === 0, `provider fake recorded a violation: ${JSON.stringify(violations)}`)
-}
-
-export function assertDoBearer(fx) {
-  const api = fx.requests().filter(req => req.bin === 'http' && String(req.path).startsWith('/v2/'))
-  assert(api.length > 0, 'expected DigitalOcean API requests')
-  const missing = api.filter(req => !req.env || req.env.authorizationBearer !== true)
-  assert(missing.length === 0, `DigitalOcean request missing bearer: ${JSON.stringify(missing.map(req => req.path))}`)
-}
-
 export async function deploy(fx, provider) {
   return fx.cast(['deploy', AGENT, '--provider', provider])
 }

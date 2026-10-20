@@ -5,7 +5,7 @@ import path from 'node:path'
 import {createRequire} from 'node:module'
 import {fileURLToPath} from 'node:url'
 import {startFakeHttp} from './http.mjs'
-import {FAKE_TOKENS, readRequests, readWorld, resetCounts, writeScenario} from './state.mjs'
+import {readRequests, readWorld, resetCounts, writeScenario} from './state.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 export const repoRoot = path.resolve(here, '../../..')
@@ -15,10 +15,15 @@ const require = createRequire(path.join(repoRoot, 'typescript/cast-cli/package.j
 const Database = require('better-sqlite3')
 
 export const AGENT = 'smoke'
-export const TOKENS = {
-  SPRITES_TOKEN: FAKE_TOKENS.SPRITES_TOKEN,
-  FLY_API_TOKEN: FAKE_TOKENS.FLY_API_TOKEN,
-  DIGITALOCEAN_ACCESS_TOKEN: FAKE_TOKENS.DIGITALOCEAN_ACCESS_TOKEN,
+
+let activeTokens = {}
+
+export function setActiveTokens(tokens) {
+  activeTokens = tokens && typeof tokens === 'object' ? tokens : {}
+}
+
+export function currentTokens() {
+  return activeTokens
 }
 
 const ENV_ALLOW = [
@@ -196,6 +201,22 @@ function linkShims(dir, names) {
   if (!fs.existsSync(nodeLink)) fs.symlinkSync(process.execPath, nodeLink)
 }
 
+const tuiBundle = path.join(repoRoot, 'typescript/cast-tui/dist/index.js')
+const hiddenTuiBundle = `${tuiBundle}.e2e-hidden`
+
+function hideTuiBundle() {
+  if (!fs.existsSync(tuiBundle) || fs.existsSync(hiddenTuiBundle)) return false
+  fs.renameSync(tuiBundle, hiddenTuiBundle)
+  return true
+}
+
+function restoreTuiBundle(hidden) {
+  if (!hidden) return
+  if (fs.existsSync(hiddenTuiBundle) && !fs.existsSync(tuiBundle)) {
+    fs.renameSync(hiddenTuiBundle, tuiBundle)
+  }
+}
+
 export async function withFixture(fn) {
   const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-e2e-home-'))
   const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-e2e-state-'))
@@ -203,10 +224,13 @@ export async function withFixture(fn) {
   fs.writeFileSync(path.join(stateDir, 'world.json'), '{}\n')
   fs.writeFileSync(path.join(stateDir, 'scenario.json'), '{}\n')
   fs.chmodSync(shimPath, 0o755)
-  const {loadProviders, providerHttpHandlers, providerShims} = await import('./discover.mjs')
+  const {loadProviders, providerHttpHandlers, providerShims, providerTokens} = await import('./discover.mjs')
   const modules = await loadProviders()
+  const tokens = providerTokens(modules)
+  setActiveTokens(tokens)
+  fs.writeFileSync(path.join(stateDir, 'tokens.json'), JSON.stringify(tokens))
   linkShims(shimDir, [...BUILTIN_SHIMS, ...providerShims(modules)])
-  const http = await startFakeHttp(stateDir, TOKENS.DIGITALOCEAN_ACCESS_TOKEN, providerHttpHandlers(modules))
+  const http = await startFakeHttp(stateDir, tokens, providerHttpHandlers(modules))
   const env = allowedEnv({
     HOME: home,
     USERPROFILE: home,
@@ -214,9 +238,7 @@ export async function withFixture(fn) {
     CAST_PROVIDER_HTTP_BASE: http.base,
     CAST_E2E_STATE: stateDir,
     CAST_E2E_HTTP_BASE: http.base,
-    SPRITES_TOKEN: TOKENS.SPRITES_TOKEN,
-    FLY_API_TOKEN: TOKENS.FLY_API_TOKEN,
-    DIGITALOCEAN_ACCESS_TOKEN: TOKENS.DIGITALOCEAN_ACCESS_TOKEN,
+    ...tokens,
     NO_COLOR: '1',
     FORCE_COLOR: '0',
     CI: '1',
@@ -241,9 +263,11 @@ export async function withFixture(fn) {
     setRemoteState: value => writeRemoteState(home, AGENT, value),
     cast: (args, input) => runCast(env, args, input),
   }
+  const hiddenTui = hideTuiBundle()
   try {
     await fn(fx)
   } finally {
+    restoreTuiBundle(hiddenTui)
     await http.close()
     fs.rmSync(home, {recursive: true, force: true})
     fs.rmSync(stateDir, {recursive: true, force: true})
@@ -284,9 +308,9 @@ function runCast(env, args, input) {
   })
 }
 
-export function startProcSampler() {
+export function startProcSampler(tokens = activeTokens) {
   const hits = []
-  const values = Object.entries(TOKENS)
+  const values = Object.entries(tokens || {})
   const timer = setInterval(() => {
     let entries = []
     try {

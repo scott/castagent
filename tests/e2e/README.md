@@ -22,9 +22,10 @@ Run one provider or one case:
 node tests/e2e/run.mjs --provider fly
 node tests/e2e/run.mjs --case fly.deploy
 node tests/e2e/run.mjs sprites.rollback digitalocean.upgrade-failure
+node tests/e2e/run.mjs --provider fly --case fly.deploy,fly.connect
 ```
 
-`--provider` takes a comma-separated list. `--case` takes case ids (`provider.case`). A positional argument with a dot is a case id. A positional argument without a dot is a provider name. An unknown name exits 2.
+`--provider` takes a comma-separated list. `--case` takes case ids (`provider.case`). A positional argument with a dot is a case id. A positional argument without a dot is a provider name. An unknown name exits 2. When both a provider and a case are given, a case runs only if it matches both (AND). `--list` prints the ids that would run.
 
 Each case uses a temporary `HOME`, so Python user-site packages would otherwise disappear. The runner keeps the `python3` that was on `PATH` when it started, and puts that interpreter's site packages on `PYTHONPATH`. `pip install --user` locally and `python3 -m pip install` in CI both work. CI also installs `libsecret-1-0` so the keytar module can load. With no Secret Service, Cast stores the deployment token in the temporary home.
 
@@ -32,7 +33,7 @@ The process writes `tests/e2e/smoke-summary.json` (or `$SMOKE_SUMMARY`) and exit
 
 ## CLI endings
 
-Each case compares the CLI tail with `tests/e2e/endings/<id>.txt`. Ending files are `cat -A` style: `$` marks the end of each line, `^I` is a tab, and `^M` is a carriage return. Paths, ports, deployment SHAs, tar sizes, and key fingerprints are normalized before the comparison.
+Each case compares the CLI tail with `tests/e2e/endings/<id>.txt`. Ending files are `cat -A` style: `$` marks the end of each line, `^I` is a tab, and `^M` is a carriage return. Paths, ports, deployment SHAs, tar sizes, and key fingerprints are normalized before the comparison. While a case runs, the harness renames `typescript/cast-tui/dist/index.js` out of the way and puts it back afterwards. Connect then always prints the missing-OpenTUI warning, whether or not the TUI was built.
 
 Rewriting those files is explicit and local:
 
@@ -51,9 +52,12 @@ Add one module, `tests/e2e/providers/<name>.mjs`. The runner loads every `*.mjs`
 The module exports:
 
 - `shims`: CLI basenames to place on `PATH` (`['flyctl']`). Each name is a symlink to `tests/e2e/lib/shim.mjs`.
+- `tokens`: fake env values for this provider, `{FLY_API_TOKEN: 'fly-secret-...'}`. The name is the env var. Discovery merges every module's `tokens`. The harness puts them in the `cast` environment, the HTTP fake accepts any of them as a bearer, and the argv sampler scans the merged values. Do not add the token to a shared list.
 - `cases`: objects `{id, provider, name, run(fx), skip?}`. `id` is `provider.case`.
-- `handleShim(api)`: optional. Return `false` when `api.bin` is not yours. Call `api.finish(code, stdout, stderr)` to record the command and exit. Return `true` to keep the process alive (an SSH tunnel).
+- `handleShim(api)`: optional. Return `false` when `api.bin` is not yours. Call `api.finish(code, stdout, stderr)` to record the command and exit. Return `true` to keep the process alive (an SSH tunnel). `api.envFlags()` reports which merged token env vars were set.
 - `handleHttp(ctx)`: optional. Return `true` after `ctx.send(...)` when the request is yours.
+
+Keep this provider's assertions in the module. `assert.mjs` is generic helpers (`assertOk`, `assertEnding`, registry rows). A check that a droplet was named `cast-smoke`, or that SSH keys are add-only, lives next to the cases that need it.
 
 Shared helpers live in `tests/e2e/lib/` (`assert.mjs`, `harness.mjs`, `state.mjs`). `gzip` and `bun` are built-in stand-ins in `lib/builtin-shims.mjs`, not part of a provider.
 

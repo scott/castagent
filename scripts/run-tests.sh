@@ -36,7 +36,13 @@ if [ "$status" -eq 0 ]; then
   # --exit: a finished suite still holds the sqlite handle and other
   # leftovers, and mocha would otherwise wait forever. The status is
   # the test result; --exit only ends the process after that.
-  nyc mocha --forbid-only --exit 'tests/**/*.test.ts'
+  # The JSON file is the PR-versus-main input. Spec stays on the console.
+  mkdir -p "$ROOT/test-results"
+  nyc mocha --forbid-only --exit \
+    --reporter spec \
+    --reporter json \
+    --reporter-option "output=$ROOT/test-results/mocha.json" \
+    'tests/**/*.test.ts'
   status=$?
 fi
 

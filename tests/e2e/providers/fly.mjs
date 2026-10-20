@@ -2,7 +2,6 @@ import {handleAgentHttp} from '../lib/agent-http.mjs'
 import {
   AGENT,
   assert,
-  assertAgentResources,
   assertEnding,
   assertExcludes,
   assertFailed,
@@ -20,6 +19,14 @@ import {
 } from '../lib/assert.mjs'
 
 export const shims = ['flyctl']
+
+export const tokens = {
+  FLY_API_TOKEN: 'fly-secret-e2e-9f3a7c',
+}
+
+function assertFlyResources(fx) {
+  assertIncludes(blob(fx), 'flyctl apps create cast-smoke')
+}
 
 function ensureApp(world, name) {
   if (!world.apps[name]) world.apps[name] = {volumes: [], deployed: false}
@@ -117,7 +124,7 @@ export const cases = [
       assert(row.deployment_url === 'https://cast-smoke.fly.dev', String(row.deployment_url))
       assert(!String(row.deployment_url).includes(fx.base), String(row.deployment_url))
       assertIncludes(blob(fx), 'http GET /.well-known/agent.json')
-      assertAgentResources(fx, 'fly')
+      assertFlyResources(fx)
       assertIncludes(blob(fx), 'flyctl volumes create cast_smoke_memory')
       assertEnding('fly.deploy', result.stdout, result.stderr, fx.home)
     },
