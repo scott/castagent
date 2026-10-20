@@ -14,6 +14,7 @@ import {
   stageCastRuntime,
 } from './deploy-utils'
 import {deployToSprites, type SpriteDeployOptions} from './sprites'
+import {SPRITE_SERVICE_LOG} from './sprites-service'
 import {dockerContainerEnv, dockerContainerRunArgs, startDockerAgentContainer, writeDockerCompose} from './docker'
 import {writeHostMotdOverSsh} from './motd'
 import {writeRequirementsTxt} from './requirements'
@@ -509,8 +510,31 @@ function failureText(text: string): string {
   return text.replace(/[ \t\r\n]+$/g, '')
 }
 
+function isSpriteLogsHint(line: string): boolean {
+  return line.startsWith('Logs: sprite exec -s ') && line.endsWith(` -- cat ${SPRITE_SERVICE_LOG}`)
+}
+
+/** The service-log hint is one line, after the restore result. */
+function moveSpriteLogsHintLast(message: string): string {
+  const lines = message.split('\n')
+  let hint: string | null = null
+  const body: string[] = []
+  for (const line of lines) {
+    if (isSpriteLogsHint(line)) {
+      if (!hint) hint = line
+      continue
+    }
+    body.push(line)
+  }
+  if (!hint) return message
+  while (body.length > 0 && body[body.length - 1] === '') body.pop()
+  return `${body.join('\n')}\n\n${hint}`
+}
+
 export function upgradeRolledBackMessage(agent: string, oldVersion: string, target: string, upgradeError: string): string {
-  return `Upgrade to ${target} failed. ${agent} is back on ${oldVersion}.\n\nReason: ${failureText(upgradeError)}\n\nTo try again: cast upgrade ${agent} ${target}`
+  return moveSpriteLogsHintLast(
+    `Upgrade to ${target} failed. ${agent} is back on ${oldVersion}.\n\nReason: ${failureText(upgradeError)}\n\nTo try again: cast upgrade ${agent} ${target}`,
+  )
 }
 
 export function upgradeRestoreFailedMessage(
@@ -531,7 +555,7 @@ export function upgradeRestoreFailedMessage(
       'To restore it, find the last good release and upgrade to it:',
       `  cast upgrade ${agent} --list-versions`,
     ]
-  return [
+  return moveSpriteLogsHintLast([
     `Upgrade to ${target} failed, and restoring ${oldVersion} on the remote also failed.`,
     '',
     `Upgrade error: ${failureText(upgradeError)}`,
@@ -539,7 +563,7 @@ export function upgradeRestoreFailedMessage(
     '',
     `${agent} may be running the broken ${target} release. ${localFiles}`,
     ...recovery,
-  ].join('\n')
+  ].join('\n'))
 }
 
 /** State C: restoring the recorded version failed again, and the failed target stays put. */
@@ -549,14 +573,14 @@ export function restoreFailedAgainMessage(
   brokenTarget: string,
   error: string,
 ): string {
-  return [
+  return moveSpriteLogsHintLast([
     `Restoring ${oldVersion} on the remote failed again.`,
     '',
     `Error: ${failureText(error)}`,
     '',
     `${agent} may still be running the broken ${brokenTarget} release. Your local files are on ${oldVersion}.`,
     `To try again: cast upgrade ${agent} ${oldVersion}`,
-  ].join('\n')
+  ].join('\n'))
 }
 
 export function unfinishedUpgradeLine(agent: string, target: string): string {
@@ -564,7 +588,7 @@ export function unfinishedUpgradeLine(agent: string, target: string): string {
 }
 
 export function restoringLine(oldVersion: string): string {
-  return `Restoring ${oldVersion}...`
+  return `Restoring ${oldVersion} on the remote...`
 }
 
 export function restoredLine(agent: string, oldVersion: string): string {
@@ -719,6 +743,12 @@ export async function upgradeSpritesDeployment(
     }
     if (restoreFailure) {
       throwRestoreFailure(withoutSecrets(restoreFailure.trim(), secrets))
+    }
+
+    // This call is already the restore of the recorded release. Another
+    // deploy would repeat it and print the install progress twice.
+    if (restoring) {
+      throwRestoreFailure(upgradeError)
     }
 
     host.log(`Restoring ${knownGood} on the remote...`)

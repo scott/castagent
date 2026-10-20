@@ -235,6 +235,10 @@ The version is a positional argument, not a flag.
   deployment row is marked `remote-state-unknown` with the failed target,
   and the next `cast upgrade` is not refused as already on the recorded
   version. `cast upgrade <agent> <recorded version>` restores that release.
+  It prints `Restoring <recorded version> on the remote...` once and redeploys
+  that release once. A failure ends with one
+  `Logs: sprite exec -s cast-<agent> -- cat /.sprite/logs/services/cast-agent.log`
+  line.
   When no version was recorded, the failure says to run
   `cast upgrade <agent> --list-versions` instead of naming a version.
   The version is stored only after a redeploy succeeds.
