@@ -1,5 +1,20 @@
 # cast-cli
 
+## 2.6.0
+
+### Minor Changes
+
+- add1fc7: Remove `cast migrate`. Agents still on a pre-1.1 layout should run `cast migrate` from 2.5.1 before upgrading.
+
+### Patch Changes
+
+- f63176b: `cast deploy` records `1.0` when agent.yaml has no version. A version that contains whitespace is refused. A version that is not MAJOR.MINOR or MAJOR.MINOR.PATCH is recorded with one warning.
+- bcd8757: Pin certifi to 2026.10.19. The locked 2026.10.18 release is inside GHSA-6q48-6c7w-9gw2, and the deploy fallback floor is now `certifi>=2026.10.19`.
+- 217e8a9: Fail deploy when a runtime requirement pin or upper bound cannot meet the declared floor. Strip `--hash` options and mask URL credentials in the warning.
+- 678f863: `CAST_PROVIDER_HTTP_BASE` is a loopback-only testing override for Droplet DigitalOcean API calls and Fly agent-card checks. The value is literal `127.0.0.1` or `::1`. Fly checks it before creating an app, and `cast connect` rewrites the stored URL only for Fly. The path and query stay the same. The override is not stored as the deployment URL. MicroVM calls to api.digitalocean.com are unchanged. Provider CLIs stay on `PATH`.
+- 89c9da2: The agent image no longer includes gcc. Docker deploys now use `python:3.11-slim-bookworm` instead of `python:3.11-slim`.
+- f44b763: TUI `/release` suggests the next patch of the current release, and `/deploy` lists releases newest first with `(latest)` on the current version.
+
 ## 2.5.1
 
 ### Patch Changes
