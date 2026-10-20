@@ -147,18 +147,22 @@ Connect with: cast connect abc123
 ```
 
 Without `--version`, Cast records the top-level `version` in the agent
-directory's `agent.yaml`. `version: null`, `version: ~`, and an empty
-`version:` count as no version. Block scalars of any style are read
-and trimmed to their first line, and a byte-order mark at the start of
-the file is ignored. Unquoted numbers are kept as written. The runtime
-reads that same spelling, so `version: 1.10`, `version: 2.0`, and
-`version: 1.0.0` stay `1.10`, `2.0`, and `1.0.0`. Quoted forms such as
-`version: "1.10"` and `version: '2.0'` stay that text too. When that field is
-absent, Cast records the current release from `releases.json`. If the
-file has no releases, the recorded value is `latest`. If the release
-list cannot be read, the recorded value is still `latest`, and the
-warning says the file could not be read rather than that it has no
-releases.
+directory's `agent.yaml`. Deploy and the runtime parse that field with
+a YAML parser and keep it as text, so `version: 1.10`, `version: 2.0`,
+and `version: 1.0.0` stay `1.10`, `2.0`, and `1.0.0`. Quoted forms such
+as `version: "1.10"` and `version: '2.0'` stay that text too. A block
+scalar is that text with surrounding whitespace removed, so a trailing
+newline from `|`, `>`, or `|+` is not part of the version. A version
+that still contains a newline or any other whitespace is refused.
+Write it as one line, for example `version: "1.4.5"`. The runtime still
+reports the text the parser returned. Anchors, aliases, and explicit
+tags (`!!str`, `!!float`) resolve to the same text. An explicit `!!null`
+tag is a missing version. A later duplicate `version` key wins. A
+byte-order mark at the start of the file is ignored. `version: null`,
+`version: ~`, an empty `version:`, and a missing `version` are `1.0`.
+`cast deploy` records that `1.0` and warns once. A version that is not
+MAJOR.MINOR or MAJOR.MINOR.PATCH, such as `true` or `yes`, is recorded
+and `cast deploy` prints one warning.
 
 ## Upgrading a live deployment
 
