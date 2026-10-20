@@ -48,6 +48,15 @@ class TestOpenRouterProvider:
             assert call_kwargs["model"] == "anthropic/claude-3.7-sonnet"
 
     @patch("cast.providers.openrouter.ChatOpenAI")
+    def test_create_llm_normalizes_prefixed_dashed_id(self, mock_chat_openai):
+        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
+            provider = OpenRouterProvider()
+            provider.create_llm("anthropic/claude-3-7-sonnet")
+
+            call_kwargs = mock_chat_openai.call_args.kwargs
+            assert call_kwargs["model"] == "anthropic/claude-3.7-sonnet"
+
+    @patch("cast.providers.openrouter.ChatOpenAI")
     def test_create_llm_adds_provider_prefix(self, mock_chat_openai):
         with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}):
             provider = OpenRouterProvider()
