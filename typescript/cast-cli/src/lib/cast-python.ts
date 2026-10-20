@@ -5,10 +5,19 @@ import * as path from 'path'
 /**
  * Directory that contains the `cast` Python package (the parent of `cast/`).
  *
- * Prefer this checkout. `~/.cast/python` is a one-time copy from an older
- * install. After the sessions table gained `topic`, that copy's
- * `SessionMeta.from_db_row` crashes with an unexpected keyword argument
- * and `cast connect` prints the traceback over the chat.
+ * Resolution order:
+ * 1. This checkout (`<repo>/python`), from either the dist or src layout.
+ * 2. A shallower checkout layout.
+ * 3. `~/.cast/python`.
+ *
+ * Prefer the checkout. `~/.cast/python` can still hold a partial copy
+ * written by `cast migrate` in 2.5.1 or earlier. That copy has no
+ * `sessions.py` from this tree. After the sessions table gained `topic`,
+ * an older `SessionMeta.from_db_row` crashes with an unexpected keyword
+ * argument and `cast connect` prints the traceback over the chat.
+ *
+ * Keep the sessions lookup in step with
+ * typescript/cast-tui/src/lib/cast-python.ts.
  */
 export function resolveCastPythonPath(moduleDir: string = __dirname, homeDir?: string): string {
   const candidates = pythonPackageCandidates(moduleDir, homeDir)
@@ -24,11 +33,14 @@ export function resolveCastPythonPath(moduleDir: string = __dirname, homeDir?: s
  * Interpreter and package directory for modules that ship in this
  * checkout, such as `cast.undo`.
  *
- * `cast migrate` copies its migration modules into ~/.cast/python.
- * That copy does not include undo.py, so system python3
- * with that directory on sys.path raises ModuleNotFoundError. Prefer the
- * checkout package and the virtualenv created next to it. System python3
- * is only the fallback when that virtualenv has not been created.
+ * Same directory order as `resolveCastPythonPath`. The virtualenv
+ * created next to the chosen package is preferred. System python3 is
+ * only the fallback when that virtualenv has not been created.
+ *
+ * A partial `~/.cast/python` from `cast migrate` in 2.5.1 or earlier
+ * does not include `undo.py`. Putting that directory on `sys.path`
+ * raises `ModuleNotFoundError`. A checkout `cast` package is still
+ * this install when `undo.py` is missing, so it wins over that copy.
  */
 export interface CastPythonRuntime {
   command: string
@@ -59,14 +71,10 @@ function resolveUndoPackageDir(moduleDir: string, homeDir?: string): string {
       return candidate
     }
   }
-  // A checkout package that is missing undo.py is still this install.
-  // The migrate copy is what made the import fail.
-  for (const candidate of candidates.slice(0, 2)) {
-    if (fs.existsSync(path.join(candidate, 'cast'))) {
-      return candidate
-    }
-  }
-  return candidates[candidates.length - 1]
+  // Minimal guard for a stale ~/.cast/python. See resolveCastPythonRuntime.
+  const checkout = candidates.slice(0, 2).find((candidate) =>
+    fs.existsSync(path.join(candidate, 'cast')))
+  return checkout ?? candidates[candidates.length - 1]
 }
 
 function resolveVenvPython(pythonPath: string): string {

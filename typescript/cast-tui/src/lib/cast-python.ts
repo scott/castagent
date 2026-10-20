@@ -5,10 +5,12 @@ import * as path from 'path'
 /**
  * Directory that contains the `cast` Python package (the parent of `cast/`).
  *
- * Prefer this checkout. `~/.cast/python` is a one-time copy from an older
- * install. After the sessions table gained `topic`, that copy's
- * `SessionMeta.from_db_row` crashes with an unexpected keyword argument
- * and `cast connect` prints the traceback over the chat.
+ * Resolution order: this checkout (dist or src layout), a shallower
+ * checkout layout, then `~/.cast/python`. Prefer the checkout. That home
+ * directory can still hold a partial copy from `cast migrate` in 2.5.1
+ * or earlier, or an older `sessions.py`. After the sessions table gained
+ * `topic`, an older `SessionMeta.from_db_row` crashes with an unexpected
+ * keyword argument and `cast connect` prints the traceback over the chat.
  *
  * Keep this in step with typescript/cast-cli/src/lib/cast-python.ts.
  */
