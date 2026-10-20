@@ -6,11 +6,11 @@ import * as path from 'path'
 import {CastDatabase} from '../../../typescript/cast-cli/src/lib/sqlite'
 
 /**
- * Production order for `cast connect` on an upgraded home:
- * the TypeScript database adds `topic`, then the TUI appends through
- * whatever Python package the helper selects. A stale package planted
- * at ~/.cast/python must not run, the message must land in the session
- * file, and the helper must not write a traceback to the terminal.
+ * Production order for `cast connect` on a home whose sessions table
+ * has no topic columns yet: opening the database adds `topic`, then
+ * the CLI and TUI append through the checkout package. A stale package
+ * planted at ~/.cast/python must not run, the message must land in the
+ * session file, and the helper must not write a traceback to the terminal.
  */
 describe('session append seam', () => {
   const repo = path.resolve(__dirname, '../../..')

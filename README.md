@@ -123,6 +123,8 @@ pip install langchain langchain-openai langchain-core starlette uvicorn pyyaml p
 
 `upgrade.sh` moves this checkout onto the newest `origin/main` commit and rebuilds the CLI, TUI, and Python runtime in place. It refuses that commit unless the signature matches the trusted key shipped in the script (`scripts/trusted-commit-key.asc`, GitHub's web commit signing key). An unsigned commit stays where it is and nothing is rebuilt. If `gpg` is not on `PATH`, upgrade stops and tells you to install gnupg. It does not describe that commit as unsigned. A checkout on any branch is switched, including local `master` that tracks `origin/master`. `origin/master` is used only when the remote has no `main` branch. Agents, config, and tokens under `~/.cast` stay in place. A stale pre-TypeScript binary at `~/.cast/bin/cast` is removed so it cannot shadow the rebuilt CLI.
 
+An agent that still stores its history in `.cast/versions/` (the layout from before 1.1.0) should be updated with Cast 2.5.1 before this upgrade. The changelog names that step. Opening the database and creating an agent do not depend on that old command.
+
 Tracked TypeScript build info (`typescript/cast-cli/tsconfig.tsbuildinfo` and `typescript/cast-tui/tsconfig.tsbuildinfo`) is reset. `tsc -b` rewrites those files, and checkouts from before they were removed from git still track them, so a build would otherwise look like a local edit and block the fast-forward. Any other uncommitted change stops the upgrade before it rebuilds. The script also stops when the local upstream branch has commits that cannot fast-forward. Commits that exist only on the branch you were on stay on that branch. It does not upgrade a deployed agent. That command is still `cast upgrade <agent>`.
 
 A checkout created before the default branch was `main` can still contain the older `upgrade.sh`, which follows `origin/master` and reports that it is already current. Run the current script instead. It finds the checkout through `~/.local/bin/cast` or the `cast` command on `PATH`:
@@ -496,8 +498,8 @@ Highlighting text with the mouse copies that selection to the clipboard.
 | `/session resume [id\|name]` | session | Replay a session's transcript into the chat and the model context. Opens the picker if no argument. |
 | `/save [filename]` | session | Save the conversation as plain text. With no name, writes `~/.cast/transcripts/<agent>-<timestamp>.txt`. A relative name stays in that directory. An absolute path or a path starting with `~` is written there, and missing parent directories are created. |
 | `/releases` | session | Shows semantic releases with `C` (Create Release) and `U` (Upgrade, if deployed) shortcuts. |
-| `/release` | agent | Opens a modal to create a new semantic release. Suggests patch/minor/major versions based on the current release. |
-| `/deploy` | agent | Release picker → provider picker → live deploy with SHA shown on success. |
+| `/release` | agent | Opens a modal to create a new semantic release. The version starts at the next patch of the current release, so 1.4.1 suggests 1.4.2 and 1.10 suggests 1.10.1. With no current release the suggestion is 0.1.0. |
+| `/deploy` | agent | Release picker lists releases newest first and marks the row matching `current.version` as `(latest)`, then a provider picker, then a live deploy with the SHA shown on success. |
 | `/upgrade` | agent | Operates on the current agent. Modal lists releases to upgrade to. |
 | `/update [flags]` | agent | Update the current agent's local configuration. No arguments opens a field modal. Dev and production. Hidden on-host. |
 | `/shutdown` | agent | Lists active deployments (every provider) and shuts one down after Y/N. Streams `cast shutdown --force`. Dev and production only. |
