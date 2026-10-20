@@ -156,6 +156,54 @@ class TestAgentConfig:
 
         assert config.version == "2.0"
 
+    @pytest.mark.parametrize(
+        ("scalar", "expected"),
+        [
+            ("1.10", "1.10"),
+            ("2.0", "2.0"),
+            ("1.0.0", "1.0.0"),
+            ("'1.10'", "1.10"),
+            ('"1.10"', "1.10"),
+            ("'2.0'", "2.0"),
+            ('"2.0"', "2.0"),
+            ("'1.0.0'", "1.0.0"),
+            ('"1.0.0"', "1.0.0"),
+            ("1.10 # keep", "1.10"),
+        ],
+    )
+    def test_version_survives_as_written(self, temp_agent_dir, scalar, expected):
+        """Unquoted numbers and quoted forms load as the same string deploy records."""
+        yaml_path = os.path.join(temp_agent_dir, "agent.yaml")
+        with open(yaml_path, "w", encoding="utf-8") as handle:
+            handle.write(
+                "name: demo\n"
+                f"version: {scalar}\n"
+                "description: stay\n"
+                "runtime:\n"
+                "  python_version: 3.11\n"
+            )
+
+        config = AgentConfig.from_path(temp_agent_dir)
+
+        assert config.version == expected
+        assert isinstance(config.version, str)
+        assert config.config["version"] == expected
+        if expected == "1.10":
+            assert config.version != "1.1"
+        assert isinstance(config.config["runtime"]["python_version"], float)
+        assert config.description == "stay"
+        assert config.name == "demo"
+
+    def test_null_version_is_not_rewritten_as_text(self, temp_agent_dir):
+        """A YAML null stays null. Only numeric spellings are restored."""
+        yaml_path = os.path.join(temp_agent_dir, "agent.yaml")
+        with open(yaml_path, "w", encoding="utf-8") as handle:
+            handle.write("name: demo\nversion: null\n")
+
+        config = AgentConfig.from_path(temp_agent_dir)
+
+        assert config.version is None
+
     def test_config_attributes_description(self, full_agent_yaml):
         """Test description attribute parsing."""
         config = AgentConfig.from_path(full_agent_yaml)

@@ -86,7 +86,9 @@ changes show up as files on disk.
   published port, and memory volume. It does not contain the deployment
   bearer token or provider API keys. Deploy passes the bearer token and
   the API key for `brain.model` to the container as environment variables
-  and stores the bearer token in the keychain. The values are handed to
+  and stores the bearer token in the keychain. The runtime reads
+  `AUTH_TOKEN` from that environment and does not take the token on its
+  command line. The values are handed to
   the provider on stdin or in the create request body.
   With no Secret Service, the token is written under `~/.cast/tokens/`
   instead, outside this directory.
@@ -100,7 +102,7 @@ changes show up as files on disk.
 | Section | Controls |
 |---|---|
 | `description` | one-line summary shown in `cast list` and the TUI |
-| `version` | current semantic version; `cast release` writes here |
+| `version` | semantic version kept as written (`1.10` stays `1.10`); `cast release` writes here |
 | `repository` | git remote, used by `cast git push` |
 | `brain.model` | the LLM the runtime agent calls |
 | `brain.instructions_file` | relative path to the system prompt |

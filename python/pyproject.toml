@@ -26,8 +26,8 @@ test = [
 ]
 
 [project.scripts]
-cast-builder = "cast.builder:main"
-cast-runtime = "cast.runtime:main"
+cast-builder = "cast.builder:run"
+cast-runtime = "cast.runtime:run"
 
 [build-system]
 requires = ["setuptools>=61.0"]

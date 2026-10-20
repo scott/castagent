@@ -6,6 +6,7 @@ import crypto from 'crypto'
 import YAML from 'yaml'
 import { db } from '../sqlite'
 import { keychain, type TokenStore } from '../keychain'
+import {runtimeDockerfileCmd} from '../runtime-args'
 import {writeRequirementsTxt} from './requirements'
 
 const CAST_DIR = path.join(os.homedir(), '.cast')
@@ -545,7 +546,7 @@ ENV PYTHONPATH=/usr/local
 EXPOSE 8080
 
 # Run agent
-CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "8080", "--host", "0.0.0.0"]
+${runtimeDockerfileCmd()}
 `
     fs.writeFileSync(dockerfilePath, dockerfile)
   }
@@ -595,7 +596,7 @@ ENV PYTHONPATH=/app
 EXPOSE 8080
 
 # Run agent
-CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "8080", "--host", "0.0.0.0"]
+${runtimeDockerfileCmd()}
 `
 }
 

@@ -7,7 +7,7 @@ import socket
 import sys
 import time
 import traceback
-from typing import Any, AsyncGenerator, Callable, Dict, List, Optional
+from typing import Any, AsyncGenerator, Callable, Dict, List, Mapping, Optional
 
 from .agent.base import AgentConfig
 from .agent.runtime import RuntimeAgent
@@ -697,12 +697,32 @@ def configure_runtime_env(agent_path: str) -> str:
     return root
 
 
-async def main():
-    parser = argparse.ArgumentParser(description="Cast Runtime Agent")
+def build_runtime_parser() -> argparse.ArgumentParser:
+    """CLI for the runtime process. The bearer token is not an argument."""
+    parser = argparse.ArgumentParser(
+        description=(
+            "Cast Runtime Agent. "
+            "The deployment bearer token is the AUTH_TOKEN environment variable. "
+            "Pass the token in the environment. It is not accepted on the command line."
+        ),
+    )
     parser.add_argument("--agent-path", required=True, help="Path to agent directory")
     parser.add_argument("--port", type=int, default=0, help="Port for A2A server")
     parser.add_argument("--host", default="localhost", help="Host to bind the A2A server to")
-    parser.add_argument("--auth-token", help="Auth token for deployed mode")
+    return parser
+
+
+def read_auth_token(environ: Optional[Mapping[str, str]] = None) -> Optional[str]:
+    """Bearer token from AUTH_TOKEN. An empty value leaves the server in local mode."""
+    env = os.environ if environ is None else environ
+    token = env.get("AUTH_TOKEN")
+    if not token:
+        return None
+    return token
+
+
+async def main():
+    parser = build_runtime_parser()
     args = parser.parse_args()
 
     # Validate agent path
@@ -726,8 +746,8 @@ async def main():
     # Start A2A server
     server = A2AServer(agent, host=args.host, port=args.port)
 
-    # Set auth token if provided via CLI or environment variable
-    auth_token = args.auth_token or os.environ.get('AUTH_TOKEN')
+    # AUTH_TOKEN is the only input. A command-line flag would show up in ps.
+    auth_token = read_auth_token()
     if auth_token:
         server.set_auth_token(auth_token)
 

@@ -3,6 +3,13 @@ import re
 import yaml
 from typing import List, Optional
 
+# PyYAML loads a plain `1.10` as the float 1.1. The scalar node still holds
+# the spelling from agent.yaml, which is what deploy records.
+_YAML_NUMBER_TAGS = (
+    "tag:yaml.org,2002:int",
+    "tag:yaml.org,2002:float",
+)
+
 
 class AgentConfigError(Exception):
     """agent.yaml could not be parsed or validated."""
@@ -33,6 +40,7 @@ class AgentConfig:
             raise AgentConfigError(
                 f"agent.yaml could not be validated ({config_path}): expected a mapping"
             )
+        _keep_numeric_version_spelling(text, loaded)
         return loaded
     
     @property
@@ -193,6 +201,44 @@ class AgentConfig:
 
 _SKILL_FRONTMATTER = re.compile(r"\A---\r?\n(.*?)\r?\n---\r?\n?(.*)\Z", re.DOTALL)
 _SKILL_MARKDOWN_NAMES = ("SKILL.md", "skill.md")
+
+
+def _keep_numeric_version_spelling(text: str, loaded: dict) -> None:
+    """Store a numeric top-level version as the text that was written.
+
+    Quoted versions and strings such as `1.0.0` already load as strings.
+    `version: null` stays null. Other numbers in the file are left alone.
+    """
+    value = loaded.get("version")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return
+    spelling = _numeric_version_spelling(text)
+    if spelling is not None:
+        loaded["version"] = spelling
+
+
+def _numeric_version_spelling(text: str) -> Optional[str]:
+    """Source text of the last top-level version scalar when it is a number."""
+    try:
+        node = yaml.compose(text, Loader=yaml.SafeLoader)
+    except yaml.YAMLError:
+        return None
+    if not isinstance(node, yaml.MappingNode):
+        return None
+    spelling: Optional[str] = None
+    for key_node, value_node in node.value:
+        if not isinstance(key_node, yaml.ScalarNode) or key_node.value != "version":
+            continue
+        if (
+            isinstance(value_node, yaml.ScalarNode)
+            and value_node.tag in _YAML_NUMBER_TAGS
+            and isinstance(value_node.value, str)
+            and value_node.value != ""
+        ):
+            spelling = value_node.value
+        else:
+            spelling = None
+    return spelling
 
 
 def _yaml_error_line(text: str, mark: object) -> Optional[int]:

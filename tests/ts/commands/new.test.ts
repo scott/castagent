@@ -517,17 +517,36 @@ describe('new command - stdin without a TTY', () => {
   const worker = path.join(__dirname, 'new-stdin-worker.ts')
   const repoRoot = path.resolve(__dirname, '../../..')
 
-  function runNew(input: string, extraEnv: NodeJS.ProcessEnv = {}) {
-    return spawnSync(process.execPath, ['-r', 'ts-node/register', worker], {
-      cwd: repoRoot,
+  function runNew(input: string, extraEnv: NodeJS.ProcessEnv = {}, cwd = repoRoot) {
+    // Preload by absolute path. A temp cwd cannot resolve `ts-node/register`
+    // from its own directory, and that cwd is what getPythonExecutable reads.
+    const tsNodeRegister = require.resolve('ts-node/register')
+    return spawnSync(process.execPath, ['-r', tsNodeRegister, worker], {
+      cwd,
       env: {
         ...process.env,
         TS_NODE_TRANSPILE_ONLY: '1',
+        TS_NODE_PROJECT: path.join(repoRoot, 'tsconfig.test.json'),
         ...extraEnv,
       },
       encoding: 'utf8',
       input,
     })
+  }
+
+  // getPythonExecutable() uses <cwd>/python/.venv/bin/python3 when that file
+  // exists, and only otherwise looks up python3 on PATH. A checkout that has
+  // already run ./setup.sh therefore never runs a PATH-only shim. Plant the
+  // same interpreter in both places and run with that directory as cwd so
+  // these tests do not depend on the real python/.venv.
+  function plantPythonShim(root: string, script: string): string {
+    const bin = path.join(root, 'bin')
+    const venvBin = path.join(root, 'python', '.venv', 'bin')
+    fs.mkdirSync(bin, {recursive: true})
+    fs.mkdirSync(venvBin, {recursive: true})
+    fs.writeFileSync(path.join(bin, 'python3'), script, {mode: 0o755})
+    fs.writeFileSync(path.join(venvBin, 'python3'), script, {mode: 0o755})
+    return bin
   }
 
   function withMarkerRestore(fn: () => void): void {
@@ -561,13 +580,10 @@ describe('new command - stdin without a TTY', () => {
 
   it('prints the agent from stdin and does not launch the TUI', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-fake-'))
-    const bin = path.join(root, 'bin')
     const agents = path.join(root, 'agents')
     const stdinOut = path.join(root, 'stdin.txt')
-    fs.mkdirSync(bin)
     fs.mkdirSync(agents)
-    const fake = path.join(bin, 'python3')
-    fs.writeFileSync(fake, `#!/usr/bin/env node
+    const bin = plantPythonShim(root, `#!/usr/bin/env node
 const fs = require('fs')
 const path = require('path')
 const chunks = []
@@ -582,14 +598,14 @@ process.stdin.on('end', () => {
   const agentPath = path.join(process.env.CAST_AGENTS_DIR, 'email-agent')
   process.stdout.write(JSON.stringify({name: 'email-agent', path: agentPath}) + '\\n')
 })
-`, {mode: 0o755})
+`)
     try {
       const description = 'Email assistant that triages and drafts replies'
       const result = runNew(`${description}\n`, {
         PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}`,
         CAST_AGENTS_DIR: agents,
         CAST_STDIN_OUT: stdinOut,
-      })
+      }, root)
       expect(result.status, result.stderr || result.stdout).to.equal(0)
       expect(result.stdout).to.include("Created agent 'email-agent'")
       expect(result.stdout).to.include('cast dev email-agent')
@@ -603,19 +619,50 @@ process.stdin.on('end', () => {
 
   it('surfaces a builder failure from the piped path', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-fail-'))
-    const bin = path.join(root, 'bin')
-    fs.mkdirSync(bin)
-    fs.writeFileSync(path.join(bin, 'python3'), `#!/bin/sh
+    const agents = path.join(root, 'agents')
+    fs.mkdirSync(agents)
+    // This builder reads the description, then fails. CAST_AGENTS_DIR
+    // keeps a bypassed shim from writing into ~/.cast/agents.
+    const bin = plantPythonShim(root, `#!/bin/sh
+cat >/dev/null
 echo 'Could not derive an agent name from the description.' >&2
 exit 2
-`, {mode: 0o755})
+`)
     try {
       const result = runNew('hello from the pipe\n', {
         PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}`,
-      })
+        CAST_AGENTS_DIR: agents,
+      }, root)
       expect(result.status).to.not.equal(0)
       expect(result.stderr).to.include('Could not derive an agent name from the description.')
       expect(result.stdout).to.not.include('Launching OpenTUI')
+    } finally {
+      fs.rmSync(root, {recursive: true, force: true})
+    }
+  })
+
+  it('surfaces a builder error when the builder exits before reading stdin', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-epipe-'))
+    const agents = path.join(root, 'agents')
+    fs.mkdirSync(agents)
+    // Do not read stdin. A short write fits in the pipe and never raises
+    // EPIPE, so the description is larger than the default 64KiB buffer.
+    const bin = plantPythonShim(root, `#!/bin/sh
+echo 'builder failed before reading stdin' >&2
+exit 2
+`)
+    try {
+      const description = `builder input ${'x'.repeat(256 * 1024)}`
+      const result = runNew(description, {
+        PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}`,
+        CAST_AGENTS_DIR: agents,
+      }, root)
+      const output = `${result.stderr ?? ''}\n${result.stdout ?? ''}`
+      expect(result.status, output).to.not.equal(0)
+      expect(output).to.include('builder failed before reading stdin')
+      expect(output).to.not.match(/EPIPE/)
+      expect(result.stdout ?? '').to.not.include('Launching OpenTUI')
+      expect(fs.readdirSync(agents)).to.deep.equal([])
     } finally {
       fs.rmSync(root, {recursive: true, force: true})
     }

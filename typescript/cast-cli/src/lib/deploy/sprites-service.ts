@@ -1,3 +1,5 @@
+import {runtimeProcessArgs} from '../runtime-args'
+
 /** Sprite service that keeps the Cast agent listening on port 8080. */
 
 export const SPRITE_AGENT_DIR = '/opt/cast-agent'
@@ -38,8 +40,13 @@ export function spriteAgentLaunchScript(
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(key)) continue
     lines.push(`export ${key}=${shellSingleQuote(value)}`)
   }
+  const runtimeArgs = runtimeProcessArgs({
+    agentPath: SPRITE_AGENT_DIR,
+    port: 8080,
+    host: '0.0.0.0',
+  })
   lines.push(
-    `exec ${SPRITE_AGENT_DIR}/venv/bin/python -m cast.runtime --agent-path ${SPRITE_AGENT_DIR} --port 8080 --host 0.0.0.0`,
+    `exec ${SPRITE_AGENT_DIR}/venv/bin/python ${runtimeArgs.join(' ')}`,
   )
   return `${lines.join('\n')}\n`
 }

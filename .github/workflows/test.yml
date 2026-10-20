@@ -137,10 +137,14 @@ jobs:
 
       - name: Run Python tests with coverage
         # A collection error or a failing test fails this job.
-        # Session storage is not in this step. That suite is the
-        # required session-python job, and it runs from the repo root.
+        # working-directory is python/, so `tests/python` is
+        # python/tests/python and `tests` is python/tests. The second
+        # path is the modules beside that subdirectory (test_openrouter
+        # and the rest). Pytest collects each file once. Session storage
+        # is not in this step. That suite is the required session-python
+        # job, and it runs from the repo root.
         run: |
-          python -m pytest tests/python \
+          python -m pytest tests/python tests \
             --cov=cast \
             --cov-report=xml \
             --cov-report=html \
@@ -194,9 +198,10 @@ jobs:
 
   # ============================================================================
   # Session storage
-  # The Python coverage step runs python/tests/python, which does not
-  # include tests/python/unit. This job is required. It is the suite
-  # that owns session rows.
+  # The Python coverage step runs python/tests (including
+  # python/tests/python). It does not include tests/python/unit at the
+  # repo root. This job is required. It is the suite that owns session
+  # rows.
   # ============================================================================
   session-python:
     name: Session storage tests
