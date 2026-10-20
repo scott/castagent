@@ -11,6 +11,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `cast migrate` is removed. It was a one-time upgrade for agents created before 1.1.0. Opening `cast.db` still creates the `releases` table, and new agents still get a default `memory/config.yaml`. Agents still on a pre-1.1 layout should run `cast migrate` from 2.5.1 before upgrading. ([#389](https://github.com/scott/castagent/pull/389))
 
+### Fixed
+
+- TUI `/release` suggests the next patch of the current release. For demo-agent, current `1.4.1` suggests `1.4.2`, and a two-part version such as `1.10` suggests `1.10.1`. `/deploy` lists releases newest first and marks the row matching `current.version` as latest ([#390](https://github.com/scott/castagent/pull/390)).
+- TUI release and version helpers run in the mocha suite. The disabled subprocess harness is removed ([#390](https://github.com/scott/castagent/pull/390)).
+
 ## [2.5.1] - 2026-10-14
 
 ### Fixed

@@ -60,7 +60,7 @@ import {
 } from '../lib/subject-agent.js'
 import {
   agentChangesIndicateBreaking,
-  isDeploymentSha,
+  connectTypedTarget,
   latestReleaseIndex,
   loadReleasesDocument,
   releaseFormState,
@@ -2329,10 +2329,11 @@ const commands: SlashCommand[] = [
             return true
           }
           if (key.name === 'return' || key.name === 'enter') {
-            // A typed value connects only when it is a 6-character deployment SHA.
-            if (isDeploymentSha(shaInput)) {
+            // Typed input is a SHA or an agent name. Pass it through, including a partial SHA.
+            const typed = connectTypedTarget(shaInput)
+            if (typed) {
               modal.hide()
-              launchConnect(ctx, shaInput)
+              launchConnect(ctx, typed)
               return true
             }
             if (deployments.length > 0) {

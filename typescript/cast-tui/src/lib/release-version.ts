@@ -48,18 +48,20 @@ export interface LoadedReleases {
   currentVersion: string | null
 }
 
-export type DiffArgs =
-  | {ok: true; kind: 'interactive'}
-  | {ok: true; kind: 'change'; left: number; right: number}
-  | {ok: true; kind: 'release'; left: string; right: string}
-  | {ok: false; error: string}
-
-const DIFF_CHANGE_USAGE = 'Usage: /diff --change N --change N'
-const DIFF_RELEASE_USAGE = 'Usage: /diff --release V --release V'
-
 /** Same rule as the CLI `isShaPattern`: 6 lowercase alphanumeric characters. */
 export function isDeploymentSha(input: string): boolean {
   return /^[a-z0-9]{6}$/.test(input)
+}
+
+/**
+ * Typed value from the `/connect` modal.
+ *
+ * A non-empty string is passed to `cast connect`, which accepts a deployment
+ * SHA or an agent name. A partial SHA is included. An empty string means the
+ * selected deployment row is used instead.
+ */
+export function connectTypedTarget(typed: string): string | null {
+  return typed.length > 0 ? typed : null
 }
 
 /** Python `validate_semver`: `1.0`, `1.10`, and `1.4.1` are valid. `1` and `01.2` are not. */
@@ -200,6 +202,9 @@ function normalizeRelease(entry: unknown): ReleaseRecord | null {
 /**
  * Read `current.version` when it is a non-empty string. Otherwise the newest
  * valid semver in the releases array, or null when the agent has no releases.
+ *
+ * Python `get_current_release` does not use that fallback. When `current` is
+ * missing, `suggest_version` returns 0.1.0 even if older releases exist.
  */
 export function currentReleaseVersion(
   data: unknown,
@@ -257,50 +262,4 @@ export function agentChangesIndicateBreaking(agentName: string, homeDir: string 
   } catch {
     return false
   }
-}
-
-/**
- * Parse `/diff --change N --change N` and `/diff --release V --release V`.
- * Release versions are kept as written, so `1.10` stays `1.10`.
- * No arguments means the interactive picker.
- */
-export function parseDiffArgs(args: readonly string[]): DiffArgs {
-  const changes: number[] = []
-  const releases: string[] = []
-
-  for (let i = 0; i < args.length; i++) {
-    const token = args[i]
-    if (token === '--change' || token.startsWith('--change=')) {
-      const value = token === '--change' ? args[++i] : token.slice('--change='.length)
-      if (value === undefined || value.startsWith('--') || !/^(0|[1-9]\d*)$/.test(value)) {
-        return {ok: false, error: DIFF_CHANGE_USAGE}
-      }
-      changes.push(Number(value))
-      continue
-    }
-    if (token === '--release' || token.startsWith('--release=')) {
-      const value = token === '--release' ? args[++i] : token.slice('--release='.length)
-      if (value === undefined || value.length === 0 || value.startsWith('--')) {
-        return {ok: false, error: DIFF_RELEASE_USAGE}
-      }
-      releases.push(value)
-      continue
-    }
-    return {ok: false, error: `Unknown /diff argument: ${token}`}
-  }
-
-  if (changes.length > 0 && releases.length > 0) {
-    return {ok: false, error: 'Use either --change or --release, not both'}
-  }
-  if (changes.length === 0 && releases.length === 0) {
-    return {ok: true, kind: 'interactive'}
-  }
-  if (changes.length === 2) {
-    return {ok: true, kind: 'change', left: changes[0], right: changes[1]}
-  }
-  if (releases.length === 2) {
-    return {ok: true, kind: 'release', left: releases[0], right: releases[1]}
-  }
-  if (changes.length > 0) return {ok: false, error: DIFF_CHANGE_USAGE}
-  return {ok: false, error: DIFF_RELEASE_USAGE}
 }

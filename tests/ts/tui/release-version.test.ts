@@ -306,54 +306,16 @@ describe('current release lookup', () => {
   })
 })
 
-describe('parseDiffArgs', () => {
-  it('parses two --change values', () => {
-    expect(helper.parseDiffArgs(['--change', '1', '--change', '4'])).to.deep.equal({
-      ok: true,
-      kind: 'change',
-      left: 1,
-      right: 4,
-    })
-    expect(helper.parseDiffArgs(['--change=3', '--change=8'])).to.deep.equal({
-      ok: true,
-      kind: 'change',
-      left: 3,
-      right: 8,
-    })
+describe('connectTypedTarget', () => {
+  it('passes a partial SHA and an agent name through to cast connect', () => {
+    expect(helper.connectTypedTarget('abc12')).to.equal('abc12')
+    expect(helper.connectTypedTarget('abc1234')).to.equal('abc1234')
+    expect(helper.connectTypedTarget('demo-agent')).to.equal('demo-agent')
+    expect(helper.connectTypedTarget('abc123')).to.equal('abc123')
   })
 
-  it('parses two --release values and keeps 1.10 as text', () => {
-    const parsed = helper.parseDiffArgs(['--release', '1.0', '--release', '1.10'])
-    expect(parsed).to.deep.equal({
-      ok: true,
-      kind: 'release',
-      left: '1.0',
-      right: '1.10',
-    })
-    if (parsed.ok && parsed.kind === 'release') {
-      expect(parsed.right).to.equal('1.10')
-      expect(parsed.right).to.not.equal('1.1')
-    }
-    expect(helper.parseDiffArgs(['--release=1.4.1', '--release=1.10'])).to.deep.equal({
-      ok: true,
-      kind: 'release',
-      left: '1.4.1',
-      right: '1.10',
-    })
-  })
-
-  it('treats no arguments as the interactive picker', () => {
-    expect(helper.parseDiffArgs([])).to.deep.equal({ok: true, kind: 'interactive'})
-  })
-
-  it('rejects a single side, mixed flags, and unknown tokens', () => {
-    expect(helper.parseDiffArgs(['--change', '1']).ok).to.equal(false)
-    expect(helper.parseDiffArgs(['--release', '1.0']).ok).to.equal(false)
-    expect(helper.parseDiffArgs(['--change', '1', '--release', '1.0']).ok).to.equal(false)
-    const unknown = helper.parseDiffArgs(['--file', 'agent.yaml'])
-    expect(unknown.ok).to.equal(false)
-    if (!unknown.ok) expect(unknown.error).to.include('--file')
-    expect(helper.parseDiffArgs(['--change', '1.10']).ok).to.equal(false)
+  it('returns null when nothing was typed so the selected row is used', () => {
+    expect(helper.connectTypedTarget('')).to.equal(null)
   })
 })
 
@@ -395,7 +357,12 @@ describe('slash registry wiring', () => {
     expect(source).to.not.include('/^\\d+(\\.\\d+){0,2}$/')
   })
 
-  it('connect accepts a typed value only when it is a deployment SHA', () => {
-    expect(source).to.include('isDeploymentSha(shaInput)')
+  it('connect passes a typed SHA or agent name through', () => {
+    expect(source).to.include('connectTypedTarget(shaInput)')
+    expect(source).to.not.include('isDeploymentSha(shaInput)')
+    const typed = source.indexOf('const typed = connectTypedTarget(shaInput)')
+    const launch = source.indexOf('launchConnect(ctx, typed)', typed)
+    expect(typed).to.be.greaterThan(-1)
+    expect(launch).to.be.greaterThan(typed)
   })
 })

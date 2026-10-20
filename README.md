@@ -505,7 +505,7 @@ Highlighting text with the mouse copies that selection to the clipboard.
 | `/shutdown` | agent | Lists active deployments (every provider) and shuts one down after Y/N. Streams `cast shutdown --force`. Dev and production only. |
 | `/stop` | agent | Stop the current local agent and stay in the TUI. |
 | `/registry` | session | Modal table of every live deployment (agent, SHA, provider, version, time, URL). Release history stays on `/releases`. |
-| `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a 6-character deployment SHA. Connecting starts a new session for that agent. |
+| `/connect` | session | Recent deployments table with SHA, provider, and version. Pick a row or type a SHA directly. Connecting starts a new session for that agent. |
 | `/import [source] [name]` | agent | Import a Cast agent from GitHub or a local path. |
 | `/builder-skills [add <github-or-folder>]` | agent | Add or remove skills the builder uses when creating agents. Dev mode only. Applies on the next `cast new` or `cast edit`. |
 | `/model` | agent | Change the model the builder uses. Dev mode only. Hidden in production and on-host. Applies on the next `cast dev`. |
