@@ -189,16 +189,20 @@ function runSuites(root, outDir) {
   const wanted = suitesToRun()
   prepareTree(root)
   if (wanted.has('mocha')) {
+    const mochaJson = path.join(outDir, 'mocha.json')
     const mochaBin = path.join(root, 'node_modules', 'mocha', 'bin', 'mocha.js')
     const bin = fs.existsSync(mochaBin) ? process.execPath : 'npx'
+    const report = ['--reporter', 'json', '--reporter-option', `output=${mochaJson}`, '--forbid-only', '--exit']
     const args = fs.existsSync(mochaBin)
-      ? [mochaBin, '--reporter', 'json', '--forbid-only', '--exit', ...mochaArgs()]
-      : ['mocha', '--reporter', 'json', '--forbid-only', '--exit', ...mochaArgs()]
-    capture(bin, args, {cwd: root}, path.join(outDir, 'mocha.json'))
-    if (!fs.existsSync(path.join(outDir, 'mocha.json')) || fs.statSync(path.join(outDir, 'mocha.json')).size === 0) {
+      ? [mochaBin, ...report, ...mochaArgs()]
+      : ['mocha', ...report, ...mochaArgs()]
+    // The JSON reporter writes mocha.json itself. Stdout also contains prompts
+    // from commands under test, so it is not the report.
+    capture(bin, args, {cwd: root}, path.join(outDir, 'mocha.stdout'))
+    if (!fs.existsSync(mochaJson) || fs.statSync(mochaJson).size === 0) {
       throw new Error(`mocha produced no JSON in ${root}`)
     }
-    JSON.parse(fs.readFileSync(path.join(outDir, 'mocha.json'), 'utf8'))
+    JSON.parse(fs.readFileSync(mochaJson, 'utf8'))
   }
   if (wanted.has('pytest')) {
     const pytestXml = path.join(outDir, 'pytest.xml')
