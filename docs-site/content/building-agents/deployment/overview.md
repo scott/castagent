@@ -252,9 +252,12 @@ The deployment is a single Docker image that contains:
   packages.
 - The git binary, installed with `apt-get install -y --no-install-recommends git`.
   The same step deletes the apt package lists. The runtime imports GitPython
-  before the server binds, and that import fails when git is missing.
+  before the server binds. GitPython 3.2.1 raises ImportError when the git
+  binary is missing.
   Recommended packages such as openssh-client, xauth, less, and patch stay out of the image.
   perl stays, because git depends on it.
+  A compiler is not installed. langgraph, langchain, httpx, starlette, uvicorn, and
+  PyYAML install from wheels on python:3.11-slim-bookworm.
 - For DigitalOcean with `--with-tui`: the `cast-tui` binary + Bun, so you
   can SSH into the droplet and run `cast-tui` inside the container.
 
@@ -308,7 +311,7 @@ Docker, Fly, Sprites, Droplets, MicroVMs, and Railway install that file with
 not keep its own package list. `--provider local` writes the file and then
 stops, because that provider is not implemented and does not run pip.
 
-Droplet, MicroVM, and Fly images copy that same package to `/app/cast` and set
+Docker, Droplet, MicroVM, and Fly images copy that same package to `/app/cast` and set
 `PYTHONPATH=/app`. Their `requirements.txt` is the same file and also omits
 `cast`. Fly deploy then waits until
 `https://cast-<agent>.fly.dev/.well-known/agent.json` returns the agent
@@ -317,12 +320,16 @@ fails the deploy and Cast does not print a success banner. A current
 log line `Error loading agent config` fails that check while the machine
 is still started or starting.
 
-The runtime stage installs git with
-`--no-install-recommends` and removes the apt lists. gcc stays in the
-builder stage. A generated Dockerfile that still points `PYTHONPATH` at
-`/usr/local`, or whose runtime stage omits
-`apt-get install -y --no-install-recommends git` and the apt list cleanup,
-is replaced on the next deploy.
+The image installs git with
+`--no-install-recommends` and removes the apt lists. The generated
+Dockerfile does not include a compiler. langgraph, langchain, httpx,
+starlette, uvicorn, and PyYAML install from wheels on
+`python:3.11-slim-bookworm`. An agent that needs a compiler should edit
+the Dockerfile, for example by adding `build-essential` to the apt line.
+Cast keeps an edited Dockerfile and prints
+`Keeping your edited Dockerfile; delete it to regenerate.`
+Delete the file to regenerate it. Cast replaces a Dockerfile only when
+the file still matches a template Cast generated.
 
 `cast deploy --provider docker` and `cast deploy --provider digitalocean`
 wait until the container is still running and the runtime has printed

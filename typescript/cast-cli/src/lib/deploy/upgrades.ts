@@ -12,12 +12,13 @@ import {
   readAgentModel,
   resolveDeploymentAuthToken,
   stageCastRuntime,
+  ensureCastRuntimeDockerfile,
+  appendCompilerHint,
 } from './deploy-utils'
 import {deployToSprites, type SpriteDeployOptions} from './sprites'
 import {SPRITE_SERVICE_LOG} from './sprites-service'
 import {dockerContainerEnv, dockerContainerRunArgs, startDockerAgentContainer, writeDockerCompose} from './docker'
 import {writeHostMotdOverSsh} from './motd'
-import {runtimeDockerfileCmd} from '../runtime-args'
 import {stagePythonRequirements, writeRequirementsTxt} from './requirements'
 import {
   digitalOceanMemoryVolumeName,
@@ -68,40 +69,6 @@ export async function detectOnHostTui(dropletIp: string): Promise<boolean> {
   } catch {
     return false
   }
-}
-
-function createDockerfile(agentPath: string): void {
-  const dockerfile = `FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \\
-    gcc \\
-    git \\
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy and install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy cast runtime package
-COPY .cast-runtime/cast /app/cast
-
-# Copy agent files
-COPY . /app/agent/
-
-# Set environment variables
-ENV CAST_AGENT_PATH=/app/agent
-ENV PYTHONPATH=/app
-
-# Expose A2A HTTP server port
-EXPOSE 8080
-
-# Run agent A2A server
-${runtimeDockerfileCmd()}
-`
-  fs.writeFileSync(path.join(agentPath, 'Dockerfile'), dockerfile)
 }
 
 function createRequirementsTxt(projectRoot: string, agentPath: string): void {
@@ -159,7 +126,7 @@ export async function upgradeDockerDeployment(
   fs.cpSync(castPackageSource, castRuntimeDir, {recursive: true})
 
   const dockerfilePath = path.join(agentPath, 'Dockerfile')
-  createDockerfile(agentPath)
+  ensureCastRuntimeDockerfile(agentPath)
   createDockerignore(agentPath)
   createRequirementsTxt(projectRoot, agentPath)
   writeDockerCompose(agentPath, {
@@ -171,17 +138,13 @@ export async function upgradeDockerDeployment(
   host.log('Building Docker image...')
   const {spawn} = await import('child_process')
 
-  const buildProc = spawn('docker', ['build', '--progress=plain', '--load', '-t', `cast-${agentName}:latest`, '-f', dockerfilePath, agentPath], {
-    stdio: process.stdout.isTTY ? 'inherit' : 'pipe',
-  })
-
-  await new Promise<void>((resolve, reject) => {
-    buildProc.on('error', reject)
-    buildProc.on('exit', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(`Docker build failed with code ${code}`))
-    })
-  })
+  const built = await execCommand('docker', ['build', '--progress=plain', '--load', '-t', `cast-${agentName}:latest`, '-f', dockerfilePath, agentPath])
+  if (built.exitCode !== 0) {
+    throw new Error(appendCompilerHint(
+      `Docker build failed with code ${built.exitCode}`,
+      `${built.stdout}\n${built.stderr}`,
+    ))
+  }
 
   const containerName = `cast-${agentName}`
   try {
@@ -396,18 +359,13 @@ export async function upgradeDigitalOceanDeployment(
 
   const imageName = `registry.digitalocean.com/cast-${agentName}/agent:${version}`
 
-  const buildProc = spawn('docker', ['build', '-t', imageName, '.'], {
-    cwd: agentPath,
-    stdio: 'inherit',
-  })
-
-  await new Promise<void>((resolve, reject) => {
-    buildProc.on('error', reject)
-    buildProc.on('exit', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(`Docker build failed with code ${code}`))
-    })
-  })
+  const built = await execCommand('docker', ['build', '-t', imageName, '.'], {cwd: agentPath})
+  if (built.exitCode !== 0) {
+    throw new Error(appendCompilerHint(
+      `Docker build failed with code ${built.exitCode}`,
+      `${built.stdout}\n${built.stderr}`,
+    ))
+  }
 
   const pushProc = spawn('docker', ['push', imageName], {
     stdio: 'inherit',

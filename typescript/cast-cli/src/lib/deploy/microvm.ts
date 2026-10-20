@@ -18,6 +18,7 @@ import {
   isShaPattern,
   prepareCastImageContext,
   prepareHostTuiBuildContext,
+  appendCompilerHint,
   resolveDeploymentAuthToken,
   resolveDigitalOceanToken,
   saveDeployment,
@@ -1528,7 +1529,10 @@ async function buildAndPushImage(agentName: string, tag: string, log: (message: 
     agentPath,
   ], {silent: false, timeoutMs: 900000})
   if (build.exitCode !== 0) {
-    throw new Error(`Docker build failed: ${build.stderr || build.stdout}`)
+    throw new Error(appendCompilerHint(
+      `Docker build failed: ${build.stderr || build.stdout}`,
+      `${build.stdout}\n${build.stderr}`,
+    ))
   }
 
   const inspect = await run('docker', ['image', 'inspect', '--format', '{{.Architecture}}', localTag])

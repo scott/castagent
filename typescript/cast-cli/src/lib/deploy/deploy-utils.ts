@@ -7,6 +7,7 @@ import YAML from 'yaml'
 import { db } from '../sqlite'
 import { keychain, type TokenStore } from '../keychain'
 import {runtimeDockerfileCmd} from '../runtime-args'
+import {PAST_AGENT_DOCKERFILES} from './past-agent-dockerfiles'
 import {writeRequirementsTxt} from './requirements'
 
 const CAST_DIR = path.join(os.homedir(), '.cast')
@@ -506,41 +507,134 @@ export async function forgetDeploymentTokens(
   return finish(removedDeploymentToken ? 'deployment' : 'none')
 }
 
+/** Printed once when a Cast Dockerfile was edited and is left in place. */
+export const EDITED_DOCKERFILE_MESSAGE = 'Keeping your edited Dockerfile; delete it to regenerate.'
+
+const COMPILER_HINT = 'This package needs a compiler. Edit the Dockerfile and add build-essential to the apt line. See https://castagent.dev/building-agents/deployment/overview#what-gets-shipped'
+
+/**
+ * One-line hint when a pip build fails because the image has no compiler.
+ * The deployment overview explains how to add `build-essential`.
+ */
+export function compilerBuildHint(output: string): string | undefined {
+  if (
+    output.includes("command 'gcc' failed")
+    || output.includes("error: command 'cc'")
+    || output.includes('Failed building wheel')
+  ) {
+    return COMPILER_HINT
+  }
+  return undefined
+}
+
+/** Append the compiler hint when the build output shows a missing compiler. */
+export function appendCompilerHint(message: string, output: string): string {
+  const hint = compilerBuildHint(output)
+  return hint ? `${message}\n${hint}` : message
+}
+
+/**
+ * Whitespace and line endings are not an edit. Anything else is.
+ * A backslash before a newline, or before CRLF, is a line continuation.
+ * Joining it into a space makes that form match the one line a JS template
+ * writes when the backslash is eaten. Blank lines and runs of spaces or
+ * tabs are ignored.
+ */
+export function normalizeDockerfile(content: string): string {
+  return content
+    .replace(/\\\r\n/g, ' ')
+    .replace(/\\\n/g, ' ')
+    .replace(/\\\r/g, ' ')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map(line => line.trim().replace(/[ \t]+/g, ' '))
+    .filter(line => line.length > 0)
+    .join('\n')
+}
+
+function dockerfileMatches(content: string, template: string): boolean {
+  return normalizeDockerfile(content) === normalizeDockerfile(template)
+}
+
 export function ensureDockerfile(agentPath: string): void {
   const dockerfilePath = path.join(agentPath, 'Dockerfile')
   if (!fs.existsSync(dockerfilePath)) {
-    // Multi-stage Docker build:
-    // - Stage 1 (builder): gcc, for Python packages with C extensions.
-    //   gcc is about 250 MB and is not copied into the runtime image.
-    // - Stage 2 (runtime): installed packages and git. GitPython imports
-    //   the git binary before the server binds.
-    const dockerfile = `FROM python:3.11-slim-bookworm AS builder
+    fs.writeFileSync(dockerfilePath, renderAgentDockerfile())
+    return
+  }
+  const current = fs.readFileSync(dockerfilePath, 'utf8')
+  const desired = renderAgentDockerfile()
+  // Railway does not stage the Cast package. Replace a file only when it
+  // is still a template Cast wrote. An edited file stays, including one
+  // that adds a compiler.
+  if (dockerfileMatches(current, desired)) return
+  if (PAST_AGENT_DOCKERFILES.some(template =>
+    !dockerfileCopiesCastPackage(template) && dockerfileMatches(current, template)
+  )) {
+    fs.writeFileSync(dockerfilePath, desired)
+    return
+  }
+  if (dockerfileMatches(current, castRuntimeDockerfile())) return
+  if (PAST_AGENT_DOCKERFILES.some(template => dockerfileMatches(current, template))) return
+  if (isCastDockerfileFamily(current)) {
+    console.log(EDITED_DOCKERFILE_MESSAGE)
+  }
+}
 
-WORKDIR /build
+const GENERATED_DOCKERFILE_MARKER = '# cast-generated-dockerfile'
+const LEGACY_BUILDER_MARKER = 'FROM python:3.11-slim-bookworm AS builder'
 
-# Copy requirements and install dependencies
-COPY requirements.txt .
-RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/* \\
-    && pip install --no-cache-dir -r requirements.txt
+export interface AgentDockerfileOptions {
+  /**
+   * Copy `.cast-runtime/cast` to `/app/cast` and set `PYTHONPATH=/app`.
+   * Docker, Fly, Droplets, and MicroVMs do this. Railway's first-time
+   * file does not, because that deploy does not stage the package.
+   */
+  copyCastPackage?: boolean
+}
 
-# Runtime stage. gcc stays in the builder. git is installed here
-# with --no-install-recommends, and the apt lists are removed.
-FROM python:3.11-slim-bookworm
+/**
+ * Generated agent image. Docker, Fly, Railway, Droplets, and MicroVMs
+ * all call this helper. A new provider should call it too, instead of
+ * pasting another Dockerfile.
+ *
+ * Git stays. GitPython 3.2.1 raises ImportError at import when the git
+ * binary is missing, and the runtime imports GitPython while loading tools.
+ * The image has no compiler. The declared packages, including langgraph,
+ * langchain, httpx, starlette, uvicorn, and PyYAML, install from wheels
+ * on python:3.11-slim-bookworm. An agent that needs a compiler edits this
+ * file. Cast keeps that edit.
+ */
+export function renderAgentDockerfile(options: AgentDockerfileOptions = {}): string {
+  const copyCastPackage = options.copyCastPackage === true
+  const castBlock = copyCastPackage
+    ? `# The Cast package is copied from the build context, not installed from requirements.txt.
+COPY .cast-runtime/cast /app/cast
+
+`
+    : ''
+  const pythonPath = copyCastPackage ? '/app' : '/usr/local'
+  return `FROM python:3.11-slim-bookworm
+${GENERATED_DOCKERFILE_MARKER}
 
 WORKDIR /app
 
+# GitPython raises ImportError at import when the git binary is missing.
+# The runtime imports GitPython while loading its tools.
+# Packages install from wheels, so this image does not install a compiler.
 RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
 
-# Copy installed Python packages from builder stage
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy agent files
+${castBlock}# Copy agent files
 COPY . /app/agent/
 
 # Set environment variables
 ENV CAST_AGENT_PATH=/app/agent
-ENV PYTHONPATH=/usr/local
+ENV PYTHONPATH=${pythonPath}
 
 # Expose port
 EXPOSE 8080
@@ -548,95 +642,62 @@ EXPOSE 8080
 # Run agent
 ${runtimeDockerfileCmd()}
 `
-    fs.writeFileSync(dockerfilePath, dockerfile)
-  }
 }
 
-const GENERATED_DOCKERFILE_MARKER = 'FROM python:3.11-slim-bookworm AS builder'
-
 /**
- * Image used by DigitalOcean Droplets and MicroVMs.
+ * Image used by Docker, Fly, DigitalOcean Droplets, and MicroVMs.
  * `cast` is copied onto PYTHONPATH. It is not a requirements.txt entry,
  * because pip would look for a different package of that name.
  */
 export function castRuntimeDockerfile(): string {
-  return `FROM python:3.11-slim-bookworm AS builder
-
-WORKDIR /build
-
-# Copy requirements and install dependencies
-COPY requirements.txt .
-RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/* \\
-    && pip install --no-cache-dir -r requirements.txt
-
-# Runtime stage. gcc stays in the builder. git is installed here with
-# --no-install-recommends, and the apt lists are removed. GitPython
-# exits when the git binary is missing.
-FROM python:3.11-slim-bookworm
-
-WORKDIR /app
-
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-
-# Copy installed Python packages from the builder stage
-COPY --from=builder /usr/local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
-COPY --from=builder /usr/local/bin /usr/local/bin
-
-# The Cast package is copied from the build context, not installed from requirements.txt.
-COPY .cast-runtime/cast /app/cast
-
-# Copy agent files
-COPY . /app/agent/
-
-# Set environment variables
-ENV CAST_AGENT_PATH=/app/agent
-ENV PYTHONPATH=/app
-
-# Expose port
-EXPOSE 8080
-
-# Run agent
-${runtimeDockerfileCmd()}
-`
+  return renderAgentDockerfile({copyCastPackage: true})
 }
 
 export function dockerfileCopiesCastPackage(content: string): boolean {
   return /^\s*COPY\s+\.cast-runtime\/cast\s+\/app\/cast(?:\s|$)/m.test(content)
 }
 
-export function isGeneratedAgentDockerfile(content: string): boolean {
-  return content.includes(GENERATED_DOCKERFILE_MARKER) && content.includes('cast.runtime')
+/**
+ * A file Cast generated, or an edit of one. A custom Dockerfile does not match.
+ * Installing gcc is not itself a reason to replace the file.
+ */
+function isCastDockerfileFamily(content: string): boolean {
+  if (!content.includes('cast.runtime')) return false
+  if (content.includes(GENERATED_DOCKERFILE_MARKER)) return true
+  if (content.includes(LEGACY_BUILDER_MARKER)) return true
+  return content.includes('# Install system dependencies')
+}
+
+function flattenDockerfile(content: string): string {
+  return content.replace(/\\\n/g, ' ')
 }
 
 /**
- * Git installed beside gcc in the builder stage is discarded with that
- * stage. The runtime stage installs git with --no-install-recommends and
- * removes the apt lists, so recommended packages stay out of the image.
+ * git is installed with --no-install-recommends and the apt lists are
+ * removed, so recommended packages stay out of the image.
  */
 export function dockerfileInstallsRuntimeGit(content: string): boolean {
   const stages = content.split(/\n(?=FROM\s)/)
-  const runtime = (stages[stages.length - 1] ?? content).replace(/\\\n/g, ' ')
+  const runtime = flattenDockerfile(stages[stages.length - 1] ?? content)
   return /apt-get install -y --no-install-recommends\b[^\n]*\bgit\b/.test(runtime)
     && /rm -rf \/var\/lib\/apt\/lists\/\*/.test(runtime)
 }
 
 /**
- * Write the Droplet and MicroVM Dockerfile, or replace a previously
- * generated file that omitted the Cast package or a runtime git install
- * that skips recommended packages and apt lists. A custom Dockerfile
- * is left in place.
+ * Write the shared agent Dockerfile, or replace a file that still matches
+ * a template Cast generated. An edited file is left in place.
+ * ensureDockerfile prints the keep line for that edit.
  */
 export function ensureCastRuntimeDockerfile(agentPath: string): void {
   ensureDockerfile(agentPath)
   const dockerfilePath = path.join(agentPath, 'Dockerfile')
   const current = fs.readFileSync(dockerfilePath, 'utf8')
-  if (
-    dockerfileCopiesCastPackage(current)
-    && /PYTHONPATH=\/app(?:\s|$)/.test(current)
-    && dockerfileInstallsRuntimeGit(current)
-  ) return
-  if (!isGeneratedAgentDockerfile(current)) return
-  fs.writeFileSync(dockerfilePath, castRuntimeDockerfile())
+  const desired = castRuntimeDockerfile()
+  if (dockerfileMatches(current, desired)) return
+  const known = [renderAgentDockerfile(), ...PAST_AGENT_DOCKERFILES]
+  if (known.some(template => dockerfileMatches(current, template))) {
+    fs.writeFileSync(dockerfilePath, desired)
+  }
 }
 
 /** Dockerfile, dockerignore, and requirements for a Droplet or MicroVM image. */
