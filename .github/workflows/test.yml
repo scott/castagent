@@ -261,6 +261,11 @@ jobs:
           npm install
           cd typescript && npm install
 
+      # Type-aware @typescript-eslint/no-floating-promises on cast-cli source.
+      # Issue #356 is closed, so a lint failure fails this job.
+      - name: Lint TypeScript
+        run: npm run lint
+
       # The TypeScript test files import from typescript/cast-cli/dist/...
       # (compiled output), so cast-cli must be built before tsc --noEmit
       # runs. Without this, the type check fails with TS2307 ("Cannot find

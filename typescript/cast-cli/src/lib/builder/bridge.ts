@@ -183,7 +183,7 @@ export class BuilderA2ABridge extends EventEmitter {
     })
   }
 
-  private async handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
+  private handleHttpRequest(req: http.IncomingMessage, res: http.ServerResponse): void {
     // Enable CORS for local TUI
     res.setHeader('Access-Control-Allow-Origin', '*')
     res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS')
