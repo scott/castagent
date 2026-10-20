@@ -681,6 +681,10 @@ export async function upgradeSpritesDeployment(
       await tar.extract({file: versionTarballPath, cwd: agentPath})
     }
 
+    // An unsatisfiable pin fails here, before the sprite is touched.
+    // The catch restores the local directory and does not redeploy.
+    stagePythonRequirements(agentPath)
+
     host.log(`Redeploying ${agentName} to sprite ${spriteName}...`)
     remoteAttempted = true
     await deployToSprites(agentName, {

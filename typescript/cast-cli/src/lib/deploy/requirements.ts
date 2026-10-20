@@ -478,10 +478,17 @@ function failRequirement(message: string): never {
   throw new RequirementError(maskUrlUserinfo(message))
 }
 
-function floorConflict(name: string, agentSpec: string, floorLine: string): never {
+function floorConflict(name: string, agentSpec: string, existingLine: string, fromAgent: boolean): never {
+  if (fromAgent) {
+    failRequirement(
+      `Runtime requirement for ${name} conflicts with another requirement from the agent. ` +
+      `The agent specifies "${agentSpec}" and an earlier agent requirement is ${existingLine}. ` +
+      `Change the agent's lines so they can be installed together, or remove one from runtime.requirements.`
+    )
+  }
   failRequirement(
     `Runtime requirement for ${name} cannot meet the required floor. ` +
-    `The agent specifies "${agentSpec}" and the required floor is ${floorLine}. ` +
+    `The agent specifies "${agentSpec}" and the required floor is ${existingLine}. ` +
     `Raise the pin or upper bound to at least that floor, or remove the line from runtime.requirements.`
   )
 }
@@ -565,10 +572,14 @@ function applyRuntimeRequirement(
   spec: string,
   warn: (message: string) => void,
   onHashes: () => void,
+  castFloors: ReadonlyMap<string, string>,
 ): void {
-  const {line: withoutHashes, stripped} = stripHashOptions(spec.trim())
+  // Comments go first so `--hash` written in a comment is not a hash option.
+  const withoutComment = stripInlineComment(spec.trim()).trim()
+  if (!withoutComment) return
+  const {line: withoutHashes, stripped} = stripHashOptions(withoutComment)
   if (stripped) onHashes()
-  const trimmed = stripInlineComment(withoutHashes).trim()
+  const trimmed = withoutHashes.trim()
   if (!trimmed) return
   if (trimmed.endsWith('\\')) malformedRequirement(trimmed)
 
@@ -582,6 +593,10 @@ function applyRuntimeRequirement(
   )
   const existing = index === -1 ? null : lines[index]
   const floor = existing ? requirementLowerBound(existing) : null
+  const fromAgent = existing != null && existing !== castFloors.get(parsed.canonical)
+  const reject = () => {
+    floorConflict(parsed.name, trimmed, existing || floor || '', fromAgent)
+  }
   const put = (line: string) => {
     if (index === -1) lines.push(line)
     else lines[index] = line
@@ -592,7 +607,7 @@ function applyRuntimeRequirement(
     if (parsed.url) {
       warn(directReferenceWarning(trimmed, existing, true))
     } else if (floor && conflictsWithFloor(parsed, floor)) {
-      floorConflict(parsed.name, trimmed, existing || floor)
+      reject()
     } else if (floor && allowsBelowFloor(parsed, floor)) {
       line = raiseLowerBound(trimmed, floor)
     }
@@ -616,7 +631,7 @@ function applyRuntimeRequirement(
   }
 
   if (floor && conflictsWithFloor(parsed, floor)) {
-    floorConflict(parsed.name, trimmed, existing || floor)
+    reject()
   }
 
   if (floor && allowsBelowFloor(parsed, floor)) {
@@ -750,8 +765,14 @@ export function renderRequirementsFile(input: {
     announcedHashes = true
     warn(HASH_WARNING)
   }
+  const castFloors = new Map<string, string>()
+  for (const line of lines) {
+    const parsed = parseRequirement(line)
+    if (!parsed.canonical || parsed.marker !== null) continue
+    castFloors.set(parsed.canonical, line)
+  }
   for (const dep of parseRuntimeRequirements(input.agentYaml || '')) {
-    applyRuntimeRequirement(lines, dep, warn, onHashes)
+    applyRuntimeRequirement(lines, dep, warn, onHashes, castFloors)
   }
   if (!lines.some(line => canonicalRequirementName(line) === 'gitpython' && parseRequirement(line).marker === null)) {
     lines.push(GITPYTHON_REQUIREMENT)

@@ -427,6 +427,32 @@ describe('runtime requirement lines', () => {
     expect(() => renderAgent([marked])).to.throw(RequirementError, /uvicorn>=0\.30,<0\.50/)
   })
 
+  it('names an earlier agent line instead of calling it the required floor', () => {
+    try {
+      renderAgent(['requests==2.40.0', 'requests<2.35'])
+      expect.fail('duplicate agent lines should fail')
+    } catch (error) {
+      expect(error).to.be.instanceOf(RequirementError)
+      const message = error instanceof Error ? error.message : ''
+      expect(message).to.include('requests<2.35')
+      expect(message).to.include('earlier agent requirement is requests==2.40.0')
+      expect(message).to.not.include('required floor')
+    }
+  })
+
+  it('does not treat --hash inside a comment as a hash option', () => {
+    const commented = renderAgent(['requests>=2.40  # see --hash=sha256:abc'])
+    expect(commented.warnings).to.deep.equal([])
+    expect(commented.text).to.not.include('--hash')
+    expect(named(commented.text, 'requests')).to.deep.equal(['requests>=2.40'])
+
+    const real = renderAgent(['requests==2.33.1 --hash=sha256:abc  # note'])
+    expect(named(real.text, 'requests')).to.deep.equal(['requests==2.33.1'])
+    expect(real.warnings).to.deep.equal([
+      'Warning: --hash options are not supported in deploy requirements and were removed.',
+    ])
+  })
+
   it('fails when an exact pin cannot meet the floor', () => {
     const line = 'requests==2.31.0'
     try {

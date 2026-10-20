@@ -766,6 +766,42 @@ describe('Sprites deploy fixes', () => {
     }
   })
 
+  it('rejects an unsatisfiable requirement before touching the sprite', async () => {
+    const env = setup('upreq')
+    try {
+      const {agentDir} = await prepareUpgrade(env)
+      const releaseDir = path.join(env.dir, 'bad-release')
+      fs.mkdirSync(releaseDir)
+      fs.writeFileSync(path.join(releaseDir, 'agent.yaml'), [
+        'name: upgraded',
+        'runtime:',
+        '  requirements:',
+        '    - requests==2.31.0',
+        '',
+      ].join('\n'))
+      const bad = path.join(env.dir, 'bad.tar.gz')
+      await tar.create({gzip: true, file: bad, cwd: releaseDir, portable: true}, ['agent.yaml'])
+      const result = await runUpgrade(env, bad)
+      expect(result.error).to.be.a('string')
+      expect(result.error).to.include('requests==2.31.0')
+      expect(result.error).to.include('required floor')
+      expect(result.error).to.match(/requests(==|>=)/)
+      expect(result.error).to.not.match(/rolled back/i)
+      expect(result.error).to.not.include('Restoring')
+      expect(result.logs.some(line => line.startsWith('Restoring '))).to.equal(false)
+      expect(result.logs.some(line => line.startsWith('Redeploying '))).to.equal(false)
+      expect(fs.existsSync(`${env.tar}.1`)).to.equal(false)
+      expect(readCalls(env.log)).to.deep.equal([])
+      expect(fs.readFileSync(path.join(agentDir, 'agent.yaml'), 'utf8')).to.equal('name: original\n')
+      expect(fs.existsSync(path.join(agentDir, 'requirements.txt'))).to.equal(false)
+      const row = db.getDeploymentBySha(env.sha)
+      expect(row.deployed_version).to.equal('1.0.0')
+      expect(row.remote_version_state ?? null).to.equal(null)
+    } finally {
+      await cleanupUpgrade(env)
+    }
+  })
+
   it('rolls the sprite back to the previous release when the upgrade deploy fails', async () => {
     const env = setup('upback')
     process.env.SPRITE_MOCK_HEALTH = 'crash,ready'
