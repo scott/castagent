@@ -3,7 +3,7 @@ import {execFileSync} from 'child_process'
 import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
-import {createDockerignore} from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
+import {createDockerignore, DOCKER_BUILD_CONTEXT_IGNORE_LINES} from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 import {createSpriteAgentArchive} from '../../../../typescript/cast-cli/src/lib/deploy/sprites'
 
 function normalizeEntry(name: string): string {
@@ -114,6 +114,14 @@ describe('Sprites agent archive', () => {
     expect(entries).to.not.include('.cast/releases/releases.json')
     expect(entries).to.not.include('.cast/releases/1.0.0.tar.gz')
     expect(entries.some(name => name === '.cast' || name.startsWith('.cast/'))).to.equal(false)
+  })
+
+  it('rejects ignore lines the Sprites matcher cannot apply', () => {
+    for (const line of DOCKER_BUILD_CONTEXT_IGNORE_LINES) {
+      if (line.startsWith('!') || line.startsWith('/') || line.includes('**')) {
+        expect.fail(`DOCKER_BUILD_CONTEXT_IGNORE_LINES line "${line}" uses "!", a leading "/", or "**". The Sprites matcher does not support these. Rewrite the line or extend the matcher in deploy-utils.ts.`)
+      }
+    }
   })
 
   it('writes a dockerignore with the same exclusion lines', () => {

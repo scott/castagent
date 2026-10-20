@@ -1505,6 +1505,10 @@ export async function deleteMemoryVolume(volumeConfig: VolumeConfig, agentName: 
  * Lines written to `.dockerignore` for a Docker build context.
  * Sprites applies the same rules when it packs an upload.
  * `.cast-runtime/` is a different directory and stays in the context.
+ *
+ * The Sprites matcher supports only plain filepath.Match patterns anchored
+ * at the root. Lines must not start with `!` or `/` and must not contain
+ * `**`, because the matcher doesn't implement those.
  */
 export const DOCKER_BUILD_CONTEXT_IGNORE_LINES = [
   '.git',
