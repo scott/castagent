@@ -58,6 +58,15 @@ import {
   NO_AGENT_LOADED_MESSAGE,
   resolveCommandAgent,
 } from '../lib/subject-agent.js'
+import {
+  agentChangesIndicateBreaking,
+  connectTypedTarget,
+  latestReleaseIndex,
+  loadReleasesDocument,
+  releaseFormState,
+  releasePickerRows,
+  validateSemver,
+} from '../lib/release-version.js'
 
 // Get agent description from agent.yaml
 function getAgentDescription(agentName: string): string {
@@ -198,39 +207,6 @@ function findCastBinary(): string | null {
 }
 
 /**
- * Parse a semver string (e.g. "1.2.3") into its numeric parts.
- * Returns [0, 0, 0] for unparseable input.
- */
-function parseSemver(version: string): [number, number, number] {
-  const parts = version.split('.').map((p) => parseInt(p, 10))
-  return [
-    Number.isFinite(parts[0]) ? parts[0] : 0,
-    Number.isFinite(parts[1]) ? parts[1] : 0,
-    Number.isFinite(parts[2]) ? parts[2] : 0,
-  ]
-}
-
-/**
- * Compute suggested next semver versions (patch, minor, major) from a
- * current version. If currentVersion is null/empty, defaults to "1.0.0".
- */
-function suggestNextVersions(currentVersion: string | null | undefined): {
-  current: string
-  patch: string
-  minor: string
-  major: string
-} {
-  const current = currentVersion && currentVersion.length > 0 ? currentVersion : '1.0.0'
-  const [maj, min, pat] = parseSemver(current)
-  return {
-    current,
-    patch: `${maj}.${min}.${pat + 1}`,
-    minor: `${maj}.${min + 1}.0`,
-    major: `${maj + 1}.0.0`,
-  }
-}
-
-/**
  * Show a generic info/success modal with a title, a list of label/value
  * lines, and a single Close button (or just Enter/ESC).
  */
@@ -307,54 +283,6 @@ function listAgentsFromDisk(): string[] {
   }
 
   return agents.sort()
-}
-
-// Helper to get releases for an agent (reads from releases.json)
-async function getReleasesForAgent(agentName: string): Promise<Array<{version: string; message: string; changelog: string; created_at: string}>> {
-  const releasesJsonPath = path.join(os.homedir(), '.cast', 'agents', agentName, '.cast', 'releases', 'releases.json')
-  if (!fs.existsSync(releasesJsonPath)) {
-    return []
-  }
-  try {
-    const data = JSON.parse(fs.readFileSync(releasesJsonPath, 'utf8'))
-    return data.releases || []
-  } catch {
-    return []
-  }
-}
-
-/**
- * Get the current (latest) release version for an agent.
- *
- * Reads `data.current.version` from the agent's `releases.json` file. This
- * is the same field the Python `cast.releases.get_current_release` reads,
- * and the authoritative source for "what release is the agent currently
- * at". Falls back to the newest entry in the `releases` array (by semver)
- * when the `current` field is missing, and to `null` if no releases exist.
- */
-function getCurrentReleaseVersion(agentName: string): string | null {
-  const releasesJsonPath = path.join(os.homedir(), '.cast', 'agents', agentName, '.cast', 'releases', 'releases.json')
-  if (!fs.existsSync(releasesJsonPath)) {
-    return null
-  }
-  try {
-    const data = JSON.parse(fs.readFileSync(releasesJsonPath, 'utf8'))
-    const current = data.current
-    if (current && typeof current.version === 'string' && current.version.length > 0) {
-      return current.version
-    }
-    // Fallback: newest entry by semver, when current is missing
-    const releases: Array<{version: string}> = Array.isArray(data.releases) ? data.releases : []
-    if (releases.length === 0) return null
-    const sorted = [...releases].sort((a, b) => {
-      const pa = a.version.split('.').map((n) => parseInt(n, 10) || 0)
-      const pb = b.version.split('.').map((n) => parseInt(n, 10) || 0)
-      return (pb[0] - pa[0]) || (pb[1] - pa[1]) || ((pb[2] || 0) - (pa[2] || 0))
-    })
-    return sorted[0].version
-  } catch {
-    return null
-  }
 }
 
 // Helper to get changes for an agent — REMOVED in favor of undo/redo.
@@ -2401,10 +2329,11 @@ const commands: SlashCommand[] = [
             return true
           }
           if (key.name === 'return' || key.name === 'enter') {
-            // Prefer typed SHA if present
-            if (shaInput.length > 0) {
+            // Typed input is a SHA or an agent name. Pass it through, including a partial SHA.
+            const typed = connectTypedTarget(shaInput)
+            if (typed) {
               modal.hide()
-              launchConnect(ctx, shaInput)
+              launchConnect(ctx, typed)
               return true
             }
             if (deployments.length > 0) {
@@ -2841,7 +2770,7 @@ const commands: SlashCommand[] = [
       // directly. No need for an agent picker.
       const agentName = ctx.agentName
       const deployment = db.getActiveDeployment(agentName)
-      const releases = await getReleasesForAgent(agentName)
+      const releases = loadReleasesDocument(agentName).releases
 
       if (!deployment && releases.length === 0) {
         ctx.messages.addAgentMessage(
@@ -2893,7 +2822,8 @@ const commands: SlashCommand[] = [
       }
 
       // Show a release + provider selection modal.
-      const releases = await getReleasesForAgent(agentName)
+      const loadedReleases = loadReleasesDocument(agentName)
+      const releases = releasePickerRows(loadedReleases.releases, loadedReleases.currentVersion)
 
       const modal = createModal(ctx.renderer, ctx.input, {
         title: `Deploy: ${agentName}`,
@@ -2914,7 +2844,7 @@ const commands: SlashCommand[] = [
       type Stage = 'release' | 'provider' | 'running' | 'success'
       const state = {
         stage: releases.length > 0 ? 'release' : 'provider' as Stage,
-        releaseIndex: 0, // 0 = latest
+        releaseIndex: latestReleaseIndex(releases),
         providerIndex: 0,
         error: '' as string,
         resultSha: '' as string,
@@ -2944,7 +2874,7 @@ const commands: SlashCommand[] = [
             const r = releases[i]
             const isSelected = i === state.releaseIndex
             const prefix = isSelected ? cyan('▸ ') : dim('  ')
-            const label = i === 0 ? `${r.version} (latest)` : r.version
+            const label = r.label
             const message = r.message || ''
             const row = new TextRenderable(ctx.renderer, {
               content: new StyledText([
@@ -3207,7 +3137,9 @@ const commands: SlashCommand[] = [
     handler: async (ctx) => {
       const agentName = requireSubjectAgent(ctx)
       if (!agentName) return
-      const releases = await getReleasesForAgent(agentName)
+      const loadedReleases = loadReleasesDocument(agentName)
+      const releases = loadedReleases.releases
+      const currentRelease = loadedReleases.currentVersion
       const db = await getDb()
       const activeDep = db ? db.getActiveDeployment(agentName) : null
       const isDeployed = activeDep !== null
@@ -3243,15 +3175,9 @@ const commands: SlashCommand[] = [
         })
         contentBox.add(hint)
       } else {
-        // Sort by version descending
-        const sortedReleases = [...releases].sort((a, b) => {
-          const parseV = (v: string) => v.split('.').map(Number)
-          const va = parseV(a.version)
-          const vb = parseV(b.version)
-          return vb[0] - va[0] || vb[1] - va[1] || (vb[2] || 0) - (va[2] || 0)
-        })
-
-        let selectedIndex = 0
+        let selectedIndex = latestReleaseIndex(
+          releases.map((release) => ({latest: release.version === currentRelease})),
+        )
 
         function renderList() {
           for (const child of contentBox.getChildren()) {
@@ -3262,7 +3188,7 @@ const commands: SlashCommand[] = [
             content: new StyledText([
               white('Releases'),
               dim(' | '),
-              white(`Current: ${sortedReleases[0]?.version || 'none'}`),
+              white(`Current: ${currentRelease || 'none'}`),
             ]),
           })
           contentBox.add(headerText)
@@ -3272,8 +3198,8 @@ const commands: SlashCommand[] = [
           })
           contentBox.add(sep)
 
-          for (let i = 0; i < sortedReleases.length; i++) {
-            const r = sortedReleases[i]
+          for (let i = 0; i < releases.length; i++) {
+            const r = releases[i]
             const isSelected = i === selectedIndex
             const date = new Date(r.created_at)
             const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString()
@@ -3865,9 +3791,14 @@ cast dev ${agentName}
       const presetVersion = args[0] || ''
 
       // Load existing releases to compute the current version + suggestions
-      const releases = await getReleasesForAgent(agentName)
-      const currentVersion = getCurrentReleaseVersion(agentName)
-      const suggestions = suggestNextVersions(currentVersion)
+      const loadedReleases = loadReleasesDocument(agentName)
+      const form = releaseFormState(
+        loadedReleases.currentVersion,
+        presetVersion,
+        agentChangesIndicateBreaking(agentName),
+      )
+      const currentVersion = loadedReleases.currentVersion
+      const suggestions = form.suggestions
 
       // Run a release through createRelease(). Falls back to shelling out
       // to `cast release` if the TS wrapper isn't available for any reason.
@@ -3904,7 +3835,7 @@ cast dev ${agentName}
       // the content on every change.
       type FocusField = 'version' | 'message' | 'create' | 'cancel'
       const state = {
-        version: presetVersion || suggestions.patch,
+        version: form.version,
         message: '',
         focus: (presetVersion ? 'message' : 'version') as FocusField,
         error: '' as string,
@@ -4023,7 +3954,7 @@ cast dev ${agentName}
           refresh()
           return
         }
-        if (!/^\d+(\.\d+){0,2}$/.test(v)) {
+        if (!validateSemver(v)) {
           state.error = `Invalid semver: "${v}"`
           refresh()
           return

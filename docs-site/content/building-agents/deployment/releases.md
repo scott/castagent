@@ -118,6 +118,14 @@ next semver based on the kind of change that was last made:
 You can always type a different version; the suggestion is just a
 starting point.
 
+The version field opens on the patch suggestion. A current release of
+1.4.1 opens on 1.4.2. A two-part version stays numeric, so 1.10 opens
+on 1.10.1. When the agent has no current release, the suggestion is
+0.1.0.
+
+`/deploy` lists those releases newest first. The `(latest)` label is the
+row whose version equals `current.version` in `releases.json`.
+
 ## Deploying a release
 
 ```bash
