@@ -21,6 +21,7 @@ import {
   storeAuthToken,
   saveDeployment,
 } from './deploy-utils'
+import {runtimeDockerfileCmd} from '../runtime-args'
 import {writeRequirementsTxt} from './requirements'
 
 // Helper to run a shell command and return its exit code
@@ -553,7 +554,7 @@ ENV PYTHONPATH=/app
 EXPOSE 8080
 
 # Run agent A2A server
-CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "8080", "--host", "0.0.0.0"]
+${runtimeDockerfileCmd()}
 `
     fs.writeFileSync(path.join(agentPath, 'Dockerfile'), dockerfile)
   }

@@ -264,6 +264,10 @@ Deploy sends `AUTH_TOKEN` and the API key for the provider selected by
 file on stdin. Railway reads each value from stdin. A droplet writes
 them to a mode 0600 env file over SSH stdin. A sprite sends the launch
 script on stdin. A MicroVM sends them in the create request body.
+The runtime reads the bearer token from the `AUTH_TOKEN` environment
+variable. `python -m cast.runtime --help` documents that variable. The
+token is not a command-line flag, so it does not appear in the process
+list.
 
 The image exposes A2A on port 8080. Railway and Fly assign a public
 HTTPS URL. A DigitalOcean droplet binds that port to `127.0.0.1` and

@@ -17,6 +17,7 @@ import {deployToSprites, type SpriteDeployOptions} from './sprites'
 import {SPRITE_SERVICE_LOG} from './sprites-service'
 import {dockerContainerEnv, dockerContainerRunArgs, startDockerAgentContainer, writeDockerCompose} from './docker'
 import {writeHostMotdOverSsh} from './motd'
+import {runtimeDockerfileCmd} from '../runtime-args'
 import {writeRequirementsTxt} from './requirements'
 import {
   digitalOceanMemoryVolumeName,
@@ -98,7 +99,7 @@ ENV PYTHONPATH=/app
 EXPOSE 8080
 
 # Run agent A2A server
-CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "8080", "--host", "0.0.0.0"]
+${runtimeDockerfileCmd()}
 `
   fs.writeFileSync(path.join(agentPath, 'Dockerfile'), dockerfile)
 }

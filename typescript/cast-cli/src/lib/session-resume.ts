@@ -2,6 +2,7 @@ import * as fs from 'fs'
 import * as net from 'net'
 import * as os from 'os'
 import * as path from 'path'
+import {runtimeProcessArgs} from './runtime-args'
 
 export type ResumeUiMode = 'dev' | 'production' | 'on-host'
 
@@ -197,7 +198,7 @@ export function tuiAuthEnv(
 }
 
 export function devRuntimeArgs(agentPath: string, port: number): string[] {
-  return ['-m', 'cast.runtime', '--agent-path', agentPath, '--port', String(port)]
+  return runtimeProcessArgs({agentPath, port})
 }
 
 /**

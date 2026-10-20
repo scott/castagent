@@ -8,6 +8,7 @@ import * as readline from 'readline'
 import {db} from '../lib/sqlite'
 import {ensureMemoryDatabaseIgnored} from '../lib/cast-ignore'
 import {attachRuntimeLog} from '../lib/runtime-logs'
+import {runtimeProcessArgs} from '../lib/runtime-args'
 
 export default class Dev extends Command {
   static description = 'Start agent in development mode'
@@ -343,12 +344,11 @@ export default class Dev extends Command {
     const pythonExecutable = this.getPythonExecutable()
     const pythonPath = this.getPythonPath()
 
-    // Spawn Python runtime agent
-    const runtime = this.launch(pythonExecutable, [
-      '-m', 'cast.runtime',
-      '--agent-path', agentPath,
-      '--port', port.toString(),
-    ], {
+    // Spawn Python runtime agent. AUTH_TOKEN, when set, stays in the environment.
+    const runtime = this.launch(pythonExecutable, runtimeProcessArgs({
+      agentPath,
+      port,
+    }), {
       // stderr is piped so a crash can be saved for `cast logs` and still
       // shown on this terminal. CAST_AGENT_PATH stays on the runtime env.
       stdio: ['pipe', 'pipe', 'pipe'],
