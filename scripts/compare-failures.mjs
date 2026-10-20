@@ -184,6 +184,13 @@ function buildCli(root) {
   if (run('npm', ['run', 'build:cli'], {cwd: root}) !== 0) throw new Error(`build:cli failed in ${root}`)
 }
 
+function recordAbsentSuite(root, entry, summary, label) {
+  if (fs.existsSync(path.join(root, entry))) return false
+  process.stdout.write(`${label} is not in this tree; recording no failures\n`)
+  fs.writeFileSync(summary, `${JSON.stringify({ok: true, cases: [], absent: true}, null, 2)}\n`)
+  return true
+}
+
 function runSuites(root, outDir) {
   fs.mkdirSync(outDir, {recursive: true})
   const wanted = suitesToRun()
@@ -220,13 +227,17 @@ function runSuites(root, outDir) {
   }
   if (wanted.has('smoke')) {
     const summary = path.join(outDir, 'smoke-summary.json')
-    const status = run('node', ['tests/e2e/run.mjs'], {cwd: root, env: {...process.env, SMOKE_SUMMARY: summary}})
-    if (!fs.existsSync(summary)) throw new Error(`smoke summary missing (exit ${status})`)
+    if (!recordAbsentSuite(root, 'tests/e2e/run.mjs', summary, 'provider smoke')) {
+      const status = run('node', ['tests/e2e/run.mjs'], {cwd: root, env: {...process.env, SMOKE_SUMMARY: summary}})
+      if (!fs.existsSync(summary)) throw new Error(`smoke summary missing (exit ${status})`)
+    }
   }
   if (wanted.has('snapshots')) {
     const summary = path.join(outDir, 'snapshot-summary.json')
-    const status = run('node', ['tests/cli-snapshots/run.mjs'], {cwd: root, env: {...process.env, SNAPSHOT_SUMMARY: summary}})
-    if (!fs.existsSync(summary)) throw new Error(`snapshot summary missing (exit ${status})`)
+    if (!recordAbsentSuite(root, 'tests/cli-snapshots/run.mjs', summary, 'CLI snapshots')) {
+      const status = run('node', ['tests/cli-snapshots/run.mjs'], {cwd: root, env: {...process.env, SNAPSHOT_SUMMARY: summary}})
+      if (!fs.existsSync(summary)) throw new Error(`snapshot summary missing (exit ${status})`)
+    }
   }
 }
 
