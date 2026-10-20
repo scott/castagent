@@ -3,7 +3,7 @@
  *
  * These tests verify that the UiMode type and mode-checking logic
  * correctly handle the 'on-host' mode. Full integration tests
- * require the OpenTUI renderer (see TODO in slash-registry.test.ts).
+ * require the OpenTUI renderer.
  */
 
 import {expect} from 'chai'

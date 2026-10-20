@@ -498,8 +498,8 @@ Highlighting text with the mouse copies that selection to the clipboard.
 | `/session resume [id\|name]` | session | Replay a session's transcript into the chat and the model context. Opens the picker if no argument. |
 | `/save [filename]` | session | Save the conversation as plain text. With no name, writes `~/.cast/transcripts/<agent>-<timestamp>.txt`. A relative name stays in that directory. An absolute path or a path starting with `~` is written there, and missing parent directories are created. |
 | `/releases` | session | Shows semantic releases with `C` (Create Release) and `U` (Upgrade, if deployed) shortcuts. |
-| `/release` | agent | Opens a modal to create a new semantic release. Suggests patch/minor/major versions based on the current release. |
-| `/deploy` | agent | Release picker → provider picker → live deploy with SHA shown on success. |
+| `/release` | agent | Opens a modal to create a new semantic release. The version starts at the next patch of the current release, so 1.4.1 suggests 1.4.2 and 1.10 suggests 1.10.1. With no current release the suggestion is 0.1.0. |
+| `/deploy` | agent | Release picker lists releases newest first and marks the row matching `current.version` as `(latest)`, then a provider picker, then a live deploy with the SHA shown on success. |
 | `/upgrade` | agent | Operates on the current agent. Modal lists releases to upgrade to. |
 | `/update [flags]` | agent | Update the current agent's local configuration. No arguments opens a field modal. Dev and production. Hidden on-host. |
 | `/shutdown` | agent | Lists active deployments (every provider) and shuts one down after Y/N. Streams `cast shutdown --force`. Dev and production only. |
