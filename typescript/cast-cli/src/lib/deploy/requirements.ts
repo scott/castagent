@@ -12,7 +12,7 @@ import YAML from 'yaml'
  * GitPython is appended later when the frozen list and pyproject.toml both omit it.
  */
 export const FALLBACK_REQUIREMENTS = `anyio>=4.13.0
-certifi>=2026.4.22
+certifi>=2026.10.19
 charset-normalizer>=3.4.7
 distro>=1.9.0
 httpx>=0.28.1
