@@ -23,17 +23,27 @@ export const TOKENS = {
 
 const SHIMS = ['sprite', 'flyctl', 'doctl', 'docker', 'ssh', 'gzip', 'bun']
 
-function pythonUserSite() {
+function discoverPython() {
   try {
-    return execFileSync('python3', ['-c', 'import site; print(site.getusersitepackages())'], {
-      encoding: 'utf8',
-    }).trim()
+    const text = execFileSync('python3', ['-c', [
+      'import site, sys',
+      'print(sys.executable)',
+      'print(site.getusersitepackages())',
+      'print("\\n".join(site.getsitepackages()))',
+    ].join('; ')], {encoding: 'utf8'})
+    const lines = text.split('\n').map(line => line.trim()).filter(Boolean)
+    const executable = lines[0] || ''
+    const sites = lines.slice(1)
+    return {
+      binDir: executable ? path.dirname(executable) : '',
+      pythonPath: [...sites, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+    }
   } catch {
-    return ''
+    return {binDir: '', pythonPath: process.env.PYTHONPATH || ''}
   }
 }
 
-const pythonUserSitePath = pythonUserSite()
+const python = discoverPython()
 
 export function catA(text) {
   return text.split('\n').map(line => `${line.replace(/\t/g, '^I').replace(/\r/g, '^M')}$`).join('\n')
@@ -169,7 +179,7 @@ export async function withFixture(fn) {
     ...process.env,
     HOME: home,
     USERPROFILE: home,
-    PATH: `${shimDir}:/usr/bin:/bin`,
+    PATH: [shimDir, python.binDir, '/usr/bin', '/bin'].filter(Boolean).join(':'),
     CAST_PROVIDER_HTTP_BASE: http.base,
     CAST_E2E_STATE: stateDir,
     CAST_E2E_HTTP_BASE: http.base,
@@ -180,7 +190,7 @@ export async function withFixture(fn) {
     FORCE_COLOR: '0',
     CI: '1',
     TERM: 'dumb',
-    PYTHONPATH: [pythonUserSitePath, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
+    PYTHONPATH: python.pythonPath,
   }
   delete env.SPRITE_TOKEN
   const fx = {

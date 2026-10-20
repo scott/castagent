@@ -16,7 +16,7 @@ python3 -m pip install --user 'langchain-openai>=1.7.2' 'langchain-core>=1.6.12'
 node tests/e2e/run.mjs
 ```
 
-Each case uses a temporary `HOME`. The runner adds the current Python user site to `PYTHONPATH` so `python3 -m cast.providers.catalog` can import packages installed with `pip install --user`. CI installs `libsecret-1-0` so the keytar module can load. With no Secret Service, Cast stores the deployment token in the temporary home.
+Each case uses a temporary `HOME`, so Python user-site packages would otherwise disappear. The runner keeps the `python3` that was on `PATH` when it started, and puts that interpreter's site packages on `PYTHONPATH`. `pip install --user` locally and `python3 -m pip install` in CI both work. CI also installs `libsecret-1-0` so the keytar module can load. With no Secret Service, Cast stores the deployment token in the temporary home.
 
 The process writes `tests/e2e/smoke-summary.json` (or `$SMOKE_SUMMARY`) and exits non-zero when a case fails. `UPDATE_ENDINGS=1` rewrites `tests/e2e/endings/*.txt` from the current CLI tail. Ending files are `cat -A` style: `$` marks the end of each line, `^I` is a tab, and `^M` is a carriage return.
 

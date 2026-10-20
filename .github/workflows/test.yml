@@ -336,7 +336,7 @@ jobs:
         run: npm run build:cli
 
       - name: Install Python packages used by deploy
-        run: python -m pip install 'langchain-openai>=1.7.2' 'langchain-core>=1.6.12' pyyaml
+        run: python3 -m pip install 'langchain-openai>=1.7.2' 'langchain-core>=1.6.12' pyyaml
 
       - name: Run mocked provider smoke
         run: node tests/e2e/run.mjs
