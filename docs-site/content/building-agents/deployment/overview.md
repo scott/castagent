@@ -273,17 +273,25 @@ token over public HTTP. `cast stop` reads that address and stops
 `cast-agent` over SSH. It does not open port 8080. Docker maps the port
 on the machine that ran `cast deploy`.
 
-For Docker, `requirements.txt` is written when you deploy or upgrade. It
-starts from `pip freeze` of `python/.venv` when that virtualenv exists,
-otherwise from the runtime's dependency list. It always adds dependencies
-from `python/pyproject.toml` (including GitPython 3.2.1 or newer, which the runtime
-imports at startup) and every package in the agent's `runtime.requirements`.
-The `cast` package itself is omitted because the image copies that source
-tree in directly.
+`cast deploy` writes `requirements.txt` before the provider runs. Each built-in
+that installs packages writes it again on `cast upgrade`, after any snapshot of
+the agent directory. A new provider calls the same helper on upgrade.
+The file starts from `pip freeze` of `python/.venv` when that virtualenv exists,
+otherwise from the built-in dependency list. Dependencies declared in
+`python/pyproject.toml` are applied on top. When both name a package, the higher
+minimum is kept, so an older fallback floor cannot win. Packages in the agent's
+`runtime.requirements` are merged the same way. GitPython stays at 3.2.1 or
+newer, which the runtime imports at startup. The `cast` package itself is omitted
+because the image copies that source tree in directly.
+
+Docker, Fly, Sprites, Droplets, MicroVMs, and Railway install that file with
+`pip install -r requirements.txt`. A new provider uses the same file and does
+not keep its own package list. `--provider local` writes the file and then
+stops, because that provider is not implemented and does not run pip.
 
 Droplet, MicroVM, and Fly images copy that same package to `/app/cast` and set
-`PYTHONPATH=/app`. Their `requirements.txt` is written the same way and
-also omits `cast`. Fly deploy then waits until
+`PYTHONPATH=/app`. Their `requirements.txt` is the same file and also omits
+`cast`. Fly deploy then waits until
 `https://cast-<agent>.fly.dev/.well-known/agent.json` returns the agent
 card. A machine that exits before that, including `No module named 'cast'`,
 fails the deploy and Cast does not print a success banner. A current

@@ -4,9 +4,11 @@ import * as path from 'path'
 import YAML from 'yaml'
 
 /**
- * Used when the project virtualenv cannot be frozen. The runtime imports
- * these libraries at process start. GitPython is appended later when the
- * frozen list and pyproject.toml both omit it.
+ * Used when the project virtualenv cannot be frozen.
+ * Direct runtime minimums are declared in python/pyproject.toml.
+ * renderRequirementsFile keeps the higher minimum when both name a package,
+ * so a floor in this list cannot undercut that declaration.
+ * GitPython is appended later when the frozen list and pyproject.toml both omit it.
  */
 export const FALLBACK_REQUIREMENTS = `anyio>=4.13.0
 certifi>=2026.4.22
@@ -55,8 +57,26 @@ export function canonicalRequirementName(spec: string): string {
   return match[1].toLowerCase().replace(/[_.]+/g, '-')
 }
 
-function hasVersionSpecifier(spec: string): boolean {
-  return /[=<>!~]/.test(spec) || /\s@\s/.test(spec)
+/** Numeric lower bound from >=, ==, or ~=. A bare name has none. */
+export function requirementLowerBound(spec: string): string | null {
+  const match = spec.match(/(?:==|>=|~=)\s*v?(\d+(?:\.\d+)*)/)
+  return match ? match[1] : null
+}
+
+/** Compare dotted numeric versions. 1.10 is greater than 1.9. Missing parts are 0. */
+export function compareVersions(left: string, right: string): number {
+  const parse = (version: string): number[] => version.split('.').map(part => {
+    const match = /^(\d+)/.exec(part)
+    return match ? Number(match[1]) : 0
+  })
+  const a = parse(left)
+  const b = parse(right)
+  const length = Math.max(a.length, b.length)
+  for (let i = 0; i < length; i++) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0)
+    if (diff !== 0) return diff
+  }
+  return 0
 }
 
 export function filterRequirementLines(text: string): string[] {
@@ -82,7 +102,10 @@ export function upsertRequirement(lines: string[], spec: string): void {
     lines.push(trimmed)
     return
   }
-  if (!hasVersionSpecifier(lines[index]) && hasVersionSpecifier(trimmed)) {
+  const incoming = requirementLowerBound(trimmed)
+  if (!incoming) return
+  const current = requirementLowerBound(lines[index])
+  if (!current || compareVersions(current, incoming) < 0) {
     lines[index] = trimmed
   }
 }
@@ -165,6 +188,33 @@ export function readFrozenRequirements(projectRoot: string): string {
   } catch {
     return ''
   }
+}
+
+const PYPROJECT_MARKER = path.join('python', 'pyproject.toml')
+
+/** Checkout that contains python/pyproject.toml. cwd wins when it is that checkout. */
+export function findRequirementsProjectRoot(): string {
+  const candidates = [
+    process.cwd(),
+    path.resolve(__dirname, '../../..'),
+    path.resolve(__dirname, '../../../..'),
+    path.resolve(__dirname, '../../../../..'),
+    path.resolve(__dirname, '../../../../../..'),
+  ]
+  for (const candidate of candidates) {
+    if (fs.existsSync(path.join(candidate, PYPROJECT_MARKER))) return candidate
+  }
+  return process.cwd()
+}
+
+/**
+ * Write requirements.txt for a deployed agent.
+ * python/pyproject.toml is the source of truth for runtime minimums.
+ * Docker, Fly, Sprites, Droplets, MicroVMs, and Railway install this file.
+ * cast deploy calls this before provider.deploy, so a new provider does too.
+ */
+export function stagePythonRequirements(agentPath: string, projectRoot = findRequirementsProjectRoot()): string {
+  return writeRequirementsTxt(projectRoot, agentPath)
 }
 
 /** Write the image requirements for a Docker deploy or upgrade. Returns the file text. */

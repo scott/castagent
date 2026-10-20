@@ -81,7 +81,8 @@ changes show up as files on disk.
   on each `cast deploy` (or `cast upgrade`) and overwritten on the next
   deploy. Do not hand-edit. `requirements.txt` lists the Cast runtime's
   Python dependencies from `python/pyproject.toml` and any packages in
-  `runtime.requirements`. The compose file records the service name,
+  `runtime.requirements`. When `pip freeze` or the built-in fallback names
+  the same package, the higher minimum is the one written. The compose file records the service name,
   published port, and memory volume. It does not contain the deployment
   bearer token or provider API keys. Deploy passes the bearer token and
   the API key for `brain.model` to the container as environment variables

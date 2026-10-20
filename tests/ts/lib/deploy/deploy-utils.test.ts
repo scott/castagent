@@ -439,10 +439,9 @@ describe('ensureDockerfile', () => {
     expect(content).to.equal('FROM custom:latest\n')
   })
 
-  it('should create requirements.txt if not exists', () => {
+  it('does not write a private requirements list', () => {
     ensureDockerfile(tempDir)
-    const reqPath = path.join(tempDir, 'requirements.txt')
-    expect(fs.existsSync(reqPath)).to.be.true
+    expect(fs.existsSync(path.join(tempDir, 'requirements.txt'))).to.equal(false)
   })
 
   it('installs git in the runtime stage', () => {

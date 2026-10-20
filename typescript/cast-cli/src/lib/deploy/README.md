@@ -10,7 +10,8 @@ The seven built-ins (`railway`, `fly`, `digitalocean`, `microvm`, `sprites`, `do
 2. Import it once from the built-in registry, in picker order.
 3. Add a row to `providers.manifest.json` with the same `key`. A test fails if the module and the manifest disagree.
 4. Add tests for `deploy`, `destroy`, and any `upgrade` or `connect` hook.
-5. Update `docs-site/content/building-agents/deployment/overview.md` if the public comparison table changes.
+5. Install Python packages from the `requirements.txt` that `cast deploy` writes. Call `stagePythonRequirements` from `requirements.ts` on `upgrade`, after any snapshot of the agent directory. Do not copy package minimums into the provider. `python/pyproject.toml` is the source of truth.
+6. Update `docs-site/content/building-agents/deployment/overview.md` if the public comparison table changes.
 
 Do not add the key to `deploy.ts`, `upgrade.ts`, `shutdown.ts`, `connect.ts`, or `cast-tui/src/lib/deployment-providers.ts`. Those read the registry.
 
@@ -118,7 +119,10 @@ The provider does not repeat this work:
 - Generates the 6-character deployment SHA and sets `CAST_DEPLOYMENT_SHA`.
 - Runs the generic CLI, auth, and Docker checks from `cli`, `auth`, and `requiresDocker`.
 - Calls `prepare` after those checks, for anything the generic walkthrough cannot express.
+- Writes `requirements.txt` with `stagePythonRequirements`. Declared minimums come from `python/pyproject.toml`. A `pip freeze` pin or a built-in fallback floor is kept when it is at least that minimum. Agent `runtime.requirements` merge the same way. Install that file. Do not ship a second package list.
 - After `deploy` resolves, stores the deployed version on the deployment row.
+
+`cast upgrade` does not write the file before `upgrade`. A failed Sprites upgrade restores a snapshot taken at the start of `upgrade`, and a file written before that snapshot would be restored with it. Call `stagePythonRequirements(agentPath)` inside `upgrade` after the snapshot. Image upgrades that already call `stageCastRuntime` or `prepareCastImageContext` write the same file.
 
 `deploy` must call `saveDeployment` (or the db helper it wraps) so `cast connect` and `cast shutdown` can find the row. Use `ctx.deploymentSha` as the row id. `ctx.tokenHash` is the hash of the agent auth token Cast generated. The raw token is `ctx.authToken`. Put it in the host environment. Do not log it. `saveDeployment` marks earlier rows for the same provider and resource deleted and removes their `~/.cast/tokens/deployments/<sha>.token` files. Pass `{supersede: false}` when a failed deploy records a leftover remote, so the previous successful row stays. A second provider and a separate MicroVM stay registered.
 
@@ -219,7 +223,7 @@ These behaviors move behind the interface. They do not change.
 
 | Key | Notes |
 |---|---|
-| `railway` | `railway` CLI, `railway login`. Memory is a Railway volume. `destroy` runs `railway down --yes`. |
+| `railway` | `railway` CLI, `railway login`. Memory is a Railway volume. `destroy` runs `railway down --yes`. Deploy and upgrade install `requirements.txt` from `stagePythonRequirements`. |
 | `fly` | `flyctl`, `flyctl auth login`. The app is created with `flyctl apps create` (not `launch`) when `fly.toml` is already present. The image copies `python/cast` to `/app/cast`. Memory is a Fly volume named `cast_<agent>_memory` (lowercase, digits, underscores, at most 30 characters), created after the app exists with `--yes` only when `flyctl volumes list` has no volume of that name. A later deploy reuses it. Shutdown destroys machines (`flyctl machine destroy --force`) and the app first, then deletes every remaining `vol_...` id of that name, and reports removal only on exit 0. A failed remote step keeps the deployment row and token. Deploy waits until `/.well-known/agent.json` responds and fails if the machine exits. A log line `Error loading agent config` fails that check, including while the machine is still started or starting. A failed build records the row once the app exists and deletes the attempt's token file. Secrets go to `flyctl secrets import --stage` on stdin and apply only when `flyctl deploy` succeeds; that failure leaves the previous token in place. A release that exits 0 keeps the new token even if the health check then fails. Deploy flags: `--local-only`, `--remote-only`, `--depot`, `--no-depot`. |
 | `digitalocean` | Droplet plus `docker load`. `withTui: 'supported'`. Flag `--size` is a droplet slug (default `s-2vcpu-2gb`) and is forwarded on deploy. Token from `DIGITALOCEAN_ACCESS_TOKEN` or `providers.digitalocean.token`. Requires Docker and `doctl`. SSH pins an ed25519 host key in `~/.cast/ssh/known_hosts` and keeps host key checking enabled. Memory volume is `cast-<agent>`. Shutdown deletes that volume and older `cast-<agent>-<uuid>-memory` volumes, and reports removal only when the delete succeeds. |
 | `microvm` | `withTui: 'rejected'` with the existing error sentence. Flags `--size` (default `1:2048`), `--idle-timeout` (default `15m`), `--edge-auth-only`. `doctl` >= 1.173.0. The API token is `DIGITALOCEAN_ACCESS_TOKEN` in the `doctl` child environment, not an argument. `connect` sets the edge token and the resume hint. `destroy` deletes the MicroVM, not the registry. |
