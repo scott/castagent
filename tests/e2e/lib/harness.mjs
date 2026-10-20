@@ -189,6 +189,7 @@ export async function withFixture(fn) {
     NO_COLOR: '1',
     FORCE_COLOR: '0',
     CI: '1',
+    OCLIF_COLUMNS: '240',
     TERM: 'dumb',
     PYTHONPATH: python.pythonPath,
   }

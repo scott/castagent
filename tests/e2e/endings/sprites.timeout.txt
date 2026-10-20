@@ -1,6 +1,5 @@
 # stderr, last 12 lines, cat -A
- ›   Error: Sprite command timed out after 300s: /opt/cast-agent/venv/bin/pip $
- ›   install -r /opt/cast-...$
+ ›   Error: Sprite command timed out after 300s: /opt/cast-agent/venv/bin/pip install -r /opt/cast-...$
 # stdout, last 14 lines, cat -A
 Deploying smoke to sprites...$
 Deploying smoke to Sprites...$
