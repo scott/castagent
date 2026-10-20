@@ -1502,6 +1502,94 @@ export async function deleteMemoryVolume(volumeConfig: VolumeConfig, agentName: 
 }
 
 /**
+ * Lines written to `.dockerignore` for a Docker build context.
+ * Sprites applies the same rules when it packs an upload.
+ * `.cast-runtime/` is a different directory and stays in the context.
+ */
+export const DOCKER_BUILD_CONTEXT_IGNORE_LINES = [
+  '.git',
+  '.gitignore',
+  '*.tar',
+  '*.tar.gz',
+  '*.zip',
+  '__pycache__/',
+  '*.py[cod]',
+  '*.pyc',
+  '.DS_Store',
+  '.AppleDouble',
+  '.LSOverride',
+  '*.log',
+  '.env',
+  '.env.*',
+  'cast.db',
+  'cast.db-*',
+  '.cast/',
+  '.castignore',
+  '.cloud-init.yml',
+  '.dockerignore',
+] as const
+
+interface BuildContextIgnoreRule {
+  dirOnly: boolean
+  matches: (name: string) => boolean
+}
+
+function compileBuildContextIgnore(line: string): BuildContextIgnoreRule {
+  const dirOnly = line.endsWith('/')
+  const body = dirOnly ? line.slice(0, -1) : line
+  return {dirOnly, matches: basenameGlob(body)}
+}
+
+const DOCKER_BUILD_CONTEXT_RULES = DOCKER_BUILD_CONTEXT_IGNORE_LINES.map(compileBuildContextIgnore)
+
+function basenameGlob(pattern: string): (name: string) => boolean {
+  let body = ''
+  for (let i = 0; i < pattern.length; i++) {
+    const char = pattern[i]
+    if (char === '*') {
+      body += '[^/]*'
+      continue
+    }
+    if (char === '?') {
+      body += '[^/]'
+      continue
+    }
+    if (char === '[') {
+      const end = pattern.indexOf(']', i + 1)
+      if (end > i + 1) {
+        body += pattern.slice(i, end + 1)
+        i = end
+        continue
+      }
+    }
+    body += char.replace(/[\\^$+?.()|{]/g, '\\$&')
+  }
+  const expression = new RegExp(`^${body}$`)
+  return (name: string) => expression.test(name)
+}
+
+function contextRelativePath(entryPath: string): string {
+  let rel = entryPath.replace(/\\/g, '/')
+  while (rel.startsWith('./')) rel = rel.slice(2)
+  return rel.replace(/^\/+/, '').replace(/\/+$/, '')
+}
+
+/**
+ * True when a Docker build context would leave this path out.
+ * Patterns match the final path segment.
+ */
+export function dockerBuildContextExcluded(entryPath: string, isDirectory: boolean): boolean {
+  const rel = contextRelativePath(entryPath)
+  if (rel === '' || rel === '.') return false
+  const name = rel.slice(rel.lastIndexOf('/') + 1)
+  for (const rule of DOCKER_BUILD_CONTEXT_RULES) {
+    if (rule.dirOnly && !isDirectory) continue
+    if (rule.matches(name)) return true
+  }
+  return false
+}
+
+/**
  * Creates a comprehensive .dockerignore file in the agent directory to
  * exclude non-runtime files from the Docker build context. This
  * significantly reduces image size by excluding .git, archives,
@@ -1511,26 +1599,6 @@ export async function deleteMemoryVolume(volumeConfig: VolumeConfig, agentName: 
  * the runtime needed at runtime.
  */
 export function createDockerignore(agentPath: string): void {
-  const content = `.git
-.gitignore
-*.tar
-*.tar.gz
-*.zip
-__pycache__/
-*.py[cod]
-*.pyc
-.DS_Store
-.AppleDouble
-.LSOverride
-*.log
-.env
-.env.*
-cast.db
-cast.db-*
-.cast/
-.castignore
-.cloud-init.yml
-.dockerignore
-`
+  const content = `${DOCKER_BUILD_CONTEXT_IGNORE_LINES.join('\n')}\n`
   fs.writeFileSync(path.join(agentPath, '.dockerignore'), content)
 }
