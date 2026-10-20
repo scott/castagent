@@ -12,10 +12,9 @@ function send(res, status, body) {
   res.end(payload)
 }
 
-function bearerOk(req) {
+function bearerOk(req, accessToken) {
   const header = req.headers.authorization || ''
-  const token = process.env.DIGITALOCEAN_ACCESS_TOKEN || ''
-  return token.length > 0 && header === `Bearer ${token}`
+  return accessToken.length > 0 && header === `Bearer ${accessToken}`
 }
 
 async function readBody(req) {
@@ -39,8 +38,9 @@ function volumeRecord(volume) {
   }
 }
 
-export function startFakeHttp(stateDir) {
+export function startFakeHttp(stateDir, accessToken = '') {
   const server = http.createServer(async (req, res) => {
+    try {
     const url = new URL(req.url || '/', 'http://127.0.0.1')
     const method = req.method || 'GET'
     const body = method === 'GET' || method === 'DELETE' ? {} : await readBody(req)
@@ -51,7 +51,7 @@ export function startFakeHttp(stateDir) {
       path: `${url.pathname}${url.search}`,
       argv: note ? [note] : [],
       remote: note,
-      env: {authorizationBearer: bearerOk(req)},
+      env: {authorizationBearer: bearerOk(req, accessToken)},
     })
 
     if (method === 'DELETE' || (method !== 'GET' && method !== 'POST' && url.pathname.startsWith('/v2/account/keys'))) {
@@ -159,6 +159,11 @@ export function startFakeHttp(stateDir) {
     }
 
     send(res, 404, {id: 'not_found', message: `no fake route for ${method} ${url.pathname}`})
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (!res.headersSent) send(res, 500, {id: 'fake_error', message})
+      else res.end()
+    }
   })
 
   return new Promise(resolve => {

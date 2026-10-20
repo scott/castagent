@@ -1,0 +1,17 @@
+# stderr, last 12 lines, cat -A
+$
+# stdout, last 14 lines, cat -A
+URL: <fake-http>$
+Provider: fly$
+$
+To view logs:$
+  cast logs smoke$
+$
+To check status:$
+  cast status smoke$
+$
+To connect:$
+  cast connect smoke$
+$
+Deployed smoke with deployment SHA: <sha>$
+Connect with: cast connect <sha>$

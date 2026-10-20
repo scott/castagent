@@ -1,0 +1,27 @@
+# stderr, last 12 lines, cat -A
+ ›   Error: Deployment to digitalocean failed.$
+ ›$
+ ›   Error: Docker container 'cast-agent' exited before the runtime was ready.$
+ ›   Status: exited$
+ ›   Error loading agent config$
+ ›   Logs: docker logs cast-agent$
+ ›$
+ ›   Troubleshooting:$
+ ›     - Ensure the provider CLI is properly authenticated$
+ ›     - Check your network connection$
+ ›     - Review the logs above for more details$
+# stdout, last 14 lines, cat -A
+Droplet size: s-2vcpu-2gb$
+Uploaded DigitalOcean SSH key 'cast-do-key-<fp>'.$
+On-host TUI bundle: skipped (use --with-tui to enable).$
+Creating droplet 'cast-smoke'...$
+Droplet IP: 203.0.113.10$
+Waiting for SSH to be available...$
+Waiting for Docker to be ready on droplet...$
+Building Docker image for linux/amd64...$
+Streaming Docker image to droplet...$
+Deploying on droplet...$
+Creating memory volume: cast-smoke$
+Volume attached at /mnt/cast-smoke$
+Waiting for the container to become ready...$
+Removed droplet 'cast-smoke' after the deploy failed.$

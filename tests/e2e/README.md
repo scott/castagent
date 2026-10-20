@@ -12,9 +12,11 @@ Build the CLI first. The runner executes `typescript/cast-cli/bin/run`.
 npm install
 cd typescript && npm install && cd ..
 npm run build:cli
-python3 -m pip install 'langchain-openai>=1.7.2' 'langchain-core>=1.6.12' pyyaml
+python3 -m pip install --user 'langchain-openai>=1.7.2' 'langchain-core>=1.6.12' pyyaml
 node tests/e2e/run.mjs
 ```
+
+Each case uses a temporary `HOME`. The runner adds the current Python user site to `PYTHONPATH` so `python3 -m cast.providers.catalog` can import packages installed with `pip install --user`.
 
 The process writes `tests/e2e/smoke-summary.json` (or `$SMOKE_SUMMARY`) and exits non-zero when a case fails. `UPDATE_ENDINGS=1` rewrites `tests/e2e/endings/*.txt` from the current CLI tail. Ending files are `cat -A` style: `$` marks the end of each line, `^I` is a tab, and `^M` is a carriage return.
 

@@ -1,0 +1,28 @@
+# stderr, last 12 lines, cat -A
+Last lines from the cast-agent service log:$
+  Error loading agent config$
+Restore error: Sprite service 'cast-agent' on 'cast-smoke' failed before the runtime was ready.$
+Status: running$
+Last lines from the cast-agent service log:$
+  Error loading agent config$
+$
+smoke may be running the broken 1.1.0 release. Your local files are back on 1.0.0.$
+To restore 1.0.0 on the remote, run:$
+  cast upgrade smoke 1.0.0$
+$
+Logs: sprite exec -s cast-smoke -- cat /.sprite/logs/services/cast-agent.log$
+# stdout, last 14 lines, cat -A
+Deploying smoke to Sprites...$
+Ensuring sprite 'cast-smoke' exists...$
+Waiting for sprite to be ready...$
+Ensuring Python is installed...$
+Transferring agent files...$
+  Tar file size: <size>MB$
+  Transferring tar to sprite (streaming)...$
+  Extracting files...$
+Creating memory directory inside sprite...$
+Setting up Python environment...$
+Installing dependencies...$
+Starting agent service...$
+Waiting for the agent service to become ready...$
+Restoring 1.0.0 on the remote...$

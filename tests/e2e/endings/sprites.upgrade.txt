@@ -1,0 +1,17 @@
+# stderr, last 12 lines, cat -A
+$
+# stdout, last 14 lines, cat -A
+It is not a direct agent URL. Use cast connect.$
+$
+To view logs:$
+  cast logs smoke$
+  sprite exec -s cast-smoke -- cat /.sprite/logs/services/cast-agent.log$
+$
+To destroy:$
+  cast shutdown smoke$
+$
+Upgraded to version 1.1.0 on Sprites.$
+Sprite: cast-smoke$
+Volume cast-smoke-memory.$
+$
+Upgraded to version 1.1.0 successfully.$

@@ -1,0 +1,17 @@
+# stderr, last 12 lines, cat -A
+$
+# stdout, last 14 lines, cat -A
+Provider: fly$
+$
+To view logs:$
+  cast logs smoke$
+$
+To check status:$
+  cast status smoke$
+$
+To connect:$
+  cast connect smoke$
+Warning: agent.yaml has no version. Recorded 1.0. Add a version to agent.yaml or pass --version to choose.$
+$
+Deployed smoke with deployment SHA: <sha>$
+Connect with: cast connect <sha>$

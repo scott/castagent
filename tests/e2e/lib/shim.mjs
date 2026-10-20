@@ -333,4 +333,6 @@ if (bin === 'ssh') {
   }
 }
 
-finish(1, '', `e2e shim: unhandled ${bin} ${joined}\n`)
+if (!(bin === 'ssh' && args.includes('-N') && args.includes('-L'))) {
+  finish(1, '', `e2e shim: unhandled ${bin} ${joined}\n`)
+}

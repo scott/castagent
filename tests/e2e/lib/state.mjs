@@ -62,10 +62,26 @@ export function writeScenario(dir, scenario) {
   fs.writeFileSync(path.join(dir, 'scenario.json'), JSON.stringify(scenario))
 }
 
+function withDefaults(world) {
+  const base = emptyWorld()
+  const current = world && typeof world === 'object' ? world : {}
+  return {
+    ...base,
+    ...current,
+    sprites: current.sprites || {},
+    apps: current.apps || {},
+    droplets: current.droplets || [],
+    volumes: current.volumes || [],
+    sshKeys: current.sshKeys || [],
+    violations: current.violations || [],
+    counts: {...base.counts, ...(current.counts || {})},
+  }
+}
+
 export function updateWorld(dir, fn) {
   return withState(dir, () => {
     const file = path.join(dir, 'world.json')
-    const world = readJson(file, emptyWorld())
+    const world = withDefaults(readJson(file, emptyWorld()))
     const result = fn(world, readScenario(dir))
     fs.writeFileSync(file, JSON.stringify(world))
     return result
@@ -107,7 +123,7 @@ export function recordRequest(dir, entry) {
     fs.appendFileSync(path.join(dir, 'requests.jsonl'), `${JSON.stringify(row)}\n`)
     if (tokenInArgv.length > 0) {
       const worldFile = path.join(dir, 'world.json')
-      const world = readJson(worldFile, emptyWorld())
+      const world = withDefaults(readJson(worldFile, emptyWorld()))
       world.violations.push({kind: 'token-argv', bin: row.bin, names: tokenInArgv})
       fs.writeFileSync(worldFile, JSON.stringify(world))
     }
@@ -125,7 +141,7 @@ export function readRequests(dir) {
 }
 
 export function readWorld(dir) {
-  return readJson(path.join(dir, 'world.json'), emptyWorld())
+  return withDefaults(readJson(path.join(dir, 'world.json'), emptyWorld()))
 }
 
 export function faultHit(spec, count) {

@@ -23,6 +23,18 @@ export const TOKENS = {
 
 const SHIMS = ['sprite', 'flyctl', 'doctl', 'docker', 'ssh', 'gzip', 'bun']
 
+function pythonUserSite() {
+  try {
+    return execFileSync('python3', ['-c', 'import site; print(site.getusersitepackages())'], {
+      encoding: 'utf8',
+    }).trim()
+  } catch {
+    return ''
+  }
+}
+
+const pythonUserSitePath = pythonUserSite()
+
 export function catA(text) {
   return text.split('\n').map(line => `${line.replace(/\t/g, '^I').replace(/\r/g, '^M')}$`).join('\n')
 }
@@ -31,12 +43,13 @@ export function normalizeOutput(text, home) {
   return text
     .replaceAll(home, '<home>')
     .replaceAll(repoRoot, '<repo>')
+    .replace(/cast-do-key-[0-9a-f]{8}(?:-[0-9]+)?/g, 'cast-do-key-<fp>')
     .replace(/http:\/\/127\.0\.0\.1:\d+/g, '<fake-http>')
     .replace(/127\.0\.0\.1:\d+/g, '127.0.0.1:<port>')
     .replace(/Tar file size: [0-9.]+MB/g, 'Tar file size: <size>MB')
-    .replace(/deployment SHA: [a-z0-9]{6}/g, 'deployment SHA: <sha>')
-    .replace(/cast connect [a-z0-9]{6}/g, 'cast connect <sha>')
-    .replace(/\(deployment: [a-z0-9]{6}\)/g, '(deployment: <sha>')
+    .replace(/deployment SHA: [a-f0-9]{6}/g, 'deployment SHA: <sha>')
+    .replace(/Connect with: cast connect [a-f0-9]{6}/g, 'Connect with: cast connect <sha>')
+    .replace(/\(deployment: [a-f0-9]{6}\)/g, '(deployment: <sha>')
 }
 
 export function tailLines(text, count) {
@@ -139,6 +152,8 @@ function linkShims(dir) {
     const dest = path.join(dir, name)
     if (!fs.existsSync(dest)) fs.symlinkSync(shimPath, dest)
   }
+  const nodeLink = path.join(dir, 'node')
+  if (!fs.existsSync(nodeLink)) fs.symlinkSync(process.execPath, nodeLink)
 }
 
 export async function withFixture(fn) {
@@ -149,7 +164,7 @@ export async function withFixture(fn) {
   fs.writeFileSync(path.join(stateDir, 'scenario.json'), '{}\n')
   fs.chmodSync(shimPath, 0o755)
   linkShims(shimDir)
-  const http = await startFakeHttp(stateDir)
+  const http = await startFakeHttp(stateDir, TOKENS.DIGITALOCEAN_ACCESS_TOKEN)
   const env = {
     ...process.env,
     HOME: home,
@@ -165,6 +180,7 @@ export async function withFixture(fn) {
     FORCE_COLOR: '0',
     CI: '1',
     TERM: 'dumb',
+    PYTHONPATH: [pythonUserSitePath, process.env.PYTHONPATH].filter(Boolean).join(path.delimiter),
   }
   delete env.SPRITE_TOKEN
   const fx = {

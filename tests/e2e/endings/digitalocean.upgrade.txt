@@ -1,0 +1,17 @@
+# stderr, last 12 lines, cat -A
+$
+# stdout, last 14 lines, cat -A
+Upgrading smoke from version 1.0.0 to 1.1.0...$
+Provider: digitalocean$
+Proceed with upgrade? (y/N) Using release 1.1.0 from <home>/.cast/agents/smoke/.cast/releases/1.1.0.tar.gz$
+Extracting version 1.1.0 tarball...$
+Building and pushing Docker image to DigitalOcean...$
+Restarting droplet...$
+Mounting memory volume at /mnt/cast-smoke...$
+Volume attached at /mnt/cast-smoke$
+Refreshing SSH login MOTD...$
+$
+Upgraded to version 1.1.0 on DigitalOcean.$
+Deployment URL: https://203.0.113.10$
+$
+Upgraded to version 1.1.0 successfully.$

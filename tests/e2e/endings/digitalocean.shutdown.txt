@@ -1,0 +1,12 @@
+# stderr, last 12 lines, cat -A
+$
+# stdout, last 14 lines, cat -A
+Agent 'smoke' (deployment: <sha> is deployed to digitalocean (https://203.0.113.10)$
+Shutting down smoke on digitalocean...$
+Droplet 'cast-smoke' deleted.$
+Memory volume 'cast-smoke' has been removed.$
+Left DigitalOcean account SSH keys in place, including 'cast-do-key'.$
+Remote resources destroyed on digitalocean.$
+Marked all deployments as deleted in database.$
+Removed auth token from token file.$
+Agent 'smoke' has been shut down.$
