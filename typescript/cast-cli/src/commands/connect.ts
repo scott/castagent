@@ -5,7 +5,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import {db} from '../lib/sqlite'
 import {A2AClient, A2AClientError} from '../lib/a2a/client'
-import {deploymentAuthFailureReason, missingDeploymentAuthMessage, resolveDeploymentAuthToken, resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
+import {deploymentAuthFailureReason, missingDeploymentAuthMessage, providerRequestUrl, resolveDeploymentAuthToken, resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
 import {deploymentProviderLoadErrors, getDeploymentProvider} from '../lib/deploy/registry'
 import {
   checkNeedsProxy as spriteNeedsProxy,
@@ -111,11 +111,15 @@ export default class Connect extends Command {
       this.warn(`No auth token found for agent '${agentName}'. Connecting without authentication...`)
     }
 
+    // The registry URL stays the official provider URL. A loopback testing
+    // override rewrites only this request, and never a tunnel that is already local.
+    const requestUrl = providerRequestUrl(deploymentUrl)
+
     // Verify connection before launching TUI
     try {
-      const client = new A2AClient(deploymentUrl, token || undefined, edgeToken)
+      const client = new A2AClient(requestUrl, token || undefined, edgeToken)
       await client.getAgentCard()
-      this.log(`Connection verified: ${deploymentUrl}`)
+      this.log(`Connection verified: ${requestUrl}`)
     } catch (error: any) {
       if (error instanceof A2AClientError) {
         if (error.statusCode === 401 || error.statusCode === 403 || error.code === 'AUTH_FAILED' || error.code === 'FORBIDDEN') {
@@ -126,13 +130,13 @@ export default class Connect extends Command {
           )
         } else if (error.code === 'ECONNREFUSED' || error.code === 'ENOTFOUND') {
           this.error(
-            `Cannot connect to agent at ${deploymentUrl}.\n` +
+            `Cannot connect to agent at ${requestUrl}.\n` +
             `The agent may not be running or the URL may be incorrect.\n` +
             `Check the deployment status with your provider.`
           )
         } else if (error.code === 'TIMEOUT') {
           this.error(
-            `Connection to ${deploymentUrl} timed out.\n` +
+            `Connection to ${requestUrl} timed out.\n` +
             `The agent may be starting up or unresponsive. Try again in a moment.${timeoutHint}`
           )
         } else {
@@ -143,7 +147,7 @@ export default class Connect extends Command {
       }
     }
 
-    await this.launchTui(agentName, deploymentUrl, token || undefined, proxyProcess, edgeToken)
+    await this.launchTui(agentName, requestUrl, token || undefined, proxyProcess, edgeToken)
   }
 
   private async checkNeedsProxy(url: string): Promise<boolean> {

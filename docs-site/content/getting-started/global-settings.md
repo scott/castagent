@@ -87,7 +87,6 @@ selected by the agent's `brain.model`, including an external provider.
 | `DIGITALOCEAN_ACCESS_TOKEN` | DigitalOcean deploys (also accepts `DIGITALOCEAN_API_TOKEN`, `DIGITALOCEAN_API_KEY`). MicroVM passes this value to `doctl` through the child environment, not as `--access-token`. |
 | `SPRITES_TOKEN` | Sprites deploys. Create the token at [sprites.dev/account](https://sprites.dev/account) in the `org-slug/org-id/token-id/token-value` format. `sprite login` is an alternative. The sprite CLI reads `SPRITE_TOKEN`, not `SPRITES_TOKEN`. When `SPRITE_TOKEN` is unset, Cast copies `SPRITES_TOKEN` into `SPRITE_TOKEN` for sprite child processes. The token is not placed on a command line. `FLY_API_TOKEN` is not a Sprites token. |
 | `CAST_DEPLOYMENT_SHA` | Set automatically during `cast deploy`; useful for child processes. |
-| `CAST_PROVIDER_HTTP_BASE` | Optional http or https origin. When set, Cast uses it as the origin for provider HTTP calls and keeps the official path and query. Unset, those calls use the official origin. Provider CLIs stay on `PATH`. |
 
 Anything in `config.yaml` can use `${VAR}` interpolation, and the
 interpolation falls through to the environment if not set in YAML.
@@ -97,6 +96,17 @@ Sprites needs the `sprite` CLI. Set `SPRITES_TOKEN` to a token created at
 `org-slug/org-id/token-id/token-value` format, or run `sprite login`.
 `FLY_API_TOKEN` is not a Sprites token. Cast copies `SPRITES_TOKEN` to
 `SPRITE_TOKEN` for sprite child processes when `SPRITE_TOKEN` is unset.
+
+## Testing override
+
+`CAST_PROVIDER_HTTP_BASE` is a loopback-only testing override. The value
+must be an `http` or `https` origin of `127.0.0.1`, `::1`, or `localhost`,
+with no path, query, user, or hash. When it is set, Droplet DigitalOcean
+API calls and Fly agent-card checks use that origin and keep the official
+path and query. Cast stores the official provider URL in the registry.
+MicroVM calls to `api.digitalocean.com` are not redirected. Leave it unset
+for a normal deploy. Provider CLIs stay on `PATH`. Any other host is an
+error, so a bearer token is not sent to that origin.
 
 ## Secrets
 

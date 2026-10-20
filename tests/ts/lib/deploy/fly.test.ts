@@ -3,7 +3,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import sinon from 'sinon'
-import {db} from '../../../../typescript/cast-cli/src/lib/sqlite'
+import {CastDatabase, db} from '../../../../typescript/cast-cli/src/lib/sqlite'
 import {keychain} from '../../../../typescript/cast-cli/src/lib/keychain'
 import {flyProvider} from '../../../../typescript/cast-cli/src/lib/deploy/providers/fly'
 import {generateAuthToken, stageCastRuntime} from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
@@ -12,6 +12,8 @@ import FlyDeploy, {
   destroyFlyDeployment,
   discardFailedFlyTokens,
   flyAgentCardUrl,
+  flyDeploymentUrl,
+  probeFlyAgentCard,
   flyAppsCreateArgs,
   flyBuilderOptions,
   flyDeployArgs,
@@ -1224,5 +1226,63 @@ describe('Fly runtime image and health', () => {
     })
     expect(seen).to.deep.equal(['https://cast-ready.fly.dev'])
     expect(host.logs.join('\n')).to.include('Deployment Successful')
+  })
+
+  it('stores the official Fly URL when the loopback override is set', async () => {
+    const previous = process.env.CAST_PROVIDER_HTTP_BASE
+    process.env.CAST_PROVIDER_HTTP_BASE = 'http://127.0.0.1:9'
+    const dbPath = path.join(os.tmpdir(), `cast-fly-override-${process.pid}-${Date.now()}.db`)
+    const registry = new CastDatabase(dbPath)
+    const dir = path.join(root, 'loopback')
+    fs.mkdirSync(dir, {recursive: true})
+    const host = flyHost()
+    const fetched: string[] = []
+    const originalFetch = globalThis.fetch
+    globalThis.fetch = (async (input: string | URL) => {
+      fetched.push(String(input))
+      return {ok: true, json: async () => ({name: 'loopback'})} as Response
+    }) as typeof fetch
+    try {
+      expect(flyDeploymentUrl('loopback')).to.equal('https://cast-loopback.fly.dev')
+      await deployFlyAgent({agentName: 'loopback', agentPath: dir, host}, {
+        exec: async (args) => {
+          if (args[0] === 'status') return flyResult(0, 'running\n')
+          if (args[0] === 'volumes' && args[1] === 'list') return flyResult(0, '[]')
+          if (args[0] === 'volumes' && args[1] === 'create') return flyResult(0)
+          if (args[0] === 'deploy') return flyResult(0)
+          return flyResult(1, '', `unexpected ${args.join(' ')}`)
+        },
+        generateAuthToken: async () => ({authToken: 'token', tokenHash: 'hash'}),
+        saveDeployment: async (agentName, provider, url, tokenHash, volumeId, volumeConfig) => {
+          registry.createDeployment('ovr001', agentName, provider, url, tokenHash, volumeId, volumeConfig, '1.0.0')
+          return 'ovr001'
+        },
+        listDeployments: () => [],
+        discardTokens: async () => {},
+        inferenceEnv: () => ({}),
+        importSecrets: async () => flyResult(0),
+        stageRuntime: () => {},
+        checkCli: async () => {},
+        confirmReady: async (input) => {
+          expect(input.deploymentUrl).to.equal('https://cast-loopback.fly.dev')
+          expect(input.deploymentUrl).to.not.include('127.0.0.1')
+          expect(await probeFlyAgentCard(input.deploymentUrl)).to.equal(true)
+        },
+      })
+      const row = registry.getDeployment('loopback')
+      expect(row.deployment_url).to.equal('https://cast-loopback.fly.dev')
+      expect(JSON.stringify(row)).to.not.include('127.0.0.1')
+      expect(JSON.stringify(row)).to.not.include('example.com')
+      expect(JSON.stringify(row)).to.not.include('evil.test')
+      expect(fetched).to.deep.equal(['http://127.0.0.1:9/.well-known/agent.json'])
+      expect(host.logs.join('\n')).to.include('URL: https://cast-loopback.fly.dev')
+      expect(host.logs.join('\n')).to.not.include('127.0.0.1')
+    } finally {
+      globalThis.fetch = originalFetch
+      registry.close()
+      for (const suffix of ['', '-wal', '-shm']) fs.rmSync(dbPath + suffix, {force: true})
+      if (previous === undefined) delete process.env.CAST_PROVIDER_HTTP_BASE
+      else process.env.CAST_PROVIDER_HTTP_BASE = previous
+    }
   })
 })

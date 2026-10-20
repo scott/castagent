@@ -54,9 +54,17 @@ export function startFakeHttp(stateDir, accessToken = '') {
       env: {authorizationBearer: bearerOk(req, accessToken)},
     })
 
-    if (method === 'DELETE' || (method !== 'GET' && method !== 'POST' && url.pathname.startsWith('/v2/account/keys'))) {
+    const keyPath = url.pathname === '/v2/account/keys' || url.pathname.startsWith('/v2/account/keys/')
+    if (keyPath && method === 'DELETE') {
       updateWorld(stateDir, world => {
         world.violations.push({kind: 'ssh-key-write', method, path: url.pathname})
+      })
+      send(res, 403, {id: 'forbidden', message: 'account SSH keys are add-only'})
+      return
+    }
+    if (keyPath && method !== 'GET' && method !== 'POST') {
+      updateWorld(stateDir, world => {
+        world.violations.push({kind: 'ssh-key-modify', method, path: url.pathname})
       })
       send(res, 403, {id: 'forbidden', message: 'account SSH keys are add-only'})
       return

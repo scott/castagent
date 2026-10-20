@@ -1,7 +1,7 @@
 # stderr, last 12 lines, cat -A
 $
 # stdout, last 14 lines, cat -A
-Agent 'smoke' (deployment: <sha> is deployed to fly (<fake-http>)$
+Agent 'smoke' (deployment: <sha> is deployed to fly (https://cast-smoke.fly.dev)$
 Shutting down smoke on fly...$
 Destroyed Fly machine 'm1'.$
 Fly app 'cast-smoke' has been destroyed.$

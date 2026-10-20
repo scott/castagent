@@ -1,7 +1,7 @@
 # stderr, last 12 lines, cat -A
 $
 # stdout, last 14 lines, cat -A
-URL: <fake-http>$
+URL: https://cast-smoke.fly.dev$
 Provider: fly$
 $
 To view logs:$

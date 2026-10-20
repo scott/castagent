@@ -1,12 +1,12 @@
 import fs from 'node:fs'
 import path from 'node:path'
 
-const TOKEN_NAMES = [
-  'SPRITES_TOKEN',
-  'SPRITE_TOKEN',
-  'FLY_API_TOKEN',
-  'DIGITALOCEAN_ACCESS_TOKEN',
-]
+export const FAKE_TOKENS = {
+  SPRITES_TOKEN: 'org-e2e/11111111-1111-4111-8111-111111111111/tokene2e/sprites-secret-e2e-9f3a7c',
+  SPRITE_TOKEN: 'org-e2e/11111111-1111-4111-8111-111111111111/tokene2e/sprites-secret-e2e-9f3a7c',
+  FLY_API_TOKEN: 'fly-secret-e2e-9f3a7c',
+  DIGITALOCEAN_ACCESS_TOKEN: 'dop_v1_e2e_9f3a7c_do_not_use',
+}
 
 export function emptyWorld() {
   return {
@@ -96,8 +96,7 @@ export function resetCounts(dir) {
 
 export function tokenNamesIn(text) {
   const hits = []
-  for (const name of TOKEN_NAMES) {
-    const value = process.env[name]
+  for (const [name, value] of Object.entries(FAKE_TOKENS)) {
     if (value && value.length >= 8 && text.includes(value)) hits.push(name)
   }
   return hits

@@ -5,7 +5,7 @@ import path from 'node:path'
 import {createRequire} from 'node:module'
 import {fileURLToPath} from 'node:url'
 import {startFakeHttp} from './http.mjs'
-import {readRequests, readWorld, resetCounts, writeScenario} from './state.mjs'
+import {FAKE_TOKENS, readRequests, readWorld, resetCounts, writeScenario} from './state.mjs'
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 export const repoRoot = path.resolve(here, '../../..')
@@ -16,9 +16,31 @@ const Database = require('better-sqlite3')
 
 export const AGENT = 'smoke'
 export const TOKENS = {
-  SPRITES_TOKEN: 'org-e2e/11111111-1111-4111-8111-111111111111/tokene2e/sprites-secret-e2e-9f3a7c',
-  FLY_API_TOKEN: 'fly-secret-e2e-9f3a7c',
-  DIGITALOCEAN_ACCESS_TOKEN: 'dop_v1_e2e_9f3a7c_do_not_use',
+  SPRITES_TOKEN: FAKE_TOKENS.SPRITES_TOKEN,
+  FLY_API_TOKEN: FAKE_TOKENS.FLY_API_TOKEN,
+  DIGITALOCEAN_ACCESS_TOKEN: FAKE_TOKENS.DIGITALOCEAN_ACCESS_TOKEN,
+}
+
+const ENV_ALLOW = [
+  'LANG',
+  'LC_ALL',
+  'LC_CTYPE',
+  'TZ',
+  'TMPDIR',
+  'TMP',
+  'TEMP',
+  'USER',
+  'LOGNAME',
+  'LD_LIBRARY_PATH',
+]
+
+function allowedEnv(extra) {
+  const env = {}
+  for (const key of ENV_ALLOW) {
+    if (process.env[key]) env[key] = process.env[key]
+  }
+  if (!env.LANG) env.LANG = 'C.UTF-8'
+  return {...env, ...extra}
 }
 
 const SHIMS = ['sprite', 'flyctl', 'doctl', 'docker', 'ssh', 'gzip', 'bun']
@@ -175,8 +197,7 @@ export async function withFixture(fn) {
   fs.chmodSync(shimPath, 0o755)
   linkShims(shimDir)
   const http = await startFakeHttp(stateDir, TOKENS.DIGITALOCEAN_ACCESS_TOKEN)
-  const env = {
-    ...process.env,
+  const env = allowedEnv({
     HOME: home,
     USERPROFILE: home,
     PATH: [shimDir, python.binDir, '/usr/bin', '/bin'].filter(Boolean).join(':'),
@@ -192,8 +213,7 @@ export async function withFixture(fn) {
     OCLIF_COLUMNS: '240',
     TERM: 'dumb',
     PYTHONPATH: python.pythonPath,
-  }
-  delete env.SPRITE_TOKEN
+  })
   const fx = {
     home,
     stateDir,

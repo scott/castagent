@@ -2291,6 +2291,34 @@ describe('DigitalOcean Deploy Provider', () => {
       }
     })
 
+    it('rejects a non-loopback CAST_PROVIDER_HTTP_BASE', () => {
+      const previous = process.env.CAST_PROVIDER_HTTP_BASE
+      const official = 'https://api.digitalocean.com/v2/volumes?per_page=1'
+      try {
+        for (const value of ['http://example.com', 'https://evil.test', 'http://127.0.0.1.evil.test', 'https://example.com', 'http://0.0.0.0:9']) {
+          process.env.CAST_PROVIDER_HTTP_BASE = value
+          expect(() => deployUtils.readProviderHttpBase()).to.throw(/loopback/)
+          expect(() => deployUtils.providerHttpUrl(official)).to.throw(/loopback/)
+        }
+        process.env.CAST_PROVIDER_HTTP_BASE = 'http://127.0.0.1:9'
+        expect(deployUtils.providerHttpUrl(official)).to.equal('http://127.0.0.1:9/v2/volumes?per_page=1')
+        expect(deployUtils.providerRequestUrl('http://127.0.0.1:4000')).to.equal('http://127.0.0.1:4000')
+        expect(deployUtils.providerRequestUrl('https://cast-mail.fly.dev')).to.equal('http://127.0.0.1:9')
+        process.env.CAST_PROVIDER_HTTP_BASE = 'http://localhost:9'
+        expect(deployUtils.providerHttpUrl('https://cast-mail.fly.dev/.well-known/agent.json'))
+          .to.equal('http://localhost:9/.well-known/agent.json')
+        process.env.CAST_PROVIDER_HTTP_BASE = 'http://[::1]:9'
+        expect(deployUtils.providerHttpUrl('https://api.digitalocean.com/v2/volumes'))
+          .to.equal('http://[::1]:9/v2/volumes')
+        delete process.env.CAST_PROVIDER_HTTP_BASE
+        expect(deployUtils.providerHttpUrl(official)).to.equal(official)
+        expect(deployUtils.readProviderHttpBase()).to.equal(null)
+      } finally {
+        if (previous === undefined) delete process.env.CAST_PROVIDER_HTTP_BASE
+        else process.env.CAST_PROVIDER_HTTP_BASE = previous
+      }
+    })
+
     async function destroyWith(dropletLists: string[]): Promise<{commands: string[]; logs: string[]}> {
       sandbox.stub(db, 'listDeployments').returns([])
       sandbox.stub(deployUtils, 'getProviderToken').returns('test-token')

@@ -20,12 +20,14 @@ Each case uses a temporary `HOME`, so Python user-site packages would otherwise 
 
 The process writes `tests/e2e/smoke-summary.json` (or `$SMOKE_SUMMARY`) and exits non-zero when a case fails. `UPDATE_ENDINGS=1` rewrites `tests/e2e/endings/*.txt` from the current CLI tail. Ending files are `cat -A` style: `$` marks the end of each line, `^I` is a tab, and `^M` is a carriage return.
 
-Each case also fails if a fake provider token value shows up in argv. The CLI shims record that on every command, and a `/proc` sampler checks the command lines of live processes. Environment values are not scanned, so a token that stays in the environment is allowed.
+Each case also fails if a fake provider token value shows up in argv. The CLI shims and the HTTP fake compare argv with those fixed fake values, not with the runner's environment. A `/proc` sampler checks the command lines of live processes. Environment values are not scanned, so a token that stays in the environment is allowed.
+
+The `cast` process is started with an allowlist. `HOME`, `PATH`, the fake provider tokens, and a few locale variables are set explicitly. Real values such as `GH_TOKEN`, `OPENROUTER_API_KEY`, `DIGITALOCEAN_API_TOKEN`, and `DIGITALOCEAN_API_KEY` are not copied in.
 
 ## Add a provider fake
 
 1. Teach `tests/e2e/lib/shim.mjs` a new basename, and add that name to `SHIMS` in `tests/e2e/lib/harness.mjs`. The harness prepends the shim directory to `PATH`. Cast still resolves the CLI by name.
-2. If the provider calls HTTP, route it in `tests/e2e/lib/http.mjs`. Point Cast at that server with `CAST_PROVIDER_HTTP_BASE` (already set by the harness). The variable replaces the origin of an official provider URL and keeps the path and query. It is a generic override, not a test-only branch: leave it unset and the official origin is used. Provider CLIs stay on `PATH`.
+2. If the provider calls HTTP, route it in `tests/e2e/lib/http.mjs`. Point Cast at that server with `CAST_PROVIDER_HTTP_BASE` (already set by the harness to the fake's loopback origin). The variable accepts only `127.0.0.1`, `::1`, or `localhost`. It replaces the origin of an official provider URL and keeps the path and query. Leave it unset and the official origin is used. Fly stores `https://cast-<agent>.fly.dev` in the registry. The agent-card check and `cast connect` send that request to the override. MicroVM calls are not redirected. Provider CLIs stay on `PATH`.
 3. Record every command with `recordRequest`. Return scripted stdout, stderr, and exit codes, including failures. `scenario.json` (`fx.setScenario`) is how a case asks for a fault. Do not log token values or stdin.
 
 ## Add a case

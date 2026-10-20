@@ -207,8 +207,13 @@ if (bin === 'flyctl') {
   finish(1, '', `e2e flyctl: unhandled ${joined}\n`)
 }
 
+function isDoctlSshKeyDelete(argv) {
+  if (!argv.includes('ssh-key')) return false
+  return argv.some(arg => arg === 'delete' || arg === 'rm' || arg === 'd')
+}
+
 if (bin === 'doctl') {
-  if (args.includes('ssh-key') && args.includes('delete')) {
+  if (isDoctlSshKeyDelete(args)) {
     updateWorld(stateDir, world => {
       world.violations.push({kind: 'doctl-ssh-key-delete', argv: args})
     })
@@ -259,7 +264,7 @@ if (bin === 'doctl') {
     })
     finish(0, `deleted ${id}\n`)
   }
-  finish(0, '')
+  finish(1, '', `e2e doctl: unhandled ${joined}\n`)
 }
 
 if (bin === 'docker') {
