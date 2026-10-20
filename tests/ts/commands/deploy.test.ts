@@ -1021,10 +1021,28 @@ describe('Deploy Command - recorded release version', () => {
     })
   })
 
-  it('records a plain 1.10 version without turning it into 1.1', async () => {
-    const agentName = `deploy-plain-110-${Date.now()}`
-    await withAgent(agentName, async () => {
-      await expectBlockVersion(agentName, 'name: plain\nversion: 1.10\n', '1.10')
+  const versionScalars: Array<[string, string]> = [
+    ['1.10', '1.10'],
+    ['2.0', '2.0'],
+    ['1.0.0', '1.0.0'],
+    ['"1.10"', '1.10'],
+    ["'1.10'", '1.10'],
+    ['"2.0"', '2.0'],
+    ["'2.0'", '2.0'],
+    ['"1.0.0"', '1.0.0'],
+    ["'1.0.0'", '1.0.0'],
+    ['1.10 # keep', '1.10'],
+  ]
+
+  versionScalars.forEach(([scalar, expected], index) => {
+    it(`records agent.yaml version ${scalar} as ${expected}`, async () => {
+      const agentName = `deploy-yaml-ver-${index}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      await withAgent(agentName, async () => {
+        await expectBlockVersion(agentName, `name: plain\nversion: ${scalar}\n`, expected)
+        if (expected === '1.10') {
+          expect(db.getDeployedVersion(agentName)).to.not.equal('1.1')
+        }
+      })
     })
   })
 
