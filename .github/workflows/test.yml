@@ -133,18 +133,10 @@ jobs:
         working-directory: python
 
       - name: Run Python tests with coverage
-        # continue-on-error: the Python test step is currently broken on
-        # main: pyyaml and langchain-core are imported by
-        # python/cast/agent/base.py and python/cast/tools/bash.py but
-        # are NOT declared in python/pyproject.toml, and the workflow's
-        # pip install step doesn't install them. This blocks the
-        # TypeScript test pass we just fixed (see
-        # fix/ci-test-coverage branch) from going green. Tracked in the
-        # follow-up "Fix Python test deps and workflow" issue; the
-        # workflow should be re-tightened once that's resolved.
+        # test_host_tui_launcher.py skips when langgraph is missing.
+        # A collection error or a failing test fails this job.
         # Session storage is not in this step. That suite is the
         # required session-python job, and it runs from the repo root.
-        continue-on-error: true
         run: |
           python -m pytest tests/python \
             --cov=cast \
@@ -200,9 +192,9 @@ jobs:
 
   # ============================================================================
   # Session storage
-  # The broad Python step above is continue-on-error and runs
-  # python/tests/python, which does not include tests/python/unit.
-  # This job is required. It is the suite that owns session rows.
+  # The Python coverage step runs python/tests/python, which does not
+  # include tests/python/unit. This job is required. It is the suite
+  # that owns session rows.
   # ============================================================================
   session-python:
     name: Session storage tests
