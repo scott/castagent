@@ -92,11 +92,6 @@
       "description": "Run meta-builder tests"
     },
     {
-      "id": "migrate",
-      "full": "cast migrate",
-      "description": "Migrate to the new versioning system"
-    },
-    {
       "id": "model",
       "full": "cast model",
       "description": "Show or set the model the builder agent uses"

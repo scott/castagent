@@ -39,6 +39,10 @@ other — is the most common source of confusion.
   do not exclude the current undo log at `.cast/changes/`. See
   [Versioning with Git](building-agents/versioning/git).
 
+Cast no longer ships a command that moves a pre-1.1 agent from
+`.cast/versions/` to `.cast/changes/`. Update that agent with Cast
+2.5.1 first. The changelog names the command.
+
 ## When to use which
 
 | You want to… | Use |
