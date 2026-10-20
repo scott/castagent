@@ -206,21 +206,21 @@ function runSuites(root, outDir) {
   fs.mkdirSync(outDir, {recursive: true})
   const wanted = suitesToRun()
   prepareTree(root)
-  if (wanted.has('mocha')) {
-    const mochaJson = path.join(outDir, 'mocha.json')
-    const mochaBin = path.join(root, 'node_modules', 'mocha', 'bin', 'mocha.js')
-    const bin = fs.existsSync(mochaBin) ? process.execPath : 'npx'
-    const report = ['--reporter', 'json', '--reporter-option', `output=${mochaJson}`, '--forbid-only', '--exit']
-    const args = fs.existsSync(mochaBin)
-      ? [mochaBin, ...report, ...mochaArgs()]
-      : ['mocha', ...report, ...mochaArgs()]
-    // The JSON reporter writes mocha.json itself. Stdout also contains prompts
-    // from commands under test, so it is not the report.
-    capture(bin, args, {cwd: root}, path.join(outDir, 'mocha.stdout'))
-    if (!fs.existsSync(mochaJson) || fs.statSync(mochaJson).size === 0) {
-      throw new Error(`mocha produced no JSON in ${root}`)
+  // Connect endings record the missing-OpenTUI warning. Smoke and snapshots
+  // run before the TUI build so that warning still matches.
+  if (wanted.has('smoke')) {
+    const summary = path.join(outDir, 'smoke-summary.json')
+    if (!recordAbsentSuite(root, 'tests/e2e/run.mjs', summary, 'provider smoke')) {
+      const status = run('node', ['tests/e2e/run.mjs'], {cwd: root, env: {...process.env, SMOKE_SUMMARY: summary}})
+      if (!fs.existsSync(summary)) throw new Error(`smoke summary missing (exit ${status})`)
     }
-    JSON.parse(fs.readFileSync(mochaJson, 'utf8'))
+  }
+  if (wanted.has('snapshots')) {
+    const summary = path.join(outDir, 'snapshot-summary.json')
+    if (!recordAbsentSuite(root, 'tests/cli-snapshots/run.mjs', summary, 'CLI snapshots')) {
+      const status = run('node', ['tests/cli-snapshots/run.mjs'], {cwd: root, env: {...process.env, SNAPSHOT_SUMMARY: summary}})
+      if (!fs.existsSync(summary)) throw new Error(`snapshot summary missing (exit ${status})`)
+    }
   }
   if (wanted.has('pytest')) {
     const pytestXml = path.join(outDir, 'pytest.xml')
@@ -236,19 +236,22 @@ function runSuites(root, outDir) {
       throw new Error(`pytest did not write junit XML in ${root}`)
     }
   }
-  if (wanted.has('smoke')) {
-    const summary = path.join(outDir, 'smoke-summary.json')
-    if (!recordAbsentSuite(root, 'tests/e2e/run.mjs', summary, 'provider smoke')) {
-      const status = run('node', ['tests/e2e/run.mjs'], {cwd: root, env: {...process.env, SMOKE_SUMMARY: summary}})
-      if (!fs.existsSync(summary)) throw new Error(`smoke summary missing (exit ${status})`)
+  if (wanted.has('mocha')) {
+    buildTui(root)
+    const mochaJson = path.join(outDir, 'mocha.json')
+    const mochaBin = path.join(root, 'node_modules', 'mocha', 'bin', 'mocha.js')
+    const bin = fs.existsSync(mochaBin) ? process.execPath : 'npx'
+    const report = ['--reporter', 'json', '--reporter-option', `output=${mochaJson}`, '--forbid-only', '--exit']
+    const args = fs.existsSync(mochaBin)
+      ? [mochaBin, ...report, ...mochaArgs()]
+      : ['mocha', ...report, ...mochaArgs()]
+    // The JSON reporter writes mocha.json itself. Stdout also contains prompts
+    // from commands under test, so it is not the report.
+    capture(bin, args, {cwd: root}, path.join(outDir, 'mocha.stdout'))
+    if (!fs.existsSync(mochaJson) || fs.statSync(mochaJson).size === 0) {
+      throw new Error(`mocha produced no JSON in ${root}`)
     }
-  }
-  if (wanted.has('snapshots')) {
-    const summary = path.join(outDir, 'snapshot-summary.json')
-    if (!recordAbsentSuite(root, 'tests/cli-snapshots/run.mjs', summary, 'CLI snapshots')) {
-      const status = run('node', ['tests/cli-snapshots/run.mjs'], {cwd: root, env: {...process.env, SNAPSHOT_SUMMARY: summary}})
-      if (!fs.existsSync(summary)) throw new Error(`snapshot summary missing (exit ${status})`)
-    }
+    JSON.parse(fs.readFileSync(mochaJson, 'utf8'))
   }
 }
 
@@ -285,8 +288,6 @@ function runBoth() {
     }
     buildCli(repoRoot)
     buildCli(baseRoot)
-    buildTui(repoRoot)
-    buildTui(baseRoot)
     process.stdout.write('running suites on head\n')
     runSuites(repoRoot, headOut)
     process.stdout.write('running suites on merge base\n')
