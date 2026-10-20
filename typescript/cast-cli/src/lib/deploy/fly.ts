@@ -17,6 +17,7 @@ import {
   getAgentPath,
   inferenceEnv,
   isShaPattern,
+  providerHttpUrl,
   readAgentModel,
   saveDeployment,
   secretValues,
@@ -60,7 +61,7 @@ export function flyAppName(agentName: string): string {
 }
 
 export function flyDeploymentUrl(agentName: string): string {
-  return `https://${flyAppName(agentName)}.fly.dev`
+  return providerHttpUrl(`https://${flyAppName(agentName)}.fly.dev`)
 }
 
 /**

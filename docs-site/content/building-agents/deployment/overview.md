@@ -82,6 +82,9 @@ before that service existed.
 sprite CLI reads `SPRITE_TOKEN`, so Cast copies `SPRITES_TOKEN` into
 the environment of each `sprite` process when `SPRITE_TOKEN` is unset.
 The token is not passed as an argument.
+
+`CAST_PROVIDER_HTTP_BASE`, when set to an http or https origin with no path, replaces the origin of provider HTTP calls such as the DigitalOcean API and the Fly app URL. The path and query stay the same. Leave it unset to use the official origin. Provider CLIs stay on `PATH`.
+
 The launch script goes to `sprite exec` on stdin and contains the
 deployment token plus the API key for `brain.model`. Other inference
 keys stay on the machine running `cast deploy`.

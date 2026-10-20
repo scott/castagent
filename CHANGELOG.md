@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `CAST_PROVIDER_HTTP_BASE` replaces the origin of provider HTTP calls, including the DigitalOcean API and Fly app URLs. The path and query stay the same. Provider CLIs stay on `PATH`.
+
 ### Changed
 
 - The agent image no longer includes gcc. Docker deploys now use `python:3.11-slim-bookworm` instead of `python:3.11-slim`. ([#391](https://github.com/scott/castagent/pull/391))

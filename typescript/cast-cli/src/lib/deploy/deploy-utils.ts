@@ -185,6 +185,43 @@ export function getAgentPath(agentName: string): string {
   return path.join(os.homedir(), '.cast', 'agents', agentName)
 }
 
+/**
+ * Optional origin for provider HTTP calls.
+ * `CAST_PROVIDER_HTTP_BASE` replaces the origin of an official provider URL
+ * and keeps the path and query. Unset, the official URL is used.
+ * A future provider calls `providerHttpUrl(officialUrl)` at each request.
+ * The value is an http or https origin with no user, path, query, or hash.
+ * Example: `CAST_PROVIDER_HTTP_BASE=http://127.0.0.1:9` turns
+ * `https://api.digitalocean.com/v2/volumes` into `http://127.0.0.1:9/v2/volumes`.
+ * Provider CLIs (`sprite`, `flyctl`, `doctl`) stay on `PATH`.
+ */
+export function readProviderHttpBase(): URL | null {
+  const raw = process.env.CAST_PROVIDER_HTTP_BASE?.trim()
+  if (!raw) return null
+  let parsed: URL
+  try {
+    parsed = new URL(raw)
+  } catch {
+    return null
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') return null
+  if (parsed.username || parsed.password) return null
+  if (parsed.pathname !== '/' || parsed.search || parsed.hash) return null
+  return parsed
+}
+
+export function providerHttpUrl(officialUrl: string): string {
+  const raw = process.env.CAST_PROVIDER_HTTP_BASE?.trim()
+  if (!raw) return officialUrl
+  const base = readProviderHttpBase()
+  if (!base) {
+    throw new Error('CAST_PROVIDER_HTTP_BASE must be an http or https origin with no path, query, user, or hash')
+  }
+  const official = new URL(officialUrl)
+  if (official.pathname === '/' && !official.search && !official.hash) return base.origin
+  return new URL(`${official.pathname}${official.search}${official.hash}`, base).toString()
+}
+
 export function loadConfig(): any {
   if (!fs.existsSync(CONFIG_PATH)) {
     return {}

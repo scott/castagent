@@ -706,6 +706,7 @@ export DIGITALOCEAN_MODEL_ACCESS_KEY="your-model-access-key"
 export RAILWAY_API_TOKEN="your-token"
 export FLY_API_TOKEN="your-token"  # Fly.io only; not a Sprites token
 export SPRITES_TOKEN="org-slug/org-id/token-id/token-value"  # from https://sprites.dev/account; or run: sprite login
+export CAST_PROVIDER_HTTP_BASE="https://example.test"  # optional origin override for provider HTTP; CLIs stay on PATH
 export DO_API_TOKEN="your-token"  # DigitalOcean deploy token
 ```
 

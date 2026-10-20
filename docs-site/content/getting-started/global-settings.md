@@ -87,6 +87,7 @@ selected by the agent's `brain.model`, including an external provider.
 | `DIGITALOCEAN_ACCESS_TOKEN` | DigitalOcean deploys (also accepts `DIGITALOCEAN_API_TOKEN`, `DIGITALOCEAN_API_KEY`). MicroVM passes this value to `doctl` through the child environment, not as `--access-token`. |
 | `SPRITES_TOKEN` | Sprites deploys. Create the token at [sprites.dev/account](https://sprites.dev/account) in the `org-slug/org-id/token-id/token-value` format. `sprite login` is an alternative. The sprite CLI reads `SPRITE_TOKEN`, not `SPRITES_TOKEN`. When `SPRITE_TOKEN` is unset, Cast copies `SPRITES_TOKEN` into `SPRITE_TOKEN` for sprite child processes. The token is not placed on a command line. `FLY_API_TOKEN` is not a Sprites token. |
 | `CAST_DEPLOYMENT_SHA` | Set automatically during `cast deploy`; useful for child processes. |
+| `CAST_PROVIDER_HTTP_BASE` | Optional http or https origin. When set, Cast uses it as the origin for provider HTTP calls and keeps the official path and query. Unset, those calls use the official origin. Provider CLIs stay on `PATH`. |
 
 Anything in `config.yaml` can use `${VAR}` interpolation, and the
 interpolation falls through to the environment if not set in YAML.

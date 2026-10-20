@@ -2276,6 +2276,19 @@ describe('DigitalOcean Deploy Provider', () => {
       expect(digitalOceanKeysPage('http://api.digitalocean.com/v2/account/keys')).to.equal(null)
       expect(digitalOceanKeysPage('https://user:pass@api.digitalocean.com/v2/account/keys')).to.equal(null)
       expect(digitalOceanKeysPage('https://api.digitalocean.com:444/v2/account/keys')).to.equal(null)
+      const previous = process.env.CAST_PROVIDER_HTTP_BASE
+      try {
+        process.env.CAST_PROVIDER_HTTP_BASE = 'http://127.0.0.1:9'
+        expect(deployUtils.providerHttpUrl('https://api.digitalocean.com/v2/volumes?per_page=1'))
+          .to.equal('http://127.0.0.1:9/v2/volumes?per_page=1')
+        expect(deployUtils.providerHttpUrl('https://cast-mail.fly.dev')).to.equal('http://127.0.0.1:9')
+        expect(digitalOceanKeysPage('http://127.0.0.1:9/v2/account/keys?page=2')).to.include('page=2')
+        expect(digitalOceanKeysPage('http://evil.example/v2/account/keys')).to.equal(null)
+        expect(digitalOceanKeysPage('https://api.digitalocean.com/v2/account/keys?page=3')).to.include('page=3')
+      } finally {
+        if (previous === undefined) delete process.env.CAST_PROVIDER_HTTP_BASE
+        else process.env.CAST_PROVIDER_HTTP_BASE = previous
+      }
     })
 
     async function destroyWith(dropletLists: string[]): Promise<{commands: string[]; logs: string[]}> {
