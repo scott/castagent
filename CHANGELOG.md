@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-10-20
+
 ### Added
 
 - CLI output snapshots for deploy wording and agent.yaml version messages, and a PR-versus-main compare that lists new failures separately from tests that already fail on the main tip. ([#398](https://github.com/scott/castagent/pull/398))

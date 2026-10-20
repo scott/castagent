@@ -1,5 +1,15 @@
 # cast-tui
 
+## 2.6.0
+
+### Minor Changes
+
+- add1fc7: Remove `cast migrate`. Agents still on a pre-1.1 layout should run `cast migrate` from 2.5.1 before upgrading.
+
+### Patch Changes
+
+- f44b763: TUI `/release` suggests the next patch of the current release, and `/deploy` lists releases newest first with `(latest)` on the current version.
+
 ## 2.5.1
 
 ### Patch Changes

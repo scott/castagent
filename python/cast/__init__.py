@@ -1,6 +1,6 @@
 # Python Cast package
 
-__version__ = "2.5.1"
+__version__ = "2.6.0"
 
 # Import versioning and releases modules for easier access
 from cast.versioning import VersionInfo, VersioningError
