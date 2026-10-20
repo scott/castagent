@@ -142,7 +142,10 @@ Without `--version`, Cast records the top-level `version` in the agent
 directory's `agent.yaml`. `version: null`, `version: ~`, and an empty
 `version:` count as no version. Block scalars of any style are read
 and trimmed to their first line, and a byte-order mark at the start of
-the file is ignored. When that field is
+the file is ignored. Unquoted numbers are kept as written. The runtime
+reads that same spelling, so `version: 1.10`, `version: 2.0`, and
+`version: 1.0.0` stay `1.10`, `2.0`, and `1.0.0`. Quoted forms such as
+`version: "1.10"` and `version: '2.0'` stay that text too. When that field is
 absent, Cast records the current release from `releases.json`. If the
 file has no releases, the recorded value is `latest`. If the release
 list cannot be read, the recorded value is still `latest`, and the

@@ -432,7 +432,7 @@ cast session fork <id>
 cast session export <id> --out backup.json
 ```
 
-`cast release` rejects a version lower than the `version` in `agent.yaml` and leaves that file unchanged. A release that succeeds updates only the `version` field, keeps the rest of the file's formatting, and then packs the working tree (project files except `.castignore` paths, `.cast/`, and `.git/`) so the tarball's `agent.yaml` matches.
+`cast release` rejects a version lower than the `version` in `agent.yaml` and leaves that file unchanged. A release that succeeds updates only the `version` field, keeps the rest of the file's formatting, and then packs the working tree (project files except `.castignore` paths, `.cast/`, and `.git/`) so the tarball's `agent.yaml` matches. `cast deploy` and the runtime both read that `version` as written, so an unquoted `1.10` stays `1.10`.
 
 `cast undo` and `cast redo` copy the files stored in the undo snapshot
 onto the agent and leave every other project file in place. The
