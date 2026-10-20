@@ -306,8 +306,10 @@ readiness check applies to `cast upgrade` of a Docker deployment. A
 MicroVM that fails before the endpoint answers is deleted. If that
 delete fails, Cast records the MicroVM so `cast shutdown` can remove it.
 When the MicroVM is deleted, Cast also deletes the registry tag it pushed
-and the auth token file written for that attempt. The tag and token stay
-when the MicroVM remains and the deployment is recorded.
+and the auth token file written for that attempt. When no other MicroVM of
+that agent remains, Cast also deletes the `cast-<agent>` repository it
+created. The tag, repository, and token stay when the MicroVM remains and
+the deployment is recorded.
 
 ## Multi-deployment
 
@@ -365,8 +367,9 @@ rebuilt, and the new container starts with the same volume. The
 
 - Public preview, region **MKC1** only, **linux/amd64** images only. Not for production.
 - The image is pushed to your team's DigitalOcean Container Registry. Cast reuses the existing registry, or creates one named `cast`. The image includes the Cast package at `/app/cast`.
+- Each MicroVM agent uses one repository in that registry, named `cast-<agent>`. An empty repository still counts toward the plan's repository limit.
 - A MicroVM whose workload exits is deleted. If the delete fails, the deployment is recorded so `cast shutdown` can remove it.
-- A failed deploy or readiness probe that deletes the MicroVM also deletes the registry tag pushed for that attempt (for example `cast-<agent>:<id>`) and the auth token file under `~/.cast/tokens/`. The agent token stays when another deployment is still live. The tag and token stay when the MicroVM cannot be deleted and the deployment is recorded. A failed upgrade deletes the replacement tag only after that replacement MicroVM is gone. The previous MicroVM and its tag stay.
+- A failed deploy or readiness probe that deletes the MicroVM also deletes the registry tag pushed for that attempt (for example `cast-<agent>:<id>`) and the auth token file under `~/.cast/tokens/`. When no other MicroVM of that agent remains, Cast also deletes the `cast-<agent>` repository. The agent token stays when another deployment is still live. The tag and token stay when the MicroVM cannot be deleted and the deployment is recorded. A failed upgrade deletes the replacement tag only after that replacement MicroVM is gone. The previous MicroVM, its tag, and the repository stay.
 - The MicroVM pauses after an idle timeout (default 15 minutes, maximum 4 hours). The next request resumes it. While it is waking, the endpoint can return HTTP 503. Cast retries that response for about a minute. A paused MicroVM bills storage only.
 - The edge closes each chat response about 15 seconds after the request starts, even while bytes are still arriving. Cast keeps that reply running and continues it on the next request, so a long step such as installing a skill can finish. A keepalive every 5 seconds still covers proxies that drop a quiet stream. Deploy or upgrade the agent so the image includes that runtime, and reconnect with a current build.
 - There is no SSH and no on-host TUI. `--with-tui` is rejected. Logs: `doctl compute microvm exec <id> -- <log command>`.
@@ -374,8 +377,9 @@ rebuilt, and the new container starts with the same volume. The
 - Every request to the endpoint sends your DigitalOcean token as `Authorization`. Cast also sends the agent token as `X-Cast-Authorization`. If deploy's probe gets 401, rerun with `--edge-auth-only`. That mode trusts any token on the team that has `microvm:access`.
 - Sizes are `1:2048` (default), `2:4096`, `8:16384`, and `16:32768`, passed as `--size`.
 - Upgrade copies memory off the old MicroVM and onto a new one, and packages the current Cast runtime into the new image. Stores larger than 8 MiB are left on the old MicroVM and the upgrade stops.
-- `cast shutdown` deletes the registry tag stored for that MicroVM after the MicroVM is destroyed. Another MicroVM for the same agent keeps its own tag. If that tag delete fails, Cast warns and names the tag that is still in the registry, then continues the rest of shutdown.
-- A custom-scoped token needs `microvm:create`, `microvm:read`, `microvm:update`, `microvm:delete`, `microvm:access`, and registry read/write.
+- Before the image build, deploy reads the registry repository limit. When the registry is already full and `cast-<agent>` is not in it yet, deploy stops with that limit and the names of empty `cast-*` repositories.
+- `cast shutdown` deletes the registry tag stored for that MicroVM after the MicroVM is destroyed. Another MicroVM for the same agent keeps its own tag and the shared repository. When that shutdown removes the last MicroVM for the agent, Cast deletes the `cast-<agent>` repository it created. Repositories Cast did not create for this agent are left in place, and account SSH keys are left in place. If the tag delete or the repository delete fails, Cast warns and names the tag or repository that is still in the registry, then continues the rest of shutdown.
+- A custom-scoped token needs `microvm:create`, `microvm:read`, `microvm:update`, `microvm:delete`, `microvm:access`, registry read/write, and `registry:delete`.
 
 ## Pre-flight checklist
 

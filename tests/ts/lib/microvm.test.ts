@@ -22,6 +22,12 @@ import MicrovmDeploy, {
   dockerHostFromInspect,
   parseRegistryDockerConfig,
   parseRegistryName,
+  parseRegistryRepositoryLimit,
+  parseRegistryRepositoryList,
+  registryFullMessage,
+  registryLimitFromPushError,
+  registryRepositoryDeleteUrl,
+  isCastAgentRepository,
   parseSize,
   parseVolumeConfig,
   probeAuthResult,
@@ -311,6 +317,57 @@ describe('DigitalOcean MicroVM helpers', () => {
     ])
     expect(shutdownRegistryDeleteArgs('docker.io/library/cast:latest')).to.equal(undefined)
   })
+
+  it('builds a repository delete URL only for the repository Cast created for this agent', () => {
+    const own = 'registry.digitalocean.com/cast/cast-mv-shutdown-agent:abc123'
+    expect(isCastAgentRepository('mv-shutdown-agent', 'cast-mv-shutdown-agent')).to.equal(true)
+    expect(isCastAgentRepository('demo-agent', 'cast-demo-agent')).to.equal(true)
+    expect(isCastAgentRepository('gandermd', 'gandermd')).to.equal(false)
+    expect(isCastAgentRepository('mv-shutdown-agent', 'gandermd')).to.equal(false)
+    expect(isCastAgentRepository('mv-shutdown-agent', 'cast-demo-agent')).to.equal(false)
+    expect(isCastAgentRepository('mv-shutdown-agent', 'cast-mv-shutdown-agent-extra')).to.equal(false)
+    expect(registryRepositoryDeleteUrl('mv-shutdown-agent', own)).to.equal(
+      'https://api.digitalocean.com/v2/registries/cast/repositories/cast-mv-shutdown-agent',
+    )
+    expect(registryRepositoryDeleteUrl('demo-agent', 'registry.digitalocean.com/cast/cast-demo-agent:abc123')).to.equal(
+      'https://api.digitalocean.com/v2/registries/cast/repositories/cast-demo-agent',
+    )
+    expect(registryRepositoryDeleteUrl('mv-shutdown-agent', 'registry.digitalocean.com/cast/gandermd:abc123')).to.equal(undefined)
+    expect(registryRepositoryDeleteUrl('mv-shutdown-agent', 'registry.digitalocean.com/cast/cast-demo-agent:abc123')).to.equal(undefined)
+    expect(registryRepositoryDeleteUrl('mv-shutdown-agent', 'registry.digitalocean.com/cast/cast-mv-shutdown-agent-extra:abc123')).to.equal(undefined)
+  })
+
+  it('reads the repository limit and names only empty cast repositories', () => {
+    expect(parseRegistryRepositoryLimit('[{"name":"cast","subscription":{"tier":{"included_repositories":5}}}]')).to.equal(5)
+    expect(parseRegistryRepositoryLimit('{"registry":{"subscription":{"tier":{"included_repositories":1}}}}')).to.equal(1)
+    expect(parseRegistryRepositoryLimit('[{"name":"cast","subscription":{"tier":{"included_repositories":0}}}]')).to.equal(undefined)
+    expect(parseRegistryRepositoryLimit('not-json')).to.equal(undefined)
+    const listed = parseRegistryRepositoryList(JSON.stringify({
+      meta: {total: 5},
+      repositories: [
+        {name: 'gandermd', tag_count: 4},
+        {name: 'cast-demo-agent', tag_count: 2},
+        {name: 'cast-bb4-t', manifest_count: 1},
+        {name: 'cast-bb4-do', tag_count: 0, manifest_count: 3},
+      ],
+    }))
+    expect(listed?.total).to.equal(5)
+    expect(listed?.repositories.find(repo => repo.name === 'cast-bb4-t')?.tagCount).to.equal(0)
+    const message = registryFullMessage({
+      registry: 'cast',
+      limit: 5,
+      count: 5,
+      repositories: listed?.repositories,
+      agentRepository: 'cast-new-agent',
+    })
+    expect(message).to.include('already holds 5 repositories')
+    expect(message).to.include('limit is 5')
+    expect(message).to.include('Empty cast-* repositories: cast-bb4-do, cast-bb4-t.')
+    expect(message).to.not.include('gandermd')
+    expect(message).to.not.include('cast-demo-agent')
+    expect(registryLimitFromPushError('denied: registry contains 5 repositories, limit is 5')).to.deep.equal({count: 5, limit: 5})
+    expect(registryLimitFromPushError('docker push failed: denied')).to.equal(undefined)
+  })
 })
 
 describe('failed MicroVM deploy cleanup', () => {
@@ -457,7 +514,13 @@ describe('failed MicroVM deploy cleanup', () => {
   async function runDeploy(opts: {
     mode: DeployMode
     edgeAuthOnly?: boolean
-    deployments?: Array<{id: string}>
+    deployments?: Array<{id: string; provider?: string}>
+    registryGet?: string
+    repositoryList?: string
+    pushStderr?: string
+    repositoryDeleteStatus?: number
+    repositoryDeleteMessage?: string
+    repositoryDeleteError?: string
   }): Promise<{error?: Error; warnings: string[]; calls: string[][]; saved: unknown[][]}> {
     fs.mkdirSync(path.join(home, '.cast', 'agents', agentName), {recursive: true})
     const calls: string[][] = []
@@ -476,6 +539,9 @@ describe('failed MicroVM deploy cleanup', () => {
         if (args[0] === 'buildx' && opts.mode === 'build-failed') {
           return {exitCode: 1, stdout: '', stderr: 'build exploded'}
         }
+        if (args[0] === 'push' && opts.pushStderr !== undefined) {
+          return {exitCode: 1, stdout: '', stderr: opts.pushStderr}
+        }
         if (args[0] === 'info' || args[0] === 'buildx' || args[0] === 'tag' || args[0] === 'push') return ok('')
         if (args[0] === 'image') return ok('amd64\n')
         if (args[0] === 'context') return ok('unix:///var/run/docker.sock\n')
@@ -484,7 +550,10 @@ describe('failed MicroVM deploy cleanup', () => {
       if (command !== 'doctl') return {exitCode: 1, stdout: '', stderr: `unexpected ${command}`}
       const rest = args
       if (rest[0] === 'version') return ok('doctl version 1.180.0-release\n')
-      if (rest[0] === 'registry' && rest[1] === 'get') return ok('[{"name":"cast"}]')
+      if (rest[0] === 'registry' && rest[1] === 'get') return ok(opts.registryGet ?? '[{"name":"cast"}]')
+      if (rest[0] === 'registry' && rest[1] === 'repository' && rest[2] === 'list-v2') {
+        return ok(opts.repositoryList ?? '[]')
+      }
       if (rest[0] === 'registry' && rest[1] === 'docker-config') {
         return ok(JSON.stringify({auths: {'registry.digitalocean.com': {auth: 'dGVzdDp0ZXN0'}}}))
       }
@@ -503,6 +572,18 @@ describe('failed MicroVM deploy cleanup', () => {
         return ok('')
       }
       return {exitCode: 1, stdout: '', stderr: `unexpected doctl ${rest.join(' ')}`}
+    })
+    sandbox.stub(axios, 'delete').callsFake(async (url: unknown, config?: any) => {
+      expect(String(url)).to.not.include('dop_test')
+      expect(String(url)).to.not.include('gandermd')
+      expect(String(url)).to.not.include('cast-demo-agent')
+      expect(config?.headers?.Authorization).to.equal('Bearer dop_test')
+      calls.push(['axios', 'DELETE', String(url)])
+      if (opts.repositoryDeleteError) throw new Error(opts.repositoryDeleteError)
+      if (opts.repositoryDeleteStatus && opts.repositoryDeleteStatus !== 204) {
+        return {status: opts.repositoryDeleteStatus, data: {message: opts.repositoryDeleteMessage ?? 'permission denied'}}
+      }
+      return {status: 204, data: ''}
     })
     sandbox.stub(axios, 'post').callsFake(async (url: unknown) => {
       if (String(url).includes('/v2/microvms')) {
@@ -545,6 +626,12 @@ describe('failed MicroVM deploy cleanup', () => {
     return calls.filter(call => call[0] === 'doctl' && call.includes('microvm') && call.includes('delete') && !call.includes('delete-tag'))
   }
 
+  function repositoryDeleteUrls(calls: string[][]): string[] {
+    return calls.filter(call => call[0] === 'axios' && call[1] === 'DELETE').map(call => call[2])
+  }
+
+  const agentRepositoryUrl = 'https://api.digitalocean.com/v2/registries/cast/repositories/cast-mv-cleanup-agent'
+
   it('deletes the registry tag and token files when the readiness probe fails', async () => {
     const result = await runDeploy({mode: 'probe-401'})
     expect(result.error?.message).to.include('MicroVM endpoint returned 401')
@@ -555,6 +642,9 @@ describe('failed MicroVM deploy cleanup', () => {
     ])
     expect(vmDeletes(result.calls)).to.have.length(1)
     expect(vmDeletes(result.calls)[0]).to.include('vm-new')
+    expect(repositoryDeleteUrls(result.calls)).to.deep.equal([agentRepositoryUrl])
+    expect(result.calls.some(call => call.join(' ').includes('gandermd'))).to.equal(false)
+    expect(result.calls.some(call => call.join(' ').includes('ssh-key'))).to.equal(false)
     expect(fs.existsSync(deploymentTokenPath())).to.equal(false)
     expect(fs.existsSync(agentTokenPath())).to.equal(false)
     expect(result.saved).to.have.length(0)
@@ -599,6 +689,94 @@ describe('failed MicroVM deploy cleanup', () => {
     expect(result.warnings.join('\n')).to.include('permission denied')
     expect(fs.existsSync(deploymentTokenPath())).to.equal(false)
     expect(fs.existsSync(agentTokenPath())).to.equal(false)
+  })
+
+  it('does not delete the repository while another MicroVM for the agent is live', async () => {
+    const result = await runDeploy({mode: 'probe-401', deployments: [{id: 'bbbbbb', provider: 'microvm'}]})
+    expect(result.error?.message).to.include('The MicroVM was deleted.')
+    expect(tagDeletes(result.calls)).to.have.length(1)
+    expect(repositoryDeleteUrls(result.calls)).to.deep.equal([])
+  })
+
+  it('warns with the leftover repository when cleanup fails and still removes the token files', async () => {
+    const result = await runDeploy({mode: 'probe-401', repositoryDeleteStatus: 403, repositoryDeleteMessage: 'permission denied'})
+    expect(result.error?.message).to.include('The MicroVM was deleted.')
+    expect(result.error?.message).to.not.include('permission denied')
+    expect(repositoryDeleteUrls(result.calls)).to.deep.equal([agentRepositoryUrl])
+    expect(result.warnings).to.deep.equal([
+      "Failed to delete registry repository 'cast-mv-cleanup-agent'. The repository is still in the registry: permission denied",
+    ])
+    expect(fs.existsSync(deploymentTokenPath())).to.equal(false)
+    expect(fs.existsSync(agentTokenPath())).to.equal(false)
+  })
+
+  it('warns with the leftover repository when the registry request throws and still finishes', async () => {
+    const result = await runDeploy({mode: 'probe-401', repositoryDeleteError: 'socket hang up'})
+    expect(result.error?.message).to.include('The MicroVM was deleted.')
+    expect(result.warnings).to.deep.equal([
+      "Failed to delete registry repository 'cast-mv-cleanup-agent'. The repository is still in the registry: socket hang up",
+    ])
+    expect(fs.existsSync(agentTokenPath())).to.equal(false)
+  })
+
+  it('stops before the image build when the registry repository limit is already reached', async () => {
+    const result = await runDeploy({
+      mode: 'success',
+      registryGet: JSON.stringify([{name: 'cast', subscription: {tier: {included_repositories: 5}}}]),
+      repositoryList: JSON.stringify([
+        {name: 'gandermd', tag_count: 4, manifest_count: 4},
+        {name: 'cast-demo-agent', tag_count: 2, manifest_count: 2},
+        {name: 'cast-bb5-fail', tag_count: 0, manifest_count: 1},
+        {name: 'cast-bb4-t', manifest_count: 1},
+        {name: 'cast-bb4-do', tag_count: 0, manifest_count: 3},
+      ]),
+    })
+    expect(result.error?.message).to.include('already holds 5 repositories')
+    expect(result.error?.message).to.include('limit is 5')
+    expect(result.error?.message).to.include('Empty cast-* repositories: cast-bb4-do, cast-bb4-t, cast-bb5-fail.')
+    expect(result.error?.message).to.include('cast-mv-cleanup-agent')
+    expect(result.error?.message).to.not.include('gandermd')
+    expect(result.error?.message).to.not.include('cast-demo-agent')
+    expect(result.calls.some(call => call[0] === 'docker' && call[1] === 'buildx')).to.equal(false)
+    expect(repositoryDeleteUrls(result.calls)).to.deep.equal([])
+    expect(result.calls.some(call => call.join(' ').includes('ssh-key'))).to.equal(false)
+    expect(fs.existsSync(agentTokenPath())).to.equal(false)
+  })
+
+  it('keeps deploying when this agent already has a repository at the limit', async () => {
+    const result = await runDeploy({
+      mode: 'success',
+      registryGet: JSON.stringify([{name: 'cast', subscription: {tier: {included_repositories: 5}}}]),
+      repositoryList: JSON.stringify([
+        {name: 'gandermd', tag_count: 1},
+        {name: 'cast-demo-agent', tag_count: 1},
+        {name: 'cast-bb4-do', tag_count: 0},
+        {name: 'cast-bb4-t', tag_count: 0},
+        {name: 'cast-mv-cleanup-agent', tag_count: 1},
+      ]),
+    })
+    expect(result.error).to.equal(undefined)
+    expect(result.calls.some(call => call[0] === 'docker' && call[1] === 'buildx')).to.equal(true)
+    expect(repositoryDeleteUrls(result.calls)).to.deep.equal([])
+  })
+
+  it('explains a push that is denied because the registry is full', async () => {
+    const result = await runDeploy({
+      mode: 'success',
+      pushStderr: 'denied: registry contains 5 repositories, limit is 5',
+      repositoryList: JSON.stringify([
+        {name: 'gandermd', tag_count: 4},
+        {name: 'cast-demo-agent', tag_count: 2},
+        {name: 'cast-bb4-do', tag_count: 0, manifest_count: 3},
+      ]),
+    })
+    expect(result.error?.message).to.include('already holds 5 repositories')
+    expect(result.error?.message).to.include('limit is 5')
+    expect(result.error?.message).to.include('Empty cast-* repositories: cast-bb4-do.')
+    expect(result.error?.message).to.not.include('docker push failed')
+    expect(result.error?.message).to.not.include('gandermd')
+    expect(result.error?.message).to.not.include('cast-demo-agent')
+    expect(result.calls.some(call => call[0] === 'docker' && call[1] === 'buildx')).to.equal(true)
   })
 
   it('leaves the agent token when another deployment is live and the probe fails', async () => {
@@ -657,6 +835,7 @@ describe('failed MicroVM deploy cleanup', () => {
       if (rest[0] === 'registry' && rest[2] === 'delete-tag') return ok('')
       return {exitCode: 1, stdout: '', stderr: `unexpected ${command} ${rest.join(' ')}`}
     })
+    const repositoryDeletes = sandbox.stub(axios, 'delete').rejects(new Error('refusing live DigitalOcean call'))
     sandbox.stub(axios, 'post').callsFake(async (url: unknown) => {
       if (String(url).includes('/v2/microvms')) {
         return {status: 201, data: JSON.parse(readyVm())}
@@ -692,6 +871,7 @@ describe('failed MicroVM deploy cleanup', () => {
     expect(fs.readFileSync(deploymentTokenPath(), 'utf8')).to.equal('deploy-secret')
     expect(fs.readFileSync(agentTokenPath(), 'utf8')).to.equal('agent-secret')
     expect(logs.join('\n')).to.not.include('Failed to delete registry tag')
+    expect(repositoryDeletes.called).to.equal(false)
   })
 
   it('keeps the replacement tag when the new MicroVM cannot be deleted', async () => {
@@ -720,6 +900,7 @@ describe('failed MicroVM deploy cleanup', () => {
       if (rest[0] === 'registry' && rest[2] === 'delete-tag') return ok('')
       return {exitCode: 1, stdout: '', stderr: `unexpected ${command} ${rest.join(' ')}`}
     })
+    const repositoryDeletes = sandbox.stub(axios, 'delete').rejects(new Error('refusing live DigitalOcean call'))
     sandbox.stub(axios, 'post').callsFake(async (url: unknown) => {
       if (String(url).includes('/v2/microvms')) {
         return {status: 201, data: JSON.parse(readyVm())}
@@ -746,14 +927,17 @@ describe('failed MicroVM deploy cleanup', () => {
       expect(error.message).to.include('vm-new')
     }
     expect(tagDeletes(calls)).to.have.length(0)
+    expect(repositoryDeletes.called).to.equal(false)
   })
 })
 
 describe('MicroVM shutdown registry tag', () => {
   const agentName = 'mv-shutdown-agent'
+  const agentRepositoryUrl = 'https://api.digitalocean.com/v2/registries/cast/repositories/cast-mv-shutdown-agent'
   let sandbox: sinon.SinonSandbox
   let previousToken: string | undefined
   let logs: string[]
+  let registryDeletes: sinon.SinonStub
 
   function volumeConfig(tag: string, microvmId = 'vm-1'): string {
     return JSON.stringify({
@@ -774,6 +958,13 @@ describe('MicroVM shutdown registry tag', () => {
     logs = []
     sandbox.stub(console, 'log').callsFake((line: unknown) => {
       logs.push(String(line))
+    })
+    registryDeletes = sandbox.stub(axios, 'delete').callsFake(async (url: unknown, config?: any) => {
+      expect(String(url)).to.not.include('dop_test')
+      expect(String(url)).to.not.include('gandermd')
+      expect(String(url)).to.not.include('cast-demo-agent')
+      expect(config?.headers?.Authorization).to.equal('Bearer dop_test')
+      return {status: 204, data: ''}
     })
   })
 
@@ -804,6 +995,10 @@ describe('MicroVM shutdown registry tag', () => {
     return calls.filter(call => call.includes('delete-tag'))
   }
 
+  function deletedUrls(): string[] {
+    return registryDeletes.getCalls().map(call => String(call.args[0]))
+  }
+
   it('deletes that deployment tag after the MicroVM is destroyed', async () => {
     sandbox.stub(db, 'listDeployments').returns([
       {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123', 'vm-1')},
@@ -820,6 +1015,8 @@ describe('MicroVM shutdown registry tag', () => {
     expect(calls.some(call => call.includes('vm-2'))).to.equal(false)
     expect(logs).to.include("Deleted registry tag 'cast-mv-shutdown-agent:abc123'.")
     expect(logs).to.include("MicroVM 'vm-1' has been destroyed.")
+    expect(deletedUrls()).to.deep.equal([])
+    expect(calls.some(call => call.join(' ').includes('ssh-key'))).to.equal(false)
   })
 
   it('deletes the tag when the MicroVM is already gone', async () => {
@@ -855,6 +1052,8 @@ describe('MicroVM shutdown registry tag', () => {
     stubDoctl({tagExit: 1, tagStderr: 'tag not found'})
     await MicrovmDeploy.destroy(agentName, {id: 'abc123', volume_id: 'vm-1'})
     expect(logs).to.not.include("Deleted registry tag 'cast-mv-shutdown-agent:abc123'.")
+    expect(deletedUrls()).to.deep.equal([agentRepositoryUrl])
+    expect(logs).to.include("Deleted registry repository 'cast-mv-shutdown-agent'.")
   })
 
   it('warns about a leftover tag when the delete is denied and still finishes', async () => {
@@ -871,6 +1070,7 @@ describe('MicroVM shutdown registry tag', () => {
     expect(warnings).to.deep.equal([
       "Failed to delete registry tag 'cast-mv-shutdown-agent:abc123'. The tag is still in the registry: permission denied",
     ])
+    expect(deletedUrls()).to.deep.equal([])
   })
 
   it('destroys the next MicroVM when an earlier tag delete fails', async () => {
@@ -903,6 +1103,9 @@ describe('MicroVM shutdown registry tag', () => {
     expect(warnings.join('\n')).to.include("Failed to delete registry tag 'cast-mv-shutdown-agent:abc123'")
     expect(warnings.join('\n')).to.include('still in the registry')
     expect(warnings.join('\n')).to.not.include('bbbbbb')
+    expect(deletedUrls()).to.deep.equal([])
+    expect(calls.some(call => call.join(' ').includes('ssh-key'))).to.equal(false)
+    expect(calls.some(call => call.includes('gandermd'))).to.equal(false)
   })
 
   it('skips the tag when the row has no volume config', async () => {
@@ -919,5 +1122,87 @@ describe('MicroVM shutdown registry tag', () => {
     await MicrovmDeploy.destroy(agentName, {volume_id: 'vm-1', volume_config: volumeConfig('abc123')})
     expect(tagDeletes(calls)).to.have.length(1)
     expect(tagDeletes(calls)[0]).to.include('abc123')
+    expect(deletedUrls()).to.deep.equal([agentRepositoryUrl])
+    expect(logs).to.include("Deleted registry repository 'cast-mv-shutdown-agent'.")
+  })
+
+  it('deletes the cast repository after the last MicroVM for the agent is destroyed', async () => {
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123', 'vm-1')},
+      {id: 'bbbbbb', provider: 'microvm', volume_id: 'vm-2', volume_config: volumeConfig('bbbbbb', 'vm-2')},
+    ])
+    const calls = stubDoctl()
+    await MicrovmDeploy.destroy(agentName)
+    expect(tagDeletes(calls)).to.have.length(2)
+    expect(deletedUrls()).to.deep.equal([agentRepositoryUrl])
+    expect(logs).to.include("Deleted registry repository 'cast-mv-shutdown-agent'.")
+    expect(calls.some(call => call.join(' ').includes('ssh-key'))).to.equal(false)
+    expect(calls.some(call => call.includes('gandermd'))).to.equal(false)
+    expect(calls.some(call => call.includes('cast-demo-agent'))).to.equal(false)
+  })
+
+  it('does not delete registry repositories that do not belong to the agent', async () => {
+    const foreign = (repo: string, id: string) => JSON.stringify({
+      microvmId: id,
+      region: 'mkc1',
+      ociRef: `registry.digitalocean.com/cast/${repo}:abc123`,
+      authMode: 'dual',
+      cpu: 1,
+      memory: 2048,
+      idleTimeout: '15m',
+    })
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: foreign('gandermd', 'vm-1')},
+      {id: 'bbbbbb', provider: 'microvm', volume_id: 'vm-2', volume_config: foreign('cast-demo-agent', 'vm-2')},
+    ])
+    const calls = stubDoctl()
+    await MicrovmDeploy.destroy(agentName)
+    expect(tagDeletes(calls)).to.have.length(0)
+    expect(deletedUrls()).to.deep.equal([])
+    expect(calls.some(call => call.includes('gandermd'))).to.equal(false)
+    expect(calls.some(call => call.includes('cast-demo-agent'))).to.equal(false)
+    expect(calls.some(call => call.join(' ').includes('ssh-key'))).to.equal(false)
+    expect(logs.join('\n')).to.include("Left registry repository 'gandermd' in place.")
+    expect(logs.join('\n')).to.include("Left registry repository 'cast-demo-agent' in place.")
+    expect(logs).to.include("MicroVM 'vm-1' has been destroyed.")
+    expect(logs).to.include("MicroVM 'vm-2' has been destroyed.")
+  })
+
+  it('warns with the leftover repository when repository delete fails and still finishes', async () => {
+    const warnings: string[] = []
+    sandbox.stub(console, 'warn').callsFake((line: unknown) => {
+      warnings.push(String(line))
+    })
+    registryDeletes.resolves({status: 403, data: {message: 'permission denied'}})
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123')},
+    ])
+    const calls = stubDoctl()
+    await MicrovmDeploy.destroy(agentName, {id: 'abc123', volume_id: 'vm-1'})
+    expect(logs).to.include("MicroVM 'vm-1' has been destroyed.")
+    expect(logs).to.include("Deleted registry tag 'cast-mv-shutdown-agent:abc123'.")
+    expect(deletedUrls()).to.deep.equal([agentRepositoryUrl])
+    expect(warnings).to.deep.equal([
+      "Failed to delete registry repository 'cast-mv-shutdown-agent'. The repository is still in the registry: permission denied",
+    ])
+    expect(calls.some(call => call.join(' ').includes('ssh-key'))).to.equal(false)
+    expect(calls.some(call => call.includes('gandermd'))).to.equal(false)
+  })
+
+  it('warns with the leftover repository when the registry request throws and still finishes', async () => {
+    const warnings: string[] = []
+    sandbox.stub(console, 'warn').callsFake((line: unknown) => {
+      warnings.push(String(line))
+    })
+    registryDeletes.rejects(new Error('socket hang up'))
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123')},
+    ])
+    stubDoctl()
+    await MicrovmDeploy.destroy(agentName, {id: 'abc123', volume_id: 'vm-1'})
+    expect(logs).to.include("MicroVM 'vm-1' has been destroyed.")
+    expect(warnings).to.deep.equal([
+      "Failed to delete registry repository 'cast-mv-shutdown-agent'. The repository is still in the registry: socket hang up",
+    ])
   })
 })

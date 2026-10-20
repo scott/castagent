@@ -1,4 +1,5 @@
 import {expect} from 'chai'
+import axios from 'axios'
 import sinon from 'sinon'
 import * as path from 'path'
 import * as os from 'os'
@@ -491,10 +492,11 @@ describe('shutdown command', () => {
         commandWarnings.push(msg)
       }
 
+      const repository = `cast-${testAgentName}`
       const volumeConfig = JSON.stringify({
         microvmId: 'vm-1',
         region: 'mkc1',
-        ociRef: 'registry.digitalocean.com/cast/cast-leftover:abc123',
+        ociRef: `registry.digitalocean.com/cast/${repository}:abc123`,
         authMode: 'dual',
         cpu: 1,
         memory: 2048,
@@ -540,6 +542,7 @@ describe('shutdown command', () => {
         warnings.push(String(line))
       })
       sandbox.stub(console, 'log').callsFake(() => {})
+      const registryDeletes = sandbox.stub(axios, 'delete').rejects(new Error('refusing live DigitalOcean call'))
 
       try {
         await instance.run()
@@ -550,8 +553,95 @@ describe('shutdown command', () => {
         expect(logs.join('\n')).to.include('Removed auth token from keychain.')
         expect(logs.join('\n')).to.include(`Agent '${testAgentName}' has been shut down.`)
         expect(commandWarnings.join('\n')).to.not.include('Failed to destroy remote resources')
+        expect(registryDeletes.called).to.equal(false)
         expect(warnings).to.deep.equal([
-          "Failed to delete registry tag 'cast-leftover:abc123'. The tag is still in the registry: permission denied",
+          `Failed to delete registry tag '${repository}:abc123'. The tag is still in the registry: permission denied`,
+        ])
+      } finally {
+        if (previousToken === undefined) delete process.env.DIGITALOCEAN_ACCESS_TOKEN
+        else process.env.DIGITALOCEAN_ACCESS_TOKEN = previousToken
+        sandbox.restore()
+      }
+    })
+
+    it('warns about a leftover MicroVM registry repository and still finishes shutdown', async () => {
+      const testAgentName = 'test-shutdown-microvm-repo-' + Date.now()
+      const repository = `cast-${testAgentName}`
+      const instance = createCommandInstance(Shutdown, [testAgentName], {force: true})
+      const logs: string[] = []
+      const commandWarnings: string[] = []
+      instance.log = (msg: string) => {
+        logs.push(msg)
+      }
+      instance.warn = (msg: string) => {
+        commandWarnings.push(msg)
+      }
+
+      const volumeConfig = JSON.stringify({
+        microvmId: 'vm-1',
+        region: 'mkc1',
+        ociRef: `registry.digitalocean.com/cast/${repository}:abc123`,
+        authMode: 'dual',
+        cpu: 1,
+        memory: 2048,
+        idleTimeout: '15m',
+      })
+      const sqliteModule = require('../../../typescript/cast-cli/src/lib/sqlite')
+      sandbox.stub(sqliteModule.db, 'listDeployments').returns([{
+        id: 'abc123',
+        agent_name: testAgentName,
+        provider: 'microvm',
+        deployment_url: 'https://micro.example',
+        volume_id: 'vm-1',
+        volume_config: volumeConfig,
+      }])
+      sandbox.stub(sqliteModule.db, 'getDeploymentBySha').returns(null)
+      const removeAll = sandbox.stub(sqliteModule.db, 'removeAllDeployments').callsFake(() => {})
+
+      const keychainModule = require('../../../typescript/cast-cli/src/lib/keychain')
+      sandbox.stub(keychainModule.keychain, 'deleteToken').resolves({removed: true, stores: ['keychain']})
+      stubDeploymentTokenDelete(sandbox)
+
+      const deployUtils = require('../../../typescript/cast-cli/src/lib/deploy/deploy-utils')
+      sandbox.stub(deployUtils, 'execCommand').callsFake(async (...raw: unknown[]) => {
+        const args = Array.isArray(raw[1]) ? raw[1] as string[] : []
+        const options = raw[2] as {env?: NodeJS.ProcessEnv} | undefined
+        expect(args).to.not.include('--access-token')
+        expect(args.join('\0')).to.not.include('dop_test')
+        expect(args.join(' ')).to.not.include('ssh-key')
+        expect(args).to.not.include('gandermd')
+        expect(args).to.not.include('cast-demo-agent')
+        expect(options?.env?.DIGITALOCEAN_ACCESS_TOKEN).to.equal('dop_test')
+        const rest = args
+        if (rest[2] === 'delete-tag' || (rest[1] === 'microvm' && rest[2] === 'delete')) {
+          return {exitCode: 0, stdout: '', stderr: ''}
+        }
+        return {exitCode: 1, stdout: '', stderr: `unexpected ${rest.join(' ')}`}
+      })
+
+      const previousToken = process.env.DIGITALOCEAN_ACCESS_TOKEN
+      process.env.DIGITALOCEAN_ACCESS_TOKEN = 'dop_test'
+      const warnings: string[] = []
+      sandbox.stub(console, 'warn').callsFake((line: unknown) => {
+        warnings.push(String(line))
+      })
+      sandbox.stub(console, 'log').callsFake(() => {})
+      const registryDeletes = sandbox.stub(axios, 'delete').resolves({status: 403, data: {message: 'permission denied'}})
+
+      try {
+        await instance.run()
+        expect(registryDeletes.calledOnce).to.equal(true)
+        expect(String(registryDeletes.firstCall.args[0])).to.equal(
+          `https://api.digitalocean.com/v2/registries/cast/repositories/${repository}`,
+        )
+        expect(String(registryDeletes.firstCall.args[0])).to.not.include('gandermd')
+        expect(String(registryDeletes.firstCall.args[0])).to.not.include('dop_test')
+        expect(removeAll.calledOnce).to.equal(true)
+        expect(logs.join('\n')).to.include('Remote resources destroyed on microvm.')
+        expect(logs.join('\n')).to.include(`Agent '${testAgentName}' has been shut down.`)
+        expect(commandWarnings.join('\n')).to.not.include('Failed to destroy remote resources')
+        expect(warnings).to.deep.equal([
+          `Failed to delete registry repository '${repository}'. The repository is still in the registry: permission denied`,
         ])
       } finally {
         if (previousToken === undefined) delete process.env.DIGITALOCEAN_ACCESS_TOKEN
