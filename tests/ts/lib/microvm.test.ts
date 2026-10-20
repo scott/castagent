@@ -1419,6 +1419,162 @@ describe('MicroVM shutdown registry tag', () => {
     ])
   })
 
+  const siblingWarning = "Left registry repository 'cast-mv-shutdown-agent' in place. Another MicroVM still uses an image from that repository."
+
+  async function destroyOne(list: (url: string) => {status: number; data: unknown}): Promise<string[]> {
+    const warnings: string[] = []
+    sandbox.stub(console, 'warn').callsFake((line: unknown) => {
+      warnings.push(String(line))
+    })
+    microvmLists.callsFake(async (url: unknown, config?: any) => {
+      expect(String(url)).to.not.include('dop_test')
+      expect(config?.headers?.Authorization).to.equal('Bearer dop_test')
+      return list(String(url))
+    })
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: volumeConfig('abc123')},
+    ])
+    stubDoctl()
+    await MicrovmDeploy.destroy(agentName, {id: 'abc123', volume_id: 'vm-1'})
+    return warnings
+  }
+
+  it('leaves the repository when another MicroVM uses a digest reference', async () => {
+    const warnings = await destroyOne(() => ({
+      status: 200,
+      data: {
+        microvms: [{
+          id: 'vm-other',
+          source: {oci_ref: 'registry.digitalocean.com/cast/cast-mv-shutdown-agent@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'},
+        }],
+      },
+    }))
+    expect(deletedUrls()).to.deep.equal([])
+    expect(warnings).to.deep.equal([siblingWarning])
+  })
+
+  it('leaves the repository when another MicroVM uses an untagged reference', async () => {
+    const warnings = await destroyOne(() => ({
+      status: 200,
+      data: {
+        microvms: [{
+          id: 'vm-other',
+          source: {oci_ref: 'registry.digitalocean.com/cast/cast-mv-shutdown-agent'},
+        }],
+      },
+    }))
+    expect(deletedUrls()).to.deep.equal([])
+    expect(warnings).to.deep.equal([siblingWarning])
+  })
+
+  it('leaves the repository when another MicroVM has no image reference', async () => {
+    const warnings = await destroyOne(() => ({
+      status: 200,
+      data: {
+        microvms: [
+          {id: 'vm-other'},
+          {id: 'vm-blank', source: {oci_ref: ''}},
+          {id: 'vm-foreign', source: {oci_ref: 'docker.io/library/nginx:latest'}},
+        ],
+      },
+    }))
+    expect(deletedUrls()).to.deep.equal([])
+    expect(warnings).to.deep.equal([siblingWarning])
+  })
+
+  it('deletes cast-foo when the only other image is cast-foobar', async () => {
+    const warnings: string[] = []
+    sandbox.stub(console, 'warn').callsFake((line: unknown) => {
+      warnings.push(String(line))
+    })
+    microvmLists.callsFake(async (url: unknown, config?: any) => {
+      expect(String(url)).to.equal('https://api.digitalocean.com/v2/microvms?per_page=200')
+      expect(config?.headers?.Authorization).to.equal('Bearer dop_test')
+      return {
+        status: 200,
+        data: {
+          microvms: [{
+            id: 'vm-other',
+            source: {oci_ref: 'registry.digitalocean.com/cast/cast-foobar:latest'},
+          }],
+        },
+      }
+    })
+    const own = JSON.stringify({
+      microvmId: 'vm-1',
+      region: 'mkc1',
+      ociRef: 'registry.digitalocean.com/cast/cast-foo:abc123',
+      authMode: 'dual',
+      cpu: 1,
+      memory: 2048,
+      idleTimeout: '15m',
+    })
+    sandbox.stub(db, 'listDeployments').returns([
+      {id: 'abc123', provider: 'microvm', volume_id: 'vm-1', volume_config: own},
+    ])
+    stubDoctl()
+    await MicrovmDeploy.destroy('foo', {id: 'abc123', volume_id: 'vm-1'})
+    expect(deletedUrls()).to.deep.equal([
+      'https://api.digitalocean.com/v2/registries/cast/repositories/cast-foo',
+    ])
+    expect(warnings).to.deep.equal([])
+  })
+
+  it('follows a relative MicroVM list page and keeps the repository', async () => {
+    const seen: string[] = []
+    const warnings = await destroyOne(url => {
+      seen.push(url)
+      if (url === 'https://api.digitalocean.com/v2/microvms?per_page=200') {
+        return {
+          status: 200,
+          data: {
+            microvms: [{
+              id: 'vm-1',
+              source: {oci_ref: 'registry.digitalocean.com/cast/cast-mv-shutdown-agent:abc123'},
+            }],
+            links: {pages: {next: '/v2/microvms?page=2&per_page=200'}},
+          },
+        }
+      }
+      return {
+        status: 200,
+        data: {
+          microvms: [{
+            id: 'vm-other',
+            source: {oci_ref: 'registry.digitalocean.com/cast/cast-mv-shutdown-agent@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'},
+          }],
+        },
+      }
+    })
+    expect(seen).to.deep.equal([
+      'https://api.digitalocean.com/v2/microvms?per_page=200',
+      'https://api.digitalocean.com/v2/microvms?page=2&per_page=200',
+    ])
+    expect(deletedUrls()).to.deep.equal([])
+    expect(warnings).to.deep.equal([siblingWarning])
+  })
+
+  it('keeps the repository when the MicroVM list next page is a foreign host', async () => {
+    const warnings = await destroyOne(url => {
+      expect(url).to.equal('https://api.digitalocean.com/v2/microvms?per_page=200')
+      return {
+        status: 200,
+        data: {
+          microvms: [{
+            id: 'vm-1',
+            source: {oci_ref: 'registry.digitalocean.com/cast/cast-mv-shutdown-agent:abc123'},
+          }],
+          links: {pages: {next: 'https://evil.example/v2/microvms?page=2'}},
+        },
+      }
+    })
+    expect(microvmLists.calledOnce).to.equal(true)
+    expect(deletedUrls()).to.deep.equal([])
+    expect(warnings).to.deep.equal([
+      "Left registry repository 'cast-mv-shutdown-agent' in place. Could not list live MicroVMs: MicroVM list returned an unexpected next page.",
+    ])
+  })
+
   it('still deletes the repository when the only listed MicroVM is the one just destroyed', async () => {
     microvmLists.callsFake(async () => ({
       status: 200,

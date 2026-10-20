@@ -115,8 +115,10 @@ shared `cast-<agent>` repository. When the shutdown removes the last
 MicroVM for the agent, Cast deletes the `cast-<agent>` repository it
 created. Before that delete, Cast lists the live MicroVMs on the account
 and leaves the repository in place, with a warning that names it, when
-another MicroVM's image uses that repository. Other repositories in the
-same registry stay, including ones Cast did not create for this agent.
+another MicroVM's image uses that repository. A digest reference, an
+untagged reference, or an image Cast cannot read also keeps it. Other
+repositories in the same registry stay, including ones Cast did not
+create for this agent.
 If the tag delete or the repository delete fails, Cast warns and names
 the tag or repository that is still in the registry, then finishes the
 rest of shutdown.

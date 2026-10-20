@@ -937,7 +937,20 @@ function microvmIdOf(vm: unknown): string | undefined {
 function microvmOciRef(vm: unknown): string | undefined {
   if (!vm || typeof vm !== 'object') return undefined
   const ref = (vm as {source?: {oci_ref?: unknown}}).source?.oci_ref
-  return typeof ref === 'string' ? ref : undefined
+  return typeof ref === 'string' && ref.length > 0 ? ref : undefined
+}
+
+/**
+ * True when the image is exactly this repository, or that name followed by
+ * `:` or `@`. `cast-foo` does not match `cast-foobar`.
+ * Undefined means the reference is not a DigitalOcean repository image.
+ */
+function ociRefUsesRepository(ref: string, registry: string, repository: string): boolean | undefined {
+  const prefix = `registry.digitalocean.com/${registry}/${repository}`
+  if (ref === prefix || ref.startsWith(`${prefix}:`) || ref.startsWith(`${prefix}@`)) return true
+  const match = /^registry\.digitalocean\.com\/([^/]+)\/([^/:@]+)([:@].*)?$/.exec(ref)
+  if (!match) return undefined
+  return false
 }
 
 /** Follow GET /v2/microvms. A partial list is a failure so the repository stays. */
@@ -980,9 +993,10 @@ async function anotherLiveMicrovmUsesRepository(
     const id = microvmIdOf(vm)
     if (id && ignoreIds.has(id)) return false
     const image = microvmOciRef(vm)
-    if (!image) return false
-    const parsed = parsePushedRegistryTag(image)
-    return parsed?.registry === registry && parsed.repository === repository
+    // A missing or unreadable image might still be this repository.
+    if (!image) return true
+    const uses = ociRefUsesRepository(image, registry, repository)
+    return uses !== false
   })
 }
 
