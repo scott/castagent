@@ -194,15 +194,17 @@ class TestAgentConfig:
         assert config.description == "stay"
         assert config.name == "demo"
 
-    def test_null_version_is_not_rewritten_as_text(self, temp_agent_dir):
-        """A YAML null stays null. Only numeric spellings are restored."""
+    def test_null_version_is_the_missing_default(self, temp_agent_dir):
+        """A YAML null is no version. It is not kept as the text null."""
         yaml_path = os.path.join(temp_agent_dir, "agent.yaml")
         with open(yaml_path, "w", encoding="utf-8") as handle:
             handle.write("name: demo\nversion: null\n")
 
         config = AgentConfig.from_path(temp_agent_dir)
 
-        assert config.version is None
+        assert config.version == "1.0"
+        assert config.version != "null"
+        assert config.config["version"] == "1.0"
 
     def test_config_attributes_description(self, full_agent_yaml):
         """Test description attribute parsing."""

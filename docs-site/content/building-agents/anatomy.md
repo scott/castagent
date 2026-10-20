@@ -102,7 +102,7 @@ changes show up as files on disk.
 | Section | Controls |
 |---|---|
 | `description` | one-line summary shown in `cast list` and the TUI |
-| `version` | semantic version kept as written (`1.10` stays `1.10`); `cast release` writes here |
+| `version` | semantic version kept as text (`1.10` stays `1.10`); missing, null, empty, or `!!null` is `1.0` and `cast deploy` records `1.0`; a version that contains whitespace is refused (use `version: "1.4.5"`); a value that is not MAJOR.MINOR or MAJOR.MINOR.PATCH is recorded with one warning; `cast release` writes here |
 | `repository` | git remote, used by `cast git push` |
 | `brain.model` | the LLM the runtime agent calls |
 | `brain.instructions_file` | relative path to the system prompt |

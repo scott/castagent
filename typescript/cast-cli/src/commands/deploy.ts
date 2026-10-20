@@ -4,7 +4,8 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import * as readline from 'readline'
-import {loadAgentYaml} from '../lib/agent-yaml'
+import {AgentYamlError, agentConfigFromDocument, parseAgentYamlDocument} from '../lib/agent-yaml'
+import {MISSING_AGENT_VERSION, isSemverLike, versionFromAgentYamlDocument, type AgentYamlVersion} from '../lib/agent-version'
 import {checkCli, generateAuthToken, generateDeploymentSha} from '../lib/deploy/deploy-utils'
 import {stagePythonRequirements} from '../lib/deploy/requirements'
 import {
@@ -18,7 +19,6 @@ import {
 import type {DeployContext, DeploymentProvider} from '../lib/deploy/types'
 import {createAgentGit} from '../lib/git-identity'
 import {missingAgentError} from '../lib/missing-agent'
-import {lookupCurrentRelease} from '../lib/releases'
 import {db} from '../lib/sqlite'
 
 const DOCKER_INSTALL_URL = 'https://docs.docker.com/get-docker/'
@@ -82,78 +82,26 @@ function buildDeployFlags(): Record<string, any> {
 }
 
 /**
- * Top-level `version` scalar in the agent directory's agent.yaml.
- * `cast release` writes that field, and the tarball deploys it.
- * releases.json `current` is the most recently created release, which can be newer
- * than the files left in the directory after a failed upgrade.
- * An empty field, a YAML null (`null`, `~`), or an unreadable field returns null.
- * A block scalar (`|` or `>`, optional chomp and indent) is its first
- * non-empty line, trimmed. A leading byte-order mark is ignored.
+ * Top-level `version` in the agent directory's agent.yaml.
+ * The file is read and parsed once. The same document supplies the
+ * mapping check and the version, which is the runtime's rule.
+ * A missing file is no version. An unreadable file or a bad document throws.
  */
-function readAgentDirReleaseVersion(agentPath: string): string | null {
+function readAgentDirReleaseVersion(agentPath: string): AgentYamlVersion {
   const yamlPath = path.join(agentPath, 'agent.yaml')
+  if (!fs.existsSync(yamlPath)) {
+    return {version: MISSING_AGENT_VERSION, explicit: false}
+  }
   let text: string
   try {
     text = fs.readFileSync(yamlPath, 'utf8')
-  } catch {
-    return null
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new AgentYamlError(`agent.yaml could not be read (${yamlPath}): ${message}`)
   }
-  if (text.charCodeAt(0) === 0xfeff) text = text.slice(1)
-  const lines = text.split(/\r?\n/)
-  for (let index = 0; index < lines.length; index++) {
-    const block = blockVersion(lines, index)
-    if (block !== undefined) return block.length > 0 ? block : null
-    const value = topLevelVersionScalar(lines[index])
-    if (value === undefined) continue
-    const trimmed = value.trim()
-    return trimmed.length > 0 ? trimmed : null
-  }
-  return null
-}
-
-// `|` or `>`, then an optional indent digit 1-9 and chomp (`-` or `+`)
-// in either order. A trailing comment is ignored. The recorded value is
-// the first non-empty content line, so a multi-line block cannot store
-// a newline.
-const BLOCK_VERSION = /^version[ \t]*:[ \t]*[|>](?:[1-9][+-]?|[+-][1-9]?)?[ \t]*(?:#.*)?$/
-
-function blockVersion(lines: string[], index: number): string | undefined {
-  if (!BLOCK_VERSION.test(lines[index] ?? '')) return undefined
-  let indent = -1
-  for (let cursor = index + 1; cursor < lines.length; cursor++) {
-    const line = lines[cursor]
-    if (line.trim() === '') continue
-    const leading = /^ */.exec(line)?.[0].length ?? 0
-    if (leading === 0 || (indent !== -1 && leading < indent)) break
-    if (indent === -1) indent = leading
-    const text = line.slice(indent).trim()
-    if (text.length > 0) return text
-  }
-  return ''
-}
-
-function isYamlNullToken(value: string): boolean {
-  return value === '~' || value === 'null' || value === 'Null' || value === 'NULL'
-}
-
-function topLevelVersionScalar(line: string): string | undefined {
-  const match = /^(version)([ \t]*:)(.*)$/.exec(line)
-  if (!match) return undefined
-  const after = match[3]
-  const spaces = /^[ \t]*/.exec(after)?.[0] ?? ''
-  const rest = after.slice(spaces.length)
-  if (rest === '' || rest.startsWith('#')) return ''
-  if (rest[0] === '"' || rest[0] === "'") {
-    const quote = rest[0]
-    const end = rest.indexOf(quote, 1)
-    if (end < 0) return undefined
-    return rest.slice(1, end)
-  }
-  if (rest[0] === '|' || rest[0] === '>') return undefined
-  const comment = /[ \t]+#/.exec(rest)
-  const raw = comment ? rest.slice(0, comment.index) : rest.replace(/[ \t]+$/, '')
-  if (isYamlNullToken(raw.trim())) return ''
-  return raw
+  const doc = parseAgentYamlDocument(text, yamlPath)
+  agentConfigFromDocument(doc, yamlPath)
+  return versionFromAgentYamlDocument(doc)
 }
 
 export default class Deploy extends Command {
@@ -499,11 +447,23 @@ export default class Deploy extends Command {
     await this.prepareVersionForDeploy(agentName, agentPath, version)
 
     // Reject a broken agent.yaml before git, provider CLIs, or uploads.
-    try {
-      loadAgentYaml(agentPath)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      this.error(message)
+    // The same read supplies the version recorded after a successful deploy.
+    const agentYamlVersion = (() => {
+      try {
+        return readAgentDirReleaseVersion(agentPath)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.error(message)
+      }
+    })()
+    // A newline or any other whitespace used to be cut to the first line.
+    // The shared reader keeps that text so the runtime can report it.
+    // Deploy refuses it instead of storing the newline.
+    if (agentYamlVersion.explicit && /\s/.test(agentYamlVersion.version)) {
+      this.error(
+        `agent.yaml version ${JSON.stringify(agentYamlVersion.version)} contains whitespace. ` +
+        'Use a single-line quoted version, for example version: "1.4.5".',
+      )
     }
 
     // Check if agent is a git repo and prompt for commit
@@ -604,41 +564,31 @@ export default class Deploy extends Command {
 
       // Store deployed version after successful deployment.
       // An explicit --version is that release. Otherwise record the
-      // version in the agent directory. With no readable version there,
-      // keep the newest release, or "latest" when none exists.
+      // version in the agent directory. releases.json `current` can be
+      // newer than the files left after a failed upgrade, so it is not
+      // used here. With no version in the file, record the same `1.0`
+      // the runtime reports.
       let versionToStore = version
-      let releaseFallback: string | null | undefined
-      let releaseUnreadable = false
+      let missingYamlVersion = false
       if (version === 'latest') {
-        const present = readAgentDirReleaseVersion(agentPath)
-        if (present) {
-          versionToStore = present
+        if (agentYamlVersion.explicit) {
+          versionToStore = agentYamlVersion.version
         } else {
-          const lookup = await lookupCurrentRelease(agentName)
-          if (lookup.ok) {
-            releaseFallback = lookup.version
-            versionToStore = lookup.version || 'latest'
-          } else {
-            // A failed read is not an empty release list. Record the same
-            // fallback and say the file could not be read.
-            releaseUnreadable = true
-            versionToStore = 'latest'
-            if (lookup.error) this.debug('%s', lookup.error)
-          }
+          missingYamlVersion = true
+          versionToStore = MISSING_AGENT_VERSION
         }
       }
       db.updateDeployedVersion(agentName, versionToStore)
       // The warning names the value that was written, and it comes out
       // before the deploy result lines below.
-      if (releaseUnreadable || releaseFallback !== undefined) {
+      if (missingYamlVersion) {
         const recordedVersion = db.getDeployedVersion(agentName) ?? versionToStore
-        if (releaseUnreadable) {
-          this.log(`Warning: agent.yaml has no version and releases.json could not be read. Recorded ${recordedVersion}. Add a version to agent.yaml or pass --version to choose.`)
-        } else if (releaseFallback) {
-          this.log(`Warning: agent.yaml has no version. Recorded ${recordedVersion} from releases.json. Add a version to agent.yaml or pass --version to choose.`)
-        } else {
-          this.log(`Warning: agent.yaml has no version and releases.json has no releases. Recorded ${recordedVersion}. Add a version to agent.yaml or pass --version to choose.`)
-        }
+        this.log(`Warning: agent.yaml has no version. Recorded ${recordedVersion}. Add a version to agent.yaml or pass --version to choose.`)
+      } else if (version === 'latest' && !isSemverLike(versionToStore)) {
+        this.log(
+          `Warning: agent.yaml version ${JSON.stringify(versionToStore)} is not a semantic version ` +
+          `(MAJOR.MINOR or MAJOR.MINOR.PATCH). Recorded ${versionToStore}.`,
+        )
       }
 
       this.log('')
