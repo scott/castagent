@@ -9,6 +9,11 @@ import {Command} from '@oclif/core'
 import DeployCommand from '../../../typescript/cast-cli/src/commands/deploy'
 import {saveDeployment} from '../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 import {localProvider} from '../../../typescript/cast-cli/src/lib/deploy/providers/local'
+import {
+  findRequirementsProjectRoot,
+  readFrozenRequirements,
+  renderRequirementsFile,
+} from '../../../typescript/cast-cli/src/lib/deploy/requirements'
 import {resetDeploymentProviderRegistry} from '../../../typescript/cast-cli/src/lib/deploy/registry'
 import {_setExecPythonForTests} from '../../../typescript/cast-cli/src/lib/releases'
 import {db} from '../../../typescript/cast-cli/src/lib/sqlite'
@@ -783,6 +788,14 @@ describe('Deploy Command - local provider', () => {
           expect(output).to.include('Using release 1.0 from /tmp/1.0.tar.gz')
         }
         expect(db.listDeployments(agentName)).to.deep.equal([])
+        const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
+        const root = findRequirementsProjectRoot()
+        const expected = renderRequirementsFile({
+          frozen: readFrozenRequirements(root),
+          pyprojectSource: fs.readFileSync(path.join(root, 'python', 'pyproject.toml'), 'utf8'),
+          agentYaml: fs.readFileSync(path.join(agentDir, 'agent.yaml'), 'utf8'),
+        })
+        expect(fs.readFileSync(path.join(agentDir, 'requirements.txt'), 'utf8')).to.equal(expected)
       } finally {
         if (previousSha === undefined) delete process.env.CAST_DEPLOYMENT_SHA
         else process.env.CAST_DEPLOYMENT_SHA = previousSha

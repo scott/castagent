@@ -550,19 +550,6 @@ ${runtimeDockerfileCmd()}
 `
     fs.writeFileSync(dockerfilePath, dockerfile)
   }
-
-  const requirementsPath = path.join(agentPath, 'requirements.txt')
-  if (!fs.existsSync(requirementsPath)) {
-    const requirements = `langchain>=0.1.0
-langchain-openai>=0.0.5
-langchain-core>=0.1.0
-starlette>=0.35.0
-uvicorn>=0.25.0
-pyyaml>=6.0.1
-python-dotenv>=1.0.0
-`
-    fs.writeFileSync(requirementsPath, requirements)
-  }
 }
 
 const GENERATED_DOCKERFILE_MARKER = 'FROM python:3.11-slim-bookworm AS builder'

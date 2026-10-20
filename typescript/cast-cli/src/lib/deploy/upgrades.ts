@@ -18,7 +18,7 @@ import {SPRITE_SERVICE_LOG} from './sprites-service'
 import {dockerContainerEnv, dockerContainerRunArgs, startDockerAgentContainer, writeDockerCompose} from './docker'
 import {writeHostMotdOverSsh} from './motd'
 import {runtimeDockerfileCmd} from '../runtime-args'
-import {writeRequirementsTxt} from './requirements'
+import {stagePythonRequirements, writeRequirementsTxt} from './requirements'
 import {
   digitalOceanMemoryVolumeName,
   ensureDropletContainerMemory,
@@ -266,6 +266,8 @@ export async function upgradeRailwayDeployment(
     await tar.extract({file: versionTarballPath, cwd: agentPath})
   }
 
+  stagePythonRequirements(agentPath)
+
   host.log('Triggering Railway redeploy...')
   const {spawn} = await import('child_process')
 
@@ -383,6 +385,7 @@ export async function upgradeDigitalOceanDeployment(
     await tar.extract({file: versionTarballPath, cwd: agentPath})
   }
 
+  stageCastRuntime(agentPath)
   host.log('Building and pushing Docker image to DigitalOcean...')
   const {spawn} = await import('child_process')
 

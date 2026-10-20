@@ -6,6 +6,7 @@ import * as path from 'path'
 import * as readline from 'readline'
 import {loadAgentYaml} from '../lib/agent-yaml'
 import {checkCli, generateAuthToken, generateDeploymentSha} from '../lib/deploy/deploy-utils'
+import {stagePythonRequirements} from '../lib/deploy/requirements'
 import {
   deploymentProviderKeys,
   deploymentProviderLoadErrors,
@@ -592,6 +593,9 @@ export default class Deploy extends Command {
         error: (message: string): never => this.error(message),
         confirm: message => this.confirm(message, flags.force),
       }
+
+      // Every provider installs this file. Declared minimums come from pyproject.toml.
+      stagePythonRequirements(agentPath)
 
       if (registered.prepare) {
         await registered.prepare(ctx)

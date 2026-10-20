@@ -18,6 +18,7 @@ import {
   generateDeploymentId,
   getVolumeName,
 } from './deploy-utils'
+import {stagePythonRequirements} from './requirements'
 
 export default class RailwayDeploy extends Command {
   static description = 'Deploy agent to Railway'
@@ -44,8 +45,9 @@ export default class RailwayDeploy extends Command {
       this.error(error.message)
     }
 
-    // Ensure Docker packaging
+    // Ensure Docker packaging. Requirements come from python/pyproject.toml.
     ensureDockerfile(agentPath)
+    stagePythonRequirements(agentPath)
 
     // Generate auth token and deployment ID
     const { authToken, tokenHash } = await generateAuthToken(agentName)
