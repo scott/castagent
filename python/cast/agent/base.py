@@ -25,7 +25,7 @@ def read_agent_yaml_version(text: str) -> AgentYamlVersion:
     surrounding whitespace removed, which drops the trailing newline `|`,
     `>`, and `|+` add. Anchors, aliases, and tags resolve before that
     spelling is read. A later duplicate `version` key wins. A YAML null
-    (`null`, `~`, empty) is not a version.
+    (`null`, `~`, empty, or an explicit `!!null` tag) is not a version.
 
     This is the same rule as `readAgentYamlVersion` in
     `typescript/cast-cli/src/lib/agent-version.ts`. The shared cases live

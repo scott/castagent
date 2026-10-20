@@ -834,12 +834,13 @@ describe('Deploy Command - recorded release version', () => {
     })
   }
 
-  async function deployRecorded(agentName: string, yaml: string, version: string): Promise<{recorded: string | null; logs: string[]; debugs: string[]}> {
+  async function deployRecorded(agentName: string, yaml: string, version: string, onDeploy?: () => void): Promise<{recorded: string | null; logs: string[]; debugs: string[]}> {
     const agentDir = path.join(os.homedir(), '.cast', 'agents', agentName)
     fs.mkdirSync(agentDir, {recursive: true})
     fs.writeFileSync(path.join(agentDir, 'agent.yaml'), yaml)
 
     localProvider.deploy = async (ctx) => {
+      onDeploy?.()
       await saveDeployment(ctx.agentName, 'local', 'http://127.0.0.1', 'hash')
     }
 
@@ -1011,27 +1012,57 @@ describe('Deploy Command - recorded release version', () => {
     })
   }
 
-  it('records the YAML text of a multi-line literal block version', async () => {
-    const agentName = `deploy-block-multiline-${Date.now()}`
-    await withAgent(agentName, async () => {
-      stubReleasePython('9.9')
-      const {recorded, logs} = await deployRecorded(agentName, 'name: block\nversion: |\n  1.4.5\n  extra\ndescription: stay\n', 'latest')
-      expect(recorded).to.equal('1.4.5\nextra')
-      expect(recorded?.endsWith('\n')).to.equal(false)
-      expect(logs.filter(entry => entry.startsWith('Warning:'))).to.deep.equal([])
-    })
-  })
+  const versionTable = JSON.parse(fs.readFileSync(path.join(__dirname, '../../fixtures/agent-yaml-version.json'), 'utf8')) as {
+    cases: Array<{name: string; yaml: string; expected: string; deploy?: string}>
+  }
 
-  it('records the YAML text of a multi-line folded block version', async () => {
-    const agentName = `deploy-block-folded-${Date.now()}`
-    await withAgent(agentName, async () => {
-      stubReleasePython('9.9')
-      const {recorded, logs} = await deployRecorded(agentName, 'name: block\nversion: >\n  1.4.5\n  extra\ndescription: stay\n', 'latest')
-      expect(recorded).to.equal('1.4.5 extra')
-      expect(recorded?.endsWith('\n')).to.equal(false)
-      expect(logs.filter(entry => entry.startsWith('Warning:'))).to.deep.equal([])
+  async function expectWhitespaceRefusal(agentName: string, yaml: string, shown: string): Promise<void> {
+    stubReleasePython('9.9')
+    let deployed = false
+    let caught: Error | undefined
+    try {
+      await deployRecorded(agentName, yaml, 'latest', () => {
+        deployed = true
+      })
+    } catch (error) {
+      caught = error instanceof Error ? error : new Error(String(error))
+    }
+    expect(caught, 'deploy should refuse a version that contains whitespace').to.be.an('error')
+    expect(caught?.message).to.include('agent.yaml')
+    expect(caught?.message).to.include(shown)
+    expect(caught?.message).to.include('version: "1.4.5"')
+    expect(deployed).to.equal(false)
+    expect(db.getDeployedVersion(agentName)).to.equal(null)
+  }
+
+  for (const item of versionTable.cases.filter(entry => entry.deploy === 'refuse')) {
+    it(`refuses ${item.name} before deploy`, async () => {
+      const slug = item.name.replace(/\s+/g, '-')
+      const agentName = `deploy-refuse-${slug}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      await withAgent(agentName, async () => {
+        await expectWhitespaceRefusal(agentName, item.yaml, JSON.stringify(item.expected))
+      })
     })
-  })
+  }
+
+  for (const value of ['true', 'yes', 'on', '.inf', '0x10']) {
+    it(`warns once and records non-semver version ${value}`, async () => {
+      const slug = value.replace(/[^a-z0-9]/gi, 'x')
+      const agentName = `deploy-nonsemver-${slug}-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`
+      await withAgent(agentName, async () => {
+        stubReleasePython('9.9')
+        const {recorded, logs} = await deployRecorded(agentName, `name: odd\nversion: ${value}\n`, 'latest')
+        expect(recorded).to.equal(value)
+        const warnings = logs.filter(entry => entry.startsWith('Warning:'))
+        expect(warnings).to.have.length(1)
+        expect(warnings[0]).to.include(JSON.stringify(value))
+        expect(warnings[0]).to.include('MAJOR.MINOR')
+        expect(warnings[0]).to.include(`Recorded ${recorded}.`)
+        const resultAt = logs.findIndex(entry => entry.startsWith('Deployed '))
+        expect(logs.indexOf(warnings[0])).to.be.greaterThan(-1).and.lessThan(resultAt)
+      })
+    })
+  }
 
   const versionScalars: Array<[string, string]> = [
     ['1.10', '1.10'],

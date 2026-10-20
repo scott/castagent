@@ -41,13 +41,15 @@
       "name": "literal multiline",
       "yaml": "version: |\n  1.4.5\n  extra\n",
       "expected": "1.4.5\nextra",
-      "explicit": true
+      "explicit": true,
+      "deploy": "refuse"
     },
     {
       "name": "folded multiline",
       "yaml": "version: >\n  1.4.5\n  extra\n",
       "expected": "1.4.5 extra",
-      "explicit": true
+      "explicit": true,
+      "deploy": "refuse"
     },
     {
       "name": "missing key",
@@ -64,6 +66,12 @@
     {
       "name": "null",
       "yaml": "version: null\n",
+      "expected": "1.0",
+      "explicit": false
+    },
+    {
+      "name": "null tag with content",
+      "yaml": "version: !!null x\n",
       "expected": "1.0",
       "explicit": false
     },

@@ -1,6 +1,6 @@
 import * as fs from 'fs'
 import * as path from 'path'
-import {parseDocument, YAMLParseError} from 'yaml'
+import {parseDocument, YAMLParseError, type Document} from 'yaml'
 
 /**
  * Line the parser quotes. A mark at column 1 of a blank line is the parser
@@ -24,10 +24,42 @@ export class AgentYamlError extends Error {
 }
 
 /**
+ * Parse agent.yaml text once.
+ * Duplicate keys are kept (last wins), matching PyYAML's safe_load.
+ * `quotedYamlLine` always returns a line number, so a parser mark is enough
+ * to name the location.
+ */
+export function parseAgentYamlDocument(text: string, yamlPath: string): Document {
+  const doc = parseDocument(text)
+  const error = doc.errors.find(item => item.code !== 'DUPLICATE_KEY')
+  if (error) {
+    const pos = error instanceof YAMLParseError ? error.linePos?.[0] : undefined
+    const location = pos ? `${yamlPath}:${quotedYamlLine(text, pos.line, pos.col)}` : yamlPath
+    throw new AgentYamlError(`agent.yaml could not be parsed (${location}): ${error.message}`)
+  }
+  return doc
+}
+
+/** Mapping from an already-parsed document. A non-mapping document is thrown. */
+export function agentConfigFromDocument(doc: Document, yamlPath: string): Record<string, unknown> {
+  let parsed: unknown
+  try {
+    parsed = doc.toJS()
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new AgentYamlError(`agent.yaml could not be parsed (${yamlPath}): ${message}`)
+  }
+  if (parsed == null) return {}
+  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new AgentYamlError(`agent.yaml could not be validated (${yamlPath}): expected a mapping`)
+  }
+  return parsed as Record<string, unknown>
+}
+
+/**
  * Load agent.yaml the way deploy must see it.
  * A missing file or an empty document uses the runtime's defaults.
  * A parse error or a non-mapping document is thrown.
- * Duplicate keys are kept (last wins), matching PyYAML's safe_load.
  */
 export function loadAgentYaml(agentPath: string): Record<string, unknown> {
   const yamlPath = path.join(agentPath, 'agent.yaml')
@@ -41,25 +73,5 @@ export function loadAgentYaml(agentPath: string): Record<string, unknown> {
     throw new AgentYamlError(`agent.yaml could not be read (${yamlPath}): ${message}`)
   }
 
-  const doc = parseDocument(text)
-  const error = doc.errors.find(item => item.code !== 'DUPLICATE_KEY')
-  if (error) {
-    const pos = error instanceof YAMLParseError ? error.linePos?.[0] : undefined
-    const line = pos ? quotedYamlLine(text, pos.line, pos.col) : undefined
-    const location = typeof line === 'number' ? `${yamlPath}:${line}` : yamlPath
-    throw new AgentYamlError(`agent.yaml could not be parsed (${location}): ${error.message}`)
-  }
-
-  let parsed: unknown
-  try {
-    parsed = doc.toJS()
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    throw new AgentYamlError(`agent.yaml could not be parsed (${yamlPath}): ${message}`)
-  }
-  if (parsed == null) return {}
-  if (typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new AgentYamlError(`agent.yaml could not be validated (${yamlPath}): expected a mapping`)
-  }
-  return parsed as Record<string, unknown>
+  return agentConfigFromDocument(parseAgentYamlDocument(text, yamlPath), yamlPath)
 }

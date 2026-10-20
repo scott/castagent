@@ -144,12 +144,17 @@ a YAML parser and keep it as text, so `version: 1.10`, `version: 2.0`,
 and `version: 1.0.0` stay `1.10`, `2.0`, and `1.0.0`. Quoted forms such
 as `version: "1.10"` and `version: '2.0'` stay that text too. A block
 scalar is that text with surrounding whitespace removed, so a trailing
-newline from `|`, `>`, or `|+` is not part of the version. Anchors,
-aliases, and explicit tags (`!!str`, `!!float`) resolve to the same
-text, and a later duplicate `version` key wins. A byte-order mark at
-the start of the file is ignored. `version: null`, `version: ~`, an
-empty `version:`, and a missing `version` are `1.0`. `cast deploy`
-records that `1.0` and warns once.
+newline from `|`, `>`, or `|+` is not part of the version. A version
+that still contains a newline or any other whitespace is refused.
+Write it as one line, for example `version: "1.4.5"`. The runtime still
+reports the text the parser returned. Anchors, aliases, and explicit
+tags (`!!str`, `!!float`) resolve to the same text. An explicit `!!null`
+tag is a missing version. A later duplicate `version` key wins. A
+byte-order mark at the start of the file is ignored. `version: null`,
+`version: ~`, an empty `version:`, and a missing `version` are `1.0`.
+`cast deploy` records that `1.0` and warns once. A version that is not
+MAJOR.MINOR or MAJOR.MINOR.PATCH, such as `true` or `yes`, is recorded
+and `cast deploy` prints one warning.
 
 ## Upgrading a live deployment
 

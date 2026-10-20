@@ -4,8 +4,8 @@ import * as fs from 'fs'
 import * as os from 'os'
 import * as path from 'path'
 import * as readline from 'readline'
-import {loadAgentYaml} from '../lib/agent-yaml'
-import {MISSING_AGENT_VERSION, readAgentYamlVersion, type AgentYamlVersion} from '../lib/agent-version'
+import {AgentYamlError, agentConfigFromDocument, parseAgentYamlDocument} from '../lib/agent-yaml'
+import {MISSING_AGENT_VERSION, isSemverLike, versionFromAgentYamlDocument, type AgentYamlVersion} from '../lib/agent-version'
 import {checkCli, generateAuthToken, generateDeploymentSha} from '../lib/deploy/deploy-utils'
 import {stagePythonRequirements} from '../lib/deploy/requirements'
 import {
@@ -83,18 +83,25 @@ function buildDeployFlags(): Record<string, any> {
 
 /**
  * Top-level `version` in the agent directory's agent.yaml.
- * The runtime reads that field with the same YAML rule. An unreadable
- * file returns null, which deploy treats as no version.
+ * The file is read and parsed once. The same document supplies the
+ * mapping check and the version, which is the runtime's rule.
+ * A missing file is no version. An unreadable file or a bad document throws.
  */
-function readAgentDirReleaseVersion(agentPath: string): AgentYamlVersion | null {
+function readAgentDirReleaseVersion(agentPath: string): AgentYamlVersion {
   const yamlPath = path.join(agentPath, 'agent.yaml')
+  if (!fs.existsSync(yamlPath)) {
+    return {version: MISSING_AGENT_VERSION, explicit: false}
+  }
   let text: string
   try {
     text = fs.readFileSync(yamlPath, 'utf8')
-  } catch {
-    return null
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new AgentYamlError(`agent.yaml could not be read (${yamlPath}): ${message}`)
   }
-  return readAgentYamlVersion(text)
+  const doc = parseAgentYamlDocument(text, yamlPath)
+  agentConfigFromDocument(doc, yamlPath)
+  return versionFromAgentYamlDocument(doc)
 }
 
 export default class Deploy extends Command {
@@ -440,11 +447,23 @@ export default class Deploy extends Command {
     await this.prepareVersionForDeploy(agentName, agentPath, version)
 
     // Reject a broken agent.yaml before git, provider CLIs, or uploads.
-    try {
-      loadAgentYaml(agentPath)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      this.error(message)
+    // The same read supplies the version recorded after a successful deploy.
+    const agentYamlVersion = (() => {
+      try {
+        return readAgentDirReleaseVersion(agentPath)
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        this.error(message)
+      }
+    })()
+    // A newline or any other whitespace used to be cut to the first line.
+    // The shared reader keeps that text so the runtime can report it.
+    // Deploy refuses it instead of storing the newline.
+    if (agentYamlVersion.explicit && /\s/.test(agentYamlVersion.version)) {
+      this.error(
+        `agent.yaml version ${JSON.stringify(agentYamlVersion.version)} contains whitespace. ` +
+        'Use a single-line quoted version, for example version: "1.4.5".',
+      )
     }
 
     // Check if agent is a git repo and prompt for commit
@@ -552,9 +571,8 @@ export default class Deploy extends Command {
       let versionToStore = version
       let missingYamlVersion = false
       if (version === 'latest') {
-        const present = readAgentDirReleaseVersion(agentPath)
-        if (present?.explicit) {
-          versionToStore = present.version
+        if (agentYamlVersion.explicit) {
+          versionToStore = agentYamlVersion.version
         } else {
           missingYamlVersion = true
           versionToStore = MISSING_AGENT_VERSION
@@ -566,6 +584,11 @@ export default class Deploy extends Command {
       if (missingYamlVersion) {
         const recordedVersion = db.getDeployedVersion(agentName) ?? versionToStore
         this.log(`Warning: agent.yaml has no version. Recorded ${recordedVersion}. Add a version to agent.yaml or pass --version to choose.`)
+      } else if (version === 'latest' && !isSemverLike(versionToStore)) {
+        this.log(
+          `Warning: agent.yaml version ${JSON.stringify(versionToStore)} is not a semantic version ` +
+          `(MAJOR.MINOR or MAJOR.MINOR.PATCH). Recorded ${versionToStore}.`,
+        )
       }
 
       this.log('')
