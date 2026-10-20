@@ -21,6 +21,7 @@ import {
   storeAuthToken,
   saveDeployment,
   ensureCastRuntimeDockerfile,
+  appendCompilerHint,
 } from './deploy-utils'
 import {writeRequirementsTxt} from './requirements'
 
@@ -412,9 +413,12 @@ export default class DockerDeploy extends Command {
     // Build Docker image
     this.log('Building Docker image...')
     // Use --progress=plain for cleaner output in non-TTY environments (like TUI)
-    const buildCode = await runCommand('docker', ['build', '--progress=plain', '--load', '-t', imageName, '-f', dockerfilePath, agentPath])
-    if (buildCode !== 0) {
-      this.error(`Docker build failed with code ${buildCode}`)
+    const buildResult = await execCommand('docker', ['build', '--progress=plain', '--load', '-t', imageName, '-f', dockerfilePath, agentPath])
+    if (buildResult.exitCode !== 0) {
+      this.error(appendCompilerHint(
+        `Docker build failed with code ${buildResult.exitCode}`,
+        `${buildResult.stdout}\n${buildResult.stderr}`,
+      ))
     }
 
     // Stop existing container if running (ignore errors)

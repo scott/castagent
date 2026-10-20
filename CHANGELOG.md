@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- The agent image no longer includes gcc. Docker deploys now use `python:3.11-slim-bookworm` instead of `python:3.11-slim`. ([#391](https://github.com/scott/castagent/pull/391))
+
 ### Removed
 
 - `cast migrate` is removed. It was a one-time upgrade for agents created before 1.1.0. Opening `cast.db` still creates the `releases` table, and new agents still get a default `memory/config.yaml`. Agents still on a pre-1.1 layout should run `cast migrate` from 2.5.1 before upgrading. ([#389](https://github.com/scott/castagent/pull/389))

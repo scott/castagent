@@ -20,6 +20,7 @@ import {
   prepareHostTuiBuildContext,
   prepareCastImageContext,
   installPin,
+  appendCompilerHint,
   checkCli,
   deploymentShaFromEnv,
   isShaPattern,
@@ -2172,7 +2173,10 @@ export default class DigitalOceanDeploy extends Command {
         agentPath,
       ])
       if (buildResult.exitCode !== 0) {
-        this.error(`Docker build failed: ${buildResult.stderr}`)
+        this.error(appendCompilerHint(
+          `Docker build failed: ${buildResult.stderr}`,
+          `${buildResult.stdout}\n${buildResult.stderr}`,
+        ))
       }
 
       // Stream image directly to droplet (no intermediate disk write)

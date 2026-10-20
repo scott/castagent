@@ -256,8 +256,8 @@ The deployment is a single Docker image that contains:
   binary is missing.
   Recommended packages such as openssh-client, xauth, less, and patch stay out of the image.
   perl stays, because git depends on it.
-  gcc is not installed. langgraph, langchain, httpx, starlette, uvicorn, and
-  PyYAML install from wheels on python:3.11-slim.
+  A compiler is not installed. langgraph, langchain, httpx, starlette, uvicorn, and
+  PyYAML install from wheels on python:3.11-slim-bookworm.
 - For DigitalOcean with `--with-tui`: the `cast-tui` binary + Bun, so you
   can SSH into the droplet and run `cast-tui` inside the container.
 
@@ -308,12 +308,15 @@ log line `Error loading agent config` fails that check while the machine
 is still started or starting.
 
 The image installs git with
-`--no-install-recommends` and removes the apt lists. It does not install
-gcc. langgraph, langchain, httpx, starlette, uvicorn, and PyYAML install
-from wheels on python:3.11-slim. A generated Dockerfile that still
-installs gcc, still points `PYTHONPATH` at `/usr/local`, or omits
-`apt-get install -y --no-install-recommends git` and the apt list cleanup,
-is replaced on the next deploy. A custom Dockerfile is left in place.
+`--no-install-recommends` and removes the apt lists. The generated
+Dockerfile does not include a compiler. langgraph, langchain, httpx,
+starlette, uvicorn, and PyYAML install from wheels on
+`python:3.11-slim-bookworm`. An agent that needs a compiler should edit
+the Dockerfile, for example by adding `build-essential` to the apt line.
+Cast keeps an edited Dockerfile and prints
+`Keeping your edited Dockerfile; delete it to regenerate.`
+Delete the file to regenerate it. Cast replaces a Dockerfile only when
+the file still matches a template Cast generated.
 
 `cast deploy --provider docker` and `cast deploy --provider digitalocean`
 wait until the container is still running and the runtime has printed

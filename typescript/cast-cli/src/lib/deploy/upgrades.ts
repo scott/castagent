@@ -13,6 +13,7 @@ import {
   resolveDeploymentAuthToken,
   stageCastRuntime,
   ensureCastRuntimeDockerfile,
+  appendCompilerHint,
 } from './deploy-utils'
 import {deployToSprites, type SpriteDeployOptions} from './sprites'
 import {SPRITE_SERVICE_LOG} from './sprites-service'
@@ -137,17 +138,13 @@ export async function upgradeDockerDeployment(
   host.log('Building Docker image...')
   const {spawn} = await import('child_process')
 
-  const buildProc = spawn('docker', ['build', '--progress=plain', '--load', '-t', `cast-${agentName}:latest`, '-f', dockerfilePath, agentPath], {
-    stdio: process.stdout.isTTY ? 'inherit' : 'pipe',
-  })
-
-  await new Promise<void>((resolve, reject) => {
-    buildProc.on('error', reject)
-    buildProc.on('exit', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(`Docker build failed with code ${code}`))
-    })
-  })
+  const built = await execCommand('docker', ['build', '--progress=plain', '--load', '-t', `cast-${agentName}:latest`, '-f', dockerfilePath, agentPath])
+  if (built.exitCode !== 0) {
+    throw new Error(appendCompilerHint(
+      `Docker build failed with code ${built.exitCode}`,
+      `${built.stdout}\n${built.stderr}`,
+    ))
+  }
 
   const containerName = `cast-${agentName}`
   try {
@@ -362,18 +359,13 @@ export async function upgradeDigitalOceanDeployment(
 
   const imageName = `registry.digitalocean.com/cast-${agentName}/agent:${version}`
 
-  const buildProc = spawn('docker', ['build', '-t', imageName, '.'], {
-    cwd: agentPath,
-    stdio: 'inherit',
-  })
-
-  await new Promise<void>((resolve, reject) => {
-    buildProc.on('error', reject)
-    buildProc.on('exit', (code) => {
-      if (code === 0) resolve()
-      else reject(new Error(`Docker build failed with code ${code}`))
-    })
-  })
+  const built = await execCommand('docker', ['build', '-t', imageName, '.'], {cwd: agentPath})
+  if (built.exitCode !== 0) {
+    throw new Error(appendCompilerHint(
+      `Docker build failed with code ${built.exitCode}`,
+      `${built.stdout}\n${built.stderr}`,
+    ))
+  }
 
   const pushProc = spawn('docker', ['push', imageName], {
     stdio: 'inherit',

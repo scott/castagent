@@ -7,6 +7,7 @@ import YAML from 'yaml'
 import { db } from '../sqlite'
 import { keychain, type TokenStore } from '../keychain'
 import {runtimeDockerfileCmd} from '../runtime-args'
+import {PAST_AGENT_DOCKERFILES} from './past-agent-dockerfiles'
 import {writeRequirementsTxt} from './requirements'
 
 const CAST_DIR = path.join(os.homedir(), '.cast')
@@ -506,22 +507,72 @@ export async function forgetDeploymentTokens(
   return finish(removedDeploymentToken ? 'deployment' : 'none')
 }
 
+/** Printed once when a Cast Dockerfile was edited and is left in place. */
+export const EDITED_DOCKERFILE_MESSAGE = 'Keeping your edited Dockerfile; delete it to regenerate.'
+
+const COMPILER_HINT = 'This package needs a compiler. Edit the Dockerfile and add build-essential to the apt line. See https://castagent.dev/building-agents/deployment/overview#what-gets-shipped'
+
+/**
+ * One-line hint when a pip build fails because the image has no compiler.
+ * The deployment overview explains how to add `build-essential`.
+ */
+export function compilerBuildHint(output: string): string | undefined {
+  if (
+    output.includes("command 'gcc' failed")
+    || output.includes("error: command 'cc'")
+    || output.includes('Failed building wheel')
+  ) {
+    return COMPILER_HINT
+  }
+  return undefined
+}
+
+/** Append the compiler hint when the build output shows a missing compiler. */
+export function appendCompilerHint(message: string, output: string): string {
+  const hint = compilerBuildHint(output)
+  return hint ? `${message}\n${hint}` : message
+}
+
+/**
+ * Whitespace and line endings are not an edit. Anything else is.
+ * Blank lines and runs of spaces or tabs are ignored.
+ */
+export function normalizeDockerfile(content: string): string {
+  return content
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .split('\n')
+    .map(line => line.trim().replace(/[ \t]+/g, ' '))
+    .filter(line => line.length > 0)
+    .join('\n')
+}
+
+function dockerfileMatches(content: string, template: string): boolean {
+  return normalizeDockerfile(content) === normalizeDockerfile(template)
+}
+
 export function ensureDockerfile(agentPath: string): void {
   const dockerfilePath = path.join(agentPath, 'Dockerfile')
   if (!fs.existsSync(dockerfilePath)) {
     fs.writeFileSync(dockerfilePath, renderAgentDockerfile())
-  } else {
-    const current = fs.readFileSync(dockerfilePath, 'utf8')
-    // Railway does not stage the Cast package. Refresh only a generated
-    // file that still installs a compiler or skips the slim git install,
-    // and leave a Cast-copying Dockerfile for ensureCastRuntimeDockerfile.
-    if (
-      isGeneratedAgentDockerfile(current)
-      && !dockerfileCopiesCastPackage(current)
-      && (dockerfileInstallsGcc(current) || !dockerfileInstallsRuntimeGit(current))
-    ) {
-      fs.writeFileSync(dockerfilePath, renderAgentDockerfile())
-    }
+    return
+  }
+  const current = fs.readFileSync(dockerfilePath, 'utf8')
+  const desired = renderAgentDockerfile()
+  // Railway does not stage the Cast package. Replace a file only when it
+  // is still a template Cast wrote. An edited file stays, including one
+  // that adds a compiler.
+  if (dockerfileMatches(current, desired)) return
+  if (PAST_AGENT_DOCKERFILES.some(template =>
+    !dockerfileCopiesCastPackage(template) && dockerfileMatches(current, template)
+  )) {
+    fs.writeFileSync(dockerfilePath, desired)
+    return
+  }
+  if (dockerfileMatches(current, castRuntimeDockerfile())) return
+  if (PAST_AGENT_DOCKERFILES.some(template => dockerfileMatches(current, template))) return
+  if (isCastDockerfileFamily(current)) {
+    console.log(EDITED_DOCKERFILE_MESSAGE)
   }
 }
 
@@ -544,9 +595,10 @@ export interface AgentDockerfileOptions {
  *
  * Git stays. GitPython 3.2.1 raises ImportError at import when the git
  * binary is missing, and the runtime imports GitPython while loading tools.
- * gcc does not. The declared packages, including langgraph, langchain,
- * httpx, starlette, uvicorn, and PyYAML, install from wheels on
- * python:3.11-slim.
+ * The image has no compiler. The declared packages, including langgraph,
+ * langchain, httpx, starlette, uvicorn, and PyYAML, install from wheels
+ * on python:3.11-slim-bookworm. An agent that needs a compiler edits this
+ * file. Cast keeps that edit.
  */
 export function renderAgentDockerfile(options: AgentDockerfileOptions = {}): string {
   const copyCastPackage = options.copyCastPackage === true
@@ -599,14 +651,15 @@ export function dockerfileCopiesCastPackage(content: string): boolean {
   return /^\s*COPY\s+\.cast-runtime\/cast\s+\/app\/cast(?:\s|$)/m.test(content)
 }
 
-export function isGeneratedAgentDockerfile(content: string): boolean {
+/**
+ * A file Cast generated, or an edit of one. A custom Dockerfile does not match.
+ * Installing gcc is not itself a reason to replace the file.
+ */
+function isCastDockerfileFamily(content: string): boolean {
   if (!content.includes('cast.runtime')) return false
   if (content.includes(GENERATED_DOCKERFILE_MARKER)) return true
   if (content.includes(LEGACY_BUILDER_MARKER)) return true
-  const flat = flattenDockerfile(content)
   return content.includes('# Install system dependencies')
-    && /apt-get install\b[^\n]*\bgcc\b/.test(flat)
-    && /apt-get install\b[^\n]*\bgit\b/.test(flat)
 }
 
 function flattenDockerfile(content: string): string {
@@ -624,30 +677,21 @@ export function dockerfileInstallsRuntimeGit(content: string): boolean {
     && /rm -rf \/var\/lib\/apt\/lists\/\*/.test(runtime)
 }
 
-function dockerfileInstallsGcc(content: string): boolean {
-  return /apt-get install\b[^\n]*\bgcc\b/.test(flattenDockerfile(content))
-}
-
-function isCurrentCastRuntimeDockerfile(content: string): boolean {
-  return dockerfileCopiesCastPackage(content)
-    && /PYTHONPATH=\/app(?:\s|$)/.test(content)
-    && dockerfileInstallsRuntimeGit(content)
-    && !dockerfileInstallsGcc(content)
-}
-
 /**
- * Write the shared agent Dockerfile, or replace a previously generated
- * file that omitted the Cast package, still installs gcc, or whose git
- * install pulls recommended packages or leaves the apt lists. A custom
- * Dockerfile is left in place.
+ * Write the shared agent Dockerfile, or replace a file that still matches
+ * a template Cast generated. An edited file is left in place.
+ * ensureDockerfile prints the keep line for that edit.
  */
 export function ensureCastRuntimeDockerfile(agentPath: string): void {
   ensureDockerfile(agentPath)
   const dockerfilePath = path.join(agentPath, 'Dockerfile')
   const current = fs.readFileSync(dockerfilePath, 'utf8')
-  if (isCurrentCastRuntimeDockerfile(current)) return
-  if (!isGeneratedAgentDockerfile(current)) return
-  fs.writeFileSync(dockerfilePath, castRuntimeDockerfile())
+  const desired = castRuntimeDockerfile()
+  if (dockerfileMatches(current, desired)) return
+  const known = [renderAgentDockerfile(), ...PAST_AGENT_DOCKERFILES]
+  if (known.some(template => dockerfileMatches(current, template))) {
+    fs.writeFileSync(dockerfilePath, desired)
+  }
 }
 
 /** Dockerfile, dockerignore, and requirements for a Droplet or MicroVM image. */

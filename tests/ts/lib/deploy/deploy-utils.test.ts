@@ -16,10 +16,16 @@ import {
   ensureCastRuntimeDockerfile,
   dockerfileInstallsRuntimeGit,
   prepareCastImageContext,
+  EDITED_DOCKERFILE_MESSAGE,
+  renderAgentDockerfile,
+  castRuntimeDockerfile,
+  compilerBuildHint,
+  appendCompilerHint,
   prepareHostTuiBuildContext,
   installPin,
 } from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
 import * as deployUtils from '../../../../typescript/cast-cli/src/lib/deploy/deploy-utils'
+import {PAST_AGENT_DOCKERFILES} from '../../../../typescript/cast-cli/src/lib/deploy/past-agent-dockerfiles'
 import * as path from 'path'
 import * as os from 'os'
 import * as sinon from 'sinon'
@@ -408,12 +414,31 @@ describe('deleteMemoryVolume', () => {
   })
 })
 
+function oldDockerTemplate(): string {
+  const template = PAST_AGENT_DOCKERFILES.find(item =>
+    item.startsWith('FROM python:3.11-slim\n')
+    && item.includes('\n    gcc \\\n')
+    && item.includes('\n    git \\\n')
+    && item.includes('COPY .cast-runtime/cast /app/cast\n')
+  )
+  if (!template) throw new Error('missing old docker template')
+  return template
+}
+
+function expectEditedKept(log: sinon.SinonStub, dockerfilePath: string, original: string) {
+  expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal(original)
+  expect(log.calledOnce).to.equal(true)
+  expect(log.firstCall.args[0]).to.equal(EDITED_DOCKERFILE_MESSAGE)
+}
+
 describe('ensureDockerfile', () => {
   let sandbox: sinon.SinonSandbox
+  let log: sinon.SinonStub
   const tempDir = path.join(os.tmpdir(), 'cast-test-' + Date.now())
 
   beforeEach(() => {
     sandbox = sinon.createSandbox()
+    log = sandbox.stub(console, 'log')
     fs.mkdirSync(tempDir, { recursive: true })
   })
 
@@ -439,24 +464,31 @@ describe('ensureDockerfile', () => {
     expect(content).to.equal('FROM custom:latest\n')
   })
 
-  it('replaces a generated Dockerfile that installs gcc and does not copy cast', () => {
+  it('keeps an edited Dockerfile on the Railway path', () => {
     const dockerfilePath = path.join(tempDir, 'Dockerfile')
-    const old = `FROM python:3.11-slim-bookworm AS builder
-WORKDIR /build
-RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
-FROM python:3.11-slim-bookworm
-WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-ENV PYTHONPATH=/usr/local
-CMD ["python", "-m", "cast.runtime"]
-`
-    fs.writeFileSync(dockerfilePath, old)
+    const edited = renderAgentDockerfile().replace(
+      'apt-get install -y --no-install-recommends git',
+      'apt-get install -y --no-install-recommends gcc git',
+    )
+    fs.writeFileSync(dockerfilePath, edited)
     ensureDockerfile(tempDir)
-    const dockerfile = fs.readFileSync(dockerfilePath, 'utf8')
-    expect(dockerfile).to.not.equal(old)
-    expect(dockerfile).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
-    expect(dockerfile).to.include('PYTHONPATH=/usr/local')
-    expect(dockerfile).to.not.include('COPY .cast-runtime/cast')
+    expectEditedKept(log, dockerfilePath, edited)
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.include('gcc')
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.include('PYTHONPATH=/usr/local')
+  })
+
+  it('upgrades an unmodified old Railway Dockerfile', () => {
+    const dockerfilePath = path.join(tempDir, 'Dockerfile')
+    const old = PAST_AGENT_DOCKERFILES.find(item =>
+      item.includes('FROM python:3.11-slim-bookworm AS builder')
+      && item.includes('PYTHONPATH=/usr/local')
+      && !item.includes('COPY .cast-runtime/cast')
+    )
+    if (!old) throw new Error('missing old railway template')
+    fs.writeFileSync(dockerfilePath, old.replace(/\n/g, '\r\n'))
+    ensureDockerfile(tempDir)
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal(renderAgentDockerfile())
+    expect(log.called).to.equal(false)
   })
 
   it('does not replace a Dockerfile that copies the cast package', () => {
@@ -470,7 +502,7 @@ CMD ["python", "-m", "cast.runtime"]
 `
     fs.writeFileSync(dockerfilePath, castFile)
     ensureDockerfile(tempDir)
-    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal(castFile)
+    expectEditedKept(log, dockerfilePath, castFile)
   })
 
   it('does not write a private requirements list', () => {
@@ -493,12 +525,17 @@ CMD ["python", "-m", "cast.runtime"]
 
 describe('ensureCastRuntimeDockerfile', () => {
   let agentDir = ''
+  let sandbox: sinon.SinonSandbox
+  let log: sinon.SinonStub
 
   beforeEach(() => {
+    sandbox = sinon.createSandbox()
+    log = sandbox.stub(console, 'log')
     agentDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-image-'))
   })
 
   afterEach(() => {
+    sandbox.restore()
     if (agentDir) fs.rmSync(agentDir, {recursive: true, force: true})
   })
 
@@ -543,7 +580,65 @@ describe('ensureCastRuntimeDockerfile', () => {
     expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal('FROM custom:latest\n')
   })
 
-  it('replaces a generated Dockerfile that installs git only next to gcc in the builder', () => {
+  it('keeps an edited generated Dockerfile that adds gcc', () => {
+    const dockerfilePath = path.join(agentDir, 'Dockerfile')
+    const edited = castRuntimeDockerfile().replace(
+      'apt-get install -y --no-install-recommends git',
+      'apt-get install -y --no-install-recommends gcc git',
+    )
+    fs.writeFileSync(dockerfilePath, edited)
+    ensureCastRuntimeDockerfile(agentDir)
+    expectEditedKept(log, dockerfilePath, edited)
+  })
+
+  it('keeps an edited copy of an old Dockerfile template', () => {
+    const dockerfilePath = path.join(agentDir, 'Dockerfile')
+    const edited = oldDockerTemplate().replace(
+      '# Install system dependencies\n',
+      '# Install system dependencies\n# added build-essential for a package that has no wheel\n',
+    ).replace(
+      '\n    gcc \\\n',
+      '\n    gcc \\\n    build-essential \\\n',
+    )
+    fs.writeFileSync(dockerfilePath, edited)
+    ensureCastRuntimeDockerfile(agentDir)
+    expectEditedKept(log, dockerfilePath, edited)
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.include('build-essential')
+  })
+
+  it('keeps an edited Railway Dockerfile when the cast runtime helper runs', () => {
+    const dockerfilePath = path.join(agentDir, 'Dockerfile')
+    const edited = renderAgentDockerfile().replace(
+      'apt-get install -y --no-install-recommends git',
+      'apt-get install -y --no-install-recommends gcc git',
+    )
+    fs.writeFileSync(dockerfilePath, edited)
+    ensureCastRuntimeDockerfile(agentDir)
+    expectEditedKept(log, dockerfilePath, edited)
+  })
+
+  it('upgrades an unmodified old Dockerfile template', () => {
+    const dockerfilePath = path.join(agentDir, 'Dockerfile')
+    fs.writeFileSync(dockerfilePath, oldDockerTemplate())
+    ensureCastRuntimeDockerfile(agentDir)
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal(castRuntimeDockerfile())
+    expect(log.called).to.equal(false)
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.include('python:3.11-slim-bookworm')
+  })
+
+  it('upgrades every unmodified template Cast used to write', () => {
+    const dockerfilePath = path.join(agentDir, 'Dockerfile')
+    for (const template of PAST_AGENT_DOCKERFILES) {
+      log.resetHistory()
+      fs.writeFileSync(dockerfilePath, template)
+      ensureCastRuntimeDockerfile(agentDir)
+      expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal(castRuntimeDockerfile())
+      expect(log.called).to.equal(false)
+    }
+  })
+
+  it('keeps an edited abbreviated builder Dockerfile', () => {
     const dockerfilePath = path.join(agentDir, 'Dockerfile')
     const builderOnly = `FROM python:3.11-slim-bookworm AS builder
 
@@ -557,114 +652,8 @@ ENV PYTHONPATH=/app
 CMD ["python", "-m", "cast.runtime"]
 `
     fs.writeFileSync(dockerfilePath, builderOnly)
-    expect(dockerfileInstallsRuntimeGit(builderOnly)).to.equal(false)
-
     ensureCastRuntimeDockerfile(agentDir)
-    const dockerfile = fs.readFileSync(dockerfilePath, 'utf8')
-    expect(dockerfile).to.not.equal(builderOnly)
-    expect(runtimeStage(dockerfile)).to.match(/apt-get install -y --no-install-recommends git\b/)
-    expect(runtimeStage(dockerfile)).to.match(/rm -rf \/var\/lib\/apt\/lists\/\*/)
-    expect(dockerfile).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
-    expect(dockerfile).to.include('COPY .cast-runtime/cast /app/cast')
-  })
-
-  it('replaces a generated Dockerfile that installs git with recommended packages', () => {
-    const dockerfilePath = path.join(agentDir, 'Dockerfile')
-    const recommended = `FROM python:3.11-slim-bookworm AS builder
-
-WORKDIR /build
-RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
-
-FROM python:3.11-slim-bookworm
-WORKDIR /app
-RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
-COPY .cast-runtime/cast /app/cast
-ENV PYTHONPATH=/app
-CMD ["python", "-m", "cast.runtime"]
-`
-    fs.writeFileSync(dockerfilePath, recommended)
-    expect(dockerfileInstallsRuntimeGit(recommended)).to.equal(false)
-
-    ensureCastRuntimeDockerfile(agentDir)
-    const dockerfile = fs.readFileSync(dockerfilePath, 'utf8')
-    const runtime = runtimeStage(dockerfile)
-    expect(dockerfile).to.not.equal(recommended)
-    expect(runtime).to.match(/apt-get install -y --no-install-recommends git\b/)
-    expect(runtime).to.match(/rm -rf \/var\/lib\/apt\/lists\/\*/)
-    expect(dockerfile).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
-  })
-
-  it('replaces a generated Dockerfile that installs git and leaves the apt lists', () => {
-    const dockerfilePath = path.join(agentDir, 'Dockerfile')
-    const dirtyLists = `FROM python:3.11-slim-bookworm AS builder
-
-WORKDIR /build
-RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
-
-FROM python:3.11-slim-bookworm
-WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends git
-COPY .cast-runtime/cast /app/cast
-ENV PYTHONPATH=/app
-CMD ["python", "-m", "cast.runtime"]
-`
-    fs.writeFileSync(dockerfilePath, dirtyLists)
-    expect(dockerfileInstallsRuntimeGit(dirtyLists)).to.equal(false)
-
-    ensureCastRuntimeDockerfile(agentDir)
-    const runtime = runtimeStage(fs.readFileSync(dockerfilePath, 'utf8'))
-    expect(runtime).to.match(/apt-get install -y --no-install-recommends git\b/)
-    expect(runtime).to.match(/rm -rf \/var\/lib\/apt\/lists\/\*/)
-  })
-
-  it('replaces a generated Dockerfile that still installs gcc in the builder', () => {
-    const dockerfilePath = path.join(agentDir, 'Dockerfile')
-    const withCompiler = `FROM python:3.11-slim-bookworm AS builder
-
-WORKDIR /build
-RUN apt-get update && apt-get install -y gcc && rm -rf /var/lib/apt/lists/*
-
-FROM python:3.11-slim-bookworm
-WORKDIR /app
-RUN apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
-COPY .cast-runtime/cast /app/cast
-ENV PYTHONPATH=/app
-# keep-tui-sentinel
-CMD ["python", "-m", "cast.runtime"]
-`
-    fs.writeFileSync(dockerfilePath, withCompiler)
-    ensureCastRuntimeDockerfile(agentDir)
-    const dockerfile = fs.readFileSync(dockerfilePath, 'utf8')
-    expect(dockerfile).to.not.equal(withCompiler)
-    expect(dockerfile).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
-    expect(dockerfile).to.match(/apt-get install -y --no-install-recommends git\b/)
-    expect(dockerfile).to.include('COPY .cast-runtime/cast /app/cast')
-  })
-
-  it('replaces the legacy single-stage Dockerfile that installs gcc and git together', () => {
-    const dockerfilePath = path.join(agentDir, 'Dockerfile')
-    const legacy = `FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \\
-    gcc \\
-    git \\
-    && rm -rf /var/lib/apt/lists/*
-
-COPY .cast-runtime/cast /app/cast
-ENV PYTHONPATH=/app
-CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "8080", "--host", "0.0.0.0"]
-`
-    fs.writeFileSync(dockerfilePath, legacy)
-    ensureCastRuntimeDockerfile(agentDir)
-    const dockerfile = fs.readFileSync(dockerfilePath, 'utf8')
-    expect(dockerfile).to.not.equal(legacy)
-    expect(dockerfile).to.not.match(/apt-get install\b[^\n]*\bgcc\b/)
-    expect(dockerfile).to.match(/apt-get install -y --no-install-recommends git\b/)
-    expect(dockerfile).to.match(/rm -rf \/var\/lib\/apt\/lists\/\*/)
-    expect(dockerfile).to.include('COPY .cast-runtime/cast /app/cast')
+    expectEditedKept(log, dockerfilePath, builderOnly)
   })
 
   it('keeps a generated Dockerfile that installs git without a compiler', () => {
@@ -683,7 +672,7 @@ CMD ["python", "-m", "cast.runtime"]
 `
     fs.writeFileSync(dockerfilePath, current)
     ensureCastRuntimeDockerfile(agentDir)
-    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal(current)
+    expectEditedKept(log, dockerfilePath, current)
   })
 
   it('leaves a custom Dockerfile that installs gcc', () => {
@@ -692,6 +681,35 @@ CMD ["python", "-m", "cast.runtime"]
     fs.writeFileSync(dockerfilePath, custom)
     ensureCastRuntimeDockerfile(agentDir)
     expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal(custom)
+    expect(log.called).to.equal(false)
+  })
+})
+
+describe('compilerBuildHint', () => {
+  const hint = 'https://castagent.dev/building-agents/deployment/overview#what-gets-shipped'
+
+  it('points at the deployment overview when a compiler is missing', () => {
+    for (const output of [
+      "error: command 'gcc' failed: No such file or directory",
+      "error: command 'cc' failed with exit status 1",
+      'Failed building wheel for example-package',
+    ]) {
+      const line = compilerBuildHint(output)
+      expect(line).to.be.a('string')
+      expect(line).to.include('build-essential')
+      expect(line).to.include(hint)
+      expect(line).to.not.include('\n')
+      expect(appendCompilerHint('Docker build failed with code 1', output)).to.equal(
+        `Docker build failed with code 1\n${line}`,
+      )
+    }
+  })
+
+  it('stays quiet for other build failures', () => {
+    expect(compilerBuildHint('network timeout')).to.equal(undefined)
+    expect(appendCompilerHint('Docker build failed with code 1', 'network timeout')).to.equal(
+      'Docker build failed with code 1',
+    )
   })
 })
 
