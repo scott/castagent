@@ -497,14 +497,9 @@ function spriteVolumeConfigs(
   return configs
 }
 
-function archiveEntryIsDirectory(entry: object): boolean {
-  if (!('isDirectory' in entry) || typeof entry.isDirectory !== 'function') return false
-  return entry.isDirectory() === true
-}
-
 /**
  * Pack an agent directory for a Sprites upload.
- * Excluded directories are not opened, so an unreadable file under `.cast/`
+ * A matching directory is not opened, so an unreadable file under `.cast/`
  * does not fail the archive.
  */
 export async function createSpriteAgentArchive(agentPath: string, tarPath: string): Promise<void> {
@@ -512,7 +507,7 @@ export async function createSpriteAgentArchive(agentPath: string, tarPath: strin
     gzip: true,
     file: tarPath,
     cwd: agentPath,
-    filter: (entryPath, entry) => !dockerBuildContextExcluded(entryPath, archiveEntryIsDirectory(entry)),
+    filter: (entryPath) => !dockerBuildContextExcluded(entryPath),
   }, ['.'])
 }
 

@@ -24,6 +24,9 @@ function writeFixture(root: string): void {
   const files = [
     'agent.yaml',
     'skills/search.md',
+    'skills/x.log',
+    'skills/data.zip',
+    'skills/__pycache__/m.pyc',
     '.cast-runtime/cast/__init__.py',
     '.cast/releases/1.0.0.tar.gz',
     '.cast/releases/releases.json',
@@ -67,6 +70,9 @@ describe('Sprites agent archive', () => {
 
     expect(entries).to.include('agent.yaml')
     expect(entries).to.include('skills/search.md')
+    expect(entries).to.include('skills/x.log')
+    expect(entries).to.include('skills/data.zip')
+    expect(entries).to.include('skills/__pycache__/m.pyc')
     expect(entries).to.include('.cast-runtime/cast/__init__.py')
     expect(entries).to.not.include('.cast')
     expect(entries).to.not.include('.cast/releases/1.0.0.tar.gz')
@@ -86,7 +92,8 @@ describe('Sprites agent archive', () => {
     expect(entries.some(name => name === '.cast' || name.startsWith('.cast/'))).to.equal(false)
   })
 
-  it('packs an agent whose releases.json cannot be read', async () => {
+  it('packs an agent whose releases.json cannot be read', async function () {
+    if (process.getuid?.() === 0) this.skip()
     const agentPath = path.join(dir, 'agent')
     fs.mkdirSync(agentPath)
     writeFixture(agentPath)

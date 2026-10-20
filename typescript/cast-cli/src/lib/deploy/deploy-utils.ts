@@ -1529,20 +1529,18 @@ export const DOCKER_BUILD_CONTEXT_IGNORE_LINES = [
   '.dockerignore',
 ] as const
 
-interface BuildContextIgnoreRule {
-  dirOnly: boolean
-  matches: (name: string) => boolean
+/** Strip a trailing slash. Docker's filepath.Clean does this; it is not "directories only". */
+function cleanIgnorePattern(pattern: string): string {
+  let cleaned = pattern
+  while (cleaned.endsWith('/')) cleaned = cleaned.slice(0, -1)
+  return cleaned
 }
 
-function compileBuildContextIgnore(line: string): BuildContextIgnoreRule {
-  const dirOnly = line.endsWith('/')
-  const body = dirOnly ? line.slice(0, -1) : line
-  return {dirOnly, matches: basenameGlob(body)}
-}
-
-const DOCKER_BUILD_CONTEXT_RULES = DOCKER_BUILD_CONTEXT_IGNORE_LINES.map(compileBuildContextIgnore)
-
-function basenameGlob(pattern: string): (name: string) => boolean {
+/**
+ * Go filepath.Match against one full path.
+ * `*` and `?` do not cross `/`. There is no `**`.
+ */
+function filepathMatch(pattern: string): (name: string) => boolean {
   let body = ''
   for (let i = 0; i < pattern.length; i++) {
     const char = pattern[i]
@@ -1562,11 +1560,18 @@ function basenameGlob(pattern: string): (name: string) => boolean {
         continue
       }
     }
+    if (char === '\\' && i + 1 < pattern.length) {
+      i += 1
+      body += pattern[i].replace(/[\\^$+?.()|{]/g, '\\$&')
+      continue
+    }
     body += char.replace(/[\\^$+?.()|{]/g, '\\$&')
   }
   const expression = new RegExp(`^${body}$`)
   return (name: string) => expression.test(name)
 }
+
+const DOCKER_BUILD_CONTEXT_RULES = DOCKER_BUILD_CONTEXT_IGNORE_LINES.map(line => filepathMatch(cleanIgnorePattern(line)))
 
 function contextRelativePath(entryPath: string): string {
   let rel = entryPath.replace(/\\/g, '/')
@@ -1574,17 +1579,28 @@ function contextRelativePath(entryPath: string): string {
   return rel.replace(/^\/+/, '').replace(/\/+$/, '')
 }
 
+function pathMatchesBuildContext(rel: string): boolean {
+  for (const matches of DOCKER_BUILD_CONTEXT_RULES) {
+    if (matches(rel)) return true
+  }
+  return false
+}
+
 /**
  * True when a Docker build context would leave this path out.
- * Patterns match the final path segment.
+ * Each ignore line is cleaned (a trailing `/` is removed) and matched with
+ * filepath.Match against the full root-relative path. A matching directory
+ * excludes everything under it.
  */
-export function dockerBuildContextExcluded(entryPath: string, isDirectory: boolean): boolean {
+export function dockerBuildContextExcluded(entryPath: string): boolean {
   const rel = contextRelativePath(entryPath)
   if (rel === '' || rel === '.') return false
-  const name = rel.slice(rel.lastIndexOf('/') + 1)
-  for (const rule of DOCKER_BUILD_CONTEXT_RULES) {
-    if (rule.dirOnly && !isDirectory) continue
-    if (rule.matches(name)) return true
+  let cursor = rel
+  while (cursor.length > 0) {
+    if (pathMatchesBuildContext(cursor)) return true
+    const slash = cursor.lastIndexOf('/')
+    if (slash <= 0) return false
+    cursor = cursor.slice(0, slash)
   }
   return false
 }
