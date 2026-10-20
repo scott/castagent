@@ -20,8 +20,9 @@ import {
   createDockerignore,
   storeAuthToken,
   saveDeployment,
+  ensureCastRuntimeDockerfile,
+  appendCompilerHint,
 } from './deploy-utils'
-import {runtimeDockerfileCmd} from '../runtime-args'
 import {writeRequirementsTxt} from './requirements'
 
 // Helper to run a shell command and return its exit code
@@ -396,10 +397,11 @@ export default class DockerDeploy extends Command {
 
     fs.cpSync(castPackageSource, castRuntimeDir, {recursive: true})
 
-    // Generate deployment files
+    // Generate deployment files. A custom Dockerfile is left in place.
+    // --no-build keeps an existing file, including a stale generated one.
     const dockerfilePath = path.join(agentPath, 'Dockerfile')
-    if (!fs.existsSync(dockerfilePath) || !flags['no-build']) {
-      this.createDockerfile(agentPath)
+    if (!flags['no-build'] || !fs.existsSync(dockerfilePath)) {
+      ensureCastRuntimeDockerfile(agentPath)
     }
 
     this.createDockerignore(agentPath)
@@ -411,9 +413,12 @@ export default class DockerDeploy extends Command {
     // Build Docker image
     this.log('Building Docker image...')
     // Use --progress=plain for cleaner output in non-TTY environments (like TUI)
-    const buildCode = await runCommand('docker', ['build', '--progress=plain', '--load', '-t', imageName, '-f', dockerfilePath, agentPath])
-    if (buildCode !== 0) {
-      this.error(`Docker build failed with code ${buildCode}`)
+    const buildResult = await execCommand('docker', ['build', '--progress=plain', '--load', '-t', imageName, '-f', dockerfilePath, agentPath])
+    if (buildResult.exitCode !== 0) {
+      this.error(appendCompilerHint(
+        `Docker build failed with code ${buildResult.exitCode}`,
+        `${buildResult.stdout}\n${buildResult.stderr}`,
+      ))
     }
 
     // Stop existing container if running (ignore errors)
@@ -523,40 +528,6 @@ export default class DockerDeploy extends Command {
       .map((row: {volume_id?: string | null}) => row.volume_id)
     await removeDockerMemoryVolumes(agentName, recorded, dockerRunner())
     await removeDockerImage(agentName, dockerRunner())
-  }
-
-  private createDockerfile(agentPath: string): void {
-    const dockerfile = `FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install system dependencies
-RUN apt-get update && apt-get install -y \
-    gcc \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy and install Python dependencies
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
-
-# Copy cast runtime package
-COPY .cast-runtime/cast /app/cast
-
-# Copy agent files
-COPY . /app/agent/
-
-# Set environment variables
-ENV CAST_AGENT_PATH=/app/agent
-ENV PYTHONPATH=/app
-
-# Expose A2A HTTP server port
-EXPOSE 8080
-
-# Run agent A2A server
-${runtimeDockerfileCmd()}
-`
-    fs.writeFileSync(path.join(agentPath, 'Dockerfile'), dockerfile)
   }
 
   private createDockerignore(agentPath: string): void {
