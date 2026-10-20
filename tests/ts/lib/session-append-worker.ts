@@ -2,8 +2,8 @@
  * Child process for the session append seam test.
  *
  * The parent sets HOME to a temporary directory that already holds a
- * migrated sessions database and a stale ~/.cast/python. This process
- * then calls the real CLI or TUI append helper.
+ * sessions database without topic columns and a stale ~/.cast/python.
+ * This process then calls the real CLI or TUI append helper.
  */
 import * as fs from 'fs'
 import * as path from 'path'

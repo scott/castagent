@@ -49,7 +49,7 @@ describe('cast undo python runtime', () => {
     expect(resolveCastPythonRuntime(moduleDir, home).pythonPath).to.equal(pythonDir)
   })
 
-  it('keeps a checkout package that has no undo.py ahead of the migrate copy', () => {
+  it('keeps a checkout package that has no undo.py ahead of a stale ~/.cast/python copy', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-undo-missing-'))
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-undo-home-'))
     const pythonDir = path.join(root, 'python')
@@ -57,8 +57,8 @@ describe('cast undo python runtime', () => {
     fs.writeFileSync(path.join(pythonDir, 'cast', 'versioning.py'), 'pass\n')
     const stale = path.join(home, '.cast', 'python', 'cast')
     fs.mkdirSync(stale, {recursive: true})
-    fs.writeFileSync(path.join(stale, 'migrate.py'), 'pass\n')
     fs.writeFileSync(path.join(stale, 'versioning.py'), 'pass\n')
+    fs.writeFileSync(path.join(stale, '__init__.py'), 'pass\n')
     const moduleDir = path.join(root, 'typescript', 'cast-cli', 'dist', 'lib')
     fs.mkdirSync(moduleDir, {recursive: true})
 

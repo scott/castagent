@@ -158,6 +158,11 @@ branch is switched, including local `master` that tracks `origin/master`.
 and tokens in `~/.cast` stay where they are. A stale pre-TypeScript binary
 at `~/.cast/bin/cast` is removed so it cannot shadow the new CLI.
 
+An agent that still stores its history in `.cast/versions/` (the layout from
+before 1.1.0) should be updated with Cast 2.5.1 before this upgrade. The
+changelog names that step. Opening the database and creating an agent do not
+depend on that old command.
+
 Tracked TypeScript build info (`typescript/cast-cli/tsconfig.tsbuildinfo` and
 `typescript/cast-tui/tsconfig.tsbuildinfo`) is reset. A build rewrites those
 files, and checkouts from before they were removed from git still track them.
