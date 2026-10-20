@@ -1,3 +1,4 @@
+import argparse
 import asyncio
 import inspect
 import json
@@ -1506,5 +1507,17 @@ async def main():
     await server.run()
 
 
-if __name__ == "__main__":
+def run():
+    """Synchronous entry point for the cast-builder console script.
+
+    The generated script calls ``sys.exit(run())``. ``main`` is a coroutine,
+    so the script has to enter it here. ``--help`` is handled before the
+    stdio server starts.
+    """
+    parser = argparse.ArgumentParser(description="Cast Builder Agent")
+    parser.parse_args()
     asyncio.run(main())
+
+
+if __name__ == "__main__":
+    run()
