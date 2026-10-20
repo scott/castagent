@@ -535,10 +535,16 @@ export function appendCompilerHint(message: string, output: string): string {
 
 /**
  * Whitespace and line endings are not an edit. Anything else is.
- * Blank lines and runs of spaces or tabs are ignored.
+ * A backslash before a newline, or before CRLF, is a line continuation.
+ * Joining it into a space makes that form match the one line a JS template
+ * writes when the backslash is eaten. Blank lines and runs of spaces or
+ * tabs are ignored.
  */
 export function normalizeDockerfile(content: string): string {
   return content
+    .replace(/\\\r\n/g, ' ')
+    .replace(/\\\n/g, ' ')
+    .replace(/\\\r/g, ' ')
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
     .split('\n')

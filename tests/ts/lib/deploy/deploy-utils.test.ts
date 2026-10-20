@@ -627,6 +627,80 @@ describe('ensureCastRuntimeDockerfile', () => {
     expect(fs.readFileSync(dockerfilePath, 'utf8')).to.include('python:3.11-slim-bookworm')
   })
 
+  it('upgrades the one-line Dockerfile that cast deploy --provider docker wrote in 2.5.1', () => {
+    // Literal file from v2.5.1 docker.ts. The source put `\` before each
+    // newline inside a JS template, so the backslash and the newline are gone.
+    const written = `FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y     gcc     git     && rm -rf /var/lib/apt/lists/*
+
+# Copy and install Python dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy cast runtime package
+COPY .cast-runtime/cast /app/cast
+
+# Copy agent files
+COPY . /app/agent/
+
+# Set environment variables
+ENV CAST_AGENT_PATH=/app/agent
+ENV PYTHONPATH=/app
+
+# Expose A2A HTTP server port
+EXPOSE 8080
+
+# Run agent A2A server
+CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "8080", "--host", "0.0.0.0"]
+`
+    const dockerfilePath = path.join(agentDir, 'Dockerfile')
+    fs.writeFileSync(dockerfilePath, written)
+    ensureCastRuntimeDockerfile(agentDir)
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal(castRuntimeDockerfile())
+    expect(log.called).to.equal(false)
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.not.include('gcc')
+  })
+
+  it('upgrades the one-line Dockerfile that deploy-utils wrote in 1.0 and 1.1', () => {
+    // Literal file from v1.0.0 and v1.1.0 deploy-utils.ts. Same JS template
+    // line joining as the 2.5.1 Docker file. This string is not taken from
+    // the stored past-template list.
+    const written = `FROM python:3.11-slim
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y     gcc     git     && rm -rf /var/lib/apt/lists/*
+
+# Copy Python runtime
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy agent files
+COPY . /app/agent/
+
+# Set environment variables
+ENV CAST_AGENT_PATH=/app/agent
+ENV PYTHONPATH=/app
+
+# Expose port
+EXPOSE 8080
+
+# Run agent
+CMD ["python", "-m", "cast.runtime", "--agent-path", "/app/agent", "--port", "8080", "--host", "0.0.0.0"]
+`
+    const dockerfilePath = path.join(agentDir, 'Dockerfile')
+    fs.writeFileSync(dockerfilePath, written)
+    ensureCastRuntimeDockerfile(agentDir)
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.equal(castRuntimeDockerfile())
+    expect(log.called).to.equal(false)
+    expect(fs.readFileSync(dockerfilePath, 'utf8')).to.not.include('gcc')
+  })
+
   it('upgrades every unmodified template Cast used to write', () => {
     const dockerfilePath = path.join(agentDir, 'Dockerfile')
     for (const template of PAST_AGENT_DOCKERFILES) {
