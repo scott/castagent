@@ -219,8 +219,13 @@ export default class New extends Command {
       },
     })
 
-    if (result.error) {
-      this.error(`Failed to create agent: ${result.error.message}`)
+    // A builder that exits before reading the description (an import
+    // error, a config error) closes stdin while this write is still in
+    // flight. spawnSync then sets EPIPE, and also keeps the builder's
+    // status and stderr. The pipe error is not the failure to report.
+    const errno = result.error as NodeJS.ErrnoException | undefined
+    if (errno && errno.code !== 'EPIPE') {
+      this.error(`Failed to create agent: ${errno.message}`)
     }
     if (result.status !== 0) {
       const detail = `${result.stderr || result.stdout || 'Failed to create agent'}`.trim()

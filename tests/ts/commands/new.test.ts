@@ -619,8 +619,10 @@ process.stdin.on('end', () => {
 
   it('surfaces a builder failure from the piped path', () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-fail-'))
-    // Drain stdin before exiting. spawnSync reports EPIPE (and the CLI
-    // never surfaces the builder stderr) if the child closes stdin unread.
+    const agents = path.join(root, 'agents')
+    fs.mkdirSync(agents)
+    // This builder reads the description, then fails. CAST_AGENTS_DIR
+    // keeps a bypassed shim from writing into ~/.cast/agents.
     const bin = plantPythonShim(root, `#!/bin/sh
 cat >/dev/null
 echo 'Could not derive an agent name from the description.' >&2
@@ -629,10 +631,38 @@ exit 2
     try {
       const result = runNew('hello from the pipe\n', {
         PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}`,
+        CAST_AGENTS_DIR: agents,
       }, root)
       expect(result.status).to.not.equal(0)
       expect(result.stderr).to.include('Could not derive an agent name from the description.')
       expect(result.stdout).to.not.include('Launching OpenTUI')
+    } finally {
+      fs.rmSync(root, {recursive: true, force: true})
+    }
+  })
+
+  it('surfaces a builder error when the builder exits before reading stdin', () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-new-stdin-epipe-'))
+    const agents = path.join(root, 'agents')
+    fs.mkdirSync(agents)
+    // Do not read stdin. A short write fits in the pipe and never raises
+    // EPIPE, so the description is larger than the default 64KiB buffer.
+    const bin = plantPythonShim(root, `#!/bin/sh
+echo 'builder failed before reading stdin' >&2
+exit 2
+`)
+    try {
+      const description = `builder input ${'x'.repeat(256 * 1024)}`
+      const result = runNew(description, {
+        PATH: `${bin}${path.delimiter}${process.env.PATH ?? ''}`,
+        CAST_AGENTS_DIR: agents,
+      }, root)
+      const output = `${result.stderr ?? ''}\n${result.stdout ?? ''}`
+      expect(result.status, output).to.not.equal(0)
+      expect(output).to.include('builder failed before reading stdin')
+      expect(output).to.not.match(/EPIPE/)
+      expect(result.stdout ?? '').to.not.include('Launching OpenTUI')
+      expect(fs.readdirSync(agents)).to.deep.equal([])
     } finally {
       fs.rmSync(root, {recursive: true, force: true})
     }

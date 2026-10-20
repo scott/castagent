@@ -58,8 +58,10 @@ echo "Summarises incoming email and drafts replies." | cast new
 Otherwise Cast derives one from the description, so an email assistant
 becomes `email-agent`. It records that name in
 `~/.cast/cast.db` and prints the agent name and path.
-It does not open the TUI. A blank pipe is an error. On a terminal, the
-same command still opens the Builder wizard and asks you to confirm the
+It does not open the TUI. A blank pipe is an error. If the builder
+fails, `cast new` prints the builder's own error, including when the
+builder exits before it reads the description. On a terminal, the same
+command still opens the Builder wizard and asks you to confirm the
 name.
 
 You can start the same flow for a name you already chose:
