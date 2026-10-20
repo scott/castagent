@@ -756,21 +756,14 @@ Both are bumped together in lockstep (changesets `fixed: [["*"]]` config) and sh
 
 ### Making a Change
 
-You do **not** need to hand-author a changeset. When a PR is merged to `main`, the `Auto Create Changeset` workflow automatically generates a changeset file from:
-
-- The PR's labels (`major` / `breaking`, `minor` / `feature` / `enhancement`, `fix` / `bugfix` / `hotfix`) and/or
-- Conventional commit prefixes in the PR title (`feat:`, `fix:`, `BREAKING CHANGE:`)
-
-The generated changeset targets both `cast-cli` and `cast-tui` at the determined bump level.
-
-If you prefer to author a changeset by hand, you can still do so:
+Add a changeset file in the pull request. The Release workflow on `main` reads files in `.changeset/`. It does not create them.
 
 1. Make your changes in a feature branch
 2. Run `npx changeset` to describe your change
 3. Commit the changeset file along with your code
 4. Open a PR with your changeset
 
-When writing a changeset by hand, use the workspace package names (`cast-cli`, `cast-tui`), not the root `castagent` workspace name — the root package is private and not a changeset target.
+Use the workspace package names (`cast-cli`, `cast-tui`), not the root `castagent` workspace name. The root package is private and is not a changeset target.
 
 ### Changeset Prompt Guide
 
@@ -785,7 +778,7 @@ When running `npx changeset`:
 ### Release Process
 
 1. PR with changeset merged to `main`
-2. GitHub Actions workflow automatically:
+2. The Release workflow (`.github/workflows/release.yml`) on `main`:
    - Bumps version in all package.json files (`cast-cli`, `cast-tui`)
    - Updates `CHANGELOG.md` files
    - Creates a git tag (e.g., `v0.2.0`)
