@@ -73,7 +73,9 @@ UPDATE_ENDINGS=1 node tests/e2e/run.mjs
 ```
 
 Compare this checkout with the merge base. The script reuses `node_modules`
-when the lockfiles match and rebuilds the CLI in each tree.
+when the lockfiles match and rebuilds the CLI and the TUI in each tree.
+CI installs the docs-site dependencies and Bun first, so the extractor
+test and the TUI error-handling tests run the same way as the unit job.
 
 ```bash
 node scripts/compare-failures.mjs --run
