@@ -5,6 +5,7 @@ import * as path from 'path'
 import {
   canonicalRequirementName,
   compareVersions,
+  FALLBACK_REQUIREMENTS,
   filterRequirementLines,
   findRequirementsProjectRoot,
   GITPYTHON_REQUIREMENT,
@@ -189,6 +190,56 @@ exit 1
     expect(requirementLowerBound('requests')).to.equal(null)
   })
 
+  it('sorts a pre-release or dev pin below the final release', () => {
+    expect(compareVersions('1.2.16rc1', '1.2.16')).to.be.lessThan(0)
+    expect(compareVersions('1.2.16.dev3', '1.2.16')).to.be.lessThan(0)
+    expect(compareVersions('1.2.16', '1.2.16rc1')).to.be.greaterThan(0)
+    expect(compareVersions('1.2.16', '1.2.16.dev3')).to.be.greaterThan(0)
+    expect(compareVersions('1.2.16rc1', '1.2.16rc1')).to.equal(0)
+    expect(compareVersions('1.2.16.dev3', '1.2.16rc1')).to.be.lessThan(0)
+    expect(compareVersions('1.2.16rc1', '1.2.16rc2')).to.be.lessThan(0)
+    expect(compareVersions('1.2.17.dev1', '1.2.16')).to.be.greaterThan(0)
+    expect(requirementLowerBound('langgraph==1.2.16rc1')).to.equal('1.2.16rc1')
+    expect(requirementLowerBound('PyYAML==6.0.3.dev1')).to.equal('6.0.3.dev1')
+
+    const rendered = renderRequirementsFile({
+      frozen: 'langgraph==1.2.16rc1\nPyYAML==6.0.3.dev1\n',
+      pyprojectSource: '[project]\ndependencies = ["langgraph>=1.2.16", "PyYAML>=6.0.3"]\n',
+    })
+    expect(rendered).to.include('langgraph>=1.2.16')
+    expect(rendered).to.not.include('langgraph==1.2.16rc1')
+    expect(rendered).to.include('PyYAML>=6.0.3')
+    expect(rendered).to.not.include('PyYAML==6.0.3.dev1')
+  })
+
+  it('meets every pyproject minimum in the fallback list itself', () => {
+    const source = fs.readFileSync(REPO_PYPROJECT, 'utf8')
+    const declared = parsePyprojectDependencies(source)
+    const fallbackLines = FALLBACK_REQUIREMENTS.split('\n').map(line => line.trim()).filter(Boolean)
+    for (const dep of declared) {
+      const name = canonicalRequirementName(dep)
+      const line = name === 'gitpython'
+        ? GITPYTHON_REQUIREMENT
+        : fallbackLines.find(item => canonicalRequirementName(item) === name)
+      expect(line, `${name} missing from the fallback list`).to.be.a('string')
+      expect(line, name).to.equal(dep)
+      expect(floorAtLeast(line as string, dep), `${line} is below ${dep}`).to.equal(true)
+    }
+    expect(FALLBACK_REQUIREMENTS).to.include('langchain-core>=1.6.12')
+    expect(FALLBACK_REQUIREMENTS).to.include('langchain-openai>=1.7.2')
+    expect(FALLBACK_REQUIREMENTS).to.include('langgraph>=1.2.16')
+    expect(FALLBACK_REQUIREMENTS).to.include('PyYAML>=6.0.3')
+    expect(FALLBACK_REQUIREMENTS).to.include('starlette>=1.9.0')
+    expect(FALLBACK_REQUIREMENTS).to.include('uvicorn>=0.54.0')
+    expect(FALLBACK_REQUIREMENTS).to.include('typing-extensions>=4.16.0')
+    expect(FALLBACK_REQUIREMENTS).to.not.include('langchain-core>=1.3.2')
+    expect(FALLBACK_REQUIREMENTS).to.not.include('langchain-openai>=1.2.1')
+    expect(FALLBACK_REQUIREMENTS).to.not.include('langgraph>=1.1.10')
+    expect(FALLBACK_REQUIREMENTS).to.not.include('PyYAML>=6.0.1')
+    expect(FALLBACK_REQUIREMENTS).to.not.include('starlette>=1.0.0')
+    expect(FALLBACK_REQUIREMENTS).to.not.include('uvicorn>=0.46.0')
+  })
+
   it('keeps the higher minimum when fallback, pyproject, and runtime.requirements overlap', () => {
     const rendered = renderRequirementsFile({
       frozen: '',
@@ -326,10 +377,15 @@ runtime:
 })
 
 /** Independent of requirementLowerBound, so a broken parser cannot hide a low floor. */
-function specFloor(spec: string): number[] | null {
-  const match = spec.match(/(?:==|>=|~=)\s*(\d+(?:\.\d+)*)/)
+function specFloor(spec: string): {nums: number[]; belowFinal: boolean} | null {
+  const match = spec.match(/(?:==|>=|~=)\s*v?(\d+(?:\.\d+)*)([^,;<\s]*)/)
   if (!match) return null
-  return match[1].split('.').map(part => Number(part))
+  const suffix = match[2]
+  const belowFinal = /(?:^|[-_.])(?:a|alpha|b|beta|rc|c|pre|preview|dev)\d*/i.test(suffix)
+  return {
+    nums: match[1].split('.').map(part => Number(part)),
+    belowFinal,
+  }
 }
 
 function floorAtLeast(actual: string, declared: string): boolean {
@@ -337,12 +393,13 @@ function floorAtLeast(actual: string, declared: string): boolean {
   const want = specFloor(declared)
   if (!want) return true
   if (!got) return false
-  const length = Math.max(got.length, want.length)
+  const length = Math.max(got.nums.length, want.nums.length)
   for (let i = 0; i < length; i++) {
-    const left = got[i] ?? 0
-    const right = want[i] ?? 0
+    const left = got.nums[i] ?? 0
+    const right = want.nums[i] ?? 0
     if (left !== right) return left > right
   }
+  if (got.belowFinal && !want.belowFinal) return false
   return true
 }
 

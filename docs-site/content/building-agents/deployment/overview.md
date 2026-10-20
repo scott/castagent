@@ -277,9 +277,11 @@ on the machine that ran `cast deploy`.
 that installs packages writes it again on `cast upgrade`, after any snapshot of
 the agent directory. A new provider calls the same helper on upgrade.
 The file starts from `pip freeze` of `python/.venv` when that virtualenv exists,
-otherwise from the built-in dependency list. Dependencies declared in
-`python/pyproject.toml` are applied on top. When both name a package, the higher
-minimum is kept, so an older fallback floor cannot win. Packages in the agent's
+otherwise from the built-in dependency list. That list already meets the floors
+declared in `python/pyproject.toml`, including `typing-extensions`. Those
+declared dependencies are applied on top. When both name a package, the higher
+minimum is kept. A pre-release or dev pin sorts below the matching final
+release, so pip does not keep it under the floor. Packages in the agent's
 `runtime.requirements` are merged the same way. GitPython stays at 3.2.1 or
 newer, which the runtime imports at startup. The `cast` package itself is omitted
 because the image copies that source tree in directly.

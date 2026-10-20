@@ -119,7 +119,7 @@ The provider does not repeat this work:
 - Generates the 6-character deployment SHA and sets `CAST_DEPLOYMENT_SHA`.
 - Runs the generic CLI, auth, and Docker checks from `cli`, `auth`, and `requiresDocker`.
 - Calls `prepare` after those checks, for anything the generic walkthrough cannot express.
-- Writes `requirements.txt` with `stagePythonRequirements`. Declared minimums come from `python/pyproject.toml`. A `pip freeze` pin or a built-in fallback floor is kept when it is at least that minimum. Agent `runtime.requirements` merge the same way. Install that file. Do not ship a second package list.
+- Writes `requirements.txt` with `stagePythonRequirements`. Declared minimums come from `python/pyproject.toml`. The built-in fallback list carries those same floors. A `pip freeze` pin or a fallback floor is kept when it is at least that minimum. A pre-release or dev pin sorts below the matching final release. Agent `runtime.requirements` merge the same way. Install that file. Do not ship a second package list.
 - After `deploy` resolves, stores the deployed version on the deployment row.
 
 `cast upgrade` does not write the file before `upgrade`. A failed Sprites upgrade restores a snapshot taken at the start of `upgrade`, and a file written before that snapshot would be restored with it. Call `stagePythonRequirements(agentPath)` inside `upgrade` after the snapshot. Image upgrades that already call `stageCastRuntime` or `prepareCastImageContext` write the same file.
