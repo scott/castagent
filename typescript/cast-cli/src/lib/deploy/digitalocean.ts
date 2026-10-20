@@ -24,6 +24,8 @@ import {
   checkCli,
   deploymentShaFromEnv,
   isShaPattern,
+  providerHttpUrl,
+  readProviderHttpBase,
 } from './deploy-utils'
 import {containerHealthFailureMessage, waitForContainerHealth, type ContainerProbe} from './container-health'
 import {buildCloudInitBaselineMotd, buildHostMotd, writeHostMotdOverSsh} from './motd'
@@ -958,16 +960,20 @@ export function digitalOceanKeysPage(value: unknown): string | null {
   } catch {
     return null
   }
-  if (parsed.protocol !== 'https:' || parsed.hostname !== 'api.digitalocean.com') return null
-  if (parsed.port && parsed.port !== '443') return null
   if (parsed.username || parsed.password) return null
   if (parsed.pathname !== '/v2/account/keys') return null
+  const official = parsed.protocol === 'https:'
+    && parsed.hostname === 'api.digitalocean.com'
+    && (!parsed.port || parsed.port === '443')
+  const base = readProviderHttpBase()
+  const overridden = base !== null && parsed.origin === base.origin
+  if (!official && !overridden) return null
   return parsed.toString()
 }
 
 async function listAccountSshKeys(apiToken: string): Promise<AccountSshKey[]> {
   const keys: AccountSshKey[] = []
-  let url: string | null = 'https://api.digitalocean.com/v2/account/keys?per_page=200'
+  let url: string | null = providerHttpUrl('https://api.digitalocean.com/v2/account/keys?per_page=200')
   for (let page = 0; page < 20 && url; page++) {
     const response = await axios.get(url, {
       headers: {Authorization: `Bearer ${apiToken}`},
@@ -1211,7 +1217,9 @@ export async function discardFailedDigitalOceanTokens(
   }
 }
 
-const DIGITALOCEAN_API = 'https://api.digitalocean.com/v2'
+function digitalOceanApi(): string {
+  return providerHttpUrl('https://api.digitalocean.com/v2')
+}
 const VOLUME_ACTION_TIMEOUT_MS = 60_000
 const VOLUME_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 
@@ -1365,7 +1373,7 @@ export function digitalOceanVolumeClient(apiToken: string): DigitalOceanVolumeCl
   return {
     async listVolumes(name, region) {
       try {
-        const result = await axios.get(`${DIGITALOCEAN_API}/volumes`, {
+        const result = await axios.get(`${digitalOceanApi()}/volumes`, {
           headers,
           params: {name, region},
         })
@@ -1380,7 +1388,7 @@ export function digitalOceanVolumeClient(apiToken: string): DigitalOceanVolumeCl
     },
     async createVolume(name, region) {
       try {
-        const result = await axios.post(`${DIGITALOCEAN_API}/volumes`, {
+        const result = await axios.post(`${digitalOceanApi()}/volumes`, {
           name,
           size_gigabytes: 1,
           region,
@@ -1399,7 +1407,7 @@ export function digitalOceanVolumeClient(apiToken: string): DigitalOceanVolumeCl
     },
     async attachVolumeAction(volumeId, dropletId, region) {
       try {
-        const result = await axios.post(`${DIGITALOCEAN_API}/volumes/${volumeId}/actions`, {
+        const result = await axios.post(`${digitalOceanApi()}/volumes/${volumeId}/actions`, {
           type: 'attach',
           droplet_id: dropletId,
           region,
@@ -1414,7 +1422,7 @@ export function digitalOceanVolumeClient(apiToken: string): DigitalOceanVolumeCl
     },
     async readAction(volumeId, actionId) {
       try {
-        const result = await axios.get(`${DIGITALOCEAN_API}/volumes/${volumeId}/actions/${actionId}`, {headers})
+        const result = await axios.get(`${digitalOceanApi()}/volumes/${volumeId}/actions/${actionId}`, {headers})
         const action = parseVolumeAction(result.data)
         if (!action) throw new Error(`DigitalOcean returned an unexpected action for volume ${volumeId}`)
         return action.status
@@ -1425,7 +1433,7 @@ export function digitalOceanVolumeClient(apiToken: string): DigitalOceanVolumeCl
     },
     async readVolume(volumeId) {
       try {
-        const result = await axios.get(`${DIGITALOCEAN_API}/volumes/${volumeId}`, {headers})
+        const result = await axios.get(`${digitalOceanApi()}/volumes/${volumeId}`, {headers})
         const volume = parseDigitalOceanVolumeRecord((result.data as {volume?: unknown})?.volume)
         if (!volume) throw new Error(`DigitalOcean returned an unexpected volume ${volumeId}`)
         return volume
@@ -1436,7 +1444,7 @@ export function digitalOceanVolumeClient(apiToken: string): DigitalOceanVolumeCl
     },
     async dropletExists(dropletId) {
       try {
-        await axios.get(`${DIGITALOCEAN_API}/droplets/${dropletId}`, {headers})
+        await axios.get(`${digitalOceanApi()}/droplets/${dropletId}`, {headers})
         return true
       } catch (error) {
         const parsed = volumeApiMessage(error)
@@ -2382,7 +2390,7 @@ export default class DigitalOceanDeploy extends Command {
         continue
       }
       try {
-        const response = await axios.post('https://api.digitalocean.com/v2/account/keys', {
+        const response = await axios.post(providerHttpUrl('https://api.digitalocean.com/v2/account/keys'), {
           name,
           public_key: pubKey,
         }, {headers})

@@ -1,0 +1,8 @@
+# stderr, last 12 lines, cat -A
+ ›   Warning: OpenTUI not found at <repo>/typescript/cast-tui/dist/index.js$
+# stdout, last 14 lines, cat -A
+Connecting to smoke...$
+Connection verified: <fake-http>$
+Deployment URL: <fake-http>$
+Launching OpenTUI...$
+Agent endpoint: <fake-http>$

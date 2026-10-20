@@ -62,6 +62,8 @@ no deployment was found. Use `--provider docker` to run on this machine.
 A successful Docker deploy stores the SHA printed by `cast deploy`.
 `cast registry` lists that id, and `cast connect <sha>` finds it.
 
+`CAST_PROVIDER_HTTP_BASE` is a loopback-only testing override (`127.0.0.1`, `::1`, or `localhost`). When it is set, Droplet calls to the DigitalOcean API and Fly agent-card checks use that origin and keep the official path and query. Cast stores the official provider URL, not the override. MicroVM calls to `api.digitalocean.com` keep the official host. Provider CLIs stay on `PATH`. Leave the variable unset for a normal deploy. Any other host is an error.
+
 Each provider has its own CLI auth (`railway login`, `flyctl auth login`,
 `doctl auth init`, `sprite login`). `cast deploy` walks you through any
 prerequisites interactively if you haven't set them up.
@@ -82,6 +84,7 @@ before that service existed.
 sprite CLI reads `SPRITE_TOKEN`, so Cast copies `SPRITES_TOKEN` into
 the environment of each `sprite` process when `SPRITE_TOKEN` is unset.
 The token is not passed as an argument.
+
 The launch script goes to `sprite exec` on stdin and contains the
 deployment token plus the API key for `brain.model`. Other inference
 keys stay on the machine running `cast deploy`.

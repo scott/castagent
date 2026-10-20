@@ -97,6 +97,17 @@ Sprites needs the `sprite` CLI. Set `SPRITES_TOKEN` to a token created at
 `FLY_API_TOKEN` is not a Sprites token. Cast copies `SPRITES_TOKEN` to
 `SPRITE_TOKEN` for sprite child processes when `SPRITE_TOKEN` is unset.
 
+## Testing override
+
+`CAST_PROVIDER_HTTP_BASE` is a loopback-only testing override. The value
+must be an `http` or `https` origin of `127.0.0.1`, `::1`, or `localhost`,
+with no path, query, user, or hash. When it is set, Droplet DigitalOcean
+API calls and Fly agent-card checks use that origin and keep the official
+path and query. Cast stores the official provider URL in the registry.
+MicroVM calls to `api.digitalocean.com` are not redirected. Leave it unset
+for a normal deploy. Provider CLIs stay on `PATH`. Any other host is an
+error, so a bearer token is not sent to that origin.
+
 ## Secrets
 
 - **API keys** go in `~/.cast/config.yaml` or the environment. They are never

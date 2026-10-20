@@ -709,6 +709,8 @@ export SPRITES_TOKEN="org-slug/org-id/token-id/token-value"  # from https://spri
 export DO_API_TOKEN="your-token"  # DigitalOcean deploy token
 ```
 
+`CAST_PROVIDER_HTTP_BASE` is a loopback-only testing override. Set it to an `http` or `https` origin of `127.0.0.1`, `::1`, or `localhost`, with no path, query, user, or hash. Cast then sends Droplet DigitalOcean API calls and Fly agent-card checks to that origin and keeps the official path and query. The registry stores the official provider URL, not the override. MicroVM requests to `api.digitalocean.com` are not redirected. Leave the variable unset for a normal deploy. Provider CLIs stay on `PATH`.
+
 ### LLM providers
 
 OpenRouter stays the default. The model string selects the inference provider. Both keys may be set; the prefix wins, and a missing key does not fall back to the other provider.

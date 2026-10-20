@@ -1,0 +1,17 @@
+# stderr, last 12 lines, cat -A
+$
+# stdout, last 14 lines, cat -A
+Sprites address: <fake-http>$
+That address needs Sprites org auth. A request without it returns 302 to the Sprites login page.$
+It is not a direct agent URL. Use cast connect.$
+$
+To view logs:$
+  cast logs smoke$
+  sprite exec -s cast-smoke -- cat /.sprite/logs/services/cast-agent.log$
+$
+To destroy:$
+  cast shutdown smoke$
+Warning: agent.yaml has no version. Recorded 1.0. Add a version to agent.yaml or pass --version to choose.$
+$
+Deployed smoke with deployment SHA: <sha>$
+Connect with: cast connect <sha>$

@@ -185,6 +185,69 @@ export function getAgentPath(agentName: string): string {
   return path.join(os.homedir(), '.cast', 'agents', agentName)
 }
 
+/**
+ * Loopback-only origin for provider HTTP calls during tests.
+ * `CAST_PROVIDER_HTTP_BASE` replaces the origin of an official provider URL
+ * and keeps the path and query. Unset, the official URL is used.
+ * A future provider calls `providerHttpUrl(officialUrl)` at each request.
+ * The value must be an http or https origin of 127.0.0.1, ::1, or localhost,
+ * with no user, path, query, or hash. Any other host throws.
+ * Example: `CAST_PROVIDER_HTTP_BASE=http://127.0.0.1:9` turns
+ * `https://api.digitalocean.com/v2/volumes` into `http://127.0.0.1:9/v2/volumes`.
+ * Do not store the result. The registry keeps the official provider URL.
+ * Droplet DigitalOcean API calls and Fly agent-card checks use this helper.
+ * MicroVM calls to api.digitalocean.com do not.
+ * Provider CLIs (`sprite`, `flyctl`, `doctl`) stay on `PATH`.
+ */
+export const PROVIDER_HTTP_BASE_ERROR = 'CAST_PROVIDER_HTTP_BASE must be an http or https loopback origin (127.0.0.1, ::1, or localhost) with no path, query, user, or hash'
+
+export function isLoopbackHost(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, '')
+  return host === '127.0.0.1' || host === '::1' || host === 'localhost'
+}
+
+export function readProviderHttpBase(): URL | null {
+  const raw = process.env.CAST_PROVIDER_HTTP_BASE?.trim()
+  if (!raw) return null
+  let parsed: URL
+  try {
+    parsed = new URL(raw)
+  } catch {
+    throw new Error(PROVIDER_HTTP_BASE_ERROR)
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    throw new Error(PROVIDER_HTTP_BASE_ERROR)
+  }
+  if (parsed.username || parsed.password) throw new Error(PROVIDER_HTTP_BASE_ERROR)
+  if (parsed.pathname !== '/' || parsed.search || parsed.hash) throw new Error(PROVIDER_HTTP_BASE_ERROR)
+  if (!isLoopbackHost(parsed.hostname)) throw new Error(PROVIDER_HTTP_BASE_ERROR)
+  return parsed
+}
+
+export function providerHttpUrl(officialUrl: string): string {
+  const base = readProviderHttpBase()
+  if (!base) return officialUrl
+  const official = new URL(officialUrl)
+  if (official.pathname === '/' && !official.search && !official.hash) return base.origin
+  return new URL(`${official.pathname}${official.search}${official.hash}`, base).toString()
+}
+
+/**
+ * HTTP target for a URL already stored in the registry.
+ * A loopback URL, such as a droplet SSH tunnel, is left unchanged.
+ * Any other host is rewritten only when the loopback override is set.
+ */
+export function providerRequestUrl(storedUrl: string): string {
+  let hostname = ''
+  try {
+    hostname = new URL(storedUrl).hostname
+  } catch {
+    return storedUrl
+  }
+  if (isLoopbackHost(hostname)) return storedUrl
+  return providerHttpUrl(storedUrl)
+}
+
 export function loadConfig(): any {
   if (!fs.existsSync(CONFIG_PATH)) {
     return {}

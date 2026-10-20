@@ -17,6 +17,7 @@ import {
   getAgentPath,
   inferenceEnv,
   isShaPattern,
+  providerHttpUrl,
   readAgentModel,
   saveDeployment,
   secretValues,
@@ -59,6 +60,7 @@ export function flyAppName(agentName: string): string {
   return `cast-${agentName}`
 }
 
+/** Public Fly app URL. This is the value stored in the registry. */
 export function flyDeploymentUrl(agentName: string): string {
   return `https://${flyAppName(agentName)}.fly.dev`
 }
@@ -237,7 +239,7 @@ export function flyAgentCardUrl(deploymentUrl: string): string {
 }
 
 export async function probeFlyAgentCard(deploymentUrl: string): Promise<boolean> {
-  const url = flyAgentCardUrl(deploymentUrl)
+  const url = providerHttpUrl(flyAgentCardUrl(deploymentUrl))
   try {
     const response = await fetch(url, {signal: AbortSignal.timeout(5_000)})
     if (!response.ok) return false

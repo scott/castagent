@@ -1,0 +1,17 @@
+# stderr, last 12 lines, cat -A
+$
+# stdout, last 14 lines, cat -A
+$
+To view logs:$
+  ssh -i ~/.ssh/cast_do_key -o UserKnownHostsFile=~/.cast/ssh/known_hosts -o StrictHostKeyChecking=yes -o HostKeyAlgorithms=ssh-ed25519 root@203.0.113.10 "docker logs -f cast-agent"$
+$
+To connect (from your machine):$
+  cast connect smoke$
+cast connect opens an SSH tunnel. The bearer token stays inside SSH.$
+$
+To destroy:$
+  cast shutdown smoke$
+Warning: agent.yaml has no version. Recorded 1.0. Add a version to agent.yaml or pass --version to choose.$
+$
+Deployed smoke with deployment SHA: <sha>$
+Connect with: cast connect <sha>$

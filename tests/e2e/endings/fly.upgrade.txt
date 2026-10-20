@@ -1,0 +1,14 @@
+# stderr, last 12 lines, cat -A
+$
+# stdout, last 14 lines, cat -A
+Upgrading smoke from version 1.0.0 to 1.1.0...$
+Provider: fly$
+Proceed with upgrade? (y/N) Using release 1.1.0 from <home>/.cast/agents/smoke/.cast/releases/1.1.0.tar.gz$
+Extracting version 1.1.0 tarball...$
+Triggering Fly.io deploy...$
+deployed$
+$
+Upgraded to version 1.1.0 on Fly.io.$
+Volume cast_smoke_memory.$
+$
+Upgraded to version 1.1.0 successfully.$

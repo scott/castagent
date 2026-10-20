@@ -1,0 +1,14 @@
+# stderr, last 12 lines, cat -A
+docker build failed$
+ ›   Error: Upgrade failed.$
+ ›$
+ ›   Error: Docker build failed with code 1$
+ ›$
+ ›   You can try rolling back by deploying the previous version:$
+ ›     cast deploy smoke --provider digitalocean$
+# stdout, last 14 lines, cat -A
+Upgrading smoke from version 1.0.0 to 1.1.0...$
+Provider: digitalocean$
+Proceed with upgrade? (y/N) Using release 1.1.0 from <home>/.cast/agents/smoke/.cast/releases/1.1.0.tar.gz$
+Extracting version 1.1.0 tarball...$
+Building and pushing Docker image to DigitalOcean...$

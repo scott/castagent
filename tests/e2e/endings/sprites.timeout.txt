@@ -1,0 +1,16 @@
+# stderr, last 12 lines, cat -A
+ ›   Error: Sprite command timed out after 300s: /opt/cast-agent/venv/bin/pip install -r /opt/cast-...$
+# stdout, last 14 lines, cat -A
+Deploying smoke to sprites...$
+Deploying smoke to Sprites...$
+Ensuring sprite 'cast-smoke' exists...$
+Waiting for sprite to be ready...$
+Ensuring Python is installed...$
+Transferring agent files...$
+  Tar file size: <size>MB$
+  Transferring tar to sprite (streaming)...$
+  Extracting files...$
+Creating memory directory inside sprite...$
+Setting up Python environment...$
+Installing dependencies...$
+Removed sprite 'cast-smoke' after the deploy failed.$

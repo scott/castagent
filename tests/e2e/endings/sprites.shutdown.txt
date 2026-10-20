@@ -1,0 +1,10 @@
+# stderr, last 12 lines, cat -A
+$
+# stdout, last 14 lines, cat -A
+Agent 'smoke' (deployment: <sha> is deployed to sprites (<fake-http>)$
+Shutting down smoke on sprites...$
+Sprite 'cast-smoke' has been destroyed.$
+Remote resources destroyed on sprites.$
+Marked all deployments as deleted in database.$
+Removed auth token from token file.$
+Agent 'smoke' has been shut down.$

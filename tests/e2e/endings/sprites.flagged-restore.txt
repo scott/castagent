@@ -1,0 +1,22 @@
+# stderr, last 12 lines, cat -A
+Restoring 1.0.0 on the remote failed again.$
+$
+Error: Sprite command failed: fault injected by test shim: pip install blocked (call 1)$
+$
+smoke may still be running the broken 1.1.0 release. Your local files are on 1.0.0.$
+To try again: cast upgrade smoke 1.0.0$
+# stdout, last 14 lines, cat -A
+Proceed with upgrade? (y/N) Using release 1.0.0 from <home>/.cast/agents/smoke/.cast/releases/1.0.0.tar.gz$
+Extracting version 1.0.0 tarball...$
+Redeploying smoke to sprite cast-smoke...$
+Deploying smoke to Sprites...$
+Ensuring sprite 'cast-smoke' exists...$
+Waiting for sprite to be ready...$
+Ensuring Python is installed...$
+Transferring agent files...$
+  Tar file size: <size>MB$
+  Transferring tar to sprite (streaming)...$
+  Extracting files...$
+Creating memory directory inside sprite...$
+Setting up Python environment...$
+Installing dependencies...$

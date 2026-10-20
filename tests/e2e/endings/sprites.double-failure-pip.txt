@@ -1,0 +1,24 @@
+# stderr, last 12 lines, cat -A
+Upgrade to 1.1.0 failed, and restoring 1.0.0 on the remote also failed.$
+$
+Upgrade error: Sprite command failed: fault injected by test shim: pip install blocked (call 1)$
+Restore error: Sprite command failed: fault injected by test shim: pip install blocked (call 2)$
+$
+smoke may be running the broken 1.1.0 release. Your local files are back on 1.0.0.$
+To restore 1.0.0 on the remote, run:$
+  cast upgrade smoke 1.0.0$
+# stdout, last 14 lines, cat -A
+Extracting version 1.1.0 tarball...$
+Redeploying smoke to sprite cast-smoke...$
+Deploying smoke to Sprites...$
+Ensuring sprite 'cast-smoke' exists...$
+Waiting for sprite to be ready...$
+Ensuring Python is installed...$
+Transferring agent files...$
+  Tar file size: <size>MB$
+  Transferring tar to sprite (streaming)...$
+  Extracting files...$
+Creating memory directory inside sprite...$
+Setting up Python environment...$
+Installing dependencies...$
+Restoring 1.0.0 on the remote...$

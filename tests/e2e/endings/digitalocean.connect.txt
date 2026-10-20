@@ -1,0 +1,10 @@
+# stderr, last 12 lines, cat -A
+ ›   Warning: OpenTUI not found at <repo>/typescript/cast-tui/dist/index.js$
+# stdout, last 14 lines, cat -A
+Connecting to smoke...$
+Opening an SSH tunnel to 203.0.113.10. The bearer token stays inside SSH.$
+Opening an SSH tunnel to 203.0.113.10 on 127.0.0.1:<port>$
+Connection verified: <fake-http>$
+Deployment URL: <fake-http>$
+Launching OpenTUI...$
+Agent endpoint: <fake-http>$
