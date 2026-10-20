@@ -1,0 +1,245 @@
+{
+  "missingVersion": "1.0",
+  "cases": [
+    {
+      "name": "literal block",
+      "yaml": "version: |\n  1.10\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "folded block",
+      "yaml": "version: >\n  1.10\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "literal keep",
+      "yaml": "version: |+\n  1.10\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "literal strip",
+      "yaml": "version: |-\n  1.10\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "folded strip",
+      "yaml": "version: >-\n  1.10\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "literal indent",
+      "yaml": "version: |2\n  1.10\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "literal multiline",
+      "yaml": "version: |\n  1.4.5\n  extra\n",
+      "expected": "1.4.5\nextra",
+      "explicit": true
+    },
+    {
+      "name": "folded multiline",
+      "yaml": "version: >\n  1.4.5\n  extra\n",
+      "expected": "1.4.5 extra",
+      "explicit": true
+    },
+    {
+      "name": "missing key",
+      "yaml": "name: only\n",
+      "expected": "1.0",
+      "explicit": false
+    },
+    {
+      "name": "empty document",
+      "yaml": "",
+      "expected": "1.0",
+      "explicit": false
+    },
+    {
+      "name": "null",
+      "yaml": "version: null\n",
+      "expected": "1.0",
+      "explicit": false
+    },
+    {
+      "name": "tilde",
+      "yaml": "version: ~\n",
+      "expected": "1.0",
+      "explicit": false
+    },
+    {
+      "name": "empty value",
+      "yaml": "version:\n",
+      "expected": "1.0",
+      "explicit": false
+    },
+    {
+      "name": "empty quotes",
+      "yaml": "version: \"\"\n",
+      "expected": "1.0",
+      "explicit": false
+    },
+    {
+      "name": "blank quotes",
+      "yaml": "version: \"  \"\n",
+      "expected": "1.0",
+      "explicit": false
+    },
+    {
+      "name": "anchor",
+      "yaml": "version: &v 1.10\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "alias",
+      "yaml": "pinned: &v 1.10\nversion: *v\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "str tag",
+      "yaml": "version: !!str 1.10\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "float tag",
+      "yaml": "version: !!float 1.10\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "bool true",
+      "yaml": "version: true\n",
+      "expected": "true",
+      "explicit": true
+    },
+    {
+      "name": "bool True",
+      "yaml": "version: True\n",
+      "expected": "True",
+      "explicit": true
+    },
+    {
+      "name": "bool yes",
+      "yaml": "version: yes\n",
+      "expected": "yes",
+      "explicit": true
+    },
+    {
+      "name": "duplicate last wins",
+      "yaml": "version: 1.0\nversion: 2.0\n",
+      "expected": "2.0",
+      "explicit": true
+    },
+    {
+      "name": "unquoted 1.10",
+      "yaml": "version: 1.10\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "unquoted 2.0",
+      "yaml": "version: 2.0\n",
+      "expected": "2.0",
+      "explicit": true
+    },
+    {
+      "name": "unquoted 1.0",
+      "yaml": "version: 1.0\n",
+      "expected": "1.0",
+      "explicit": true
+    },
+    {
+      "name": "unquoted 1.0.0",
+      "yaml": "version: 1.0.0\n",
+      "expected": "1.0.0",
+      "explicit": true
+    },
+    {
+      "name": "double quoted 1.10",
+      "yaml": "version: \"1.10\"\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "single quoted 1.10",
+      "yaml": "version: '1.10'\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "double quoted 2.0",
+      "yaml": "version: \"2.0\"\n",
+      "expected": "2.0",
+      "explicit": true
+    },
+    {
+      "name": "single quoted 2.0",
+      "yaml": "version: '2.0'\n",
+      "expected": "2.0",
+      "explicit": true
+    },
+    {
+      "name": "double quoted 1.0.0",
+      "yaml": "version: \"1.0.0\"\n",
+      "expected": "1.0.0",
+      "explicit": true
+    },
+    {
+      "name": "single quoted 1.0.0",
+      "yaml": "version: '1.0.0'\n",
+      "expected": "1.0.0",
+      "explicit": true
+    },
+    {
+      "name": "comment",
+      "yaml": "version: 1.10 # keep\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "quoted null",
+      "yaml": "version: \"null\"\n",
+      "expected": "null",
+      "explicit": true
+    },
+    {
+      "name": "quoted tilde",
+      "yaml": "version: \"~\"\n",
+      "expected": "~",
+      "explicit": true
+    },
+    {
+      "name": "quoted trailing space",
+      "yaml": "version: \"1.10 \"\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "byte-order mark",
+      "yaml": "\ufeffversion: \"1.7\"\n",
+      "expected": "1.7",
+      "explicit": true
+    },
+    {
+      "name": "flow mapping",
+      "yaml": "{name: demo, version: 1.10}\n",
+      "expected": "1.10",
+      "explicit": true
+    },
+    {
+      "name": "nested version is not the agent version",
+      "yaml": "name: demo\nruntime:\n  version: 9.9\n",
+      "expected": "1.0",
+      "explicit": false
+    }
+  ]
+}
