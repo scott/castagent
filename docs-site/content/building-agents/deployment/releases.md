@@ -138,6 +138,17 @@ Deployed email-assistant with deployment SHA: abc123
 Connect with: cast connect abc123
 ```
 
+Without `--version`, Cast records the top-level `version` in the agent
+directory's `agent.yaml`. `version: null`, `version: ~`, and an empty
+`version:` count as no version. Block scalars of any style are read
+and trimmed to their first line, and a byte-order mark at the start of
+the file is ignored. When that field is
+absent, Cast records the current release from `releases.json`. If the
+file has no releases, the recorded value is `latest`. If the release
+list cannot be read, the recorded value is still `latest`, and the
+warning says the file could not be read rather than that it has no
+releases.
+
 ## Upgrading a live deployment
 
 ```bash
