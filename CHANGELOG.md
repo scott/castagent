@@ -23,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - TUI `/release` suggests the next patch of the current release. For demo-agent, current `1.4.1` suggests `1.4.2`, and a two-part version such as `1.10` suggests `1.10.1`. `/deploy` lists releases newest first and marks the row matching `current.version` as latest ([#390](https://github.com/scott/castagent/pull/390)).
 - TUI release and version helpers run in the mocha suite. The disabled subprocess harness is removed ([#390](https://github.com/scott/castagent/pull/390)).
 
+### Security
+
+- Locked `certifi` is 2026.10.19, which fixes GHSA-6q48-6c7w-9gw2. The deploy fallback floor is `certifi>=2026.10.19`. ([#399](https://github.com/scott/castagent/pull/399))
+
 ## [2.5.1] - 2026-10-14
 
 ### Fixed
