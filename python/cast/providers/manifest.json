@@ -145,16 +145,23 @@
   },
   {
     "key": "xai",
-    "impl": "reserved",
     "name": "xAI",
-    "displayName": "xAI",
-    "prefixes": ["xai/"],
     "default": false,
+    "prefixes": ["xai/"],
     "envVar": "XAI_API_KEY",
     "configKey": "providers.xai.api_key",
     "baseUrl": "https://api.x.ai/v1",
+    "baseUrlEnv": "XAI_BASE_URL",
     "acceptsAnyModel": true,
+    "displayName": "xAI",
+    "modelsPath": "/models",
+    "modelsFilter": "^(?!latest$)(?!.*-latest$)(?!.*(?:imagine|image|video|voice|embed|tts|multi-agent)).+",
+    "fallbackModels": ["grok-4.7", "grok-4.20-0309-non-reasoning", "grok-4.20-0309-reasoning"],
+    "defaultModel": "xai/grok-4.7",
     "knownModels": [],
-    "openrouterVendor": "x-ai/"
+    "impl": "openai-compatible",
+    "llmDefaultModel": "grok-4.7",
+    "missingKeyMessage": "XAI_API_KEY environment variable is required for xAI",
+    "defaultParams": {"temperature": 0.7}
   }
 ]

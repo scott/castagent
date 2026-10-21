@@ -97,10 +97,11 @@ OpenRouter too, including vendors that are not in the curated list.
 A bare alias such as `claude-sonnet-4` also stays on OpenRouter.
 
 These prefixes are reserved for a direct provider and are not registered
-yet: `openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`,
-and `xai/`. `cast model openai-api/gpt-4o` exits non-zero. The message
+yet: `openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, and
+`ollama/`. `cast model openai-api/gpt-4o` exits non-zero. The message
 says that prefix is reserved and that `openai/gpt-4o` still uses
-OpenRouter. `xai/grok-2` names `x-ai/grok-2` the same way. A bare id
+OpenRouter. `xai/grok-4.7` is direct xAI, not that error. `x-ai/grok-2`
+still uses OpenRouter. A bare id
 OpenRouter does not already accept, such as `gpt-5` or `not-a-real-model`,
 is also an error. That error names the prefix convention. It does not
 list the OpenRouter catalog. `cast model qwen/qwen3-coder` and
@@ -111,11 +112,21 @@ Claude 4.7 and later (opus, sonnet, or haiku, dotted or dashed, and 5.x)
 are sent as written and omit temperature. Earlier aliases such as
 `claude-opus-4` and `claude-sonnet-4` still pin to 4.5 and 4.6.
 
-OpenRouter and DigitalOcean both use one OpenAI-compatible provider.
-Their prefixes, keys, and model lists are unchanged. A future
-OpenAI-compatible provider is a row in `python/cast/providers/manifest.json`.
-The builder still requests temperature `0.7` for both current providers,
-and omits temperature for models that reject it.
+OpenRouter, DigitalOcean, and xAI use one OpenAI-compatible provider.
+A new provider of that kind is a row in `python/cast/providers/manifest.json`.
+The builder requests temperature `0.7` from each row's `defaultParams`,
+and omits temperature for models that match `omitTemperatureModels`.
+
+`xai/<model>` calls `https://api.x.ai/v1` with `XAI_API_KEY`.
+`cast provider enable xai --token -` stores that key.
+`/model` loads `GET <base-url>/models` and keeps chat ids. Image, video,
+voice, embedding, multi-agent, and `latest` aliases are dropped. When the live list
+cannot be loaded, the picker shows `grok-4.7`,
+`grok-4.20-0309-non-reasoning`, and `grok-4.20-0309-reasoning`.
+xAI reasoning ids still receive temperature `0.7`. The row does not send
+`stop`, `presence_penalty`, or `frequency_penalty`. `XAI_BASE_URL` is a
+builder setting and is not copied onto a deployed agent. Deploy forwards
+`XAI_API_KEY` only when `brain.model` uses `xai/`.
 
 ## TUI
 

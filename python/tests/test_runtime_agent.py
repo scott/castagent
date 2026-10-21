@@ -278,11 +278,40 @@ class TestRuntimeAgentProviderSelection:
             assert mock_chat.call_args.kwargs["api_key"] == "or-key"
 
     def test_reserved_prefix_falls_back_to_echo(self, agent_config):
-        self._set_model(agent_config, "xai/grok-4")
+        self._set_model(agent_config, "openai-api/gpt-4o")
         with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
             agent = RuntimeAgent(agent_config)
         assert agent.graph is None
         assert agent._provider is None
+
+    def test_xai_without_its_key_stays_in_echo(self, agent_config):
+        self._set_model(agent_config, "xai/grok-4.7")
+        with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
+            agent = RuntimeAgent(agent_config)
+            assert agent.graph is None
+            assert agent._provider is not None
+            assert agent._provider.key == "xai"
+            response = agent._echo_response("random message")
+            assert "XAI_API_KEY" in response
+            assert "OPENROUTER_API_KEY" not in response
+
+    @patch("cast.agent.runtime.create_react_agent")
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_xai_key_starts_without_sending_builder_temperature(
+        self, mock_chat, mock_graph, agent_config
+    ):
+        self._set_model(agent_config, "xai/grok-4.7")
+        mock_graph.return_value = MagicMock()
+        with patch.dict(os.environ, _env({
+            "XAI_API_KEY": "xai-key",
+            "OPENROUTER_API_KEY": "or-key",
+        }), clear=True):
+            agent = RuntimeAgent(agent_config)
+        assert agent.graph is not None
+        assert mock_chat.call_args.kwargs["model"] == "grok-4.7"
+        assert mock_chat.call_args.kwargs["api_key"] == "xai-key"
+        assert mock_chat.call_args.kwargs["base_url"] == "https://api.x.ai/v1"
+        assert "temperature" not in mock_chat.call_args.kwargs
 
     def test_reflection_catches_a_reserved_prefix(self):
         from cast.memory.reflection import ReflectionAgent

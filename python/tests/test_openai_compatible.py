@@ -32,6 +32,8 @@ def _home(monkeypatch, tmp_path):
         "FAKEAI_BASE_URL",
         "OPENROUTER_BASE_URL",
         "DIGITALOCEAN_INFERENCE_BASE_URL",
+        "XAI_API_KEY",
+        "XAI_BASE_URL",
     ):
         monkeypatch.delenv(name, raising=False)
     return home
@@ -78,6 +80,17 @@ class TestBothProvidersUseTheSharedClass:
         assert payload["digitalocean"]["envVar"] == "DIGITALOCEAN_MODEL_ACCESS_KEY"
         assert payload["digitalocean"]["modelsPath"] == "/models"
         assert payload["digitalocean"]["fallbackModels"] == ["llama3.3-70b-instruct", "deepseek-v3.2"]
+        assert payload["xai"]["envVar"] == "XAI_API_KEY"
+        assert payload["xai"]["prefixes"] == ["xai/"]
+        assert payload["xai"]["baseUrl"] == "https://api.x.ai/v1"
+        assert payload["xai"]["baseUrlEnv"] == "XAI_BASE_URL"
+        assert payload["xai"]["modelsPath"] == "/models"
+        assert payload["xai"]["defaultModel"] == "xai/grok-4.7"
+        assert payload["xai"]["fallbackModels"] == [
+            "grok-4.7",
+            "grok-4.20-0309-non-reasoning",
+            "grok-4.20-0309-reasoning",
+        ]
         assert "fakeai" not in payload
         for item in payload.values():
             assert "knownModels" not in item
@@ -113,7 +126,6 @@ class TestPrefixErrors:
             "gemini/gemini-2.5-flash": "gemini/",
             "bedrock/us.anthropic.claude": "bedrock/",
             "ollama/qwen3": "ollama/",
-            "xai/grok-4": "xai/",
         }
         for model, prefix in cases.items():
             with pytest.raises(InferenceProviderError) as exc:
@@ -128,11 +140,10 @@ class TestPrefixErrors:
             get_provider("openai-api/gpt-4o")
         assert "openai/gpt-4o still routes to OpenRouter" in str(exc.value)
 
-    def test_xai_hint_names_the_openrouter_vendor(self, monkeypatch, tmp_path):
+    def test_xai_prefix_does_not_steal_the_openrouter_vendor(self, monkeypatch, tmp_path):
         _home(monkeypatch, tmp_path)
-        with pytest.raises(InferenceProviderError) as exc:
-            get_provider("xai/grok-4")
-        assert "x-ai/grok-4 still routes to OpenRouter" in str(exc.value)
+        assert get_provider("x-ai/grok-2").key == "openrouter"
+        assert get_provider("xai/grok-4.7").key == "xai"
 
     def test_unlisted_vendor_prefixes_stay_on_openrouter(self, monkeypatch, tmp_path):
         _home(monkeypatch, tmp_path)
@@ -225,6 +236,83 @@ class TestSamplingParams:
             create_llm()
         assert "temperature" not in mock_chat.call_args.kwargs
         assert mock_chat.call_args.kwargs["model"] == "openai/o3"
+
+class TestXaiProvider:
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_create_llm_strips_the_prefix_and_sends_temperature(self, mock_chat, monkeypatch, tmp_path):
+        _home(monkeypatch, tmp_path)
+        monkeypatch.setenv("XAI_API_KEY", "xai-key")
+        provider = get_provider("xai/grok-4.7")
+        assert isinstance(provider.impl, OpenAICompatibleProvider)
+        assert provider.impl.rewrite_model is None
+        provider.create_llm("xai/grok-4.7", **provider.llm_params("xai/grok-4.7"))
+        kwargs = mock_chat.call_args.kwargs
+        assert kwargs["model"] == "grok-4.7"
+        assert kwargs["api_key"] == "xai-key"
+        assert kwargs["base_url"] == "https://api.x.ai/v1"
+        assert kwargs["temperature"] == 0.7
+        for blocked in ("stop", "presence_penalty", "frequency_penalty", "reasoning_effort"):
+            assert blocked not in kwargs
+
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_builder_sends_temperature_for_a_reasoning_model(self, mock_chat, monkeypatch, tmp_path):
+        from cast.builder import create_llm
+
+        _home(monkeypatch, tmp_path)
+        monkeypatch.setenv("XAI_API_KEY", "xai-key")
+        config = {"defaults": {"builder_model": "xai/grok-4.20-0309-reasoning"}}
+        with patch("cast.builder.load_global_config", return_value=config):
+            create_llm()
+        assert mock_chat.call_args.kwargs["model"] == "grok-4.20-0309-reasoning"
+        assert mock_chat.call_args.kwargs["temperature"] == 0.7
+        assert mock_chat.call_args.kwargs["api_key"] == "xai-key"
+        assert mock_chat.call_args.kwargs["base_url"] == "https://api.x.ai/v1"
+
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_base_url_env_overrides_the_manifest(self, mock_chat, monkeypatch, tmp_path):
+        _home(monkeypatch, tmp_path)
+        monkeypatch.setenv("XAI_API_KEY", "xai-key")
+        monkeypatch.setenv("XAI_BASE_URL", "https://xai.example/v1")
+        get_provider("xai/grok-4").create_llm("xai/grok-4")
+        assert mock_chat.call_args.kwargs["model"] == "grok-4"
+        assert mock_chat.call_args.kwargs["base_url"] == "https://xai.example/v1"
+
+    def test_missing_key_names_xai(self, monkeypatch, tmp_path):
+        _home(monkeypatch, tmp_path)
+        provider = get_provider("xai/grok-4.7")
+        assert provider.is_available() is False
+        with pytest.raises(ValueError, match="XAI_API_KEY"):
+            provider.create_llm("xai/grok-4.7")
+
+    def test_model_filter_keeps_chat_ids(self, monkeypatch, tmp_path):
+        import re
+
+        from cast.providers.registry import catalog_entries
+
+        _home(monkeypatch, tmp_path)
+        pattern = re.compile(next(item["modelsFilter"] for item in catalog_entries() if item["key"] == "xai"))
+        kept = [
+            "grok-4.7",
+            "grok-4.20-0309-reasoning",
+            "grok-4.20-0309-non-reasoning",
+            "grok-build-0.1",
+            "grok-2-vision-1212",
+        ]
+        dropped = [
+            "latest",
+            "grok-4.3-latest",
+            "grok-4.20-multi-agent-0309",
+            "grok-4.20-multi-agent",
+            "grok-imagine-image",
+            "grok-imagine-image-2.0",
+            "grok-imagine-video",
+            "grok-2-image-1212",
+            "grok-voice-3.0",
+            "embedding-model",
+        ]
+        assert [model for model in kept if pattern.search(model)] == kept
+        assert [model for model in dropped if pattern.search(model)] == []
+
 
 class TestFakeProviderRow:
     def test_row_works_end_to_end_without_a_module(self, monkeypatch, tmp_path):

@@ -703,6 +703,7 @@ Set environment variables:
 ```bash
 export OPENROUTER_API_KEY="your-key"
 export DIGITALOCEAN_MODEL_ACCESS_KEY="your-model-access-key"
+export XAI_API_KEY="your-key"
 export RAILWAY_API_TOKEN="your-token"
 export FLY_API_TOKEN="your-token"  # Fly.io only; not a Sprites token
 export SPRITES_TOKEN="org-slug/org-id/token-id/token-value"  # from https://sprites.dev/account; or run: sprite login
@@ -713,12 +714,13 @@ export DO_API_TOKEN="your-token"  # DigitalOcean deploy token
 
 ### LLM providers
 
-OpenRouter stays the default. The model string selects the inference provider. Both keys may be set; the prefix wins, and a missing key does not fall back to the other provider.
+OpenRouter stays the default. The model string selects the inference provider. Several keys may be set; the prefix wins, and a missing key does not fall back to another provider.
 
 | Model string | Provider | API key | Base URL |
 |---|---|---|---|
-| `openrouter/...`, any other slash id that is not registered or reserved (`openai/`, `qwen/`, `z-ai/`, and the rest), or a bare alias | OpenRouter | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
+| `openrouter/...`, any other slash id that is not registered or reserved (`openai/`, `x-ai/`, `qwen/`, `z-ai/`, and the rest), or a bare alias | OpenRouter | `OPENROUTER_API_KEY` | `https://openrouter.ai/api/v1` |
 | `digitalocean/<model-id>` | DigitalOcean serverless inference | `DIGITALOCEAN_MODEL_ACCESS_KEY` | `https://inference.do-ai.run/v1` |
+| `xai/<model-id>` | xAI | `XAI_API_KEY` | `https://api.x.ai/v1` |
 
 The `digitalocean/` prefix is stripped and the catalog id is sent unchanged. It is not rewritten and is not given an `anthropic/` or `openai/` prefix. Starter ids: `llama3.3-70b-instruct`, `deepseek-v3.2`. Any other catalog id is accepted. `providers.digitalocean` is the deploy token for Droplets and MicroVMs, not this key.
 
@@ -733,11 +735,11 @@ cast provider enable digitalocean --token -
 cast provider enable digitalocean --token - --url https://inference.do-ai.run/v1
 ```
 
-`--token -` reads the model access key from stdin. `--token` with no value prompts without echoing. A literal key on the command line is stored, and Cast warns that the key is visible in process listings and shell history. The key is not written to `config.yaml` and is not printed. It is stored in the system keychain. When the keychain cannot be loaded, Cast writes `~/.cast/tokens/inference/<key>.token` at mode 0600. `--url` is optional. It writes `providers.<name>.base_url` and leaves `default_base_url` as the shipped host. A URL must be `https`, or `http` on literal `127.0.0.1`, `::1`, or `localhost`, with a host and no userinfo or query. A custom base URL is a builder setting on this machine. Deploy and upgrade do not send `OPENROUTER_BASE_URL` or `DIGITALOCEAN_INFERENCE_BASE_URL`.
+`--token -` reads the model access key from stdin. `--token` with no value prompts without echoing. A literal key on the command line is stored, and Cast warns that the key is visible in process listings and shell history. The key is not written to `config.yaml` and is not printed. It is stored in the system keychain. When the keychain cannot be loaded, Cast writes `~/.cast/tokens/inference/<key>.token` at mode 0600. `--url` is optional. It writes `providers.<name>.base_url` and leaves `default_base_url` as the shipped host. A URL must be `https`, or `http` on literal `127.0.0.1`, `::1`, or `localhost`, with a host and no userinfo or query. A custom base URL is a builder setting on this machine. Deploy and upgrade do not send `OPENROUTER_BASE_URL`, `DIGITALOCEAN_INFERENCE_BASE_URL`, or `XAI_BASE_URL`.
 
 `cast model` and `/model` list the active provider's models. OpenRouter keeps the curated list. An enabled provider that accepts any catalog id takes `cast model <prefix>/<id>`, including an id that is not in the fallback list, and that switches the builder to that provider. DigitalOcean loads `GET <base-url>/models` and falls back to `llama3.3-70b-instruct` and `deepseek-v3.2` when that request fails. The builder reads the stored model when it starts. A running builder does not hot-swap; run `cast dev <agent>` again. The TUI commands `/provider` and `/model` are dev-only. `/model` reads provider prefixes from `cast provider --json` each time it opens, so enabling a provider does not require quitting the TUI. The default remains `openrouter/minimax/minimax-m2.5`. The runtime, the builder, and memory reflection call `get_provider(model)` instead of naming a provider class.
 
-OpenRouter and DigitalOcean share one OpenAI-compatible provider. A new provider of that kind is a row in `python/cast/providers/manifest.json` (`"impl": "openai-compatible"`). Reserved direct prefixes (`openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`, `xai/`) are not registered yet, and deploy forwards no inference key for them. Every other slash prefix, including `qwen/` and `z-ai/`, uses OpenRouter and deploy forwards `OPENROUTER_API_KEY`. The builder requests temperature `0.7` for OpenRouter and DigitalOcean, and omits temperature for reasoning models and for Claude 4.7 and later.
+OpenRouter, DigitalOcean, and xAI share one OpenAI-compatible provider. A new provider of that kind is a row in `python/cast/providers/manifest.json` (`"impl": "openai-compatible"`). Reserved direct prefixes (`openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`) are not registered yet, and deploy forwards no inference key for them. `xai/<model>` is direct xAI. `x-ai/<model>` stays on OpenRouter. Every other slash prefix, including `qwen/` and `z-ai/`, uses OpenRouter and deploy forwards `OPENROUTER_API_KEY`. Deploy forwards `XAI_API_KEY` only when `brain.model` uses `xai/`, and never forwards `XAI_BASE_URL`. The builder requests temperature `0.7` for OpenRouter, DigitalOcean, and xAI, and omits temperature for models that match that provider's `omitTemperatureModels`. xAI chat models, including reasoning ids, still receive `0.7`. The xAI row does not send `stop`, `presence_penalty`, or `frequency_penalty`.
 
 Another inference provider can register without editing those callers. Put a folder at `~/.cast/inference-providers/<key>/` (`provider.json` and `provider.py`), list a module path under `inferenceProviders` in `~/.cast/config.yaml`, or publish a `cast.inference` entry point. A deploy reads `brain.model` and sends that provider's API key (`envVar`, from the environment, keychain, token file, or `configKey`). It does not send the provider's base URL. Other inference keys stay on the machine running `cast deploy`. Fly and Railway keep the inference secrets set at deploy time; `cast upgrade` does not rewrite them. `providers.digitalocean.token` is the Droplet and MicroVM deploy token. Fly imports secrets on stdin (`flyctl secrets import --stage`) and applies them when `flyctl deploy` succeeds. Docker passes the container env file on stdin. Railway reads each variable from stdin. A droplet writes a mode 0600 env file over SSH stdin. A sprite sends the launch script on stdin. A MicroVM sends the environment in the create request body. MicroVM `doctl` receives the DigitalOcean API token as `DIGITALOCEAN_ACCESS_TOKEN` in the child environment. That token is not a `doctl` argument.
 

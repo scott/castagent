@@ -68,8 +68,8 @@ key is written to `~/.cast/tokens/inference/<key>.token` at mode 0600.
 `default_base_url` stays the shipped host. A URL must be `https`, or
 `http` on literal `127.0.0.1`, `::1`, or `localhost`, with a host and no
 userinfo or query. That URL is for the builder on this machine. Deploy
-and upgrade do not copy `OPENROUTER_BASE_URL` or
-`DIGITALOCEAN_INFERENCE_BASE_URL` onto the agent. A provider is enabled when its environment variable,
+and upgrade do not copy `OPENROUTER_BASE_URL`,
+`DIGITALOCEAN_INFERENCE_BASE_URL`, or `XAI_BASE_URL` onto the agent. A provider is enabled when its environment variable,
 that stored token, or a real config value is set. An unsubstituted
 `${VAR}` is not a token. Values are trimmed.
 
@@ -80,10 +80,12 @@ Set an agent's model to `digitalocean/llama3.3-70b-instruct` or
 `digitalocean/deepseek-v3.2` to call `https://inference.do-ai.run/v1`.
 OpenRouter stays the default when the model is `openrouter/...`, any
 other slash prefix that is not registered or reserved (`openai/`,
-`qwen/`, `z-ai/`, and the rest), or a bare alias such as `claude-sonnet-4`.
-`openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`, and
-`xai/` are reserved and are not providers yet. `defaults.builder_model` can be a `digitalocean/<model-id>`
-string; the default remains `openrouter/minimax/minimax-m2.5`. Change the
+`x-ai/`, `qwen/`, `z-ai/`, and the rest), or a bare alias such as `claude-sonnet-4`.
+`openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, and
+`ollama/` are reserved and are not providers yet. `xai/<model-id>` is
+direct xAI (`XAI_API_KEY`, `https://api.x.ai/v1`). `defaults.builder_model` can be
+`digitalocean/<model-id>` or `xai/<model-id>`. The default remains
+`openrouter/minimax/minimax-m2.5`. Change the
 curated OpenRouter ids with `cast model` or `/model` in the builder TUI.
 The running builder keeps its current model until the next launch.
 
@@ -110,6 +112,8 @@ selected by the agent's `brain.model`, including an external provider.
 |---|---|
 | `OPENROUTER_API_KEY` | Default LLM provider auth. |
 | `DIGITALOCEAN_MODEL_ACCESS_KEY` | DigitalOcean serverless inference. Not the deploy token. |
+| `XAI_API_KEY` | xAI inference for `xai/<model>`. Deploy sends it only when the agent uses that prefix. |
+| `XAI_BASE_URL` | Optional builder override for the xAI base URL. Not deployed. |
 | `RAILWAY_API_TOKEN` | Railway deploys (alternative to `railway login`). |
 | `FLY_API_TOKEN` | Fly.io deploys (alternative to `flyctl auth login`). Not a Sprites token. |
 | `DIGITALOCEAN_ACCESS_TOKEN` | DigitalOcean deploys (also accepts `DIGITALOCEAN_API_TOKEN`, `DIGITALOCEAN_API_KEY`). MicroVM passes this value to `doctl` through the child environment, not as `--access-token`. |

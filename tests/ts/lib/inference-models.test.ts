@@ -18,6 +18,7 @@ describe('inference model listing', () => {
   const previousHome = process.env.HOME
   const previousDo = process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
   const previousFake = process.env.FAKEAI_API_KEY
+  const previousXai = process.env.XAI_API_KEY
   const catalog = loadInferenceCatalog()
   let home: string
 
@@ -26,6 +27,7 @@ describe('inference model listing', () => {
     process.env.HOME = home
     delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
     delete process.env.FAKEAI_API_KEY
+    delete process.env.XAI_API_KEY
   })
 
   afterEach(() => {
@@ -35,6 +37,8 @@ describe('inference model listing', () => {
     else process.env.DIGITALOCEAN_MODEL_ACCESS_KEY = previousDo
     if (previousFake === undefined) delete process.env.FAKEAI_API_KEY
     else process.env.FAKEAI_API_KEY = previousFake
+    if (previousXai === undefined) delete process.env.XAI_API_KEY
+    else process.env.XAI_API_KEY = previousXai
     fs.rmSync(home, {recursive: true, force: true})
   })
 
@@ -77,6 +81,81 @@ describe('inference model listing', () => {
     expect(result.models.map(model => model.id)).to.deep.equal([
       'digitalocean/llama3.3-70b-instruct',
       'digitalocean/deepseek-v3.2',
+    ])
+  })
+
+  it('lists xAI chat models and drops image, video, voice, embedding, and latest aliases', async () => {
+    const entry = catalog.find(item => item.key === 'xai')
+    expect(entry?.modelsPath).to.equal('/models')
+    expect(entry?.baseUrl).to.equal('https://api.x.ai/v1')
+    process.env.XAI_API_KEY = 'xai-list-key'
+    const seen: {url: string; authorization?: string}[] = []
+    const result = await modelsForProvider(entry!, {
+      fetchImpl: async (url, init) => {
+        const headers = (init?.headers ?? {}) as Record<string, string>
+        seen.push({url: String(url), authorization: headers.Authorization})
+        return jsonResponse({
+          data: [
+            {id: 'grok-4.7'},
+            {id: 'grok-4.20-0309-reasoning'},
+            {id: 'grok-4.20-0309-non-reasoning'},
+            {id: 'grok-build-0.1'},
+            {id: 'grok-4.20-multi-agent-0309'},
+            {id: 'grok-4.20-multi-agent'},
+            {id: 'grok-2-vision-1212'},
+            {id: 'latest'},
+            {id: 'grok-4.3-latest'},
+            {id: 'grok-imagine-image'},
+            {id: 'grok-imagine-image-2.0'},
+            {id: 'grok-imagine-video'},
+            {id: 'grok-2-image-1212'},
+            {id: 'grok-voice-3.0'},
+            {id: 'embedding-model'},
+          ],
+        })
+      },
+    })
+    expect(seen).to.deep.equal([{
+      url: 'https://api.x.ai/v1/models',
+      authorization: 'Bearer xai-list-key',
+    }])
+    expect(result.fallback).to.equal(false)
+    expect(result.models.map(model => model.id)).to.deep.equal([
+      'xai/grok-4.7',
+      'xai/grok-4.20-0309-reasoning',
+      'xai/grok-4.20-0309-non-reasoning',
+      'xai/grok-build-0.1',
+      'xai/grok-2-vision-1212',
+    ])
+    expect(result.models.map(model => model.id).join('\n')).to.not.match(/imagine|image|video|voice|embed|latest|multi-agent/)
+  })
+
+  it('uses xAI fallback chat ids when the live list fails or the key is missing', async () => {
+    const entry = catalog.find(item => item.key === 'xai')
+    process.env.XAI_API_KEY = 'xai-list-key'
+    const failed = await modelsForProvider(entry!, {
+      fetchImpl: async () => jsonResponse({}, 500),
+    })
+    expect(failed.fallback).to.equal(true)
+    expect(failed.models.map(model => model.id)).to.deep.equal([
+      'xai/grok-4.7',
+      'xai/grok-4.20-0309-non-reasoning',
+      'xai/grok-4.20-0309-reasoning',
+    ])
+    delete process.env.XAI_API_KEY
+    let called = false
+    const offline = await modelsForProvider(entry!, {
+      fetchImpl: async () => {
+        called = true
+        throw new Error('must not fetch without a key')
+      },
+    })
+    expect(called).to.equal(false)
+    expect(offline.fallback).to.equal(true)
+    expect(offline.models.map(model => model.id)).to.deep.equal([
+      'xai/grok-4.7',
+      'xai/grok-4.20-0309-non-reasoning',
+      'xai/grok-4.20-0309-reasoning',
     ])
   })
 

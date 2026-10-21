@@ -2,7 +2,7 @@
 
 An inference provider turns a model string into a LangChain chat model. The runtime agent, the builder, and memory reflection call `get_provider(model)`. They do not branch on a provider name.
 
-OpenRouter and DigitalOcean serverless inference ship with Cast. Another provider can add itself without editing those callers.
+OpenRouter, DigitalOcean serverless inference, and xAI ship with Cast. Another provider can add itself without editing those callers.
 
 This is not deployment. Droplets, MicroVMs, and `providers.digitalocean` are a different token. See `typescript/cast-cli/src/lib/deploy/README.md` when that file exists.
 
@@ -18,6 +18,7 @@ Non-default providers match first. A provider matches when the model starts with
 | `openai/gpt-4o` | OpenRouter |
 | `google/gemini-2.5-pro` | OpenRouter |
 | `x-ai/grok-2` | OpenRouter |
+| `xai/grok-4.7` | xAI. `x-ai/` stays on OpenRouter. |
 | `claude-sonnet-4` | OpenRouter, then the alias table |
 | `example/my-model` | The external provider that registered `example/` |
 | `qwen/qwen3-coder`, `z-ai/glm-4.6`, `unknown/model` | OpenRouter. Any slash prefix that is not registered and not reserved uses the default. |
@@ -26,11 +27,13 @@ Non-default providers match first. A provider matches when the model starts with
 
 `vendor-prefixes.json` lists vendor prefixes an external provider must not claim (`openai/`, `anthropic/`, `google/`, `x-ai/`, and the rest of that file). It does not limit which slash ids OpenRouter can serve. `qwen/`, `z-ai/`, `moonshotai/`, and any later vendor still route to OpenRouter.
 
-`openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`, and `xai/` are reserved in `manifest.json` with `"impl": "reserved"`. They are not providers. An external cannot claim one. Using one raises `InferenceProviderError` and, when the row sets `openrouterVendor`, names the OpenRouter id (`x-ai/` for `xai/`). The runtime and reflection catch that error and stay in echo mode.
+`openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, and `ollama/` are reserved in `manifest.json` with `"impl": "reserved"`. They are not providers. An external cannot claim one. Using one raises `InferenceProviderError` and, when the row sets `openrouterVendor`, names the OpenRouter id (`openai/gpt-4o` for `openai-api/gpt-4o`). The runtime and reflection catch that error and stay in echo mode.
+
+`xai/` is registered. It is not the OpenRouter vendor prefix `x-ai/`. `xai/grok-4.7` calls xAI. `x-ai/grok-2` still calls OpenRouter.
 
 A bare alias such as `claude-sonnet-4`, a known OpenRouter id, a date suffix, or a dashed Claude id such as `claude-3-7-sonnet` still uses OpenRouter. A bare id OpenRouter does not already rewrite, such as `gpt-5`, is an error in `cast model` and `cast update`. The runtime and reflection catch it and stay in echo mode.
 
-Both API keys may be set. The prefix wins. A provider is available when its environment variable is set, or `~/.cast/tokens/inference/<key>.token` exists, or its config key resolves to a real value. Environment values are trimmed. An unsubstituted `${VAR}` is missing. When `HOME` is unset, or `~/.cast/config.yaml` cannot be read, that file is treated as empty. `create_llm` uses `baseUrlEnv`, then config `base_url`, then the manifest `baseUrl`. If the selected provider's token is missing, Cast stays in echo mode and names that variable. It does not try the other provider.
+Several API keys may be set. The prefix wins. A provider is available when its environment variable is set, or `~/.cast/tokens/inference/<key>.token` exists, or its config key resolves to a real value. Environment values are trimmed. An unsubstituted `${VAR}` is missing. When `HOME` is unset, or `~/.cast/config.yaml` cannot be read, that file is treated as empty. `create_llm` uses `baseUrlEnv`, then config `base_url`, then the manifest `baseUrl`. If the selected provider's token is missing, Cast stays in echo mode and names that variable. It does not try the other provider.
 
 ## Add an OpenAI-compatible provider
 
@@ -201,5 +204,6 @@ Deploy code calls `inferenceEnv()`, then keeps the entry whose prefix matches `b
 |---|---|
 | `openrouter` | Default. Shared class plus `rewrite_openrouter_model`. Base URL `https://openrouter.ai/api/v1`. `openrouter/` is stripped before the alias table. Builder temperature is `0.7` unless the model matches `omitTemperatureModels`. |
 | `digitalocean` | Shared class. Prefix `digitalocean/` only. Base URL `https://inference.do-ai.run/v1`. Catalog id passed through. Key `DIGITALOCEAN_MODEL_ACCESS_KEY`. Config key `providers.digitalocean_inference.api_key`. Model list is `GET /models`, with fallbacks `llama3.3-70b-instruct` and `deepseek-v3.2`. Builder temperature is `0.7` unless the model matches `omitTemperatureModels`. |
+| `xai` | Shared class, no module. Prefix `xai/` only. Base URL `https://api.x.ai/v1`. Key `XAI_API_KEY`. Config key `providers.xai.api_key`. `XAI_BASE_URL` overrides the base URL on the builder and is not deployed. Model list is `GET /models`. `modelsFilter` keeps chat ids and drops `latest`, `*-latest`, and ids that contain `imagine`, `image`, `video`, `voice`, `embed`, `tts`, or `multi-agent`. Fallbacks are `grok-4.7`, `grok-4.20-0309-non-reasoning`, and `grok-4.20-0309-reasoning`. Builder `defaultParams` send temperature `0.7`, including reasoning ids. The row does not send `stop`, `presence_penalty`, `frequency_penalty`, or `reasoning_effort`. |
 
 `openai.py`, `anthropic.py`, and `ollama.py` stay placeholders until a provider is actually implemented through this contract.
