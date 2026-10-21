@@ -1,6 +1,7 @@
 """Shared OpenAI-compatible provider, prefix routing, and sampling params."""
 
 import json
+import re
 from pathlib import Path
 from unittest.mock import patch
 
@@ -122,6 +123,18 @@ class TestBothProvidersUseTheSharedClass:
         assert payload["ollama"]["defaultModel"] == "ollama/qwen3"
         assert payload["ollama"]["prefixes"] == ["ollama/"]
         assert "placeholderKey" not in payload["ollama"]
+        ollama_filter = re.compile(payload["ollama"]["modelsFilter"])
+        assert ollama_filter.search("llama3.1:8b")
+        assert ollama_filter.search("qwen3")
+        assert not ollama_filter.search("nomic-embed-text")
+        assert not ollama_filter.search("mxbai-embed-large")
+        assert not ollama_filter.search("bge-m3")
+        assert not ollama_filter.search("bge-large")
+        assert not ollama_filter.search("foo-bge-bar")
+        assert not ollama_filter.search("paraphrase-multilingual")
+        assert not ollama_filter.search("all-minilm")
+        assert not ollama_filter.search("snowflake-arctic-embed")
+        assert ollama_filter.search("qwen-abge")
         assert "fakeai" not in payload
         for item in payload.values():
             assert "knownModels" not in item

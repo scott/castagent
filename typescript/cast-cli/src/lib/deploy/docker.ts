@@ -23,7 +23,7 @@ import {
   ensureCastRuntimeDockerfile,
   appendCompilerHint,
 } from './deploy-utils'
-import {ollamaDeployRefusal, prepareOllamaDocker} from './ollama'
+import {ollamaDeployRefusal, ollamaLinuxDockerHint, prepareOllamaDocker} from './ollama'
 import {writeRequirementsTxt} from './requirements'
 
 // Helper to run a shell command and return its exit code
@@ -355,6 +355,16 @@ export default class DockerDeploy extends Command {
       this.error(`Agent '${agentName}' not found at ${agentPath}`)
     }
 
+    // Refuse a non-loopback Ollama URL before the keychain write, the
+    // runtime copy, or any docker command.
+    const earlyModel = readAgentModel(agentPath)
+    const ollamaRefusal = ollamaDeployRefusal('docker', earlyModel)
+    if (ollamaRefusal) this.error(ollamaRefusal)
+    if (earlyModel.startsWith('ollama/')) {
+      const linuxHint = ollamaLinuxDockerHint()
+      if (linuxHint) this.log(linuxHint)
+    }
+
     // Record the parent row before the container starts. The deployment
     // insert below also ensures it, but a missing row used to fail only
     // after `docker run` had already left cast-<agent> running.
@@ -462,8 +472,6 @@ export default class DockerDeploy extends Command {
     // Run container. The env file is the docker CLI's stdin.
     this.log('Starting Docker container...')
     const agentModel = readAgentModel(agentPath)
-    const ollamaRefusal = ollamaDeployRefusal('docker', agentModel)
-    if (ollamaRefusal) this.error(ollamaRefusal)
     const ollama = prepareOllamaDocker(agentModel, filterInferenceEnv(agentModel, await inferenceEnv()))
     if (ollama.hostGateway) {
       this.log(`Ollama base URL for this container: ${ollama.inference.OLLAMA_BASE_URL}`)

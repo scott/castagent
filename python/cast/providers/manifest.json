@@ -178,6 +178,7 @@
     "acceptsAnyModel": true,
     "displayName": "Ollama",
     "modelsPath": "/models",
+    "modelsFilter": "^(?!bge)(?!.*(?:embed|paraphrase-multilingual|all-minilm|-bge-|bge-m3)).+",
     "fallbackModels": ["qwen3", "llama3.1", "gpt-oss"],
     "defaultModel": "ollama/qwen3",
     "knownModels": [],

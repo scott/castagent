@@ -593,7 +593,14 @@ describe('inference model listing', () => {
           data: [
             {id: 'qwen3:8b'},
             {id: 'llama3.1:8b'},
+            {id: 'qwen-abge'},
             {id: 'nomic-embed-text'},
+            {id: 'mxbai-embed-large'},
+            {id: 'bge-m3'},
+            {id: 'foo-bge-bar'},
+            {id: 'paraphrase-multilingual'},
+            {id: 'all-minilm'},
+            {id: 'snowflake-arctic-embed'},
           ],
         })
       },
@@ -607,7 +614,7 @@ describe('inference model listing', () => {
     expect(result.models.map(model => model.id)).to.deep.equal([
       'ollama/qwen3:8b',
       'ollama/llama3.1:8b',
-      'ollama/nomic-embed-text',
+      'ollama/qwen-abge',
     ])
     expect(JSON.stringify(seen)).to.not.include('Bearer')
   })

@@ -305,7 +305,12 @@ async function fetchModels(
       ids = ids.filter(id => pattern.test(id))
     }
     ids = ids.map(id => prefixedModelId(prefix, id))
-    if (ids.length === 0) throw new Error('empty catalog')
+    if (ids.length === 0) {
+      // Ollama answered. An empty chat list is not the offline fallback,
+      // or `cast provider ollama` would store a model that is not pulled.
+      if (entry.key === 'ollama') return {ids: [], fallback: false}
+      throw new Error('empty catalog')
+    }
     return {ids, fallback: false}
   } catch {
     return {ids: fallbackIds, fallback: true}
@@ -365,8 +370,44 @@ export async function activeModelCatalog(
   return modelsForProvider(entry, options)
 }
 
-function defaultModelId(entry: InferenceCatalogEntry, models: readonly {id: string}[]): string {
+function ollamaBareId(id: string): string {
+  return id.startsWith('ollama/') ? id.slice('ollama/'.length) : id
+}
+
+/** `qwen3` and `qwen3:latest` are one pull. `qwen3:8b` is a different pull. */
+function ollamaTagsMatch(left: string, right: string): boolean {
+  const canonical = (id: string) => {
+    const bare = ollamaBareId(id)
+    return bare.endsWith(':latest') ? bare.slice(0, -':latest'.length) : bare
+  }
+  return canonical(left) === canonical(right)
+}
+
+function passesModelsFilter(id: string, filter: string | undefined): boolean {
+  if (!filter) return true
+  const slash = id.indexOf('/')
+  const bare = slash === -1 ? id : id.slice(slash + 1)
+  return new RegExp(filter).test(bare)
+}
+
+function ollamaUnreachableHint(model: string): string {
+  const bare = ollamaBareId(model)
+  const pull = bare.endsWith(':latest') ? bare.slice(0, -':latest'.length) : bare
+  return `Ollama did not answer. Using ${model}. Pull it with: ollama pull ${pull}`
+}
+
+function defaultModelId(
+  entry: InferenceCatalogEntry,
+  models: readonly {id: string}[],
+  fallback: boolean,
+): string {
   const preferred = entry.defaultModel || (entry.default ? DEFAULT_BUILDER_MODEL : '')
+  if (entry.key === 'ollama') {
+    if (fallback) return preferred || models[0]?.id || ''
+    if (preferred && models.some(model => ollamaTagsMatch(preferred, model.id))) return preferred
+    const chat = models.find(model => passesModelsFilter(model.id, entry.modelsFilter))
+    return chat?.id ?? ''
+  }
   if (preferred && modelAccepted(preferred, entry, models)) return preferred
   return models[0]?.id ?? preferred
 }
@@ -433,7 +474,7 @@ function writeSwitchedModel(
 export async function switchInferenceProvider(
   key: string,
   options: {fetchImpl?: typeof fetch} = {},
-): Promise<{provider: string; model: string; needsModel: boolean}> {
+): Promise<{provider: string; model: string; needsModel: boolean; hint?: string}> {
   const catalog = loadInferenceCatalog()
   const entry = providerOrThrow(catalog, key)
   const config = readCastConfig()
@@ -450,15 +491,16 @@ export async function switchInferenceProvider(
   const catalogResult = await modelsForProvider(entry, options)
   const accepted = rememberedModel ? acceptModelId(rememberedModel, entry, catalogResult.models) : null
   let model = accepted ?? ''
-  if (!model && catalogResult.models.length > 0) {
-    model = defaultModelId(entry, catalogResult.models)
+  if (!model && (catalogResult.models.length > 0 || entry.key === 'ollama')) {
+    model = defaultModelId(entry, catalogResult.models, catalogResult.fallback)
   }
   const needsModel = !model
   if (needsModel) {
     return {provider: providerDisplayName(entry), model: '', needsModel: true}
   }
   writeSwitchedModel(config, currentKey, key, model)
-  return {provider: providerDisplayName(entry), model, needsModel: false}
+  const hint = entry.key === 'ollama' && catalogResult.fallback ? ollamaUnreachableHint(model) : undefined
+  return {provider: providerDisplayName(entry), model, needsModel: false, hint}
 }
 
 /**

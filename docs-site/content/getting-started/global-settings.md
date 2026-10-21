@@ -98,6 +98,12 @@ Anthropic (`ANTHROPIC_API_KEY`, `https://api.anthropic.com/v1`, native
 through that proxy, with or without a trailing `/v1`. `anthropic/...`
 stays on OpenRouter. `ollama/<model>` is local Ollama at
 `http://localhost:11434/v1`. It is enabled with no token.
+`cast provider ollama` stores a pulled chat model. `qwen3` matches
+`qwen3:latest`. A lone `qwen3:8b` does not match `ollama/qwen3`, so the
+switch stores that pulled id instead. When Ollama does not answer, the
+switch stores `ollama/qwen3` and prints `ollama pull qwen3`. Embedding
+names stay out of the chat list. Ollama's default context length is 4096
+tokens; raise it with `OLLAMA_CONTEXT_LENGTH` or `num_ctx`.
 `cast provider enable ollama` can store an optional `OLLAMA_API_KEY` for
 `https://ollama.com` and can set `providers.ollama.base_url`. Neither value
 is copied onto a deployed agent. `bedrock/` is reserved and is not a

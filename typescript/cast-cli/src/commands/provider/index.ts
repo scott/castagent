@@ -48,6 +48,7 @@ export default class Provider extends Command {
         }
         this.log(`✓ Inference provider set to: ${switched.provider}`)
         if (switched.model) this.log(`  Builder model: ${switched.model}`)
+        if (switched.hint) this.log(`  ${switched.hint}`)
         this.log('  Restart the builder to take effect (run `cast dev <agent>` again).')
         return
       }

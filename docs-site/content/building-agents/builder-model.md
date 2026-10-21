@@ -206,10 +206,19 @@ Set `OLLAMA_API_KEY` only for Ollama cloud. The chat client sends the
 placeholder `ollama` when that key is absent, so the request does not use
 an empty Bearer token. `/model` loads `GET <base-url>/models` (Ollama's
 OpenAI-compatible `/v1/models`) with no token and lists the ids Ollama
-reports, including a tag such as `llama3.1:8b`. When Ollama does not
-answer, the picker shows `qwen3`, `llama3.1`, and `gpt-oss`. Tool calling
-depends on the pulled model. Those three are the ones that work. The
-builder sends temperature `0.7`. Deploy does not forward `OLLAMA_API_KEY`
+reports, including a tag such as `llama3.1:8b`. Embedding names such
+as `nomic-embed`, `mxbai-embed`, `paraphrase-multilingual`, `all-minilm`, and
+`snowflake-arctic-embed` are left out of the chat list. A `bge` name is
+left out when it starts with `bge` or contains `-bge-` or `bge-m3`. When Ollama
+answers, `cast provider ollama` keeps `ollama/qwen3` only if that pull is
+present (`qwen3` and `qwen3:latest` are the same pull; `qwen3:8b` is not)
+and otherwise stores the first pulled chat model. When Ollama does not
+answer, it stores `ollama/qwen3` and prints `ollama pull qwen3`. `qwen3`,
+`llama3.1`, and `gpt-oss` are starting points. Tool calling depends on
+the model you pull. Ollama's default context length is 4096 tokens, and
+the builder prompt starts near 1.8k tokens, so raise it with
+`OLLAMA_CONTEXT_LENGTH` (for example `16384`) or `num_ctx` in a Modelfile.
+The builder sends temperature `0.7`. Deploy does not forward `OLLAMA_API_KEY`
 or `OLLAMA_BASE_URL`. `cast deploy` to Fly, Railway, Sprites,
 DigitalOcean, or MicroVM refuses an `ollama/` agent model, because that
 host cannot reach Ollama on this machine. `cast deploy --provider docker`

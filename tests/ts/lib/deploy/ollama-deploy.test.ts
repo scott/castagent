@@ -8,6 +8,7 @@ import {
   ollamaContainerBaseUrl,
   ollamaDeployRefusal,
   ollamaDockerEnvFromBase,
+  ollamaLinuxDockerHint,
   prepareOllamaDocker,
 } from '../../../../typescript/cast-cli/src/lib/deploy/ollama'
 
@@ -39,7 +40,11 @@ describe('ollama deploy target', () => {
   it('allows docker when the builder URL is loopback', () => {
     expect(ollamaDeployRefusal('docker', 'ollama/qwen3', 'http://localhost:11434/v1')).to.equal(null)
     expect(ollamaDeployRefusal('docker', 'ollama/qwen3', 'http://127.0.0.1:11435/v1')).to.equal(null)
+    expect(ollamaDeployRefusal('docker', 'ollama/qwen3', 'http://127.4.5.6:11434/v1')).to.equal(null)
+    expect(ollamaDeployRefusal('docker', 'ollama/qwen3', 'http://localhost.:11434/v1')).to.equal(null)
     expect(ollamaDeployRefusal('docker', 'ollama/qwen3', 'http://[::1]:11434/v1')).to.equal(null)
+    expect(ollamaDeployRefusal('docker', 'ollama/qwen3', 'http://[::ffff:127.0.0.1]:11434/v1')).to.equal(null)
+    expect(ollamaDeployRefusal('docker', 'ollama/qwen3', 'http://[::ffff:127.1.2.3]:11434/v1')).to.equal(null)
   })
 
   it('refuses docker when the builder URL is not loopback', () => {
@@ -48,6 +53,21 @@ describe('ollama deploy target', () => {
     expect(message).to.include('https://ollama.com/v1')
     expect(message).to.include('host.docker.internal')
     expect(message).to.not.include(CLOUD_KEY)
+  })
+
+  it('refuses 0.0.0.0 because it is every interface', () => {
+    const message = ollamaDeployRefusal('docker', 'ollama/qwen3', 'http://0.0.0.0:11434/v1')
+    expect(message).to.include('0.0.0.0')
+    expect(message).to.include('every interface')
+    expect(message).to.include('http://127.0.0.1:11434/v1')
+  })
+
+  it('refuses https on loopback instead of rewriting it', () => {
+    const message = ollamaDeployRefusal('docker', 'ollama/qwen3', 'https://127.0.0.1:11434/v1')
+    expect(message).to.include('plain http')
+    expect(message).to.include('https://127.0.0.1:11434/v1')
+    expect(message).to.include('fail TLS')
+    expect(message).to.not.include('host.docker.internal')
   })
 
   it('refuses a builder URL that carries userinfo', () => {
@@ -61,8 +81,21 @@ describe('ollama docker base URL', () => {
   it('rewrites loopback hosts and keeps the port and path', () => {
     expect(ollamaContainerBaseUrl('http://localhost:11434/v1')).to.equal('http://host.docker.internal:11434/v1')
     expect(ollamaContainerBaseUrl('http://127.0.0.1:11435/v1/')).to.equal('http://host.docker.internal:11435/v1')
+    expect(ollamaContainerBaseUrl('http://127.4.5.6:11434/v1')).to.equal('http://host.docker.internal:11434/v1')
+    expect(ollamaContainerBaseUrl('http://localhost.:11434/v1')).to.equal('http://host.docker.internal:11434/v1')
     expect(ollamaContainerBaseUrl('http://[::1]:11434/v1')).to.equal('http://host.docker.internal:11434/v1')
+    expect(ollamaContainerBaseUrl('http://[::ffff:127.0.0.1]:11434/v1')).to.equal('http://host.docker.internal:11434/v1')
+    expect(ollamaContainerBaseUrl('http://[::ffff:127.1.2.3]:11435/v1')).to.equal('http://host.docker.internal:11435/v1')
     expect(ollamaContainerBaseUrl('')).to.equal('http://host.docker.internal:11434/v1')
+  })
+
+  it('names OLLAMA_HOST on Linux and stays quiet on other platforms', () => {
+    const linux = ollamaLinuxDockerHint('linux')
+    expect(linux).to.include('OLLAMA_HOST=0.0.0.0')
+    expect(linux).to.include('firewall')
+    expect(linux).to.include('172.17.0.1')
+    expect(linux).to.include('127.0.0.1')
+    expect(ollamaLinuxDockerHint('darwin')).to.equal(null)
   })
 
   it('puts only the rewritten URL in the container env', () => {

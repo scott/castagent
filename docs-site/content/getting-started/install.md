@@ -47,7 +47,12 @@ To call Anthropic directly, set the model to `anthropic-api/<model-id>`
 stays on OpenRouter.
 To use a local model, run Ollama and set the model to `ollama/<model-id>`
 (for example `ollama/qwen3`). Requests go to `http://localhost:11434/v1`.
-No API key is required. `OLLAMA_BASE_URL=https://ollama.com/v1` plus
+No API key is required. `cast provider ollama` stores a model Ollama has
+pulled. When Ollama does not answer, it stores `ollama/qwen3` and prints
+`ollama pull qwen3`. Embedding names are left out of the chat list.
+Ollama's default context length is 4096 tokens. Raise it with
+`OLLAMA_CONTEXT_LENGTH` or `num_ctx`, because the builder prompt starts
+near 1.8k tokens. `OLLAMA_BASE_URL=https://ollama.com/v1` plus
 `OLLAMA_API_KEY` points the builder at Ollama cloud. That URL and key stay
 on this machine.
 

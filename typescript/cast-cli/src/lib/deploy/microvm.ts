@@ -1116,6 +1116,10 @@ export default class MicrovmDeploy extends Command {
   }
 
   static async upgrade(agentName: string, deployment: any, log: (message: string) => void = console.log): Promise<void> {
+    const agentPath = getAgentPath(agentName)
+    const ollamaRefusal = ollamaDeployRefusal('microvm', readAgentModel(agentPath))
+    if (ollamaRefusal) throw new Error(ollamaRefusal)
+
     const token = requireToken()
     const config = parseVolumeConfig(deployment.volume_config)
     const current = await getMicrovm(token, config.microvmId)
@@ -1133,7 +1137,6 @@ export default class MicrovmDeploy extends Command {
     // A previous deploy left .cast-runtime/cast in the agent directory.
     // Rebuild from that copy and the image keeps the old runtime, so a
     // quiet chat stream still dies on the MicroVM edge.
-    const agentPath = getAgentPath(agentName)
     const projectRoot = findProjectRoot()
     prepareCastImageContext(agentPath, projectRoot)
     if (!copyCastRuntime(agentPath, projectRoot)) {
@@ -1141,9 +1144,6 @@ export default class MicrovmDeploy extends Command {
         `Cast Python package not found under ${projectRoot}. Run cast upgrade from a Cast Agent checkout so the image includes the current runtime.`,
       )
     }
-
-    const ollamaRefusal = ollamaDeployRefusal('microvm', readAgentModel(agentPath))
-    if (ollamaRefusal) throw new Error(ollamaRefusal)
 
     const sha = deployment.id as string
     const stamp = Date.now().toString(36)

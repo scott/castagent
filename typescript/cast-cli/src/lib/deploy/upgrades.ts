@@ -18,7 +18,7 @@ import {
 import {deployToSprites, type SpriteDeployOptions} from './sprites'
 import {SPRITE_SERVICE_LOG} from './sprites-service'
 import {dockerContainerEnv, dockerContainerRunArgs, startDockerAgentContainer, writeDockerCompose} from './docker'
-import {ollamaDeployRefusal, prepareOllamaDocker} from './ollama'
+import {ollamaLinuxDockerHint, ollamaUpgradeDecision, prepareOllamaDocker} from './ollama'
 import {writeHostMotdOverSsh} from './motd'
 import {stagePythonRequirements, writeRequirementsTxt} from './requirements'
 import {
@@ -83,6 +83,12 @@ export async function upgradeDockerDeployment(
   versionTarballPath: string | null,
 ): Promise<void> {
   const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+  const dockerDecision = await ollamaUpgradeDecision('docker', agentPath, versionTarballPath)
+  if (dockerDecision.refusal) host.error(dockerDecision.refusal)
+  if (dockerDecision.model.startsWith('ollama/')) {
+    const hint = ollamaLinuxDockerHint()
+    if (hint) host.log(hint)
+  }
   const deployment = db.getDeployment(agentName)
   const existingVolumeId = deployment?.volume_id
 
@@ -118,9 +124,6 @@ export async function upgradeDockerDeployment(
     }
     await tar.extract({file: versionTarballPath, cwd: agentPath})
   }
-
-  const dockerOllamaRefusal = ollamaDeployRefusal('docker', readAgentModel(agentPath))
-  if (dockerOllamaRefusal) host.error(dockerOllamaRefusal)
 
   const castRuntimeDir = path.join(agentPath, '.cast-runtime', 'cast')
   fs.mkdirSync(path.dirname(castRuntimeDir), {recursive: true})
@@ -221,6 +224,8 @@ export async function upgradeRailwayDeployment(
   versionTarballPath: string | null,
 ): Promise<void> {
   const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+  const railwayDecision = await ollamaUpgradeDecision('railway', agentPath, versionTarballPath)
+  if (railwayDecision.refusal) host.error(railwayDecision.refusal)
   const deployment = db.getDeployment(agentName)
   const existingVolumeId = deployment?.volume_id
 
@@ -240,9 +245,6 @@ export async function upgradeRailwayDeployment(
     }
     await tar.extract({file: versionTarballPath, cwd: agentPath})
   }
-
-  const railwayOllamaRefusal = ollamaDeployRefusal('railway', readAgentModel(agentPath))
-  if (railwayOllamaRefusal) host.error(railwayOllamaRefusal)
 
   stagePythonRequirements(agentPath)
 
@@ -275,6 +277,8 @@ export async function upgradeFlyDeployment(
   versionTarballPath: string | null,
 ): Promise<void> {
   const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+  const flyDecision = await ollamaUpgradeDecision('fly', agentPath, versionTarballPath)
+  if (flyDecision.refusal) host.error(flyDecision.refusal)
   const deployment = db.getDeployment(agentName)
   const existingVolumeId = deployment?.volume_id
 
@@ -294,9 +298,6 @@ export async function upgradeFlyDeployment(
     }
     await tar.extract({file: versionTarballPath, cwd: agentPath})
   }
-
-  const flyOllamaRefusal = ollamaDeployRefusal('fly', readAgentModel(agentPath))
-  if (flyOllamaRefusal) host.error(flyOllamaRefusal)
 
   stageCastRuntime(agentPath)
   host.log('Triggering Fly.io deploy...')
@@ -346,6 +347,8 @@ export async function upgradeDigitalOceanDeployment(
   versionTarballPath: string | null,
 ): Promise<void> {
   const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+  const dropletDecision = await ollamaUpgradeDecision('digitalocean', agentPath, versionTarballPath)
+  if (dropletDecision.refusal) host.error(dropletDecision.refusal)
   const deployment = db.getDeployment(agentName)
   const existingVolumeId = deployment?.volume_id
 
@@ -365,9 +368,6 @@ export async function upgradeDigitalOceanDeployment(
     }
     await tar.extract({file: versionTarballPath, cwd: agentPath})
   }
-
-  const dropletOllamaRefusal = ollamaDeployRefusal('digitalocean', readAgentModel(agentPath))
-  if (dropletOllamaRefusal) host.error(dropletOllamaRefusal)
 
   stageCastRuntime(agentPath)
   host.log('Building and pushing Docker image to DigitalOcean...')
@@ -624,6 +624,8 @@ export async function upgradeSpritesDeployment(
   options: SpriteUpgradeOptions = {},
 ): Promise<void> {
   const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+  const spriteDecision = await ollamaUpgradeDecision('sprites', agentPath, versionTarballPath)
+  if (spriteDecision.refusal) host.error(spriteDecision.refusal)
   const {deployment: deploymentOverride, ...spriteOptions} = options
   const deployment = deploymentOverride === undefined ? db.getDeployment(agentName) : deploymentOverride
   const existingVolumeId = deployment?.volume_id
@@ -659,9 +661,6 @@ export async function upgradeSpritesDeployment(
       }
       await tar.extract({file: versionTarballPath, cwd: agentPath})
     }
-
-    const spriteOllamaRefusal = ollamaDeployRefusal('sprites', readAgentModel(agentPath))
-    if (spriteOllamaRefusal) host.error(spriteOllamaRefusal)
 
     // An unsatisfiable pin fails here, before the sprite is touched.
     // The catch restores the local directory and does not redeploy.

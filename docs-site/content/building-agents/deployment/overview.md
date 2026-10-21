@@ -271,8 +271,18 @@ Fly, Railway, Sprites, DigitalOcean, and MicroVM refuse that model,
 because the remote host cannot reach `http://localhost:11434` and
 `OLLAMA_BASE_URL` is not forwarded. Docker on this machine rewrites a
 loopback Ollama URL to `http://host.docker.internal:<port>/v1` and does
-not copy `OLLAMA_API_KEY`. A builder URL that is not loopback is refused
-for Docker as well. Point `OLLAMA_BASE_URL` at `http://localhost:11434/v1`
+not copy `OLLAMA_API_KEY`. Loopback here is `127.0.0.0/8`, `::1`,
+`localhost`, `localhost.`, and an IPv4-mapped loopback address.
+`0.0.0.0` is refused, and so is `https` on loopback, because local Ollama
+speaks plain http. A builder URL that is not loopback, including
+`https://ollama.com` and a LAN address, is refused for Docker as well.
+On Linux the bridge address `host.docker.internal` is not `127.0.0.1`.
+Ollama listens on `127.0.0.1` unless you start it with
+`OLLAMA_HOST=0.0.0.0`. That binds every interface, so firewall port
+11434 off untrusted networks. Alternatively set `OLLAMA_HOST` to the
+docker0 bridge IP, often `172.17.0.1`, so only the bridge can connect.
+`cast deploy --provider docker` prints that hint on Linux. Point
+`OLLAMA_BASE_URL` at `http://localhost:11434/v1`
 to deploy an agent that calls Ollama on the host. Fly imports the values on stdin. Docker passes an env
 file on stdin. Railway reads each value from stdin. A droplet writes
 them to a mode 0600 env file over SSH stdin. A sprite sends the launch
