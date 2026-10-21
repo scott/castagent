@@ -16,22 +16,37 @@ Non-default providers match first. A provider matches when the model starts with
 | `openrouter/anthropic/claude-sonnet-4.6` | OpenRouter |
 | `anthropic/claude-sonnet-4.6` | OpenRouter |
 | `openai/gpt-4o` | OpenRouter |
+| `google/gemini-2.5-pro` | OpenRouter |
+| `x-ai/grok-2` | OpenRouter |
 | `claude-sonnet-4` | OpenRouter, then the alias table |
 | `example/my-model` | The external provider that registered `example/` |
+| `openai-api/gpt-4o` | Error. That direct prefix is reserved and not registered yet. `openai/gpt-4o` still uses OpenRouter. |
+| `unknown/model` | Error. The message names registered, reserved, and OpenRouter vendor prefixes. |
+| `gpt-5` | Error. A bare id OpenRouter does not already rewrite needs a prefix. |
 
-`openai/`, `anthropic/`, `google/`, `meta-llama/`, `kimi/`, `minimax/`, `deepseek/`, `mistralai/`, `cohere/`, `x-ai/`, and `perplexity/` are OpenRouter model ids. Do not register them. A prefix has to be a provider key plus a slash, such as `example/`.
+`openai/`, `anthropic/`, `google/`, `meta-llama/`, `kimi/`, `minimax/`, `deepseek/`, `mistralai/`, `cohere/`, `x-ai/`, and `perplexity/` are OpenRouter model ids. Do not register them. The list lives in `vendor-prefixes.json`.
+
+`openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`, and `xai/` are reserved in `manifest.json` with `"impl": "reserved"`. They are not providers. An external cannot claim one. Using one raises `InferenceProviderError` and, when the row sets `openrouterVendor`, names the OpenRouter id (`x-ai/` for `xai/`).
+
+A prefix that is not registered, reserved, or a vendor id is an error. It does not fall through to OpenRouter. A bare alias such as `claude-sonnet-4`, a known OpenRouter id, a date suffix, or a dashed Claude id such as `claude-3-7-sonnet` still uses OpenRouter.
 
 Both API keys may be set. The prefix wins. A provider is available when its environment variable is set, or `~/.cast/tokens/inference/<key>.token` exists, or its config key resolves to a real value. Environment values are trimmed. An unsubstituted `${VAR}` is missing. When `HOME` is unset, or `~/.cast/config.yaml` cannot be read, that file is treated as empty. `create_llm` uses `baseUrlEnv`, then config `base_url`, then the manifest `baseUrl`. If the selected provider's token is missing, Cast stays in echo mode and names that variable. It does not try the other provider.
 
-## Add a built-in
+## Add an OpenAI-compatible provider
 
-1. Add `python/cast/providers/<key>.py` that exports `provider`.
-2. Add one object to `manifest.json` with the same `key`, prefixes, environment variable, and config key.
-3. Bind the module in the built-in registry.
-4. Add tests for selection, a missing key, and `create_llm`.
-5. Do not add a branch to the runtime, the builder, reflection, `cast update`, or the deploy commands.
+OpenRouter and DigitalOcean both use `OpenAICompatibleProvider`. The row is the provider. A new OpenAI-compatible provider adds itself:
 
-A test fails when a manifest row has no module, or a module has no row.
+1. Add one object to `manifest.json` with `"impl": "openai-compatible"`, a `key`, prefixes, `envVar`, `configKey`, and `baseUrl`.
+2. Set model-list fields only when you need them: `modelsPath`, `modelsFilter`, `modelsHeaders` (`${token}`), `curatedModels`, `stripModelIdPrefix`, `keyless`, `placeholderKey`, `fallbackModels`, `defaultModel`.
+3. Set `defaultParams` for sampling values such as `{"temperature": 0.7}`. Leave it out to send no temperature. `omitTemperatureModels` is a list of regexes. A match drops `temperature` for that model.
+4. Non-secret settings go in `settings` as `{"env": "EXAMPLE_REGION", "configKey": "providers.example.region"}`. A name containing `BASE_URL` is dropped and is never forwarded on deploy.
+5. Add tests for selection, a missing key, and `create_llm`. Do not add a branch to the runtime, the builder, reflection, `cast update`, or the deploy commands.
+
+No module is required. The registry builds the shared class for every `openai-compatible` row that is not already bound. TypeScript reads the same catalog, so model listing and deploy forwarding follow the row.
+
+A rewrite of model ids needs a module. That module subclasses `OpenAICompatibleProvider`, passes the rewrite and a call-time `chat_factory`, exports `provider`, and is listed in `BUILTIN_MODULES`. OpenRouter does this for `MODEL_ALIASES`. DigitalOcean's module exists so tests can still patch `digitalocean_inference.ChatOpenAI`. It does not rewrite catalog ids.
+
+A test fails when a module exports `provider` but has no manifest row, or a live manifest row is neither a module nor `impl: openai-compatible`. Reserved rows are not providers.
 
 ## Add an external provider
 
@@ -118,7 +133,7 @@ External providers are included in `python -m cast.providers.catalog` and in dep
 class InferenceProvider:
     key: str
     name: str
-    prefixes: tuple[str, ...]   # ("example/",) — empty only for the default
+    prefixes: tuple[str, ...]   # ("example/",). Empty only for the default
     default: bool               # True only for OpenRouter
     env_var: str                # EXAMPLE_API_KEY
     config_key: str             # providers.example.api_key
@@ -130,9 +145,9 @@ class InferenceProvider:
     def create_llm(self, model: str, **kwargs): ...
 ```
 
-`is_available` is true only when `env_var` is set in the process environment. A value that exists only in `~/.cast/config.yaml` does not count here. Deploy forwarding is the path that also reads `config_key`.
+The shared class treats a provider as available when `resolve_token` finds a value: the environment variable, then `~/.cast/tokens/inference/<key>.token`, then `config_key`. A keyless row is available with no token and sends `placeholderKey` (default `ollama`). Deploy forwarding uses the same token order and also reads non-secret `settings`. It never forwards a name containing `BASE_URL`.
 
-`create_llm` receives the raw model string, including the prefix. Strip your own prefix. Do not rewrite another provider's ids. Return a LangChain `BaseChatModel`. Raise `ValueError` naming `env_var` when the key is missing.
+`create_llm` receives the raw model string, including the prefix. The shared class strips the longest prefix, then runs the optional rewrite. Do not rewrite another provider's ids. Return a LangChain `BaseChatModel`. Raise `ValueError` with the row's `missingKeyMessage` when the key is missing. The builder passes `llm_params(model)` (the row's `defaultParams`, with `temperature` removed when the model matches `omitTemperatureModels`). The runtime and reflection pass no temperature.
 
 `known_models` for OpenRouter is the current `KNOWN_MODELS` list, moved verbatim. DigitalOcean sets `accepts_any_model` and an empty `known_models`. `cast update --model` then keeps today's messages: any `digitalocean/<id>` is accepted quietly, and an unknown OpenRouter id still warns about a 404 and still saves.
 
@@ -184,7 +199,7 @@ Deploy code calls `inferenceEnv()`, then keeps the entry whose prefix matches `b
 
 | Key | Notes |
 |---|---|
-| `openrouter` | Default. Base URL `https://openrouter.ai/api/v1`. `MODEL_ALIASES` and the vendor-prefix rules stay in this module. `openrouter/` is stripped before the alias table. |
-| `digitalocean` | Prefix `digitalocean/` only. Base URL `https://inference.do-ai.run/v1`. Catalog id passed through. Key `DIGITALOCEAN_MODEL_ACCESS_KEY`. Config key `providers.digitalocean_inference.api_key`. |
+| `openrouter` | Default. Shared class plus `rewrite_openrouter_model`. Base URL `https://openrouter.ai/api/v1`. `openrouter/` is stripped before the alias table. Builder temperature is `0.7` unless the model matches `omitTemperatureModels`. |
+| `digitalocean` | Shared class. Prefix `digitalocean/` only. Base URL `https://inference.do-ai.run/v1`. Catalog id passed through. Key `DIGITALOCEAN_MODEL_ACCESS_KEY`. Config key `providers.digitalocean_inference.api_key`. Model list is `GET /models`, with fallbacks `llama3.3-70b-instruct` and `deepseek-v3.2`. Builder temperature is `0.7` unless the model matches `omitTemperatureModels`. |
 
 `openai.py`, `anthropic.py`, and `ollama.py` stay placeholders until a provider is actually implemented through this contract.

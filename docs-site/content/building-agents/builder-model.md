@@ -86,6 +86,30 @@ serverless inference when that provider is enabled. `cast model` and
 the picker shows `llama3.3-70b-instruct` and `deepseek-v3.2`. See
 [Global settings](getting-started/global-settings).
 
+## Prefixes
+
+The model id selects the provider. The longest registered prefix wins.
+
+`openai/gpt-4o`, `anthropic/claude-sonnet-4.6`, `google/gemini-2.5-pro`,
+and `x-ai/grok-2` stay on OpenRouter, as do the other OpenRouter vendor
+ids (`meta-llama/`, `kimi/`, `minimax/`, `deepseek/`, `mistralai/`,
+`cohere/`, `perplexity/`). A bare alias such as `claude-sonnet-4` also
+stays on OpenRouter.
+
+These prefixes are reserved for a direct provider and are not registered
+yet: `openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`,
+and `xai/`. `cast model openai-api/gpt-4o` exits non-zero. The message
+says that prefix is reserved and that `openai/gpt-4o` still uses
+OpenRouter. `xai/grok-2` names `x-ai/grok-2` the same way. An unknown
+prefix such as `unknown/model`, and a bare id OpenRouter does not already
+accept such as `gpt-5`, is also an error. The config is not written.
+
+OpenRouter and DigitalOcean both use one OpenAI-compatible provider.
+Their prefixes, keys, and model lists are unchanged. A future
+OpenAI-compatible provider is a row in `python/cast/providers/manifest.json`.
+The builder still requests temperature `0.7` for both current providers,
+and omits temperature for models that reject it.
+
 ## TUI
 
 `/model` is registered only in dev mode (`cast dev`, and the builder

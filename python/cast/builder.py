@@ -901,6 +901,15 @@ class EchoChatModel(BaseChatModel):
         return {"model": "echo"}
 
 
+def _rejected_param(exc: BaseException, params: dict) -> Optional[str]:
+    """Name a sampling param the provider rejected, when the error text mentions it."""
+    text = str(exc).lower()
+    for name in params:
+        if name.lower() in text:
+            return name
+    return None
+
+
 def create_llm() -> BaseChatModel:
     """Create an LLM instance, falling back to echo mode if no API key.
 
@@ -915,17 +924,27 @@ def create_llm() -> BaseChatModel:
         print("Using echo mode for the meta-builder harness.", file=sys.stderr)
         return EchoChatModel()
 
-    from .providers.registry import get_provider
+    from .providers.registry import InferenceProviderError, get_provider
 
     model = get_builder_model_id()
-    provider = get_provider(model)
+    try:
+        provider = get_provider(model)
+    except InferenceProviderError as exc:
+        print(f"Warning: {exc} Using echo mode.", file=sys.stderr)
+        return EchoChatModel()
     if not provider.is_available():
         print(f"Warning: No {provider.env_var} found. Using echo mode.", file=sys.stderr)
         return EchoChatModel()
+    params = provider.llm_params(model)
     try:
-        return provider.create_llm(model=model, temperature=0.7)
+        return provider.create_llm(model=model, **params)
     except Exception as e:
-        print(f"Warning: Failed to create {provider.name} LLM: {e}", file=sys.stderr)
+        rejected = _rejected_param(e, params)
+        detail = f" Rejected param: {rejected}." if rejected else ""
+        print(
+            f"Warning: Failed to create {provider.name} LLM for model {model}.{detail} {e}",
+            file=sys.stderr,
+        )
         return EchoChatModel()
 
 

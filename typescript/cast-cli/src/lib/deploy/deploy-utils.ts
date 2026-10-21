@@ -6,7 +6,8 @@ import crypto from 'crypto'
 import YAML from 'yaml'
 import { db } from '../sqlite'
 import { keychain, type TokenStore } from '../keychain'
-import {resolvedInferenceToken} from '../inference-credentials'
+import {dottedConfigString, expandConfigSecret, resolvedInferenceToken} from '../inference-credentials'
+import {inferencePrefixError, matchingProvider} from '../inference-routing'
 import {runtimeDockerfileCmd} from '../runtime-args'
 import {PAST_AGENT_DOCKERFILES} from './past-agent-dockerfiles'
 import {writeRequirementsTxt} from './requirements'
@@ -1279,6 +1280,18 @@ export interface InferenceCatalogEntry {
   fallbackModels?: string[]
   /** Stored builder model when this provider is selected and has no remembered id. */
   defaultModel?: string
+  /** Available without a token. Ollama will use this. */
+  keyless?: boolean
+  /** Regex applied to unprefixed ids from the live model list. */
+  modelsFilter?: string
+  /** Header template for the model list. `${token}` is replaced when a token exists. */
+  modelsHeaders?: Record<string, string>
+  /** Use knownModels instead of a live fetch. */
+  curatedModels?: boolean
+  /** Prefix stripped from ids returned by the model list, such as `models/`. */
+  stripModelIdPrefix?: string
+  /** Non-secret settings forwarded with the selected provider. Base URLs are never included. */
+  settings?: Array<{env: string; configKey?: string}>
 }
 
 export interface InstallPin {
@@ -1385,12 +1398,27 @@ export function loadInferenceCatalog(): InferenceCatalogEntry[] {
 // API keys only: env, keychain, token file, then configKey. Omits pairs with no value.
 // A custom base URL stays on the builder. This map is what deploy and upgrade send.
 // Does not read providers.digitalocean.token; that key is not in the catalog.
+function blockedInferenceEnvName(name: string): boolean {
+  return !name || name.includes('BASE_URL')
+}
+
 export async function inferenceEnv(config: any = loadConfig()): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
   for (const entry of loadInferenceCatalog()) {
-    if (!entry.envVar) continue
-    const value = await resolvedInferenceToken(entry, config)
-    if (value) out[entry.envVar] = value
+    if (entry.envVar && !blockedInferenceEnvName(entry.envVar)) {
+      const value = await resolvedInferenceToken(entry, config)
+      if (value) out[entry.envVar] = value
+    }
+    for (const setting of entry.settings ?? []) {
+      if (!setting?.env || blockedInferenceEnvName(setting.env)) continue
+      const fromEnv = process.env[setting.env]
+      if (typeof fromEnv === 'string' && fromEnv.trim()) {
+        out[setting.env] = fromEnv.trim()
+        continue
+      }
+      const fromConfig = expandConfigSecret(dottedConfigString(config, setting.configKey))
+      if (fromConfig) out[setting.env] = fromConfig
+    }
   }
   return out
 }
@@ -1431,19 +1459,9 @@ export function inferenceProviderForModel(
   model: string,
   catalog: InferenceCatalogEntry[],
 ): InferenceCatalogEntry | undefined {
-  let best: InferenceCatalogEntry | undefined
-  let bestLen = -1
-  for (const entry of catalog) {
-    const prefixes = Array.isArray(entry.prefixes) ? entry.prefixes : []
-    for (const prefix of prefixes) {
-      if (typeof prefix !== 'string' || prefix.length === 0) continue
-      if (model.startsWith(prefix) && prefix.length > bestLen) {
-        best = entry
-        bestLen = prefix.length
-      }
-    }
-  }
-  if (best) return best
+  const matched = matchingProvider(model, catalog)
+  if (matched) return matched
+  if (inferencePrefixError(model, catalog)) return undefined
   return catalog.find(entry => entry.default)
 }
 
@@ -1462,10 +1480,17 @@ export function filterInferenceEnv(
   if (Object.keys(resolved).length === 0) return {}
   const entries = catalog ?? loadInferenceCatalog()
   const provider = inferenceProviderForModel(model, entries)
-  if (!provider?.envVar) return {}
+  if (!provider?.envVar && !(provider?.settings && provider.settings.length > 0)) return {}
   const kept: Record<string, string> = {}
-  const value = resolved[provider.envVar]
-  if (value) kept[provider.envVar] = value
+  if (provider?.envVar && !blockedInferenceEnvName(provider.envVar)) {
+    const value = resolved[provider.envVar]
+    if (value) kept[provider.envVar] = value
+  }
+  for (const setting of provider?.settings ?? []) {
+    if (!setting?.env || blockedInferenceEnvName(setting.env)) continue
+    const value = resolved[setting.env]
+    if (value) kept[setting.env] = value
+  }
   return kept
 }
 

@@ -6,7 +6,7 @@ import {
 } from '../../lib/inference-provider'
 
 export default class Provider extends Command {
-  static description = 'Show or switch the inference provider the builder uses'
+  static description = 'Show or switch the inference provider the builder uses. The model prefix selects the provider. openai/, anthropic/, google/, and x-ai/ stay on OpenRouter. Direct prefixes openai-api/, anthropic-api/, gemini/, bedrock/, ollama/, and xai/ are reserved.'
 
   static examples = [
     '<%= config.bin %> <%= command.id %>',

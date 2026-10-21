@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- OpenAI-compatible inference providers share one class filled in from `python/cast/providers/manifest.json`. A new provider is a row with `"impl": "openai-compatible"` (base URL, key, model list, keyless flag, curated models, and non-secret settings such as a region). A module is only needed for a model-id rewrite. Direct prefixes `openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`, and `xai/` are reserved in the manifest and are not registered yet.
+
+### Changed
+
+- OpenRouter and DigitalOcean serverless inference use that shared class. Prefixes, environment variables, model lists, keychain and token-file lookup, and deploy forwarding are unchanged. `openai/`, `anthropic/`, `google/`, `x-ai/`, and the other OpenRouter vendor ids still use OpenRouter. A bare alias such as `claude-sonnet-4` still uses OpenRouter, including the memory reflection fallback `claude-haiku-latest`.
+- A model id with an unknown prefix, a reserved direct prefix, or a bare id OpenRouter does not already accept is an error. `cast update` shows that error. Deploy forwards no inference key for those ids. `openai-api/gpt-4o` tells you that `openai/gpt-4o` still uses OpenRouter.
+- The builder takes sampling parameters from the provider row. OpenRouter and DigitalOcean still send temperature `0.7`. Models that match `omitTemperatureModels` (reasoning-style ids such as `o1`, `gpt-5`, and Claude 4.7) omit temperature. A provider with no `defaultParams` no longer receives a hardcoded `0.7`. The runtime and reflection still pass no temperature. When a call fails because a sampling parameter was rejected, the warning names that parameter and the model.
+
 ## [2.7.0] - 2026-10-20
 
 ### Added

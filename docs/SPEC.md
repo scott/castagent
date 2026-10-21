@@ -940,16 +940,22 @@ Non-default providers match first. A provider matches when the model starts with
 | `openrouter/anthropic/claude-sonnet-4.6` | OpenRouter |
 | `anthropic/claude-sonnet-4.6` | OpenRouter |
 | `openai/gpt-4o` | OpenRouter |
+| `google/gemini-2.5-pro` | OpenRouter |
+| `x-ai/grok-2` | OpenRouter |
 | `claude-sonnet-4` | OpenRouter, then the alias table |
 | `example/my-model` | The external provider that registered `example/` |
+| `openai-api/gpt-4o` | Error. Reserved direct prefix, not registered yet |
+| `unknown/model` | Error. Unknown prefix |
 
-`openai/`, `anthropic/`, `google/`, `meta-llama/`, `kimi/`, `minimax/`, `deepseek/`, `mistralai/`, `cohere/`, `x-ai/`, and `perplexity/` are OpenRouter model ids, not provider prefixes.
+`openai/`, `anthropic/`, `google/`, `meta-llama/`, `kimi/`, `minimax/`, `deepseek/`, `mistralai/`, `cohere/`, `x-ai/`, and `perplexity/` are OpenRouter model ids, not provider prefixes. `openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`, and `xai/` are reserved and are not providers until a later change registers them.
 
-Both API keys may be set. The prefix wins. If the selected provider's environment variable is missing, Cast stays in echo mode and names that variable. It does not try the other provider.
+Both API keys may be set. The prefix wins. If the selected provider's token is missing, Cast stays in echo mode and names that variable. It does not try the other provider. An unknown prefix, a reserved direct prefix, or a bare id OpenRouter does not already accept is an error. Deploy then forwards no inference key.
 
 ### Registration
 
-Built-ins are a module under `python/cast/providers/<key>.py` that exports `provider`, one row in `python/cast/providers/manifest.json`, and one binding in `BUILTIN_MODULES`. OpenRouter (`https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`) is the default. DigitalOcean (`https://inference.do-ai.run/v1`, `DIGITALOCEAN_MODEL_ACCESS_KEY`, config key `providers.digitalocean_inference.api_key`) accepts any catalog id and does not rewrite it. `providers.digitalocean` remains the Droplet and MicroVM deploy token.
+An OpenAI-compatible built-in is one row in `python/cast/providers/manifest.json` with `"impl": "openai-compatible"`. The registry builds `OpenAICompatibleProvider` from that row. A module is only required when the provider rewrites model ids, and that module is one line in `BUILTIN_MODULES`. OpenRouter (`https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`) is the default and keeps its alias rewrite. DigitalOcean (`https://inference.do-ai.run/v1`, `DIGITALOCEAN_MODEL_ACCESS_KEY`, config key `providers.digitalocean_inference.api_key`) accepts any catalog id and does not rewrite it. Both use the shared class. `providers.digitalocean` remains the Droplet and MicroVM deploy token.
+
+Builder sampling params come from the row's `defaultParams`. OpenRouter and DigitalOcean still request temperature `0.7`. `omitTemperatureModels` drops temperature for a matching model. The runtime and reflection do not pass temperature.
 
 External providers load after built-ins, with no edit to this repository:
 
@@ -965,11 +971,12 @@ An external key or prefix that collides with a provider loaded earlier fails at 
 
 | Provider | File | Status |
 |----------|------|--------|
-| OpenRouter | `providers/openrouter.py` | v1, default |
-| DigitalOcean serverless inference | `providers/digitalocean.py` | v1 |
-| Anthropic | `providers/anthropic.py` | Placeholder |
-| OpenAI | `providers/openai.py` | Placeholder |
-| Ollama | `providers/ollama.py` | Placeholder |
+| OpenRouter | `providers/openrouter.py` (shared class plus alias rewrite) | v1, default |
+| DigitalOcean serverless inference | `providers/digitalocean.py` (shared class) | v1 |
+| Anthropic direct | reserved `anthropic-api/` | Not registered |
+| OpenAI direct | reserved `openai-api/` | Not registered |
+| Ollama | reserved `ollama/` | Not registered |
+| Gemini, Bedrock, xAI | reserved `gemini/`, `bedrock/`, `xai/` | Not registered |
 
 ### Model string examples
 
@@ -978,7 +985,7 @@ An external key or prefix that collides with a provider loaded earlier fails at 
 - `digitalocean/deepseek-v3.2`
 - `example/my-model` (external provider)
 
-A `digitalocean/<model-id>` string selects DigitalOcean and sends `<model-id>` unchanged. `openrouter/...`, bare aliases, `anthropic/...`, and `openai/...` stay on OpenRouter. Alias and vendor-prefix rewrites stay inside the OpenRouter module.
+A `digitalocean/<model-id>` string selects DigitalOcean and sends `<model-id>` unchanged. `openrouter/...`, bare aliases, `anthropic/...`, `google/...`, `x-ai/...`, and `openai/...` stay on OpenRouter. Alias rewrites stay inside the OpenRouter module. The shared class strips the provider prefix before that hook runs.
 
 ---
 

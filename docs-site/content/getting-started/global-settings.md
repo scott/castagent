@@ -78,8 +78,12 @@ It is not an inference credential. Serverless inference uses
 `providers.digitalocean_inference` (or `DIGITALOCEAN_MODEL_ACCESS_KEY`).
 Set an agent's model to `digitalocean/llama3.3-70b-instruct` or
 `digitalocean/deepseek-v3.2` to call `https://inference.do-ai.run/v1`.
-OpenRouter stays the default when the model is `openrouter/...` or has no
-provider prefix. `defaults.builder_model` can be a `digitalocean/<model-id>`
+OpenRouter stays the default when the model is `openrouter/...`, an
+OpenRouter vendor id (`openai/`, `anthropic/`, `google/`, `x-ai/`, and
+the other vendor segments), or a bare alias such as `claude-sonnet-4`.
+`openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`, and
+`xai/` are reserved and are not providers yet. An unknown prefix is an
+error. `defaults.builder_model` can be a `digitalocean/<model-id>`
 string; the default remains `openrouter/minimax/minimax-m2.5`. Change the
 curated OpenRouter ids with `cast model` or `/model` in the builder TUI.
 The running builder keeps its current model until the next launch.
