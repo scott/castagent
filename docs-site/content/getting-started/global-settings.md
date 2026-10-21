@@ -83,9 +83,9 @@ other slash prefix that is not registered or reserved (`openai/`,
 `x-ai/`, `qwen/`, `z-ai/`, and the rest), or a bare alias such as `claude-sonnet-4`.
 `openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, and
 `ollama/` are reserved and are not providers yet. `xai/<model-id>` is
-direct xAI (`XAI_API_KEY`, `https://api.x.ai/v1`). `defaults.builder_model` can be a `digitalocean/<model-id>`
-or `xai/<model-id>`
-string; the default remains `openrouter/minimax/minimax-m2.5`. Change the
+direct xAI (`XAI_API_KEY`, `https://api.x.ai/v1`). `defaults.builder_model` can be
+`digitalocean/<model-id>` or `xai/<model-id>`. The default remains
+`openrouter/minimax/minimax-m2.5`. Change the
 curated OpenRouter ids with `cast model` or `/model` in the builder TUI.
 The running builder keeps its current model until the next launch.
 
