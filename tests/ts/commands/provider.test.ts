@@ -17,6 +17,8 @@ const savedEnv = {
   OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   GEMINI_BASE_URL: process.env.GEMINI_BASE_URL,
+  ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+  ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
 }
 
 function restoreEnv(name: string, value: string | undefined): void {
@@ -65,6 +67,8 @@ describe('cast provider', () => {
     delete process.env.OPENAI_BASE_URL
     delete process.env.GEMINI_API_KEY
     delete process.env.GEMINI_BASE_URL
+    delete process.env.ANTHROPIC_API_KEY
+    delete process.env.ANTHROPIC_BASE_URL
   })
 
   afterEach(() => {
@@ -79,6 +83,8 @@ describe('cast provider', () => {
     restoreEnv('OPENAI_BASE_URL', savedEnv.OPENAI_BASE_URL)
     restoreEnv('GEMINI_API_KEY', savedEnv.GEMINI_API_KEY)
     restoreEnv('GEMINI_BASE_URL', savedEnv.GEMINI_BASE_URL)
+    restoreEnv('ANTHROPIC_API_KEY', savedEnv.ANTHROPIC_API_KEY)
+    restoreEnv('ANTHROPIC_BASE_URL', savedEnv.ANTHROPIC_BASE_URL)
     fs.rmSync(home, {recursive: true, force: true})
   })
 
@@ -100,6 +106,8 @@ describe('cast provider', () => {
     expect(text).to.include('https://api.x.ai/v1')
     expect(text).to.include('openai-api')
     expect(text).to.include('https://api.openai.com/v1')
+    expect(text).to.include('Anthropic')
+    expect(text).to.include('https://api.anthropic.com/v1')
     expect(text).to.include('not enabled')
     expect(text).to.not.include('sk-secret-value')
   })
@@ -121,6 +129,27 @@ describe('cast provider', () => {
     expect(xai.enabled).to.equal(true)
     expect(xai.baseUrl).to.equal('https://api.x.ai/v1')
     expect(listed.logs.join('\n')).to.not.include('xai-secret-token')
+  })
+
+  it('stores an Anthropic token and lists the provider without printing the key', async () => {
+    const Enable = await loadCommand('enable')
+    const result = await runCommand(Enable, {provider: 'anthropic-api'}, {
+      token: 'sk-ant-stored-token',
+    })
+    expect(result.errors, result.errors.join('\n')).to.deep.equal([])
+    expect(result.logs.join('\n')).to.include('https://api.anthropic.com/v1')
+    expect(result.logs.join('\n')).to.not.include('sk-ant-stored-token')
+    expect(await keytar.getPassword('cast', 'inference:anthropic-api')).to.equal('sk-ant-stored-token')
+    expect(fs.existsSync(configPath())).to.equal(false)
+    const Provider = await loadCommand('index')
+    const listed = await runCommand(Provider, {}, {json: true, current: false})
+    const rows = JSON.parse(listed.logs.join('\n'))
+    const anthropic = rows.find((row: {key: string}) => row.key === 'anthropic-api')
+    expect(anthropic.displayName).to.equal('Anthropic')
+    expect(anthropic.enabled).to.equal(true)
+    expect(anthropic.baseUrl).to.equal('https://api.anthropic.com/v1')
+    expect(anthropic.prefixes).to.deep.equal(['anthropic-api/'])
+    expect(listed.logs.join('\n')).to.not.include('sk-ant-stored-token')
   })
 
   it('stores an OpenAI token without printing it or reading OPENAI_BASE_URL', async () => {

@@ -139,7 +139,6 @@ class TestPrefixErrors:
     def test_reserved_direct_prefixes_do_not_fall_through(self, monkeypatch, tmp_path):
         _home(monkeypatch, tmp_path)
         cases = {
-            "anthropic-api/claude-sonnet-4.6": "anthropic-api/",
             "bedrock/us.anthropic.claude": "bedrock/",
             "ollama/qwen3": "ollama/",
         }

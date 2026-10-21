@@ -21,6 +21,7 @@ jiter>=0.14.0
 jsonpatch>=1.33
 jsonpointer>=3.1.1
 langchain>=1.2.15
+langchain-anthropic>=1.7.6
 langchain-core>=1.6.12
 langchain-openai>=1.7.2
 langgraph>=1.2.16

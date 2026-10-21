@@ -26,7 +26,8 @@ You will also need an LLM API key to actually run an agent. Any one of these is 
 - an **OpenRouter** key (`OPENROUTER_API_KEY`) from [openrouter.ai](https://openrouter.ai) — the default, or
 - a **DigitalOcean serverless inference** model access key (`DIGITALOCEAN_MODEL_ACCESS_KEY`), or
 - an **OpenAI** key (`OPENAI_API_KEY`) from [platform.openai.com](https://platform.openai.com/api-keys), or
-- a **Google Gemini** key (`GEMINI_API_KEY`) from [Google AI Studio](https://aistudio.google.com/apikey).
+- a **Google Gemini** key (`GEMINI_API_KEY`) from [Google AI Studio](https://aistudio.google.com/apikey), or
+- an **Anthropic** key (`ANTHROPIC_API_KEY`) from [platform.claude.com](https://platform.claude.com/settings/keys).
 
 OpenRouter stays the default. To call DigitalOcean, set the model to
 `digitalocean/<model-id>` (for example `digitalocean/llama3.3-70b-instruct`
@@ -38,6 +39,10 @@ To call OpenAI directly, set the model to `openai-api/<model-id>`
 To call Gemini directly, set the model to `gemini/<model-id>` (for example
 `gemini/gemini-3.8-flash`). Requests go to
 `https://generativelanguage.googleapis.com/v1beta/openai`. `google/...`
+stays on OpenRouter.
+To call Anthropic directly, set the model to `anthropic-api/<model-id>`
+(for example `anthropic-api/claude-sonnet-5-5`). Requests go to
+`https://api.anthropic.com/v1` through `ChatAnthropic`. `anthropic/...`
 stays on OpenRouter.
 
 ## One-liner install (recommended)
@@ -81,7 +86,7 @@ build and the symlink. To fetch and rebuild in one step, use
 `./setup.sh` creates `python/.venv` for a contributor checkout, including
 a pull request branch. It installs the packages `cast dev` imports: the
 Cast package from `python/pyproject.toml`, plus `langchain`,
-`langchain-openai`, `langchain-core`, `starlette`, `uvicorn`, `pyyaml`,
+`langchain-anthropic`, `langchain-openai`, `langchain-core`, `starlette`, `uvicorn`, `pyyaml`,
 and `python-dotenv`.
 
 It does not install Node dependencies or build the CLI, and it does not
@@ -111,7 +116,7 @@ cd python
 python3 -m venv .venv
 . .venv/bin/activate
 pip install -e .
-pip install langchain langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
+pip install langchain langchain-anthropic langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
 ```
 
 When `uv` is installed, `./setup.sh` creates the virtualenv with `uv venv`

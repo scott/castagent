@@ -278,7 +278,7 @@ class TestRuntimeAgentProviderSelection:
             assert mock_chat.call_args.kwargs["api_key"] == "or-key"
 
     def test_reserved_prefix_falls_back_to_echo(self, agent_config):
-        self._set_model(agent_config, "anthropic-api/claude-sonnet-4.6")
+        self._set_model(agent_config, "bedrock/us.anthropic.claude")
         with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
             agent = RuntimeAgent(agent_config)
         assert agent.graph is None
@@ -317,8 +317,42 @@ class TestRuntimeAgentProviderSelection:
         from cast.memory.reflection import ReflectionAgent
 
         with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
-            agent = ReflectionAgent("anthropic-api/claude-sonnet-4.6")
+            agent = ReflectionAgent("ollama/qwen3")
         assert agent.llm is None
+
+    def test_anthropic_without_its_key_stays_in_echo(self, agent_config):
+        self._set_model(agent_config, "anthropic-api/claude-sonnet-5-5")
+        with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
+            agent = RuntimeAgent(agent_config)
+            assert agent.graph is None
+            assert agent._provider is not None
+            assert agent._provider.key == "anthropic-api"
+            response = agent._echo_response("random message")
+            assert "ANTHROPIC_API_KEY" in response
+            assert "OPENROUTER_API_KEY" not in response
+
+    @patch("cast.agent.runtime.create_react_agent")
+    @patch("cast.providers.anthropic.load_chat_cls")
+    def test_anthropic_key_starts_native_client_not_openrouter(
+        self, mock_loader, mock_graph, agent_config
+    ):
+        self._set_model(agent_config, "anthropic-api/claude-sonnet-5-5")
+        mock_graph.return_value = MagicMock()
+        mock_chat = MagicMock()
+        mock_loader.return_value = mock_chat
+        with patch.dict(os.environ, _env({
+            "ANTHROPIC_API_KEY": "sk-ant-test",
+            "OPENROUTER_API_KEY": "or-key",
+            "ANTHROPIC_BASE_URL": "https://anthropic.example/v1",
+        }), clear=True):
+            agent = RuntimeAgent(agent_config)
+        assert agent.graph is not None
+        assert agent._provider.key == "anthropic-api"
+        assert mock_chat.call_args.kwargs["model"] == "claude-sonnet-5-5"
+        assert mock_chat.call_args.kwargs["api_key"] == "sk-ant-test"
+        assert mock_chat.call_args.kwargs["base_url"] == "https://anthropic.example"
+        assert "temperature" not in mock_chat.call_args.kwargs
+        assert "or-key" not in str(mock_chat.call_args.kwargs)
 
     def test_openai_api_without_a_key_stays_in_echo(self):
         from cast.memory.reflection import ReflectionAgent

@@ -10,6 +10,7 @@ export default class ProviderEnable extends Command {
     '<%= config.bin %> <%= command.id %> digitalocean --token -',
     '<%= config.bin %> <%= command.id %> openrouter --token -',
     '<%= config.bin %> <%= command.id %> gemini --token -',
+    '<%= config.bin %> <%= command.id %> anthropic-api --token -',
     '<%= config.bin %> <%= command.id %> digitalocean --token - --url https://inference.do-ai.run/v1',
   ]
 
@@ -40,7 +41,7 @@ export default class ProviderEnable extends Command {
       description: 'Model access key. Use --token - to read it from stdin, or --token with no value to type it without echo. The key is stored in the system keychain.',
     }),
     url: Flags.string({
-      description: 'OpenAI-compatible base URL, including the /v1 path',
+      description: 'API base URL, including the /v1 path',
     }),
   }
 

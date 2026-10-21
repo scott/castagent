@@ -1,9 +1,15 @@
-"""One OpenAI-compatible binding, filled in from a manifest row.
+"""One chat binding, filled in from a manifest row.
 
-A future provider is a row with ``"impl": "openai-compatible"``. The
-registry builds it. A module is needed when the provider rewrites model
-ids or supplies a ``chat_factory``. That module is the shared class plus
-the rewrite or factory.
+A future OpenAI-compatible provider is a row with ``"impl":
+"openai-compatible"``. The registry builds it. A module is needed when
+the provider rewrites model ids, supplies a ``chat_factory``, or adjusts
+the base URL before the client is constructed.
+
+A provider that is not OpenAI-compatible uses ``"impl": "module"`` and a
+module in ``BUILTIN_MODULES``. That module subclasses this class, passes
+its own ``chat_factory``, and exports ``provider``. The row still owns
+the prefix, key, model list, and sampling. The registry does not build a
+``ChatOpenAI`` client for that row.
 """
 
 from __future__ import annotations
@@ -71,6 +77,7 @@ class OpenAICompatibleProvider:
         *,
         rewrite_model: Optional[Callable[[str], str]] = None,
         chat_factory: Optional[Callable[[], Any]] = None,
+        chat_base_url: Optional[Callable[[str], str]] = None,
     ):
         if row is None:
             if not row_key:
@@ -106,6 +113,7 @@ class OpenAICompatibleProvider:
         )
         self.rewrite_model = rewrite_model
         self.chat_factory = chat_factory or _default_chat
+        self.chat_base_url = chat_base_url
 
     def is_available(self) -> bool:
         if self.keyless:
@@ -160,6 +168,8 @@ class OpenAICompatibleProvider:
             base_url = base_url_override
         else:
             base_url = resolve_base_url(self.base_url_env, self.config_key, self.base_url)
+        if self.chat_base_url is not None:
+            base_url = self.chat_base_url(base_url)
         model_id = self.resolve_model_id(model)
         params = dict(kwargs)
         if omits_temperature(self.omit_temperature_models, model) or omits_temperature(

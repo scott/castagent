@@ -58,7 +58,7 @@ install_python_env() {
                 uv venv
             fi
             uv pip install -e "."
-            uv pip install langchain langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
+            uv pip install langchain langchain-anthropic langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
         else
             if [ ! -d .venv ]; then
                 if ! python3 -m venv .venv; then
@@ -69,7 +69,7 @@ install_python_env() {
             # shellcheck disable=SC1091
             . .venv/bin/activate
             pip install -e "."
-            pip install langchain langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
+            pip install langchain langchain-anthropic langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
         fi
     )
     echo "Python environment ready at python/.venv"

@@ -2,7 +2,7 @@
 
 Load order:
 
-1. Built-ins (OpenRouter default, then DigitalOcean, then Gemini).
+1. Built-ins (OpenRouter default, then DigitalOcean, then Gemini, then Anthropic).
 2. ``cast.inference`` entry points, sorted by key.
 3. ``~/.cast/inference-providers/<key>/``, sorted by directory name.
 4. ``inferenceProviders`` entries in ``~/.cast/config.yaml``, in listed order.
@@ -37,6 +37,7 @@ BUILTIN_MODULES = (
     "cast.providers.openrouter",
     "cast.providers.digitalocean",
     "cast.providers.gemini",
+    "cast.providers.anthropic",
 )
 
 
@@ -352,7 +353,11 @@ def _check_manifest(record: ProviderRecord, module_name: str) -> None:
 
 
 def _load_compatible_rows(registry: Registry) -> None:
-    """Register ``impl: openai-compatible`` rows that have no module of their own."""
+    """Register ``impl: openai-compatible`` rows that have no module of their own.
+
+    ``impl: module`` is not loaded here. That row is bound by its module in
+    ``BUILTIN_MODULES``. A missing module does not fall through to ChatOpenAI.
+    """
     from .openai_compatible import OpenAICompatibleProvider
 
     for row in _manifest_by_key().values():

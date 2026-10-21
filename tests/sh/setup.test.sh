@@ -119,7 +119,7 @@ run_setup() {
     set -e
 }
 
-RUNTIME_PKGS="langchain langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv"
+RUNTIME_PKGS="langchain langchain-anthropic langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv"
 
 # uv creates the virtualenv and installs the runtime packages.
 prepare_checkout "$TMP/uv-checkout"

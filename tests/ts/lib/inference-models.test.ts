@@ -21,6 +21,7 @@ describe('inference model listing', () => {
   const previousXai = process.env.XAI_API_KEY
   const previousOpenAI = process.env.OPENAI_API_KEY
   const previousGemini = process.env.GEMINI_API_KEY
+  const previousAnthropic = process.env.ANTHROPIC_API_KEY
   const catalog = loadInferenceCatalog()
   let home: string
 
@@ -32,6 +33,7 @@ describe('inference model listing', () => {
     delete process.env.XAI_API_KEY
     delete process.env.OPENAI_API_KEY
     delete process.env.GEMINI_API_KEY
+    delete process.env.ANTHROPIC_API_KEY
   })
 
   afterEach(() => {
@@ -47,6 +49,8 @@ describe('inference model listing', () => {
     else process.env.OPENAI_API_KEY = previousOpenAI
     if (previousGemini === undefined) delete process.env.GEMINI_API_KEY
     else process.env.GEMINI_API_KEY = previousGemini
+    if (previousAnthropic === undefined) delete process.env.ANTHROPIC_API_KEY
+    else process.env.ANTHROPIC_API_KEY = previousAnthropic
     fs.rmSync(home, {recursive: true, force: true})
   })
 
@@ -368,6 +372,74 @@ describe('inference model listing', () => {
     expect(result.models.map(model => model.id)).to.deep.equal([
       'gemini/gemini-3.8-flash',
       'gemini/gemini-3.1-pro-preview',
+    ])
+  })
+
+  it('lists Anthropic models with x-api-key and drops non-Claude ids', async () => {
+    const entry = catalog.find(item => item.key === 'anthropic-api')
+    expect(entry?.modelsPath).to.equal('/models?limit=1000')
+    expect(entry?.baseUrl).to.equal('https://api.anthropic.com/v1')
+    expect(entry?.modelsHeaders?.['x-api-key']).to.equal('${token}')
+    expect(entry?.modelsHeaders?.['anthropic-version']).to.equal('2023-06-01')
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-list-key'
+    const seen: {url: string; headers: Record<string, string>}[] = []
+    const result = await modelsForProvider(entry!, {
+      fetchImpl: async (url, init) => {
+        seen.push({url: String(url), headers: {...(init?.headers as Record<string, string>)}})
+        return jsonResponse({
+          data: [
+            {id: 'claude-sonnet-5-5'},
+            {id: 'claude-opus-5-5'},
+            {id: 'claude-haiku-5-5'},
+            {id: 'claude-fable-5-1'},
+            {id: 'claude-sonnet-4-6'},
+            {id: 'voyage-3-large'},
+            {id: 'embed-english-v3'},
+          ],
+        })
+      },
+    })
+    expect(seen).to.have.length(1)
+    expect(seen[0].url).to.equal('https://api.anthropic.com/v1/models?limit=1000')
+    expect(seen[0].headers['x-api-key']).to.equal('sk-ant-list-key')
+    expect(seen[0].headers['anthropic-version']).to.equal('2023-06-01')
+    expect(seen[0].headers.Authorization).to.equal(undefined)
+    expect(result.fallback).to.equal(false)
+    expect(result.models.map(model => model.id)).to.deep.equal([
+      'anthropic-api/claude-sonnet-5-5',
+      'anthropic-api/claude-opus-5-5',
+      'anthropic-api/claude-haiku-5-5',
+      'anthropic-api/claude-fable-5-1',
+      'anthropic-api/claude-sonnet-4-6',
+    ])
+  })
+
+  it('uses Anthropic fallback ids when the live list fails or the key is missing', async () => {
+    const entry = catalog.find(item => item.key === 'anthropic-api')
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-list-key'
+    const failed = await modelsForProvider(entry!, {
+      fetchImpl: async () => jsonResponse({}, 401),
+    })
+    expect(failed.fallback).to.equal(true)
+    expect(failed.models.map(model => model.id)).to.deep.equal([
+      'anthropic-api/claude-sonnet-5-5',
+      'anthropic-api/claude-opus-5-5',
+      'anthropic-api/claude-haiku-5-5',
+    ])
+    delete process.env.ANTHROPIC_API_KEY
+    let called = false
+    const offline = await modelsForProvider(entry!, {
+      fetchImpl: async () => {
+        called = true
+        throw new Error('must not fetch without a key')
+      },
+    })
+    expect(called).to.equal(false)
+    expect(offline.fallback).to.equal(true)
+    expect(offline.models.map(model => model.id)).to.deep.equal([
+      'anthropic-api/claude-sonnet-5-5',
+      'anthropic-api/claude-opus-5-5',
+      'anthropic-api/claude-haiku-5-5',
     ])
   })
 

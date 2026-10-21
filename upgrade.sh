@@ -570,7 +570,7 @@ install_python() {
                 uv venv
             fi
             uv pip install -e "."
-            uv pip install langchain langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
+            uv pip install langchain langchain-anthropic langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
         else
             if [[ ! -d .venv ]]; then
                 python3 -m venv .venv
@@ -578,7 +578,7 @@ install_python() {
             # shellcheck disable=SC1091
             source .venv/bin/activate
             pip install -e "."
-            pip install langchain langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
+            pip install langchain langchain-anthropic langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
         fi
     )
     log_success "Python dependencies installed"
