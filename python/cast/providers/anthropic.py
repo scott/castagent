@@ -21,7 +21,7 @@ from urllib.parse import quote
 
 from .openai_compatible import OpenAICompatibleProvider
 
-_INSTALL = "pip install 'langchain-anthropic>=1.7.6'"
+_INSTALL = "pip install 'langchain-anthropic>=1.7.6,<2'"
 
 # ChatAnthropic treats an omitted timeout as no timeout. The OpenAI and
 # Anthropic SDKs both default to 10 minutes.
@@ -30,16 +30,18 @@ REQUEST_TIMEOUT = 600.0
 _ANTHROPIC_VERSION = "2023-06-01"
 _LIST_TIMEOUT = 2.0
 
-# Opus 4 and Opus 4.1 cap output below the later 64k line.
-_OPUS_4_OR_41 = re.compile(r"^claude-opus-4(?:[.-]1)?$")
+# Opus 4 and Opus 4.1 cap output at 32000, including -0 and dated snapshots.
+_OPUS_4_OR_41 = re.compile(r"^claude-opus-4(?:[.-][01])?(?:-\d{8})?$")
 # 4.7 and later, including dotted ids such as claude-opus-4.7.
 _CLAUDE_47_PLUS = re.compile(
     r"^claude-(?:opus|sonnet|haiku|fable|mythos)-(?:4[.-][7-9]|[5-9](?:[.-]\d+)?)"
 )
 _CLAUDE_4 = re.compile(r"^claude-(?:opus|sonnet|haiku|fable|mythos)-4")
 _CLAUDE_35 = re.compile(r"^claude-3[.-]5")
+# Claude 3 Haiku and Opus cap output at 4096. 3.5 stays on the 8192 line.
+_CLAUDE_3_HAIKU_OR_OPUS = re.compile(r"^claude-3-(?:haiku|opus)(?:-\d{8})?$")
 
-_listed_output_limits: dict[tuple[str, str], Optional[int]] = {}
+_listed_output_limits: dict[tuple[str, str], int] = {}
 
 
 def load_chat_cls():
@@ -81,13 +83,21 @@ def model_profile(model_id: str) -> Optional[dict]:
     """Profile from langchain-anthropic.
 
     ``None`` means the package is not installed. ``{}`` means the package
-    has no row for this id.
+    has no row for this id. A missing ``_get_default_model_profile`` raises,
+    because treating that as an unknown id would leave ``max_tokens`` unset
+    and ``ChatAnthropic`` would fall back to 4096.
     """
     try:
-        from langchain_anthropic.chat_models import _get_default_model_profile
+        import langchain_anthropic.chat_models as chat_models
     except ImportError:
         return None
-    found = _get_default_model_profile(model_id) if model_id else {}
+    lookup = getattr(chat_models, "_get_default_model_profile", None)
+    if not callable(lookup):
+        raise RuntimeError(
+            "langchain-anthropic no longer provides _get_default_model_profile. "
+            "Refusing to leave max_tokens unset, which would fall back to 4096."
+        )
+    found = lookup(model_id) if model_id else {}
     return dict(found or {})
 
 
@@ -106,6 +116,8 @@ def family_output_floor(model_id: str) -> int:
         return 64000
     if _CLAUDE_35.match(text):
         return 8192
+    if _CLAUDE_3_HAIKU_OR_OPUS.fullmatch(text):
+        return 4096
     if text.startswith("claude-"):
         return 8192
     return 8192
@@ -114,7 +126,8 @@ def family_output_floor(model_id: str) -> int:
 def listed_output_limit(base_url: str, api_key: str, model_id: str) -> Optional[int]:
     """``max_tokens`` from ``GET /v1/models/{id}``, or None when it is unavailable.
 
-    Failures are cached so a missing field does not add a request to every turn.
+    Only a positive ``max_tokens`` is cached. A failed lookup is not stored,
+    so the next turn can try the endpoint again.
     """
     root = models_v1_root(base_url)
     if not root or not api_key or not model_id:
@@ -140,7 +153,8 @@ def listed_output_limit(base_url: str, api_key: str, model_id: str) -> Optional[
             found = value
     except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError, ValueError):
         found = None
-    _listed_output_limits[cache_key] = found
+    if found is not None:
+        _listed_output_limits[cache_key] = found
     return found
 
 

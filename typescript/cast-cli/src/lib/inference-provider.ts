@@ -237,6 +237,14 @@ function withQuery(url: string, key: string, value: string): string {
   return `${url}${join}${encodeURIComponent(key)}=${encodeURIComponent(value)}`
 }
 
+function lifecycleQueryRejected(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const match = /^HTTP (\d+)$/.exec(err.message)
+  if (!match) return false
+  const status = Number(match[1])
+  return status === 400 || status === 422
+}
+
 async function readModelList(
   fetchImpl: typeof fetch,
   url: string,
@@ -270,8 +278,10 @@ async function fetchModels(
     if (entry.modelsLifecycle) {
       try {
         body = await readModelList(fetchImpl, withQuery(plainUrl, 'lifecycle', entry.modelsLifecycle), headers)
-      } catch {
-        // The host does not support the lifecycle query. List without it.
+      } catch (err) {
+        // Retry only when the host rejects the lifecycle query. A timeout
+        // or 401 stays a failure so the picker uses the offline ids.
+        if (!lifecycleQueryRejected(err)) throw err
         body = await readModelList(fetchImpl, plainUrl, headers)
       }
     } else {

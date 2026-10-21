@@ -172,8 +172,9 @@ omit it. Chat strips a trailing `/v1`. The model list adds `/v1` when it
 is missing, so a Claude Code style host still loads `/v1/models` instead
 of the offline ids. `/model` loads
 `GET /v1/models?limit=1000&lifecycle=active` with `x-api-key` and
-`anthropic-version: 2023-06-01`. If that query is rejected, the list is
-requested again without it. Rows that report another lifecycle are
+`anthropic-version: 2023-06-01`. If the host returns HTTP 400 or 422
+for that query, the list is requested again without it. A timeout or
+401 does not retry. Rows that report another lifecycle are
 dropped. Rows with no lifecycle field are kept. Ids that start with
 `claude-` are kept. Anything else is left out. One response is the whole
 list, capped at 1000 ids. When that list cannot be loaded, the picker shows
@@ -185,7 +186,10 @@ manifest pattern is the fallback: opus, sonnet, haiku, fable, and mythos
 `claude-sonnet-4-6` still receive `0.7` unless their profile says
 otherwise. A known profile supplies `max_tokens`. An unknown id uses
 `max_tokens` from `GET /v1/models/{id}` when that field is present, and
-otherwise a family floor so the request does not stop at 4096. The client
+otherwise a family floor. Opus 4 and Opus 4.1, including dated
+snapshots, use 32000. Claude 3 Haiku and Claude 3 Opus use 4096, which
+is their published cap. Other unknown Claude ids use a higher floor so
+a long tool-call write is not cut off at 4096. The client
 uses a 600 second request timeout. Cast does not force `tool_choice`.
 Direct ids are not rewritten: `anthropic-api/claude-sonnet-4` is sent as
 `claude-sonnet-4`. `anthropic/claude-sonnet-4.6` and the bare alias

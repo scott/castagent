@@ -464,6 +464,58 @@ describe('inference model listing', () => {
     ])
   })
 
+  it('retries the Anthropic model list without lifecycle on HTTP 422', async () => {
+    const entry = catalog.find(item => item.key === 'anthropic-api')
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-list-key'
+    const seen: string[] = []
+    const result = await modelsForProvider(entry!, {
+      fetchImpl: async url => {
+        const target = String(url)
+        seen.push(target)
+        if (target.includes('lifecycle=')) return jsonResponse({error: 'unprocessable'}, 422)
+        return jsonResponse({data: [{id: 'claude-sonnet-5-5', lifecycle: 'active'}]})
+      },
+    })
+    expect(seen).to.deep.equal([
+      'https://api.anthropic.com/v1/models?limit=1000&lifecycle=active',
+      'https://api.anthropic.com/v1/models?limit=1000',
+    ])
+    expect(result.fallback).to.equal(false)
+    expect(result.models.map(model => model.id)).to.deep.equal(['anthropic-api/claude-sonnet-5-5'])
+  })
+
+  it('does not retry the Anthropic model list on 401, 500, or a timeout', async () => {
+    const entry = catalog.find(item => item.key === 'anthropic-api')
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-list-key'
+    for (const status of [401, 500]) {
+      let calls = 0
+      const result = await modelsForProvider(entry!, {
+        fetchImpl: async () => {
+          calls += 1
+          return jsonResponse({}, status)
+        },
+      })
+      expect(calls, `status ${status}`).to.equal(1)
+      expect(result.fallback).to.equal(true)
+    }
+    let calls = 0
+    const timedOut = await modelsForProvider(entry!, {
+      fetchImpl: async () => {
+        calls += 1
+        const err = new Error('The operation was aborted due to timeout')
+        err.name = 'TimeoutError'
+        throw err
+      },
+    })
+    expect(calls).to.equal(1)
+    expect(timedOut.fallback).to.equal(true)
+    expect(timedOut.models.map(model => model.id)).to.deep.equal([
+      'anthropic-api/claude-sonnet-5-5',
+      'anthropic-api/claude-opus-5-5',
+      'anthropic-api/claude-haiku-5-5',
+    ])
+  })
+
   it('uses Anthropic fallback ids when the live list fails or the key is missing', async () => {
     const entry = catalog.find(item => item.key === 'anthropic-api')
     process.env.ANTHROPIC_API_KEY = 'sk-ant-list-key'

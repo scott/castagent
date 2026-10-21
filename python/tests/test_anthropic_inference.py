@@ -9,6 +9,7 @@ from cast.providers.anthropic import (
     REQUEST_TIMEOUT,
     family_output_floor,
     listed_output_limit,
+    model_profile,
     models_v1_root,
     sdk_base_url,
 )
@@ -83,8 +84,19 @@ class TestAnthropicRow:
         assert family_output_floor("claude-sonnet-4") == 64000
         assert family_output_floor("claude-opus-4-1") == 32000
         assert family_output_floor("claude-opus-4") == 32000
+        assert family_output_floor("claude-opus-4.1") == 32000
+        assert family_output_floor("claude-opus-4-0") == 32000
+        assert family_output_floor("claude-opus-4.0") == 32000
+        assert family_output_floor("claude-opus-4-1-20250805") == 32000
+        assert family_output_floor("claude-opus-4-20250514") == 32000
+        assert family_output_floor("claude-opus-4-0-20250514") == 32000
         assert family_output_floor("claude-opus-4.7") == 128000
         assert family_output_floor("claude-3-5-sonnet-20241022") == 8192
+        assert family_output_floor("claude-3-5-haiku-20241022") == 8192
+        assert family_output_floor("claude-3-haiku-20240307") == 4096
+        assert family_output_floor("claude-3-opus-20240229") == 4096
+        assert family_output_floor("claude-3-haiku") == 4096
+        assert family_output_floor("claude-3-opus") == 4096
 
     def test_openrouter_vendor_ids_stay_on_openrouter(self, monkeypatch, tmp_path):
         _home(monkeypatch, tmp_path)
@@ -264,3 +276,63 @@ class TestAnthropicProfileAndLimits:
             server.shutdown()
             thread.join(timeout=2)
             server.server_close()
+
+    def test_failed_model_lookup_is_not_cached(self):
+        import json
+        import threading
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+        hits = {"count": 0}
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, format, *args):
+                return
+
+            def do_GET(self):
+                hits["count"] += 1
+                if hits["count"] == 1:
+                    self.send_response(500)
+                    self.end_headers()
+                    return
+                raw = json.dumps({"id": "claude-opus-4", "max_tokens": 32000}).encode()
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(raw)))
+                self.end_headers()
+                self.wfile.write(raw)
+
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            root = f"http://127.0.0.1:{server.server_port}"
+            assert listed_output_limit(root, "sk-ant-test", "claude-opus-4") is None
+            assert listed_output_limit(root, "sk-ant-test", "claude-opus-4") == 32000
+            assert hits["count"] == 2
+            assert listed_output_limit(root, "sk-ant-test", "claude-opus-4") == 32000
+            assert hits["count"] == 2
+        finally:
+            server.shutdown()
+            thread.join(timeout=2)
+            server.server_close()
+
+    def test_profile_helper_still_supplies_max_output_tokens(self):
+        import langchain_anthropic.chat_models as chat_models
+
+        lookup = getattr(chat_models, "_get_default_model_profile", None)
+        assert callable(lookup), (
+            "langchain-anthropic removed _get_default_model_profile. "
+            "model_profile() would treat every id as unknown and ChatAnthropic "
+            "would fall back to 4096 max_tokens. Update the lookup before upgrading."
+        )
+        profile = lookup("claude-sonnet-4-6")
+        assert isinstance(profile, dict)
+        assert profile.get("max_output_tokens", 0) > 4096
+        assert model_profile("claude-sonnet-4-6").get("max_output_tokens", 0) > 4096
+
+    def test_missing_profile_helper_fails_loudly(self, monkeypatch):
+        import langchain_anthropic.chat_models as chat_models
+
+        monkeypatch.delattr(chat_models, "_get_default_model_profile", raising=False)
+        with pytest.raises(RuntimeError, match="4096"):
+            model_profile("claude-sonnet-4-6")
