@@ -101,17 +101,33 @@
   },
   {
     "key": "anthropic-api",
-    "impl": "reserved",
     "name": "Anthropic",
-    "displayName": "Anthropic",
-    "prefixes": ["anthropic-api/"],
     "default": false,
+    "prefixes": ["anthropic-api/"],
     "envVar": "ANTHROPIC_API_KEY",
     "configKey": "providers.anthropic.api_key",
     "baseUrl": "https://api.anthropic.com/v1",
+    "baseUrlEnv": "ANTHROPIC_BASE_URL",
     "acceptsAnyModel": true,
+    "displayName": "Anthropic",
+    "modelsPath": "/models?limit=1000",
+    "modelsFilter": "^claude-",
+    "modelsLifecycle": "active",
+    "normalizeV1Base": true,
+    "modelsHeaders": {
+      "x-api-key": "${token}",
+      "anthropic-version": "2023-06-01"
+    },
+    "fallbackModels": ["claude-sonnet-5-5", "claude-opus-5-5", "claude-haiku-5-5"],
+    "defaultModel": "anthropic-api/claude-sonnet-5-5",
     "knownModels": [],
-    "openrouterVendor": "anthropic/"
+    "impl": "module",
+    "llmDefaultModel": "claude-sonnet-5-5",
+    "missingKeyMessage": "ANTHROPIC_API_KEY environment variable is required for Anthropic. Get one at https://platform.claude.com/settings/keys",
+    "defaultParams": {"temperature": 0.7},
+    "omitTemperatureModels": [
+      "claude-(?:opus|sonnet|haiku|fable|mythos)-(?:4[.-][7-9]|[5-9](?:[.-]\\d+)?)"
+    ]
   },
   {
     "key": "gemini",

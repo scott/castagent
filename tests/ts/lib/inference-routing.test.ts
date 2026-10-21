@@ -19,6 +19,7 @@ const DIGITALOCEAN = 'do-model-secret-key-0123456789'
 const XAI = 'xai-secret-key-0123456789'
 const OPENAI = 'sk-openai-test-key-0123456789'
 const GEMINI = 'gemini-test-key-0123456789'
+const ANTHROPIC = 'sk-ant-test-key-0123456789'
 
 const BOTH = {
   OPENROUTER_API_KEY: OPENROUTER,
@@ -26,11 +27,13 @@ const BOTH = {
   XAI_API_KEY: XAI,
   OPENAI_API_KEY: OPENAI,
   GEMINI_API_KEY: GEMINI,
+  ANTHROPIC_API_KEY: ANTHROPIC,
   OPENROUTER_BASE_URL: 'https://openrouter.example/v1',
   DIGITALOCEAN_INFERENCE_BASE_URL: 'https://inference.example/v1',
   XAI_BASE_URL: 'https://xai.example/v1',
   OPENAI_BASE_URL: 'https://proxy.example/v1',
   GEMINI_BASE_URL: 'https://generativelanguage.example/v1beta/openai',
+  ANTHROPIC_BASE_URL: 'https://anthropic.example/v1',
   FAKEAI_REGION: 'sfo3',
   FAKEAI_BASE_URL: 'https://fakeai.example/v1',
 }
@@ -98,22 +101,24 @@ describe('inference prefix routing', () => {
   it('names reserved direct prefixes and routes other slash ids to OpenRouter', () => {
     const reserved = loadReservedDirectPrefixes().map(item => item.prefix)
     expect(reserved).to.include.members([
-      'anthropic-api/',
       'bedrock/',
       'ollama/',
     ])
     expect(reserved).to.not.include('xai/')
     expect(reserved).to.not.include('openai-api/')
     expect(reserved).to.not.include('gemini/')
+    expect(reserved).to.not.include('anthropic-api/')
     expect(inferencePrefixError('openai-api/gpt-4o', catalog)).to.equal(null)
     expect(matchingProvider('openai-api/gpt-4o', catalog)?.key).to.equal('openai-api')
     expect(inferencePrefixError('xai/grok-4.7', catalog)).to.equal(null)
     expect(matchingProvider('xai/grok-4.7', catalog)?.key).to.equal('xai')
     expect(inferencePrefixError('gemini/gemini-3.8-flash', catalog)).to.equal(null)
     expect(matchingProvider('gemini/gemini-3.8-flash', catalog)?.key).to.equal('gemini')
-    const reservedDirect = inferencePrefixError('anthropic-api/claude-sonnet-4.6', catalog)
-    expect(reservedDirect).to.include("reserved prefix 'anthropic-api/'")
-    expect(reservedDirect).to.include('anthropic/claude-sonnet-4.6 still routes to OpenRouter')
+    expect(inferencePrefixError('anthropic-api/claude-sonnet-5-5', catalog)).to.equal(null)
+    expect(matchingProvider('anthropic-api/claude-sonnet-5-5', catalog)?.key).to.equal('anthropic-api')
+    expect(matchingProvider('anthropic/claude-sonnet-4.6', catalog)).to.equal(undefined)
+    const reservedDirect = inferencePrefixError('bedrock/us.anthropic.claude', catalog)
+    expect(reservedDirect).to.include("reserved prefix 'bedrock/'")
     expect(inferencePrefixError('qwen/qwen3-coder', catalog)).to.equal(null)
     expect(inferencePrefixError('z-ai/glm-4.6', catalog)).to.equal(null)
     expect(inferencePrefixError('unknown/model', catalog)).to.equal(null)
@@ -169,7 +174,9 @@ describe('inference prefix routing', () => {
     expect(filterInferenceEnv('gemini/gemini-3.8-flash', BOTH, catalog)).to.deep.equal({
       GEMINI_API_KEY: GEMINI,
     })
-    expect(filterInferenceEnv('anthropic-api/claude-sonnet-4.6', BOTH, catalog)).to.deep.equal({})
+    expect(filterInferenceEnv('anthropic-api/claude-sonnet-5-5', BOTH, catalog)).to.deep.equal({
+      ANTHROPIC_API_KEY: ANTHROPIC,
+    })
     expect(filterInferenceEnv('gpt-5', BOTH, catalog)).to.deep.equal({})
     const xaiForwarded = JSON.stringify(filterInferenceEnv('xai/grok-4.7', BOTH, catalog))
     expect(xaiForwarded).to.not.include('BASE_URL')
@@ -177,11 +184,13 @@ describe('inference prefix routing', () => {
     expect(xaiForwarded).to.not.include(DIGITALOCEAN)
     expect(xaiForwarded).to.not.include(OPENAI)
     expect(xaiForwarded).to.not.include(GEMINI)
+    expect(xaiForwarded).to.not.include(ANTHROPIC)
     expect(xaiForwarded).to.not.include('https://')
     const openrouterOnly = JSON.stringify(filterInferenceEnv('openai/gpt-4o', BOTH, catalog))
     expect(openrouterOnly).to.not.include(OPENAI)
     expect(openrouterOnly).to.not.include(XAI)
     expect(openrouterOnly).to.not.include(GEMINI)
+    expect(openrouterOnly).to.not.include(ANTHROPIC)
     expect(openrouterOnly).to.not.include('BASE_URL')
     const geminiForwarded = JSON.stringify(filterInferenceEnv('gemini/gemini-3.1-pro-preview', BOTH, catalog))
     expect(geminiForwarded).to.not.include('BASE_URL')
@@ -189,16 +198,27 @@ describe('inference prefix routing', () => {
     expect(geminiForwarded).to.not.include(DIGITALOCEAN)
     expect(geminiForwarded).to.not.include(OPENAI)
     expect(geminiForwarded).to.not.include(XAI)
+    expect(geminiForwarded).to.not.include(ANTHROPIC)
+    const anthropicForwarded = JSON.stringify(filterInferenceEnv('anthropic-api/claude-sonnet-5-5', BOTH, catalog))
+    expect(anthropicForwarded).to.not.include('BASE_URL')
+    expect(anthropicForwarded).to.not.include(OPENROUTER)
+    expect(anthropicForwarded).to.not.include(DIGITALOCEAN)
+    expect(anthropicForwarded).to.not.include(OPENAI)
+    expect(anthropicForwarded).to.not.include(XAI)
+    expect(anthropicForwarded).to.not.include(GEMINI)
+    expect(anthropicForwarded).to.not.include('https://')
     const forwarded = JSON.stringify(filterInferenceEnv('digitalocean/llama3.3-70b-instruct', BOTH, catalog))
     expect(forwarded).to.not.include('BASE_URL')
     expect(forwarded).to.not.include(OPENROUTER)
     expect(forwarded).to.not.include(OPENAI)
     expect(forwarded).to.not.include(XAI)
     expect(forwarded).to.not.include(GEMINI)
+    expect(forwarded).to.not.include(ANTHROPIC)
     const openaiOnly = JSON.stringify(filterInferenceEnv('openai-api/gpt-4o', BOTH, catalog))
     expect(openaiOnly).to.not.include(OPENROUTER)
     expect(openaiOnly).to.not.include(DIGITALOCEAN)
     expect(openaiOnly).to.not.include(XAI)
+    expect(openaiOnly).to.not.include(ANTHROPIC)
     expect(openaiOnly).to.not.include('BASE_URL')
     expect(openaiOnly).to.not.include('https://proxy.example')
   })
@@ -211,6 +231,7 @@ describe('inference prefix routing', () => {
       expect(source, file).to.not.include('OPENAI_API_KEY')
       expect(source, file).to.not.include('XAI_API_KEY')
       expect(source, file).to.not.include('GEMINI_API_KEY')
+      expect(source, file).to.not.include('ANTHROPIC_API_KEY')
     }
   })
 

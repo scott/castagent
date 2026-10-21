@@ -22,7 +22,7 @@ Build the CLI before the smoke suite or the snapshot runner. Both execute `types
 npm install
 cd typescript && npm install && cd ..
 npm run build:cli
-python3 -m pip install --user 'langchain-openai>=1.7.2' 'langchain-core>=1.6.12' pyyaml
+python3 -m pip install --user 'langchain-anthropic>=1.7.6,<2' 'langchain-openai>=1.7.2' 'langchain-core>=1.6.12' pyyaml
 ```
 
 Unit tests. `npm test` runs mocha. The Python session tests are a separate CI job; this command runs the Python suites locally:

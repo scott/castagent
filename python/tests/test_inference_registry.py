@@ -209,7 +209,7 @@ class TestSelection:
         entries = [Entry("b", Impl("b")), Entry("a", Impl("a"))]
         with patch("cast.providers.registry.iter_entry_points", return_value=entries):
             keys = [item.key for item in load_registry().providers]
-        assert keys == ["openrouter", "digitalocean", "gemini", "openai-api", "xai", "a", "b"]
+        assert keys == ["openrouter", "digitalocean", "gemini", "anthropic-api", "openai-api", "xai", "a", "b"]
 
     def test_config_provider_and_directory_order(self, monkeypatch, tmp_path):
         home = _home(monkeypatch, tmp_path)
@@ -236,7 +236,7 @@ class TestSelection:
         cast_dir.mkdir(exist_ok=True)
         (cast_dir / "config.yaml").write_text(f"inferenceProviders:\n  - {module_path}\n")
         keys = [item.key for item in load_registry().providers]
-        assert keys == ["openrouter", "digitalocean", "gemini", "openai-api", "xai", "folder", "configured"]
+        assert keys == ["openrouter", "digitalocean", "gemini", "anthropic-api", "openai-api", "xai", "folder", "configured"]
         assert get_provider("configured/one").key == "configured"
 
     def test_catalog_omits_known_models(self, monkeypatch, tmp_path):
@@ -336,14 +336,15 @@ class TestSelection:
                 continue
             module = importlib.import_module(f"cast.providers.{path.stem}")
             if hasattr(module, "provider"):
-                module_keys.add(path.stem)
-                assert module.provider.key == path.stem
+                # The file name can differ from the key. anthropic.py binds anthropic-api.
+                module_keys.add(module.provider.key)
         bound = set()
         for module_name in BUILTIN_MODULES:
             module = importlib.import_module(module_name)
             bound.add(module.provider.key)
         # A module that exports provider is a built-in binding. An
         # openai-compatible row with no module registers itself.
+        # impl "module" is a native client and must have that binding.
         assert module_keys == bound
         assert module_keys <= manifest_keys
         auto = {
@@ -351,20 +352,23 @@ class TestSelection:
             for row in live
             if row.get("impl") == "openai-compatible" and row["key"] not in module_keys
         }
+        native = {row["key"] for row in live if row.get("impl") == "module"}
+        assert native <= module_keys
+        assert "anthropic-api" in native
         assert manifest_keys - module_keys == auto
         registry = load_registry()
         for key in auto:
             assert registry.by_key[key].source == f"built-in {key}"
+        for key in native:
+            assert registry.by_key[key].source == f"built-in {key}"
         reserved = [prefix for row in manifest if row.get("impl") == "reserved" for prefix in row["prefixes"]]
         assert reserved == [
-            "anthropic-api/",
             "bedrock/",
             "ollama/",
         ]
         assert not (PROVIDERS / "openai.py").exists()
-        for name in ("anthropic", "ollama"):
-            module = importlib.import_module(f"cast.providers.{name}")
-            assert not hasattr(module, "provider")
+        ollama = importlib.import_module("cast.providers.ollama")
+        assert not hasattr(ollama, "provider")
 
     def test_callers_use_get_provider(self):
         files = [

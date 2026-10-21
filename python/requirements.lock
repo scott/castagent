@@ -8,10 +8,15 @@ annotated-types==0.8.0 \
     --hash=sha256:13b2beaad985e05e2d6407ee4c4f35590b11f8d693a258a561055cac8f64cab7 \
     --hash=sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0
     # via pydantic
+anthropic==1.17.0 \
+    --hash=sha256:ccb98b85e1a14f81cf1e2ba348393f341f342bad9e07e014f96c9b69f853aaa7 \
+    --hash=sha256:dcf77a74dde89a9fd12405fca798b012725a107f7c9488454234a74e275c2163
+    # via langchain-anthropic
 anyio==4.15.1 \
     --hash=sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101 \
     --hash=sha256:9f28306018cbd6d329e64a36d58256edff76dd996fe423bc957326e578b82a94
     # via
+    #   anthropic
     #   httpx
     #   httpx2
     #   langsmith
@@ -207,6 +212,10 @@ distro==1.9.0 \
     --hash=sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed \
     --hash=sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2
     # via langsmith
+docstring-parser==0.18.0 \
+    --hash=sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015 \
+    --hash=sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b
+    # via anthropic
 gitdb==4.0.12 \
     --hash=sha256:5ef71f855d191a3326fcfbc0d5da835f26b13fbcba60c32c21091c349ffdb571 \
     --hash=sha256:67073e15955400952c6565cc3e707c554a4eea2e428946f7a4c162fab9bd9bcf
@@ -240,6 +249,7 @@ httpx2==2.15.1 \
     --hash=sha256:75841cd83d16b417f7d6da8f2089ce8120806efdbf96af37d46c5129c49015be \
     --hash=sha256:ff75485308fbe441e75b1218546e4e78d884df41e1a9741c1f79335ed8fcfef7
     # via
+    #   anthropic
     #   langsmith
     #   openai
 idna==3.20 \
@@ -370,7 +380,9 @@ jiter==0.17.0 \
     --hash=sha256:fd7790aa79c8b518e512ebcdfce9f11d8ef5f30efd43720c8a19a548b39fa489 \
     --hash=sha256:fe15ddf316f1f1f643347d3a474e74ce61880c79a11ec5dca53df20c071bd3e8 \
     --hash=sha256:ffa0380ad091de7d3fc33e17a97ff479851ee18a0a2a3ee56ff3215cdc886656
-    # via openai
+    # via
+    #   anthropic
+    #   openai
 jsonpatch==1.36 \
     --hash=sha256:7e110cb3c5a1c8768f7170bf8fb9887c4aa575fba74c95239e868b494bd9a522 \
     --hash=sha256:aa3ffbc15816644ffcc6b13712dacbc99f6f6dde302abc66983f9831d35630a5
@@ -379,11 +391,16 @@ jsonpointer==3.4 \
     --hash=sha256:136e2e3273fd82a1502274f56ec172f331b6a1703d86a1824d503af4d9a96142 \
     --hash=sha256:e57015ae65af3821c6a3976069860789cf326103f38b22b2178d41d021adad25
     # via jsonpatch
+langchain-anthropic==1.7.6 \
+    --hash=sha256:06bee97006d99e9a04abc4bd56599fc356c0c7f7f2a97629645cb603d9785c73 \
+    --hash=sha256:e5b41959a39810e69bc608fd6622b7d5d017bde93f858b09332fbb6ac764c393
+    # via cast (pyproject.toml)
 langchain-core==1.6.12 \
     --hash=sha256:39b07aed976baac14c47b7a21e3c7d4073362bccf06cf8799c585dcc9548547d \
     --hash=sha256:dc6b2a965c351b4cc94df1c80220bcf3c5472e14437d2186c8290ea22f4d0219
     # via
     #   cast (pyproject.toml)
+    #   langchain-anthropic
     #   langchain-openai
     #   langgraph
     #   langgraph-checkpoint
@@ -425,6 +442,10 @@ openai==3.35.1 \
     --hash=sha256:264fd0fafc889021f526b7c1e5a2df5ca3e8dea874738ecd31da666434f25967 \
     --hash=sha256:b33e6561b90586e450def8a388e7d364755325da6884fc71348be5542e043bd0
     # via langchain-openai
+opentelemetry-api==1.45.1 \
+    --hash=sha256:aa38ed19bcc084ba42782a73255b3582283eced7ad6dddbd6695189e69adfb75 \
+    --hash=sha256:b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb
+    # via anthropic
 orjson==3.13.0 \
     --hash=sha256:0526a3456db67b264c6d661b5f090077f326b6cd074d0ef53a72763595dec5d7 \
     --hash=sha256:08bf722f923d2100bc5e5a5dcf72c656db557049c1bea26582fdd5dd9d5395a1 \
@@ -549,6 +570,8 @@ pydantic==2.14.1 \
     --hash=sha256:9195d967ec791692a04438115466764fb8b9a27b31f14a760437694f40d6b454 \
     --hash=sha256:94f478203dd03404682a1ada216965651dd74b1d2d5ffd62e00e0837caab5c26
     # via
+    #   anthropic
+    #   langchain-anthropic
     #   langchain-core
     #   langgraph
     #   langsmith
@@ -920,6 +943,7 @@ sniffio==1.3.1 \
     --hash=sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2 \
     --hash=sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc
     # via
+    #   anthropic
     #   langsmith
     #   openai
 starlette==1.9.0 \
@@ -1006,6 +1030,7 @@ typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
     --hash=sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5
     # via
+    #   anthropic
     #   anyio
     #   cast (pyproject.toml)
     #   httpx2
@@ -1013,6 +1038,7 @@ typing-extensions==4.16.0 \
     #   langchain-protocol
     #   langsmith
     #   openai
+    #   opentelemetry-api
     #   pydantic
     #   pydantic-core
     #   starlette

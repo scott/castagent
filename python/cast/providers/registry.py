@@ -2,7 +2,7 @@
 
 Load order:
 
-1. Built-ins (OpenRouter default, then DigitalOcean, then Gemini).
+1. Built-ins (OpenRouter default, then DigitalOcean, then Gemini, then Anthropic).
 2. ``cast.inference`` entry points, sorted by key.
 3. ``~/.cast/inference-providers/<key>/``, sorted by directory name.
 4. ``inferenceProviders`` entries in ``~/.cast/config.yaml``, in listed order.
@@ -37,6 +37,7 @@ BUILTIN_MODULES = (
     "cast.providers.openrouter",
     "cast.providers.digitalocean",
     "cast.providers.gemini",
+    "cast.providers.anthropic",
 )
 
 
@@ -95,6 +96,8 @@ class ProviderRecord:
         self.models_headers = dict(models_headers or {})
         self.curated_models = bool(curated_models)
         self.strip_model_id_prefix = strip_model_id_prefix or ""
+        self.models_lifecycle = ""
+        self.normalize_v1_base = False
 
     def is_available(self) -> bool:
         return bool(self.impl.is_available())
@@ -103,7 +106,15 @@ class ProviderRecord:
         return self.impl.create_llm(model=model, **kwargs)
 
     def llm_params(self, model: Optional[str] = None) -> dict:
-        """Sampling params for the builder. Temperature is omitted when the model rejects it."""
+        """Sampling params for the builder. Temperature is omitted when the model rejects it.
+
+        The provider object decides when it implements ``llm_params``. Anthropic
+        prefers the langchain-anthropic profile there. OpenRouter and
+        DigitalOcean keep the manifest regex.
+        """
+        custom = getattr(self.impl, "llm_params", None)
+        if callable(custom):
+            return custom(model)
         from .openai_compatible import omits_temperature
 
         params = dict(self.default_params)
@@ -251,6 +262,14 @@ def _apply_row_meta(record: ProviderRecord, meta: dict) -> None:
         or getattr(record.impl, "strip_model_id_prefix", "")
         or ""
     )
+    lifecycle = meta.get("modelsLifecycle", meta.get("models_lifecycle"))
+    if lifecycle is None:
+        lifecycle = getattr(record.impl, "models_lifecycle", "") or ""
+    record.models_lifecycle = str(lifecycle or "")
+    if "normalizeV1Base" in meta or "normalize_v1_base" in meta:
+        record.normalize_v1_base = bool(meta.get("normalizeV1Base", meta.get("normalize_v1_base")))
+    else:
+        record.normalize_v1_base = bool(getattr(record.impl, "normalize_v1_base", False))
 
 
 def record_from_impl(impl: Any, source: str) -> ProviderRecord:
@@ -352,7 +371,11 @@ def _check_manifest(record: ProviderRecord, module_name: str) -> None:
 
 
 def _load_compatible_rows(registry: Registry) -> None:
-    """Register ``impl: openai-compatible`` rows that have no module of their own."""
+    """Register ``impl: openai-compatible`` rows that have no module of their own.
+
+    ``impl: module`` is not loaded here. That row is bound by its module in
+    ``BUILTIN_MODULES``. A missing module does not fall through to ChatOpenAI.
+    """
     from .openai_compatible import OpenAICompatibleProvider
 
     for row in _manifest_by_key().values():
@@ -752,6 +775,8 @@ def catalog_entries(registry: Optional[Registry] = None) -> list[dict]:
             **({"modelsHeaders": provider.models_headers} if provider.models_headers else {}),
             **({"curatedModels": True} if provider.curated_models else {}),
             **({"stripModelIdPrefix": provider.strip_model_id_prefix} if provider.strip_model_id_prefix else {}),
+            **({"modelsLifecycle": provider.models_lifecycle} if provider.models_lifecycle else {}),
+            **({"normalizeV1Base": True} if provider.normalize_v1_base else {}),
             **({"settings": [dict(item) for item in provider.settings]} if provider.settings else {}),
         })
     return payload

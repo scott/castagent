@@ -984,7 +984,7 @@ if [ "$UV_AVAILABLE" = true ]; then
     uv pip install -e "."
     
     # Install additional runtime dependencies
-    uv pip install langchain langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
+    uv pip install langchain langchain-anthropic langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
 else
     log_info "Using pip for Python dependency management..."
     
@@ -1000,7 +1000,7 @@ else
     # Install dependencies
     log_info "Installing Python packages with pip..."
     pip install -e "."
-    pip install langchain langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
+    pip install langchain langchain-anthropic langchain-openai langchain-core starlette uvicorn pyyaml python-dotenv
 fi
 
 cd "$SCRIPT_DIR"

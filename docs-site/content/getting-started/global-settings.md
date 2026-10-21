@@ -69,7 +69,7 @@ key is written to `~/.cast/tokens/inference/<key>.token` at mode 0600.
 `http` on literal `127.0.0.1`, `::1`, or `localhost`, with a host and no
 userinfo or query. That URL is for the builder on this machine. Deploy
 and upgrade do not copy `OPENROUTER_BASE_URL`,
-`DIGITALOCEAN_INFERENCE_BASE_URL`, `XAI_BASE_URL`, or `GEMINI_BASE_URL` onto the agent. A provider is enabled when its environment variable,
+`DIGITALOCEAN_INFERENCE_BASE_URL`, `XAI_BASE_URL`, `GEMINI_BASE_URL`, or `ANTHROPIC_BASE_URL` onto the agent. A provider is enabled when its environment variable,
 that stored token, or a real config value is set. An unsubstituted
 `${VAR}` is not a token. Values are trimmed.
 
@@ -89,10 +89,16 @@ builder on this machine and is not copied to a deploy.
 `xai/<model-id>` is direct xAI (`XAI_API_KEY`, `https://api.x.ai/v1`).
 `gemini/<model>` is Google Gemini (`GEMINI_API_KEY`,
 `https://generativelanguage.googleapis.com/v1beta/openai`).
-`google/...` stays on OpenRouter. `anthropic-api/`, `bedrock/`, and
-`ollama/` are reserved and are not providers yet. `defaults.builder_model`
+`google/...` stays on OpenRouter. `anthropic-api/<model>` is direct
+Anthropic (`ANTHROPIC_API_KEY`, `https://api.anthropic.com/v1`, native
+`ChatAnthropic`). An exported `ANTHROPIC_BASE_URL` routes builder calls
+through that proxy, with or without a trailing `/v1`. `anthropic/...`
+stays on OpenRouter. `bedrock/` and
+`ollama/` are reserved and are not providers yet. Deploy forwards
+`ANTHROPIC_API_KEY` only for an `anthropic-api/` model and does not copy
+`ANTHROPIC_BASE_URL`. `defaults.builder_model`
 can be `digitalocean/<model-id>`, `openai-api/<model-id>`, `xai/<model-id>`,
-or `gemini/<model-id>`. The default remains
+`gemini/<model-id>`, or `anthropic-api/<model-id>`. The default remains
 `openrouter/minimax/minimax-m2.5`. Change the
 curated OpenRouter ids with `cast model` or `/model` in the builder TUI.
 The running builder keeps its current model until the next launch.

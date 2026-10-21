@@ -1,4 +1,5 @@
 import {expect} from 'chai'
+import {ChildProcess} from 'child_process'
 import {StdioJsonRpcBridge, builderExitError, BUILDER_REQUEST_TIMEOUT_MS} from '../../../../typescript/cast-cli/src/lib/builder/stdio'
 
 describe('StdioJsonRpcBridge', () => {
@@ -21,6 +22,49 @@ describe('StdioJsonRpcBridge', () => {
     } finally {
       bridge.stop()
     }
+  })
+
+  it('rejects a request sent after the builder has already exited', async () => {
+    const script = `
+      process.stderr.write('ModuleNotFoundError: No module named cast\\n')
+      process.exit(1)
+    `
+    for (let attempt = 0; attempt < 15; attempt++) {
+      const bridge = new StdioJsonRpcBridge(process.execPath, ['-e', script], {timeoutMs: 5000})
+      await bridge.start()
+      try {
+        await bridge.send('initialize', {agent_name: 'meta-test'})
+        expect.fail('initialize should reject')
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        expect(message).to.include('No module named cast')
+        expect(message).to.not.include('EPIPE')
+        expect(message).to.not.include('Request timeout')
+      } finally {
+        bridge.stop()
+      }
+    }
+  })
+
+  it('keeps an in-flight request open when stdin reports EPIPE before close', async () => {
+    const bridge = new StdioJsonRpcBridge(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], {timeoutMs: 500})
+    await bridge.start()
+    const child = (bridge as unknown as {process: ChildProcess}).process
+    let settled = false
+    const sent = bridge.send('output', {message: 'hi'}).then(
+      () => {
+        settled = true
+      },
+      () => {
+        settled = true
+      },
+    )
+    const epipe = Object.assign(new Error('write EPIPE'), {code: 'EPIPE'})
+    expect(() => child.stdin?.emit('error', epipe)).to.not.throw()
+    await new Promise(resolve => setTimeout(resolve, 50))
+    expect(settled).to.equal(false)
+    bridge.stop()
+    await sent
   })
 
   it('times out a live request at the configured budget', async () => {

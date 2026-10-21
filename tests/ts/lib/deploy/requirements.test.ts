@@ -228,6 +228,8 @@ exit 1
       expect(line, name).to.equal(dep)
       expect(floorAtLeast(line as string, dep), `${line} is below ${dep}`).to.equal(true)
     }
+    expect(FALLBACK_REQUIREMENTS).to.include('langchain-anthropic>=1.7.6,<2')
+    expect(FALLBACK_REQUIREMENTS).to.include('anthropic>=0.120.0')
     expect(FALLBACK_REQUIREMENTS).to.include('langchain-core>=1.6.12')
     expect(FALLBACK_REQUIREMENTS).to.include('langchain-openai>=1.7.2')
     expect(FALLBACK_REQUIREMENTS).to.include('langgraph>=1.2.16')
@@ -291,6 +293,7 @@ runtime:
     for (const name of [
       'langgraph',
       'langchain-core',
+      'langchain-anthropic',
       'langchain-openai',
       'pyyaml',
       'starlette',
@@ -312,6 +315,7 @@ runtime:
     }
     const fallbackOnly = renderRequirementsFile({frozen: '', pyprojectSource: source})
     expect(fallbackOnly).to.include('langgraph>=1.2.16')
+    expect(fallbackOnly).to.include('langchain-anthropic>=1.7.6,<2')
     expect(fallbackOnly).to.include('langchain-core>=1.6.12')
     expect(fallbackOnly).to.include('langchain-openai>=1.7.2')
     expect(fallbackOnly).to.include('PyYAML>=6.0.3')
@@ -353,7 +357,7 @@ runtime:
     }
     walk(path.join(root, 'lib', 'deploy'))
     walk(path.join(root, 'commands'))
-    const pattern = /^(?:langchain|langchain-core|langchain-openai|langgraph|PyYAML|pyyaml|starlette|uvicorn|typing-extensions|GitPython)>=/m
+    const pattern = /^(?:langchain|langchain-anthropic|langchain-core|langchain-openai|langgraph|PyYAML|pyyaml|starlette|uvicorn|typing-extensions|GitPython)>=/m
     const offenders: string[] = []
     for (const file of files) {
       if (file.endsWith(`${path.sep}requirements.ts`)) continue

@@ -43,7 +43,7 @@ Build the CLI first. The smoke suite and the snapshot runner both execute it.
 npm install
 cd typescript && npm install && cd ..
 npm run build:cli
-python3 -m pip install --user 'langchain-openai>=1.7.2' 'langchain-core>=1.6.12' pyyaml
+python3 -m pip install --user 'langchain-anthropic>=1.7.6,<2' 'langchain-openai>=1.7.2' 'langchain-core>=1.6.12' pyyaml
 ```
 
 Unit tests:
