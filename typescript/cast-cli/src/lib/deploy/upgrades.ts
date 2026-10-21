@@ -5,12 +5,10 @@ import {db} from '../sqlite'
 import {containerHealthFailureMessage, probeDockerContainer, waitForContainerHealth} from './container-health'
 import {
   createDockerignore,
-  assertSecretsNotInArgv,
   execCommand,
   filterInferenceEnv,
   getProviderToken,
   inferenceEnv,
-  railwaySecretSetArgs,
   readAgentModel,
   resolveDeploymentAuthToken,
   stageCastRuntime,
@@ -235,21 +233,6 @@ export async function upgradeRailwayDeployment(
 
   stagePythonRequirements(agentPath)
 
-  const inference = filterInferenceEnv(readAgentModel(agentPath), await inferenceEnv())
-  for (const [key, value] of Object.entries(inference)) {
-    const args = railwaySecretSetArgs(key)
-    assertSecretsNotInArgv('railway variables set', args, [value])
-    const setResult = await execCommand('railway', args, {
-      cwd: agentPath,
-      silent: true,
-      shell: false,
-      input: value,
-    })
-    if (setResult.exitCode !== 0) {
-      host.error(`Failed to set inference variable ${key}.`)
-    }
-  }
-
   host.log('Triggering Railway redeploy...')
   const {spawn} = await import('child_process')
 
@@ -300,14 +283,6 @@ export async function upgradeFlyDeployment(
   }
 
   stageCastRuntime(agentPath)
-  const inference = filterInferenceEnv(readAgentModel(agentPath), await inferenceEnv())
-  if (Object.keys(inference).length > 0) {
-    const {importFlySecrets, flyAppName} = await import('./fly')
-    const imported = await importFlySecrets(agentPath, flyAppName(agentName), inference)
-    if (imported.exitCode !== 0) {
-      host.error('Failed to set inference secrets on Fly.')
-    }
-  }
   host.log('Triggering Fly.io deploy...')
   const {spawn} = await import('child_process')
 

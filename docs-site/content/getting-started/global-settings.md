@@ -67,7 +67,9 @@ key is written to `~/.cast/tokens/inference/<key>.token` at mode 0600.
 `--url` writes `base_url` next to that provider's `api_key`.
 `default_base_url` stays the shipped host. A URL must be `https`, or
 `http` on literal `127.0.0.1`, `::1`, or `localhost`, with a host and no
-userinfo or query. A provider is enabled when its environment variable,
+userinfo or query. That URL is for the builder on this machine. Deploy
+and upgrade do not copy `OPENROUTER_BASE_URL` or
+`DIGITALOCEAN_INFERENCE_BASE_URL` onto the agent. A provider is enabled when its environment variable,
 that stored token, or a real config value is set. An unsubstituted
 `${VAR}` is not a token. Values are trimmed.
 

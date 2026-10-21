@@ -6,7 +6,7 @@ import crypto from 'crypto'
 import YAML from 'yaml'
 import { db } from '../sqlite'
 import { keychain, type TokenStore } from '../keychain'
-import {resolvedBaseUrl, resolvedInferenceToken} from '../inference-credentials'
+import {resolvedInferenceToken} from '../inference-credentials'
 import {runtimeDockerfileCmd} from '../runtime-args'
 import {PAST_AGENT_DOCKERFILES} from './past-agent-dockerfiles'
 import {writeRequirementsTxt} from './requirements'
@@ -1268,7 +1268,7 @@ export interface InferenceCatalogEntry {
   envVar: string
   configKey: string
   baseUrl: string
-  /** Set when a non-default base URL should be forwarded to a deployment. */
+  /** Builder process env name. Deploy and upgrade do not forward this variable. */
   baseUrlEnv?: string
   acceptsAnyModel: boolean
   /** Shown in `cast provider`. Falls back to `name`. */
@@ -1382,7 +1382,8 @@ export function loadInferenceCatalog(): InferenceCatalogEntry[] {
   return parsed
 }
 
-// Env, keychain, token file, then configKey. Omits pairs with no value.
+// API keys only: env, keychain, token file, then configKey. Omits pairs with no value.
+// A custom base URL stays on the builder. This map is what deploy and upgrade send.
 // Does not read providers.digitalocean.token; that key is not in the catalog.
 export async function inferenceEnv(config: any = loadConfig()): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
@@ -1390,10 +1391,6 @@ export async function inferenceEnv(config: any = loadConfig()): Promise<Record<s
     if (!entry.envVar) continue
     const value = await resolvedInferenceToken(entry, config)
     if (value) out[entry.envVar] = value
-    if (entry.baseUrlEnv) {
-      const baseUrl = resolvedBaseUrl(entry, config)
-      if (baseUrl && baseUrl !== entry.baseUrl) out[entry.baseUrlEnv] = baseUrl
-    }
   }
   return out
 }
@@ -1451,7 +1448,9 @@ export function inferenceProviderForModel(
 }
 
 /**
- * Keep the env var for the provider that serves `model`.
+ * Keep the API key for the provider that serves `model`.
+ * Base URL variables are builder settings and are dropped even when
+ * `resolved` already contains them.
  * `resolved` is the output of inferenceEnv(), so callers that stub that
  * helper still control which values are available.
  */
@@ -1467,9 +1466,6 @@ export function filterInferenceEnv(
   const kept: Record<string, string> = {}
   const value = resolved[provider.envVar]
   if (value) kept[provider.envVar] = value
-  if (provider.baseUrlEnv && resolved[provider.baseUrlEnv]) {
-    kept[provider.baseUrlEnv] = resolved[provider.baseUrlEnv]
-  }
   return kept
 }
 

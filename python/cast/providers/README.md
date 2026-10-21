@@ -147,7 +147,7 @@ The provider does not decide echo mode. Callers do:
 
 The runtime, the builder, and reflection all use this sequence. Reflection keeps receiving the agent's raw model.
 
-Deploy code calls `inferenceEnv()`, then keeps the entry whose prefix matches `brain.model` (the longest prefix wins, otherwise the default provider). `inferenceEnv()` runs `python -m cast.providers.catalog`, resolves each `envVar` from the environment and then from `configKey`, and returns the pairs that have a value. Docker, Railway, Fly, Droplets, Sprites, MicroVM, and `cast upgrade` send that one key plus the Cast runtime variables. The helper never reads `providers.digitalocean.token`. Secret values go to the provider on stdin or in the create request body.
+Deploy code calls `inferenceEnv()`, then keeps the entry whose prefix matches `brain.model` (the longest prefix wins, otherwise the default provider). `inferenceEnv()` runs `python -m cast.providers.catalog`, resolves each `envVar` from the environment, keychain, token file, and then `configKey`, and returns API keys only. It does not return `baseUrlEnv`. A custom base URL stays on the builder (`primeInferenceProcessEnv` and `create_llm`). Docker, Droplets, Sprites, MicroVM, and `cast upgrade` for those hosts send that one key plus the Cast runtime variables. Railway and Fly set the key at deploy time and do not rewrite it on upgrade. The helper never reads `providers.digitalocean.token`. Secret values go to the provider on stdin or in the create request body.
 
 `python -m cast.providers.catalog` prints:
 

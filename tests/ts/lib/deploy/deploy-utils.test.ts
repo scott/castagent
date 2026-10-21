@@ -203,7 +203,7 @@ describe('Deploy Utils', () => {
       expect(JSON.stringify(env)).to.not.include('deploy-token')
     })
 
-    it('reads a keychain-only token and forwards a custom base URL for that provider', async () => {
+    it('reads a keychain-only token and omits a custom base URL', async () => {
       delete process.env.OPENROUTER_API_KEY
       delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
       delete process.env.DIGITALOCEAN_INFERENCE_BASE_URL
@@ -216,23 +216,51 @@ describe('Deploy Utils', () => {
         },
       })
       expect(env.DIGITALOCEAN_MODEL_ACCESS_KEY).to.equal('do-keychain-only')
-      expect(env.DIGITALOCEAN_INFERENCE_BASE_URL).to.equal('https://inference.example/v1')
+      expect(env).to.not.have.property('DIGITALOCEAN_INFERENCE_BASE_URL')
+      expect(env).to.not.have.property('OPENROUTER_BASE_URL')
+      expect(JSON.stringify(env)).to.not.include('BASE_URL')
+      expect(JSON.stringify(env)).to.not.include('https://inference.example/v1')
       expect(env.OPENROUTER_API_KEY).to.equal('or-config')
       const {filterInferenceEnv} = await import('../../../../typescript/cast-cli/src/lib/deploy/deploy-utils')
-      const filtered = filterInferenceEnv('digitalocean/custom-model', env)
+      const filtered = filterInferenceEnv('digitalocean/custom-model', {
+        ...env,
+        DIGITALOCEAN_INFERENCE_BASE_URL: 'https://inference.example/v1',
+        OPENROUTER_BASE_URL: 'https://openrouter.example/v1',
+      })
       expect(filtered).to.deep.equal({
         DIGITALOCEAN_MODEL_ACCESS_KEY: 'do-keychain-only',
-        DIGITALOCEAN_INFERENCE_BASE_URL: 'https://inference.example/v1',
       })
+      expect(JSON.stringify(filtered)).to.not.include('BASE_URL')
       expect(JSON.stringify(filtered)).to.not.include('or-config')
     })
 
-    it('primeInferenceProcessEnv copies a keychain token into the environment', async () => {
+    it('primeInferenceProcessEnv copies a keychain token and a custom base URL into the builder process', async () => {
+      const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-prime-base-'))
+      const previousHome = process.env.HOME
+      const previousBase = process.env.DIGITALOCEAN_INFERENCE_BASE_URL
+      process.env.HOME = home
+      fs.mkdirSync(path.join(home, '.cast'), {recursive: true})
+      fs.writeFileSync(path.join(home, '.cast', 'config.yaml'), [
+        'providers:',
+        '  digitalocean_inference:',
+        '    base_url: https://inference.example/v1',
+        '',
+      ].join('\n'))
       delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
-      await keychain.setInferenceToken('digitalocean', 'do-primed-token')
-      await primeInferenceProcessEnv()
-      expect(process.env.DIGITALOCEAN_MODEL_ACCESS_KEY).to.equal('do-primed-token')
-      delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
+      delete process.env.DIGITALOCEAN_INFERENCE_BASE_URL
+      try {
+        await keychain.setInferenceToken('digitalocean', 'do-primed-token')
+        await primeInferenceProcessEnv()
+        expect(process.env.DIGITALOCEAN_MODEL_ACCESS_KEY).to.equal('do-primed-token')
+        expect(process.env.DIGITALOCEAN_INFERENCE_BASE_URL).to.equal('https://inference.example/v1')
+      } finally {
+        delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
+        if (previousBase === undefined) delete process.env.DIGITALOCEAN_INFERENCE_BASE_URL
+        else process.env.DIGITALOCEAN_INFERENCE_BASE_URL = previousBase
+        if (previousHome === undefined) delete process.env.HOME
+        else process.env.HOME = previousHome
+        fs.rmSync(home, {recursive: true, force: true})
+      }
     })
   })
 })
