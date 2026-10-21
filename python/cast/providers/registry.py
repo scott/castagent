@@ -69,6 +69,7 @@ class ProviderRecord:
         accepts_any_model: bool,
         known_models: tuple[str, ...],
         source: str,
+        base_url_env: str = "",
     ):
         self.impl = impl
         self.key = key
@@ -81,6 +82,11 @@ class ProviderRecord:
         self.accepts_any_model = accepts_any_model
         self.known_models = known_models
         self.source = source
+        self.base_url_env = base_url_env or ""
+        self.display_name = ""
+        self.models_path = ""
+        self.fallback_models: tuple[str, ...] = ()
+        self.default_model = ""
 
     def is_available(self) -> bool:
         return bool(self.impl.is_available())
@@ -160,6 +166,16 @@ def _coerce_provider(obj: Any) -> Any:
     return obj
 
 
+def _apply_row_meta(record: ProviderRecord, meta: dict) -> None:
+    """Copy optional catalog fields. A new provider sets these in its row."""
+    display = meta.get("displayName") or meta.get("display_name") or record.name
+    record.display_name = display or record.name
+    record.models_path = meta.get("modelsPath") or meta.get("models_path") or ""
+    fallback = meta.get("fallbackModels", meta.get("fallback_models", ()))
+    record.fallback_models = _as_tuple(fallback)
+    record.default_model = meta.get("defaultModel") or meta.get("default_model") or ""
+
+
 def record_from_impl(impl: Any, source: str) -> ProviderRecord:
     try:
         key = impl.key
@@ -168,7 +184,7 @@ def record_from_impl(impl: Any, source: str) -> ProviderRecord:
         raise InferenceProviderError(
             f"Inference provider from {source} is missing {exc}"
         ) from exc
-    return ProviderRecord(
+    record = ProviderRecord(
         impl,
         key=key,
         name=getattr(impl, "name", key),
@@ -180,7 +196,15 @@ def record_from_impl(impl: Any, source: str) -> ProviderRecord:
         accepts_any_model=bool(getattr(impl, "accepts_any_model", False)),
         known_models=_as_tuple(getattr(impl, "known_models", ())),
         source=source,
+        base_url_env=getattr(impl, "base_url_env", "") or "",
     )
+    _apply_row_meta(record, {
+        "displayName": getattr(impl, "display_name", None) or getattr(impl, "name", None),
+        "modelsPath": getattr(impl, "models_path", "") or "",
+        "fallbackModels": getattr(impl, "fallback_models", ()) or (),
+        "defaultModel": getattr(impl, "default_model", "") or "",
+    })
+    return record
 
 
 def load_provider_file(path: Path) -> Any:
@@ -247,6 +271,7 @@ def _load_builtins(registry: Registry) -> None:
         module = importlib.import_module(module_name)
         record = record_from_impl(module.provider, source=f"built-in {module.provider.key}")
         _check_manifest(record, module_name)
+        _apply_row_meta(record, _manifest_by_key()[record.key])
         registry.add(record)
 
 
@@ -276,13 +301,21 @@ def _load_entry_points(registry: Registry) -> None:
         registry.add(record_from_impl(impl, source=source))
 
 
-def _inference_root() -> Path:
-    return Path.home() / ".cast" / "inference-providers"
+def _inference_root() -> Optional[Path]:
+    home = os.environ.get("HOME")
+    if not home:
+        return None
+    return Path(home) / ".cast" / "inference-providers"
 
 
 def _load_directories(registry: Registry) -> None:
     root = _inference_root()
-    if not root.is_dir():
+    if root is None:
+        return
+    try:
+        if not root.is_dir():
+            return
+    except OSError:
         return
     for directory in sorted((path for path in root.iterdir() if path.is_dir()), key=lambda path: path.name):
         json_path = directory / "provider.json"
@@ -329,7 +362,7 @@ def _record_from_directory(impl, meta: dict, directory: Path, json_path: Path, p
         )
     default = bool(meta.get("default", False) or getattr(impl, "default", False))
     known = meta.get("knownModels", getattr(impl, "known_models", ()))
-    return ProviderRecord(
+    record = ProviderRecord(
         impl,
         key=key,
         name=meta.get("name") or getattr(impl, "name", key),
@@ -341,12 +374,22 @@ def _record_from_directory(impl, meta: dict, directory: Path, json_path: Path, p
         accepts_any_model=bool(meta.get("acceptsAnyModel", getattr(impl, "accepts_any_model", False))),
         known_models=_as_tuple(known),
         source=str(directory),
+        base_url_env=meta.get("baseUrlEnv") or getattr(impl, "base_url_env", "") or "",
     )
+    _apply_row_meta(record, meta)
+    return record
 
 
 def load_cast_config() -> dict:
-    path = Path.home() / ".cast" / "config.yaml"
-    if not path.is_file():
+    home = os.environ.get("HOME")
+    if not home:
+        return {}
+    path = Path(home) / ".cast" / "config.yaml"
+    try:
+        if not path.is_file():
+            return {}
+        text = path.read_text()
+    except OSError:
         return {}
     try:
         import yaml
@@ -354,7 +397,7 @@ def load_cast_config() -> dict:
         _print_config_error(path, "PyYAML is not installed")
         return {}
     try:
-        data = yaml.safe_load(path.read_text()) or {}
+        data = yaml.safe_load(text) or {}
     except Exception as exc:
         _print_config_error(path, exc)
         return {}
@@ -486,5 +529,10 @@ def catalog_entries(registry: Optional[Registry] = None) -> list[dict]:
             "configKey": provider.config_key,
             "baseUrl": provider.base_url,
             "acceptsAnyModel": provider.accepts_any_model,
+            "displayName": provider.display_name or provider.name,
+            **({"baseUrlEnv": provider.base_url_env} if provider.base_url_env else {}),
+            **({"modelsPath": provider.models_path} if provider.models_path else {}),
+            **({"fallbackModels": list(provider.fallback_models)} if provider.fallback_models else {}),
+            **({"defaultModel": provider.default_model} if provider.default_model else {}),
         })
     return payload

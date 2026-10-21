@@ -273,7 +273,7 @@ describe('slash picker rows', () => {
         .filter((command) => command.modes?.length === 1 && command.modes[0] === 'dev')
         .map((command) => command.name)
         .sort((a, b) => a.localeCompare(b))
-      expect(devOnly).to.deep.equal(['builder-skills', 'model', 'redo', 'undo'])
+      expect(devOnly).to.deep.equal(['builder-skills', 'model', 'provider', 'redo', 'undo'])
     })
 
     it('limits /session and /sessions to dev and production', () => {
@@ -297,12 +297,12 @@ describe('slash picker rows', () => {
           .map((command) => command.name)
           .sort((a, b) => a.localeCompare(b)),
       )
-      expect(agentNames).to.include.members(['builder-skills', 'model', 'redo', 'undo'])
+      expect(agentNames).to.include.members(['builder-skills', 'model', 'provider', 'redo', 'undo'])
       const agentHeader = rows.findIndex((row) => row.kind === 'header' && row.label === 'Agent')
       expect(agentHeader).to.be.greaterThan(-1)
       expect(rows[agentHeader].kind).to.equal('header')
       expect(rows[agentHeader + 1].kind).to.equal('command')
-      for (const name of ['builder-skills', 'model', 'redo', 'undo']) {
+      for (const name of ['builder-skills', 'model', 'provider', 'redo', 'undo']) {
         const index = rows.findIndex((row) => isCommandRow(row) && row.command.name === name)
         expect(rows[index].kind).to.equal('command')
         expect(index).to.be.greaterThan(agentHeader)
@@ -313,7 +313,7 @@ describe('slash picker rows', () => {
       const rows = groupSlashCommands(visible('production'))
       const names = namesOf(rows)
       expect(names).to.include.members(['import', 'deploy', 'shutdown', 'sessions', 'session'])
-      expect(names).to.not.include.members(['undo', 'redo', 'model', 'builder-skills'])
+      expect(names).to.not.include.members(['undo', 'redo', 'model', 'provider', 'builder-skills'])
       expect(labelsOf(rows)).to.deep.equal(['Chat', 'Agent', 'Session', 'Git'])
     })
 

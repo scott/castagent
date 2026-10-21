@@ -458,7 +458,7 @@ export default class DockerDeploy extends Command {
     const containerEnv = dockerContainerEnv({
       agentName,
       authToken,
-      inference: filterInferenceEnv(readAgentModel(agentPath), inferenceEnv()),
+      inference: filterInferenceEnv(readAgentModel(agentPath), await inferenceEnv()),
     })
     const dockerRunArgs = dockerContainerRunArgs({
       containerName,

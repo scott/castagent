@@ -150,6 +150,7 @@ export async function upgradeDockerDeployment(
   try {
     const stopProc = spawn('docker', ['stop', containerName], {stdio: 'ignore'})
     await new Promise<void>((resolve) => {
+      stopProc.on('error', () => resolve())
       stopProc.on('exit', () => resolve())
     })
   } catch {
@@ -159,6 +160,7 @@ export async function upgradeDockerDeployment(
   try {
     const rmProc = spawn('docker', ['rm', containerName], {stdio: 'ignore'})
     await new Promise<void>((resolve) => {
+      rmProc.on('error', () => resolve())
       rmProc.on('exit', () => resolve())
     })
   } catch {
@@ -171,7 +173,7 @@ export async function upgradeDockerDeployment(
   const containerEnv = dockerContainerEnv({
     agentName,
     authToken,
-    inference: filterInferenceEnv(readAgentModel(agentPath), inferenceEnv()),
+    inference: filterInferenceEnv(readAgentModel(agentPath), await inferenceEnv()),
   })
   const dockerRunArgs = dockerContainerRunArgs({
     containerName,
@@ -316,7 +318,7 @@ export async function mountUpgradedDropletMemory(
   deployment: {agent_name: string; id?: string | null; auth_token_hash?: string | null} | null,
 ): Promise<void> {
   const authToken = deployment ? await resolveDeploymentAuthToken(deployment) : null
-  const inference = filterInferenceEnv(readAgentModel(agentPath), inferenceEnv())
+  const inference = filterInferenceEnv(readAgentModel(agentPath), await inferenceEnv())
   const secrets = [apiToken, authToken ?? '', ...Object.values(inference)].filter(value => value.length > 0)
   await ensureDropletContainerMemory(dropletIp, volumeName, secrets)
 }

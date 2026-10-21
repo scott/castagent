@@ -23,20 +23,36 @@ export function sortBuilderModels<T extends {id: string}>(models: readonly T[]):
 }
 
 /**
- * Catalog ids have no provider prefix. The default config stores
- * `openrouter/minimax/minimax-m2.5`, which is the same catalog row.
+ * Catalog ids have no provider prefix. Prefixes come from
+ * `cast provider --json`, not a hardcoded provider list.
+ * The default config stores `openrouter/minimax/minimax-m2.5`, which is
+ * the same catalog row as `minimax/minimax-m2.5` when `openrouter/` is passed.
  */
-export function builderModelCatalogId(id: string): string {
-  const prefix = 'openrouter/'
-  return id.startsWith(prefix) ? id.slice(prefix.length) : id
+export function builderModelCatalogId(
+  id: string,
+  prefixes: readonly string[] = [],
+): string {
+  const ordered = [...prefixes].sort((a, b) => b.length - a.length)
+  for (const prefix of ordered) {
+    if (prefix && id.startsWith(prefix)) return id.slice(prefix.length)
+  }
+  return id
 }
 
-export function isSameBuilderModel(currentId: string, selectedId: string): boolean {
-  return builderModelCatalogId(currentId) === builderModelCatalogId(selectedId)
+export function isSameBuilderModel(
+  currentId: string,
+  selectedId: string,
+  prefixes: readonly string[] = [],
+): boolean {
+  return builderModelCatalogId(currentId, prefixes) === builderModelCatalogId(selectedId, prefixes)
 }
 
-export function initialBuilderModelIndex(models: readonly {id: string}[], currentId: string): number {
-  const index = models.findIndex(model => isSameBuilderModel(model.id, currentId))
+export function initialBuilderModelIndex(
+  models: readonly {id: string}[],
+  currentId: string,
+  prefixes: readonly string[] = [],
+): number {
+  const index = models.findIndex(model => isSameBuilderModel(model.id, currentId, prefixes))
   return index >= 0 ? index : 0
 }
 
@@ -135,8 +151,12 @@ export function fitBuilderModelLine(text: string, columns: number): string {
 }
 
 /** Enter on the current row does not call the CLI. */
-export function shouldApplyBuilderModel(currentId: string, selectedId: string): boolean {
-  return !isSameBuilderModel(currentId, selectedId)
+export function shouldApplyBuilderModel(
+  currentId: string,
+  selectedId: string,
+  prefixes: readonly string[] = [],
+): boolean {
+  return !isSameBuilderModel(currentId, selectedId, prefixes)
 }
 
 export function builderModelListArgv(): string[] {
@@ -170,6 +190,7 @@ export function buildBuilderModelLines(options: {
   currentId: string
   termHeight: number
   columns: number
+  prefixes?: readonly string[]
   error?: string | null
 }): BuilderModelLine[] {
   const columns = options.columns
@@ -203,7 +224,7 @@ export function buildBuilderModelLines(options: {
     push(formatBuilderModelRow(
       model.id,
       index === selected,
-      isSameBuilderModel(model.id, options.currentId),
+      isSameBuilderModel(model.id, options.currentId, options.prefixes ?? []),
     ), 'text', lines)
   }
   if (span.end < options.models.length) push('  …', 'hint', lines)

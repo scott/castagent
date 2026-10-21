@@ -1,5 +1,5 @@
 {
-  "generatedAt": "2026-10-14T04:48:25Z",
+  "generatedAt": "2026-10-20T23:37:28Z",
   "cli": [
     {
       "id": "builder-skills",
@@ -100,6 +100,16 @@
       "id": "new",
       "full": "cast new",
       "description": "Create a new agent. On a TTY, opens the Builder wizard. Without a TTY, reads a description from stdin and creates the agent."
+    },
+    {
+      "id": "provider",
+      "full": "cast provider",
+      "description": "Show or switch the inference provider the builder uses"
+    },
+    {
+      "id": "enable",
+      "full": "cast provider enable",
+      "description": "Store an inference provider token and optional API URL"
     },
     {
       "id": "redo",
@@ -302,6 +312,11 @@
       "name": "model",
       "category": "agent",
       "description": "Change the model the builder uses"
+    },
+    {
+      "name": "provider",
+      "category": "agent",
+      "description": "Switch the inference provider the builder uses"
     },
     {
       "name": "quit",

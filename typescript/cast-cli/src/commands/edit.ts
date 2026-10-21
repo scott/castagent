@@ -4,6 +4,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import {spawn} from 'child_process'
 import {BuilderA2ABridge} from '../lib/builder/bridge'
+import {primeInferenceProcessEnv} from '../lib/inference-provider'
 
 export default class Edit extends Command {
   static description = 'Edit an existing agent through an interactive TUI wizard'
@@ -84,6 +85,7 @@ export default class Edit extends Command {
       this.error(`Agent '${agentName}' does not exist. Create it first with: cast new`)
     }
 
+    await primeInferenceProcessEnv()
     this.log(`Starting Cast Agent Editor for '${agentName}'...`)
     this.log('')
 

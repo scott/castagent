@@ -84,7 +84,7 @@ export default class RailwayDeploy extends Command {
       CAST_AGENT_NAME: agentName,
       AUTH_TOKEN: authToken,
       CAST_MEMORY_PATH: `/var/runtime/data/${volumeId}`,
-      ...filterInferenceEnv(readAgentModel(agentPath), inferenceEnv()),
+      ...filterInferenceEnv(readAgentModel(agentPath), await inferenceEnv()),
     }
 
     for (const [key, value] of Object.entries(envVars)) {

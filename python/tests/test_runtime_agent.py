@@ -1,6 +1,16 @@
 import os
+import tempfile
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+_ISOLATED_HOME = tempfile.mkdtemp(prefix="cast-pytest-home-")
+
+
+def _env(extra=None):
+    env = {"HOME": _ISOLATED_HOME, "PATH": os.environ.get("PATH", "")}
+    if extra:
+        env.update(extra)
+    return env
 
 from cast.agent.base import AgentConfig
 from cast.agent.runtime import RuntimeAgent, BUILTIN_TOOLS
@@ -59,14 +69,14 @@ class TestRuntimeAgentEchoMode:
     
     def test_init_without_api_key(self, agent_config):
         """Agent should initialize without API key and stay in echo mode."""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             agent = RuntimeAgent(agent_config)
             assert agent.graph is None
             assert agent.config.name == "test-agent"
     
     def test_echo_greeting(self, agent_config):
         """Echo mode should respond to greetings."""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             agent = RuntimeAgent(agent_config)
             response = agent._echo_response("hello")
             assert "test-agent" in response
@@ -74,7 +84,7 @@ class TestRuntimeAgentEchoMode:
     
     def test_echo_tools(self, agent_config):
         """Echo mode should list available tools."""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             agent = RuntimeAgent(agent_config)
             response = agent._echo_response("what tools do you have?")
             assert "bash" in response
@@ -83,7 +93,7 @@ class TestRuntimeAgentEchoMode:
     
     def test_echo_help(self, agent_config):
         """Echo mode should respond to help requests."""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             agent = RuntimeAgent(agent_config)
             response = agent._echo_response("help")
             assert "test-agent" in response
@@ -91,7 +101,7 @@ class TestRuntimeAgentEchoMode:
     
     def test_echo_default(self, agent_config):
         """Echo mode should return default response for unknown input."""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             agent = RuntimeAgent(agent_config)
             response = agent._echo_response("random message")
             assert "random message" in response
@@ -100,7 +110,7 @@ class TestRuntimeAgentEchoMode:
     @pytest.mark.asyncio
     async def test_process_message_echo_mode(self, agent_config):
         """process_message should work in echo mode without API key."""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             agent = RuntimeAgent(agent_config)
             response = await agent.process_message("hello")
             assert "test-agent" in response
@@ -225,14 +235,14 @@ class TestRuntimeAgentProviderSelection:
         mock_provider_class.return_value = mock_provider
         mock_graph.return_value = MagicMock()
 
-        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "test-key"}, clear=True):
+        with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "test-key"}), clear=True):
             agent = RuntimeAgent(agent_config)
 
         assert agent.graph is not None
         mock_provider_class.assert_called_once()
 
     def test_neither_key_stays_in_echo_mode(self, agent_config):
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             agent = RuntimeAgent(agent_config)
             assert agent.graph is None
             response = agent._echo_response("random message")
@@ -246,7 +256,7 @@ class TestRuntimeAgentProviderSelection:
         self._set_model(agent_config, "digitalocean/llama3.3-70b-instruct")
         mock_graph.return_value = MagicMock()
 
-        with patch.dict(os.environ, {"DIGITALOCEAN_MODEL_ACCESS_KEY": "do-key"}, clear=True):
+        with patch.dict(os.environ, _env({"DIGITALOCEAN_MODEL_ACCESS_KEY": "do-key"}), clear=True):
             agent = RuntimeAgent(agent_config)
 
         assert agent.graph is not None
@@ -254,7 +264,7 @@ class TestRuntimeAgentProviderSelection:
 
     def test_digitalocean_model_does_not_fall_back_to_openrouter(self, agent_config):
         self._set_model(agent_config, "digitalocean/llama3.3-70b-instruct")
-        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-key"}, clear=True):
+        with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
             agent = RuntimeAgent(agent_config)
             assert agent.graph is None
             response = agent._echo_response("random message")
@@ -267,7 +277,7 @@ class TestRuntimeAgentCard:
     
     def test_get_agent_card(self, agent_config):
         """get_agent_card should return valid A2A AgentCard."""
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             agent = RuntimeAgent(agent_config)
             card = agent.get_agent_card()
             

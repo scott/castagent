@@ -48,6 +48,31 @@ The file is re-read when a command or a new builder process starts.
 running. Start `cast dev`, `cast new`, or `cast edit` again to apply it.
 See [Changing the builder model](building-agents/builder-model).
 
+`cast provider` lists inference providers. The active provider is the
+one whose prefix matches `defaults.builder_model`.
+`defaults.inference_provider` is only a hint when that model has no
+registered prefix.
+
+```bash
+cast provider enable digitalocean --token -
+cast provider enable digitalocean --token - --url https://inference.do-ai.run/v1
+```
+
+`--token -` reads the model access key from stdin. `--token` with no
+value prompts without echoing. A literal key on the command line is
+stored, and Cast warns that it is visible in process listings and shell
+history. The key is not written to this file and is not printed. It is
+stored in the system keychain. When the keychain cannot be loaded, the
+key is written to `~/.cast/tokens/inference/<key>.token` at mode 0600.
+`--url` writes `base_url` next to that provider's `api_key`.
+`default_base_url` stays the shipped host. A URL must be `https`, or
+`http` on literal `127.0.0.1`, `::1`, or `localhost`, with a host and no
+userinfo or query. That URL is for the builder on this machine. Deploy
+and upgrade do not copy `OPENROUTER_BASE_URL` or
+`DIGITALOCEAN_INFERENCE_BASE_URL` onto the agent. A provider is enabled when its environment variable,
+that stored token, or a real config value is set. An unsubstituted
+`${VAR}` is not a token. Values are trimmed.
+
 `providers.digitalocean` is the **deploy** token for Droplets and MicroVMs.
 It is not an inference credential. Serverless inference uses
 `providers.digitalocean_inference` (or `DIGITALOCEAN_MODEL_ACCESS_KEY`).

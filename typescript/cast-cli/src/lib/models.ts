@@ -118,23 +118,26 @@ export function configFilePath(): string {
  * The prefix is kept so `openrouter/minimax/minimax-m2.5` writes the
  * shipped default instead of a different bare id.
  */
-export function resolveBuilderModelId(id: string): string | null {
+export function resolveBuilderModelId(
+  id: string,
+  catalog: readonly {id: string}[] = MODELS,
+): string | null {
   const trimmed = id.trim()
   if (trimmed.length === 0) return null
   const catalogId = trimmed.startsWith(OPENROUTER_PREFIX)
     ? trimmed.slice(OPENROUTER_PREFIX.length)
     : trimmed
   if (catalogId.length === 0 || catalogId.startsWith(OPENROUTER_PREFIX)) return null
-  if (!MODELS.some(model => model.id === catalogId)) return null
+  if (!catalog.some(model => model.id === catalogId || model.id === trimmed)) return null
   return trimmed
 }
 
-export function isKnownModel(id: string): boolean {
-  return resolveBuilderModelId(id) != null
+export function isKnownModel(id: string, catalog: readonly {id: string}[] = MODELS): boolean {
+  return resolveBuilderModelId(id, catalog) != null
 }
 
-export function unknownModelMessage(id: string): string {
-  const ids = MODELS.map(model => model.id).join(', ')
+export function unknownModelMessage(id: string, catalog: readonly {id: string}[] = MODELS): string {
+  const ids = catalog.map(model => model.id).join(', ')
   return `Unknown model '${id}'.\nAvailable models: ${ids}`
 }
 
@@ -152,12 +155,22 @@ function parseConfigDocument(text: string): ConfigDoc {
   return parsed as ConfigDoc
 }
 
+export function readCastConfig(): ConfigDoc {
+  const file = configFilePath()
+  if (!fs.existsSync(file)) return parseConfigDocument(DEFAULT_CONFIG_SCAFFOLD)
+  return readConfigDocument()
+}
+
+export function writeCastConfig(config: ConfigDoc): void {
+  writeConfigDocument(config)
+}
+
 function readConfigDocument(): ConfigDoc {
   const text = fs.readFileSync(configFilePath(), 'utf8')
   return parseConfigDocument(text)
 }
 
-function ensureDefaults(config: ConfigDoc): Record<string, any> {
+export function ensureConfigDefaults(config: ConfigDoc): Record<string, any> {
   const defaults = config.defaults
   if (defaults == null) {
     config.defaults = {}
@@ -204,14 +217,14 @@ export function getCurrentBuilderModel(): string {
  * is missing. Other keys are kept. The write is a temp file plus rename,
  * then a re-read. Returns the id written.
  */
-export function setBuilderModel(id: string): string {
-  const stored = resolveBuilderModelId(id)
+export function setBuilderModel(id: string, catalog: readonly {id: string}[] = MODELS): string {
+  const stored = resolveBuilderModelId(id, catalog)
   if (stored == null) {
-    throw new Error(unknownModelMessage(id.trim()))
+    throw new Error(unknownModelMessage(id.trim(), catalog))
   }
   const file = configFilePath()
   const config = fs.existsSync(file) ? readConfigDocument() : parseConfigDocument(DEFAULT_CONFIG_SCAFFOLD)
-  ensureDefaults(config).builder_model = stored
+  ensureConfigDefaults(config).builder_model = stored
   writeConfigDocument(config)
   const confirmed = readConfigDocument()
   if (confirmed.defaults?.builder_model !== stored) {
@@ -222,12 +235,12 @@ export function setBuilderModel(id: string): string {
   return stored
 }
 
-export function formatModelCatalog(current: string): string {
+export function formatModelCatalog(current: string, models: readonly {id: string}[] = MODELS): string {
   const lines = [
     `Current builder model: ${current}`,
     '',
     'Available models:',
-    ...MODELS.map((model, index) => `  ${index + 1}. ${model.id}`),
+    ...models.map((model, index) => `  ${index + 1}. ${model.id}`),
     '',
     'Set with: cast model <model-id>',
   ]

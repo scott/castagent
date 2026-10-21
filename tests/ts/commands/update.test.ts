@@ -59,30 +59,30 @@ describe('update command', () => {
       }
     })
 
-    it('should accept digitalocean models without an OpenRouter warning', () => {
+    it('should accept digitalocean models without an OpenRouter warning', async () => {
       const update = new Update(['update', 'agent'], {} as any)
-      const known = (update as any).validateModel('digitalocean/llama3.3-70b-instruct')
-      const catalog = (update as any).validateModel('digitalocean/some-new-catalog-id')
+      const known = await (update as any).validateModel('digitalocean/llama3.3-70b-instruct')
+      const catalog = await (update as any).validateModel('digitalocean/some-new-catalog-id')
       expect(known).to.deep.equal({valid: true})
       expect(catalog).to.deep.equal({valid: true})
       expect(known.warning).to.equal(undefined)
     })
 
-    it('rejects unknown OpenRouter models with the cast model message', () => {
+    it('rejects unknown OpenRouter models with the cast model message', async () => {
       const update = new Update(['update', 'agent'], {} as any)
-      const result = (update as any).validateModel('unknown/model')
+      const result = await (update as any).validateModel('unknown/model')
       expect(result).to.deep.equal({
         valid: false,
         error: unknownModelMessage('unknown/model'),
       })
     })
 
-    it('rejects zzz/notreal and still accepts the shipped openrouter default', () => {
+    it('rejects zzz/notreal and still accepts the shipped openrouter default', async () => {
       const update = new Update(['update', 'agent'], {} as any)
-      const unknown = (update as any).validateModel('zzz/notreal')
-      const shipped = (update as any).validateModel('openrouter/minimax/minimax-m2.5')
-      const prefixed = (update as any).validateModel('openrouter/anthropic/claude-sonnet-4.6')
-      const retired = (update as any).validateModel('google/gemini-2.0-flash')
+      const unknown = await (update as any).validateModel('zzz/notreal')
+      const shipped = await (update as any).validateModel('openrouter/minimax/minimax-m2.5')
+      const prefixed = await (update as any).validateModel('openrouter/anthropic/claude-sonnet-4.6')
+      const retired = await (update as any).validateModel('google/gemini-2.0-flash')
       expect(unknown).to.deep.equal({
         valid: false,
         error: unknownModelMessage('zzz/notreal'),
@@ -95,7 +95,7 @@ describe('update command', () => {
       })
     })
 
-    it('accepts an external acceptsAnyModel id without an OpenRouter warning', () => {
+    it('accepts an external acceptsAnyModel id without an OpenRouter warning', async () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-update-model-'))
       const folder = path.join(home, '.cast', 'inference-providers', 'example')
       fs.mkdirSync(folder, {recursive: true})
@@ -126,7 +126,7 @@ describe('update command', () => {
       process.env.HOME = home
       try {
         const update = new Update(['update', 'agent'], {} as any)
-        const result = (update as any).validateModel('example/my-model')
+        const result = await (update as any).validateModel('example/my-model')
         expect(result).to.deep.equal({valid: true})
         expect(result.warning).to.equal(undefined)
       } finally {

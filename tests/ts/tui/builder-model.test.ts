@@ -8,11 +8,11 @@ import ts from 'typescript'
 function loadHelper(): {
   isBuilderModelCommandVisible: (mode: 'dev' | 'production' | 'on-host') => boolean
   sortBuilderModels: <T extends {id: string}>(models: readonly T[]) => T[]
-  initialBuilderModelIndex: (models: readonly {id: string}[], currentId: string) => number
+  initialBuilderModelIndex: (models: readonly {id: string}[], currentId: string, prefixes?: readonly string[]) => number
   wrapBuilderModelIndex: (index: number, delta: number, length: number) => number
   builderModelWindow: (length: number, selected: number, maxRows: number) => {start: number; end: number}
-  isSameBuilderModel: (currentId: string, selectedId: string) => boolean
-  shouldApplyBuilderModel: (currentId: string, selectedId: string) => boolean
+  isSameBuilderModel: (currentId: string, selectedId: string, prefixes?: readonly string[]) => boolean
+  shouldApplyBuilderModel: (currentId: string, selectedId: string, prefixes?: readonly string[]) => boolean
   builderModelApplyArgv: (id: string) => string[]
   builderModelListArgv: () => string[]
   builderModelCurrentArgv: () => string[]
@@ -29,6 +29,7 @@ function loadHelper(): {
     currentId: string
     termHeight: number
     columns: number
+    prefixes?: readonly string[]
     error?: string | null
   }) => Array<{text: string; tone: string}>
   CAST_CLI_NOT_FOUND: string
@@ -44,6 +45,8 @@ function loadHelper(): {
   vm.runInContext(js, sandbox)
   return module.exports
 }
+
+const PREFIXES = ['openrouter/', 'digitalocean/']
 
 describe('builder model picker', () => {
   const helper = loadHelper()
@@ -83,10 +86,10 @@ describe('builder model picker', () => {
       {id: 'minimax/minimax-m2.5'},
       {id: 'openai/gpt-4o'},
     ]
-    const index = helper.initialBuilderModelIndex(models, 'openrouter/minimax/minimax-m2.5')
+    const index = helper.initialBuilderModelIndex(models, 'openrouter/minimax/minimax-m2.5', PREFIXES)
     expect(models[index].id).to.equal('minimax/minimax-m2.5')
-    expect(helper.isSameBuilderModel('openrouter/minimax/minimax-m2.5', 'minimax/minimax-m2.5')).to.equal(true)
-    expect(helper.shouldApplyBuilderModel('openrouter/minimax/minimax-m2.5', 'minimax/minimax-m2.5')).to.equal(false)
+    expect(helper.isSameBuilderModel('openrouter/minimax/minimax-m2.5', 'minimax/minimax-m2.5', PREFIXES)).to.equal(true)
+    expect(helper.shouldApplyBuilderModel('openrouter/minimax/minimax-m2.5', 'minimax/minimax-m2.5', PREFIXES)).to.equal(false)
     const window = helper.builderModelWindow(models.length, index, 2)
     expect(window.start).to.be.at.most(index)
     expect(window.end).to.be.greaterThan(index)
@@ -140,6 +143,7 @@ describe('builder model picker', () => {
       currentId: 'openrouter/minimax/minimax-m2.5',
       termHeight,
       columns,
+      prefixes: PREFIXES,
       error,
     })
     return {columns, lines}

@@ -92,8 +92,8 @@ export default class Update extends Command {
     return VALID_TOOLS.includes(tool)
   }
 
-  private validateModel(model: string): {valid: boolean; error?: string} {
-    const status = inferenceModelStatus(model)
+  private async validateModel(model: string): Promise<{valid: boolean; error?: string}> {
+    const status = await inferenceModelStatus(model)
     if (status.valid && !status.warning && !status.error) return {valid: true}
     // OpenRouter ids use the same message as `cast model`. A leading
     // openrouter/ prefix is still accepted by inferenceModelStatus, including
@@ -182,7 +182,7 @@ export default class Update extends Command {
     }
 
     if (flags.model) {
-      const validation = this.validateModel(flags.model)
+      const validation = await this.validateModel(flags.model)
       if (!validation.valid) {
         this.error(validation.error || `Unknown model '${flags.model}'.`)
       }

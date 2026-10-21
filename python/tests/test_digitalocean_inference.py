@@ -1,9 +1,19 @@
 import os
+import tempfile
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from cast.providers.digitalocean_inference import DigitalOceanInferenceProvider
+
+_ISOLATED_HOME = tempfile.mkdtemp(prefix="cast-pytest-home-")
+
+
+def _env(extra=None):
+    env = {"HOME": _ISOLATED_HOME, "PATH": os.environ.get("PATH", "")}
+    if extra:
+        env.update(extra)
+    return env
 from cast.providers.openrouter import MODEL_ALIASES
 from cast.providers.registry import get_provider
 
@@ -23,15 +33,15 @@ class TestDigitalOceanInferenceProvider:
             assert DigitalOceanInferenceProvider.is_available() is True
 
     def test_is_available_without_key(self):
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             assert DigitalOceanInferenceProvider.is_available() is False
 
     def test_is_available_ignores_openrouter_key(self):
-        with patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-key"}, clear=True):
+        with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
             assert DigitalOceanInferenceProvider.is_available() is False
 
     def test_init_raises_without_key(self):
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             with pytest.raises(ValueError, match="DIGITALOCEAN_MODEL_ACCESS_KEY") as exc:
                 DigitalOceanInferenceProvider()
         message = str(exc.value)
@@ -136,7 +146,7 @@ class TestBuilderProviderSelection:
         config = {"defaults": {"builder_model": "openrouter/minimax/minimax-m2.5"}}
         with patch("cast.builder.load_global_config", return_value=config):
             assert get_builder_model() == "minimax/minimax-m2.5"
-            with patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-key"}, clear=True):
+            with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
                 with patch("cast.providers.openrouter.OpenRouterProvider") as mock_or:
                     instance = MagicMock()
                     instance.create_llm.return_value = MagicMock()
@@ -168,7 +178,7 @@ class TestBuilderProviderSelection:
 
         config = {"defaults": {"builder_model": "digitalocean/deepseek-v3.2"}}
         with patch("cast.builder.load_global_config", return_value=config):
-            with patch.dict(os.environ, {"OPENROUTER_API_KEY": "or-key"}, clear=True):
+            with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
                 llm = create_llm()
         assert isinstance(llm, EchoChatModel)
         err = capsys.readouterr().err
@@ -179,7 +189,7 @@ class TestBuilderProviderSelection:
         from cast.builder import EchoChatModel, create_llm
 
         with patch("cast.builder.load_global_config", return_value={}):
-            with patch.dict(os.environ, {"DIGITALOCEAN_MODEL_ACCESS_KEY": "do-key"}, clear=True):
+            with patch.dict(os.environ, _env({"DIGITALOCEAN_MODEL_ACCESS_KEY": "do-key"}), clear=True):
                 llm = create_llm()
         assert isinstance(llm, EchoChatModel)
         err = capsys.readouterr().err

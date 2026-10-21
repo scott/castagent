@@ -251,16 +251,23 @@ class TestSelection:
         assert openrouter["envVar"] == "OPENROUTER_API_KEY"
         assert openrouter["baseUrl"] == "https://openrouter.ai/api/v1"
         assert openrouter["acceptsAnyModel"] is False
+        assert openrouter["displayName"] == "OpenRouter"
+        assert openrouter["defaultModel"] == "openrouter/minimax/minimax-m2.5"
         digitalocean = next(item for item in payload if item["key"] == "digitalocean")
         assert digitalocean["acceptsAnyModel"] is True
         assert digitalocean["configKey"] == "providers.digitalocean_inference.api_key"
         assert digitalocean["baseUrl"] == "https://inference.do-ai.run/v1"
+        assert digitalocean["displayName"] == "DigitalOcean Serverless Inference"
+        assert digitalocean["modelsPath"] == "/models"
+        assert digitalocean["fallbackModels"] == ["llama3.3-70b-instruct", "deepseek-v3.2"]
+        assert digitalocean["defaultModel"] == "digitalocean/llama3.3-70b-instruct"
 
     def test_catalog_module_prints_json(self, monkeypatch, tmp_path):
         home = _home(monkeypatch, tmp_path)
         env = os.environ.copy()
         env["HOME"] = str(home)
-        env["PYTHONPATH"] = str(PYTHON)
+        prior = env.get("PYTHONPATH")
+        env["PYTHONPATH"] = str(PYTHON) if not prior else f"{PYTHON}{os.pathsep}{prior}"
         result = subprocess.run(
             [sys.executable, "-m", "cast.providers.catalog"],
             cwd=str(ROOT),

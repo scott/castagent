@@ -19,6 +19,7 @@ import {
 import type {DeployContext, DeploymentProvider} from '../lib/deploy/types'
 import {createAgentGit} from '../lib/git-identity'
 import {missingAgentError} from '../lib/missing-agent'
+import {primeInferenceProcessEnv} from '../lib/inference-provider'
 import {db} from '../lib/sqlite'
 
 const DOCKER_INSTALL_URL = 'https://docs.docker.com/get-docker/'
@@ -431,6 +432,7 @@ export default class Deploy extends Command {
 
   async run(): Promise<void> {
     this.failProviderLoad()
+    await primeInferenceProcessEnv()
     const {args, flags} = await this.parse(Deploy)
     const agentName = args.agent
     let provider = flags.provider

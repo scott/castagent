@@ -21,7 +21,7 @@ Non-default providers match first. A provider matches when the model starts with
 
 `openai/`, `anthropic/`, `google/`, `meta-llama/`, `kimi/`, `minimax/`, `deepseek/`, `mistralai/`, `cohere/`, `x-ai/`, and `perplexity/` are OpenRouter model ids. Do not register them. A prefix has to be a provider key plus a slash, such as `example/`.
 
-Both API keys may be set. The prefix wins. If the selected provider's environment variable is missing, Cast stays in echo mode and names that variable. It does not try the other provider.
+Both API keys may be set. The prefix wins. A provider is available when its environment variable is set, or `~/.cast/tokens/inference/<key>.token` exists, or its config key resolves to a real value. Environment values are trimmed. An unsubstituted `${VAR}` is missing. When `HOME` is unset, or `~/.cast/config.yaml` cannot be read, that file is treated as empty. `create_llm` uses `baseUrlEnv`, then config `base_url`, then the manifest `baseUrl`. If the selected provider's token is missing, Cast stays in echo mode and names that variable. It does not try the other provider.
 
 ## Add a built-in
 
@@ -48,7 +48,11 @@ Create the folder `~/.cast/inference-providers/example/`:
   "configKey": "providers.example.api_key",
   "baseUrl": "https://example.invalid/v1",
   "acceptsAnyModel": true,
-  "knownModels": []
+  "knownModels": [],
+  "displayName": "Example Inference",
+  "modelsPath": "/models",
+  "fallbackModels": ["my-model"],
+  "defaultModel": "example/my-model"
 }
 ```
 
@@ -80,6 +84,8 @@ provider = ExampleProvider()
 ```
 
 The directory name, `provider.json` `key`, and `provider.key` must match. Prefixes in the JSON and the prefixes the module claims must match.
+
+`displayName`, `modelsPath`, `fallbackModels`, and `defaultModel` live on the catalog row. `cast model` and the TUI read them from `python -m cast.providers.catalog` (`cast provider --json`). A new provider sets those fields instead of editing the shared model list. `modelsPath` is fetched as `GET <base-url><modelsPath>`. A failed fetch uses `fallbackModels`, each prefixed with the provider's first prefix.
 
 Or list a module in `~/.cast/config.yaml`:
 
@@ -141,7 +147,7 @@ The provider does not decide echo mode. Callers do:
 
 The runtime, the builder, and reflection all use this sequence. Reflection keeps receiving the agent's raw model.
 
-Deploy code calls `inferenceEnv()`, then keeps the entry whose prefix matches `brain.model` (the longest prefix wins, otherwise the default provider). `inferenceEnv()` runs `python -m cast.providers.catalog`, resolves each `envVar` from the environment and then from `configKey`, and returns the pairs that have a value. Docker, Railway, Fly, Droplets, Sprites, MicroVM, and `cast upgrade` send that one key plus the Cast runtime variables. The helper never reads `providers.digitalocean.token`. Secret values go to the provider on stdin or in the create request body.
+Deploy code calls `inferenceEnv()`, then keeps the entry whose prefix matches `brain.model` (the longest prefix wins, otherwise the default provider). `inferenceEnv()` runs `python -m cast.providers.catalog`, resolves each `envVar` from the environment, keychain, token file, and then `configKey`, and returns API keys only. It does not return `baseUrlEnv`. A custom base URL stays on the builder (`primeInferenceProcessEnv` and `create_llm`). Docker, Droplets, Sprites, MicroVM, and `cast upgrade` for those hosts send that one key plus the Cast runtime variables. Railway and Fly set the key at deploy time and do not rewrite it on upgrade. The helper never reads `providers.digitalocean.token`. Secret values go to the provider on stdin or in the create request body.
 
 `python -m cast.providers.catalog` prints:
 
@@ -155,7 +161,9 @@ Deploy code calls `inferenceEnv()`, then keeps the entry whose prefix matches `b
     "envVar": "OPENROUTER_API_KEY",
     "configKey": "providers.openrouter.api_key",
     "baseUrl": "https://openrouter.ai/api/v1",
-    "acceptsAnyModel": false
+    "acceptsAnyModel": false,
+    "displayName": "OpenRouter",
+    "defaultModel": "openrouter/minimax/minimax-m2.5"
   }
 ]
 ```

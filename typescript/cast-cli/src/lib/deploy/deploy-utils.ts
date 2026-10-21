@@ -6,6 +6,7 @@ import crypto from 'crypto'
 import YAML from 'yaml'
 import { db } from '../sqlite'
 import { keychain, type TokenStore } from '../keychain'
+import {resolvedInferenceToken} from '../inference-credentials'
 import {runtimeDockerfileCmd} from '../runtime-args'
 import {PAST_AGENT_DOCKERFILES} from './past-agent-dockerfiles'
 import {writeRequirementsTxt} from './requirements'
@@ -1267,7 +1268,17 @@ export interface InferenceCatalogEntry {
   envVar: string
   configKey: string
   baseUrl: string
+  /** Builder process env name. Deploy and upgrade do not forward this variable. */
+  baseUrlEnv?: string
   acceptsAnyModel: boolean
+  /** Shown in `cast provider`. Falls back to `name`. */
+  displayName?: string
+  /** OpenAI-compatible path, for example `/models`, joined onto the base URL. */
+  modelsPath?: string
+  /** Unprefixed ids used when the live catalog cannot be loaded. */
+  fallbackModels?: string[]
+  /** Stored builder model when this provider is selected and has no remembered id. */
+  defaultModel?: string
 }
 
 export interface InstallPin {
@@ -1345,6 +1356,19 @@ function castPython(): {command: string; env: NodeJS.ProcessEnv} {
   return {command, env}
 }
 
+export function loadInferenceKnownModels(): Record<string, string[]> {
+  const {command, env} = castPython()
+  const stdout = execFileSync(command, ['-m', 'cast.providers.known_models'], {
+    encoding: 'utf8',
+    env,
+  })
+  const parsed = JSON.parse(stdout)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('cast.providers.known_models did not print a JSON object')
+  }
+  return parsed as Record<string, string[]>
+}
+
 export function loadInferenceCatalog(): InferenceCatalogEntry[] {
   const {command, env} = castPython()
   const stdout = execFileSync(command, ['-m', 'cast.providers.catalog'], {
@@ -1358,25 +1382,14 @@ export function loadInferenceCatalog(): InferenceCatalogEntry[] {
   return parsed
 }
 
-function configValue(config: any, dotted: string | undefined): string | undefined {
-  if (!dotted) return undefined
-  let current = config
-  for (const part of dotted.split('.')) {
-    if (!current || typeof current !== 'object' || !(part in current)) return undefined
-    current = current[part]
-  }
-  if (typeof current !== 'string' || current.length === 0) return undefined
-  return current
-}
-
-// Env first, then configKey. Omits pairs with no value.
+// API keys only: env, keychain, token file, then configKey. Omits pairs with no value.
+// A custom base URL stays on the builder. This map is what deploy and upgrade send.
 // Does not read providers.digitalocean.token; that key is not in the catalog.
-export function inferenceEnv(config: any = loadConfig()): Record<string, string> {
+export async function inferenceEnv(config: any = loadConfig()): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
   for (const entry of loadInferenceCatalog()) {
     if (!entry.envVar) continue
-    const fromEnv = process.env[entry.envVar]
-    const value = fromEnv || configValue(config, entry.configKey)
+    const value = await resolvedInferenceToken(entry, config)
     if (value) out[entry.envVar] = value
   }
   return out
@@ -1435,7 +1448,9 @@ export function inferenceProviderForModel(
 }
 
 /**
- * Keep the env var for the provider that serves `model`.
+ * Keep the API key for the provider that serves `model`.
+ * Base URL variables are builder settings and are dropped even when
+ * `resolved` already contains them.
  * `resolved` is the output of inferenceEnv(), so callers that stub that
  * helper still control which values are available.
  */
@@ -1448,13 +1463,14 @@ export function filterInferenceEnv(
   const entries = catalog ?? loadInferenceCatalog()
   const provider = inferenceProviderForModel(model, entries)
   if (!provider?.envVar) return {}
+  const kept: Record<string, string> = {}
   const value = resolved[provider.envVar]
-  if (!value) return {}
-  return {[provider.envVar]: value}
+  if (value) kept[provider.envVar] = value
+  return kept
 }
 
-export function inferenceEnvForAgent(agentPath: string, config: any = loadConfig()): Record<string, string> {
-  return filterInferenceEnv(readAgentModel(agentPath), inferenceEnv(config))
+export async function inferenceEnvForAgent(agentPath: string, config: any = loadConfig()): Promise<Record<string, string>> {
+  return filterInferenceEnv(readAgentModel(agentPath), await inferenceEnv(config))
 }
 
 /** Credential values. Runtime names such as CAST_AGENT_NAME are omitted. */
@@ -1531,18 +1547,19 @@ export function railwaySecretSetArgs(key: string): string[] {
   return ['variables', 'set', key, '--stdin']
 }
 
-export function inferenceModelStatus(model: string): {
+export async function inferenceModelStatus(model: string): Promise<{
   valid: boolean
   warning?: string
   error?: string
   provider?: string
-} {
+}> {
   const {command, env} = castPython()
+  const resolved = await inferenceEnv()
   const stdout = execFileSync(command, [
     '-c',
     'import json,sys\nfrom cast.providers.registry import model_status\njson.dump(model_status(sys.argv[1]), sys.stdout)\n',
     model,
-  ], {encoding: 'utf8', env})
+  ], {encoding: 'utf8', env: {...env, ...resolved}})
   const parsed = JSON.parse(stdout) as {
     valid?: boolean
     warning?: string | null

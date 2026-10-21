@@ -587,6 +587,14 @@ describe('new command - stdin without a TTY', () => {
 const fs = require('fs')
 const path = require('path')
 const chunks = []
+if (process.argv[3] === 'cast.providers.catalog') {
+  process.stdout.write('[]')
+  process.exit(0)
+}
+if (process.argv[3] === 'cast.providers.known_models') {
+  process.stdout.write('{}')
+  process.exit(0)
+}
 process.stdin.on('data', (chunk) => chunks.push(chunk))
 process.stdin.on('end', () => {
   const text = Buffer.concat(chunks).toString('utf8')
