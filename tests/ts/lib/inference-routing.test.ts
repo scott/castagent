@@ -18,16 +18,19 @@ const OPENROUTER = 'sk-or-v1-secret-openrouter-key'
 const DIGITALOCEAN = 'do-model-secret-key-0123456789'
 const XAI = 'xai-secret-key-0123456789'
 const OPENAI = 'sk-openai-test-key-0123456789'
+const GEMINI = 'gemini-test-key-0123456789'
 
 const BOTH = {
   OPENROUTER_API_KEY: OPENROUTER,
   DIGITALOCEAN_MODEL_ACCESS_KEY: DIGITALOCEAN,
   XAI_API_KEY: XAI,
   OPENAI_API_KEY: OPENAI,
+  GEMINI_API_KEY: GEMINI,
   OPENROUTER_BASE_URL: 'https://openrouter.example/v1',
   DIGITALOCEAN_INFERENCE_BASE_URL: 'https://inference.example/v1',
   XAI_BASE_URL: 'https://xai.example/v1',
   OPENAI_BASE_URL: 'https://proxy.example/v1',
+  GEMINI_BASE_URL: 'https://generativelanguage.example/v1beta/openai',
   FAKEAI_REGION: 'sfo3',
   FAKEAI_BASE_URL: 'https://fakeai.example/v1',
 }
@@ -96,16 +99,18 @@ describe('inference prefix routing', () => {
     const reserved = loadReservedDirectPrefixes().map(item => item.prefix)
     expect(reserved).to.include.members([
       'anthropic-api/',
-      'gemini/',
       'bedrock/',
       'ollama/',
     ])
     expect(reserved).to.not.include('xai/')
     expect(reserved).to.not.include('openai-api/')
+    expect(reserved).to.not.include('gemini/')
     expect(inferencePrefixError('openai-api/gpt-4o', catalog)).to.equal(null)
     expect(matchingProvider('openai-api/gpt-4o', catalog)?.key).to.equal('openai-api')
     expect(inferencePrefixError('xai/grok-4.7', catalog)).to.equal(null)
     expect(matchingProvider('xai/grok-4.7', catalog)?.key).to.equal('xai')
+    expect(inferencePrefixError('gemini/gemini-3.8-flash', catalog)).to.equal(null)
+    expect(matchingProvider('gemini/gemini-3.8-flash', catalog)?.key).to.equal('gemini')
     const reservedDirect = inferencePrefixError('anthropic-api/claude-sonnet-4.6', catalog)
     expect(reservedDirect).to.include("reserved prefix 'anthropic-api/'")
     expect(reservedDirect).to.include('anthropic/claude-sonnet-4.6 still routes to OpenRouter')
@@ -161,6 +166,9 @@ describe('inference prefix routing', () => {
     expect(filterInferenceEnv('openai-api/o3', BOTH, catalog)).to.deep.equal({
       OPENAI_API_KEY: OPENAI,
     })
+    expect(filterInferenceEnv('gemini/gemini-3.8-flash', BOTH, catalog)).to.deep.equal({
+      GEMINI_API_KEY: GEMINI,
+    })
     expect(filterInferenceEnv('anthropic-api/claude-sonnet-4.6', BOTH, catalog)).to.deep.equal({})
     expect(filterInferenceEnv('gpt-5', BOTH, catalog)).to.deep.equal({})
     const xaiForwarded = JSON.stringify(filterInferenceEnv('xai/grok-4.7', BOTH, catalog))
@@ -168,16 +176,25 @@ describe('inference prefix routing', () => {
     expect(xaiForwarded).to.not.include(OPENROUTER)
     expect(xaiForwarded).to.not.include(DIGITALOCEAN)
     expect(xaiForwarded).to.not.include(OPENAI)
+    expect(xaiForwarded).to.not.include(GEMINI)
     expect(xaiForwarded).to.not.include('https://')
     const openrouterOnly = JSON.stringify(filterInferenceEnv('openai/gpt-4o', BOTH, catalog))
     expect(openrouterOnly).to.not.include(OPENAI)
     expect(openrouterOnly).to.not.include(XAI)
+    expect(openrouterOnly).to.not.include(GEMINI)
     expect(openrouterOnly).to.not.include('BASE_URL')
+    const geminiForwarded = JSON.stringify(filterInferenceEnv('gemini/gemini-3.1-pro-preview', BOTH, catalog))
+    expect(geminiForwarded).to.not.include('BASE_URL')
+    expect(geminiForwarded).to.not.include(OPENROUTER)
+    expect(geminiForwarded).to.not.include(DIGITALOCEAN)
+    expect(geminiForwarded).to.not.include(OPENAI)
+    expect(geminiForwarded).to.not.include(XAI)
     const forwarded = JSON.stringify(filterInferenceEnv('digitalocean/llama3.3-70b-instruct', BOTH, catalog))
     expect(forwarded).to.not.include('BASE_URL')
     expect(forwarded).to.not.include(OPENROUTER)
     expect(forwarded).to.not.include(OPENAI)
     expect(forwarded).to.not.include(XAI)
+    expect(forwarded).to.not.include(GEMINI)
     const openaiOnly = JSON.stringify(filterInferenceEnv('openai-api/gpt-4o', BOTH, catalog))
     expect(openaiOnly).to.not.include(OPENROUTER)
     expect(openaiOnly).to.not.include(DIGITALOCEAN)
@@ -193,6 +210,7 @@ describe('inference prefix routing', () => {
       expect(source, file).to.include('filterInferenceEnv')
       expect(source, file).to.not.include('OPENAI_API_KEY')
       expect(source, file).to.not.include('XAI_API_KEY')
+      expect(source, file).to.not.include('GEMINI_API_KEY')
     }
   })
 

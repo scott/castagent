@@ -15,6 +15,8 @@ const savedEnv = {
   XAI_BASE_URL: process.env.XAI_BASE_URL,
   OPENAI_API_KEY: process.env.OPENAI_API_KEY,
   OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
+  GEMINI_API_KEY: process.env.GEMINI_API_KEY,
+  GEMINI_BASE_URL: process.env.GEMINI_BASE_URL,
 }
 
 function restoreEnv(name: string, value: string | undefined): void {
@@ -61,6 +63,8 @@ describe('cast provider', () => {
     delete process.env.XAI_BASE_URL
     delete process.env.OPENAI_API_KEY
     delete process.env.OPENAI_BASE_URL
+    delete process.env.GEMINI_API_KEY
+    delete process.env.GEMINI_BASE_URL
   })
 
   afterEach(() => {
@@ -73,6 +77,8 @@ describe('cast provider', () => {
     restoreEnv('XAI_BASE_URL', savedEnv.XAI_BASE_URL)
     restoreEnv('OPENAI_API_KEY', savedEnv.OPENAI_API_KEY)
     restoreEnv('OPENAI_BASE_URL', savedEnv.OPENAI_BASE_URL)
+    restoreEnv('GEMINI_API_KEY', savedEnv.GEMINI_API_KEY)
+    restoreEnv('GEMINI_BASE_URL', savedEnv.GEMINI_BASE_URL)
     fs.rmSync(home, {recursive: true, force: true})
   })
 
@@ -256,5 +262,30 @@ describe('cast provider', () => {
     expect(openrouter.current).to.equal(true)
     expect(digitalocean.current).to.equal(false)
     expect(result.logs.join('\n')).to.not.include('sk-test')
+  })
+
+  it('lists Gemini and stores its token without printing the key', async () => {
+    const Provider = await loadCommand('index')
+    const listed = await runCommand(Provider, {}, {json: true, current: false})
+    expect(listed.errors, listed.errors.join('\n')).to.deep.equal([])
+    const before = JSON.parse(listed.logs.join('\n'))
+    const gemini = before.find((row: {key: string}) => row.key === 'gemini')
+    expect(gemini.displayName).to.equal('Google Gemini')
+    expect(gemini.enabled).to.equal(false)
+    expect(gemini.baseUrl).to.equal('https://generativelanguage.googleapis.com/v1beta/openai')
+    expect(gemini.prefixes).to.deep.equal(['gemini/'])
+
+    const Enable = await loadCommand('enable')
+    const enabled = await runCommand(Enable, {provider: 'gemini'}, {token: 'gemini-secret-token'})
+    expect(enabled.errors, enabled.errors.join('\n')).to.deep.equal([])
+    expect(enabled.logs.join('\n')).to.not.include('gemini-secret-token')
+    expect(enabled.logs.join('\n')).to.include('system keychain')
+    expect(await keytar.getPassword('cast', 'inference:gemini')).to.equal('gemini-secret-token')
+    expect(fs.existsSync(tokenPath('gemini'))).to.equal(false)
+
+    const after = await runCommand(Provider, {}, {json: true, current: false})
+    const rows = JSON.parse(after.logs.join('\n'))
+    expect(rows.find((row: {key: string}) => row.key === 'gemini').enabled).to.equal(true)
+    expect(after.logs.join('\n')).to.not.include('gemini-secret-token')
   })
 })

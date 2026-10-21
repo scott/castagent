@@ -209,7 +209,7 @@ class TestSelection:
         entries = [Entry("b", Impl("b")), Entry("a", Impl("a"))]
         with patch("cast.providers.registry.iter_entry_points", return_value=entries):
             keys = [item.key for item in load_registry().providers]
-        assert keys == ["openrouter", "digitalocean", "openai-api", "xai", "a", "b"]
+        assert keys == ["openrouter", "digitalocean", "gemini", "openai-api", "xai", "a", "b"]
 
     def test_config_provider_and_directory_order(self, monkeypatch, tmp_path):
         home = _home(monkeypatch, tmp_path)
@@ -236,7 +236,7 @@ class TestSelection:
         cast_dir.mkdir(exist_ok=True)
         (cast_dir / "config.yaml").write_text(f"inferenceProviders:\n  - {module_path}\n")
         keys = [item.key for item in load_registry().providers]
-        assert keys == ["openrouter", "digitalocean", "openai-api", "xai", "folder", "configured"]
+        assert keys == ["openrouter", "digitalocean", "gemini", "openai-api", "xai", "folder", "configured"]
         assert get_provider("configured/one").key == "configured"
 
     def test_catalog_omits_known_models(self, monkeypatch, tmp_path):
@@ -358,7 +358,6 @@ class TestSelection:
         reserved = [prefix for row in manifest if row.get("impl") == "reserved" for prefix in row["prefixes"]]
         assert reserved == [
             "anthropic-api/",
-            "gemini/",
             "bedrock/",
             "ollama/",
         ]

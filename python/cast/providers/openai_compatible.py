@@ -1,8 +1,9 @@
 """One OpenAI-compatible binding, filled in from a manifest row.
 
 A future provider is a row with ``"impl": "openai-compatible"``. The
-registry builds it. A module is only needed when the provider rewrites
-model ids, and that module is the shared class plus the rewrite.
+registry builds it. A module is needed when the provider rewrites model
+ids or supplies a ``chat_factory``. That module is the shared class plus
+the rewrite or factory.
 """
 
 from __future__ import annotations
@@ -126,6 +127,11 @@ class OpenAICompatibleProvider:
             if prefix and text.startswith(prefix):
                 text = text[len(prefix):]
                 break
+        # Listed ids and a hand-typed ``gemini/models/<id>`` both drop this
+        # prefix before the request. The chat endpoint rejects ``models/``.
+        strip = self.strip_model_id_prefix
+        if strip and text.startswith(strip):
+            text = text[len(strip):]
         if self.rewrite_model is not None:
             text = self.rewrite_model(text)
         return text

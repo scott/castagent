@@ -115,17 +115,26 @@
   },
   {
     "key": "gemini",
-    "impl": "reserved",
     "name": "Google Gemini",
-    "displayName": "Google Gemini",
-    "prefixes": ["gemini/"],
     "default": false,
+    "prefixes": [
+      "gemini/"
+    ],
     "envVar": "GEMINI_API_KEY",
     "configKey": "providers.gemini.api_key",
     "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "baseUrlEnv": "GEMINI_BASE_URL",
     "acceptsAnyModel": true,
+    "displayName": "Google Gemini",
+    "modelsPath": "/models",
+    "modelsFilter": "^gemini(?!.*(?:embed|image|tts|live|transcribe|aqa|robot|imagen|veo|audio|nano|omni|computer-use))",
+    "stripModelIdPrefix": "models/",
+    "fallbackModels": ["gemini-3.8-flash", "gemini-3.1-pro-preview"],
+    "defaultModel": "gemini/gemini-3.8-flash",
     "knownModels": [],
-    "openrouterVendor": "google/"
+    "impl": "openai-compatible",
+    "llmDefaultModel": "gemini-3.8-flash",
+    "missingKeyMessage": "GEMINI_API_KEY environment variable is required for Google Gemini. Get one at https://aistudio.google.com/apikey"
   },
   {
     "key": "bedrock",

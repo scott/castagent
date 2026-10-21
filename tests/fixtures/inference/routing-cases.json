@@ -35,5 +35,11 @@
   {"id": "xai/grok-4", "provider": "xai", "model": "grok-4", "temperature": 0.7},
   {"id": "xai/grok-4.7", "provider": "xai", "model": "grok-4.7", "temperature": 0.7},
   {"id": "xai/grok-4.20-0309-reasoning", "provider": "xai", "model": "grok-4.20-0309-reasoning", "temperature": 0.7},
-  {"id": "xai/grok-4.20-0309-non-reasoning", "provider": "xai", "model": "grok-4.20-0309-non-reasoning", "temperature": 0.7}
+  {"id": "xai/grok-4.20-0309-non-reasoning", "provider": "xai", "model": "grok-4.20-0309-non-reasoning", "temperature": 0.7},
+  {"id": "google/gemini-2.5-pro", "provider": "openrouter", "model": "google/gemini-2.5-pro", "temperature": 0.7},
+  {"id": "gemini-2.5-pro", "provider": "openrouter", "model": "google/gemini-2.5-pro", "temperature": 0.7},
+  {"id": "gemini/gemini-2.5-pro", "provider": "gemini", "model": "gemini-2.5-pro", "temperature": null},
+  {"id": "gemini/gemini-3.8-flash", "provider": "gemini", "model": "gemini-3.8-flash", "temperature": null},
+  {"id": "gemini/gemini-3.1-pro-preview", "provider": "gemini", "model": "gemini-3.1-pro-preview", "temperature": null},
+  {"id": "gemini/models/gemini-3.8-flash", "provider": "gemini", "model": "gemini-3.8-flash", "temperature": null}
 ]

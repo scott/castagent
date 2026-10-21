@@ -20,6 +20,7 @@ describe('inference model listing', () => {
   const previousFake = process.env.FAKEAI_API_KEY
   const previousXai = process.env.XAI_API_KEY
   const previousOpenAI = process.env.OPENAI_API_KEY
+  const previousGemini = process.env.GEMINI_API_KEY
   const catalog = loadInferenceCatalog()
   let home: string
 
@@ -30,6 +31,7 @@ describe('inference model listing', () => {
     delete process.env.FAKEAI_API_KEY
     delete process.env.XAI_API_KEY
     delete process.env.OPENAI_API_KEY
+    delete process.env.GEMINI_API_KEY
   })
 
   afterEach(() => {
@@ -43,6 +45,8 @@ describe('inference model listing', () => {
     else process.env.XAI_API_KEY = previousXai
     if (previousOpenAI === undefined) delete process.env.OPENAI_API_KEY
     else process.env.OPENAI_API_KEY = previousOpenAI
+    if (previousGemini === undefined) delete process.env.GEMINI_API_KEY
+    else process.env.GEMINI_API_KEY = previousGemini
     fs.rmSync(home, {recursive: true, force: true})
   })
 
@@ -312,6 +316,58 @@ describe('inference model listing', () => {
     expect(result.models.map(model => model.id)).to.deep.equal([
       'fakeai/chat-small',
       'fakeai/chat-large',
+    ])
+  })
+
+  it('lists Gemini chat models with the models/ prefix stripped', async () => {
+    const entry = catalog.find(item => item.key === 'gemini')
+    expect(entry?.modelsPath).to.equal('/models')
+    expect(entry?.stripModelIdPrefix).to.equal('models/')
+    expect(entry?.baseUrl).to.equal('https://generativelanguage.googleapis.com/v1beta/openai')
+    process.env.GEMINI_API_KEY = 'gemini-list-key'
+    const seen: {url: string; authorization?: string}[] = []
+    const result = await modelsForProvider(entry!, {
+      fetchImpl: async (url, init) => {
+        const headers = (init?.headers ?? {}) as Record<string, string>
+        seen.push({url: String(url), authorization: headers.Authorization})
+        return jsonResponse({
+          data: [
+            {id: 'models/gemini-3.8-flash'},
+            {id: 'models/gemini-3.1-pro-preview'},
+            {id: 'gemini-2.5-flash'},
+            {id: 'models/gemini-3.8-flash-tts'},
+            {id: 'models/gemini-3.1-flash-image'},
+            {id: 'models/gemini-embedding-001'},
+            {id: 'models/gemini-3.8-live'},
+            {id: 'models/imagen-3.0-generate-002'},
+            {id: 'models/gemini-omni-1.1-flash'},
+          ],
+        })
+      },
+    })
+    expect(seen).to.deep.equal([{
+      url: 'https://generativelanguage.googleapis.com/v1beta/openai/models',
+      authorization: 'Bearer gemini-list-key',
+    }])
+    expect(result.fallback).to.equal(false)
+    expect(result.models.map(model => model.id)).to.deep.equal([
+      'gemini/gemini-3.8-flash',
+      'gemini/gemini-3.1-pro-preview',
+      'gemini/gemini-2.5-flash',
+    ])
+    expect(result.models.map(model => model.id).join(' ')).to.not.include('models/')
+  })
+
+  it('uses Gemini fallback ids when the live list fails', async () => {
+    const entry = catalog.find(item => item.key === 'gemini')
+    process.env.GEMINI_API_KEY = 'gemini-list-key'
+    const result = await modelsForProvider(entry!, {
+      fetchImpl: async () => jsonResponse({}, 500),
+    })
+    expect(result.fallback).to.equal(true)
+    expect(result.models.map(model => model.id)).to.deep.equal([
+      'gemini/gemini-3.8-flash',
+      'gemini/gemini-3.1-pro-preview',
     ])
   })
 
