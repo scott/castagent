@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- xAI is a direct inference provider. `xai/<model>` calls `https://api.x.ai/v1` with `XAI_API_KEY`. `x-ai/` stays on OpenRouter. The model list keeps chat models and drops image, video, voice, embedding, and `latest` aliases. The builder sends temperature `0.7` and does not send `stop`, `presence_penalty`, or `frequency_penalty`. Deploy forwards `XAI_API_KEY` only for an `xai/` model and never forwards `XAI_BASE_URL`. ([#412](https://github.com/scott/castagent/issues/412))
+- xAI is a direct inference provider. `xai/<model>` calls `https://api.x.ai/v1` with `XAI_API_KEY`. `x-ai/` stays on OpenRouter. The model list keeps chat models and drops image, video, voice, embedding, and `latest` aliases. The builder sends temperature `0.7` and does not send `stop`, `presence_penalty`, or `frequency_penalty`. Deploy forwards `XAI_API_KEY` only for an `xai/` model and never forwards `XAI_BASE_URL`. ([#414](https://github.com/scott/castagent/pull/414))
 - OpenAI-compatible inference providers share one class filled in from `python/cast/providers/manifest.json`. A new provider is a row with `"impl": "openai-compatible"` (base URL, key, model list, keyless flag, curated models, and non-secret settings such as a region). A module is only needed for a model-id rewrite. Direct prefixes `openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, and `ollama/` are reserved in the manifest and are not registered yet. ([#413](https://github.com/scott/castagent/pull/413))
 
 ### Changed
