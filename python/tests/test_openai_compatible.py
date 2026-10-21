@@ -296,12 +296,13 @@ class TestXaiProvider:
             "grok-4.20-0309-reasoning",
             "grok-4.20-0309-non-reasoning",
             "grok-build-0.1",
-            "grok-4.20-multi-agent-0309",
             "grok-2-vision-1212",
         ]
         dropped = [
             "latest",
             "grok-4.3-latest",
+            "grok-4.20-multi-agent-0309",
+            "grok-4.20-multi-agent",
             "grok-imagine-image",
             "grok-imagine-image-2.0",
             "grok-imagine-video",

@@ -120,7 +120,7 @@ and omits temperature for models that match `omitTemperatureModels`.
 `xai/<model>` calls `https://api.x.ai/v1` with `XAI_API_KEY`.
 `cast provider enable xai --token -` stores that key.
 `/model` loads `GET <base-url>/models` and keeps chat ids. Image, video,
-voice, embedding, and `latest` aliases are dropped. When the live list
+voice, embedding, multi-agent, and `latest` aliases are dropped. When the live list
 cannot be loaded, the picker shows `grok-4.7`,
 `grok-4.20-0309-non-reasoning`, and `grok-4.20-0309-reasoning`.
 xAI reasoning ids still receive temperature `0.7`. The row does not send

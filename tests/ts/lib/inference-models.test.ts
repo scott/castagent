@@ -101,6 +101,7 @@ describe('inference model listing', () => {
             {id: 'grok-4.20-0309-non-reasoning'},
             {id: 'grok-build-0.1'},
             {id: 'grok-4.20-multi-agent-0309'},
+            {id: 'grok-4.20-multi-agent'},
             {id: 'grok-2-vision-1212'},
             {id: 'latest'},
             {id: 'grok-4.3-latest'},
@@ -124,10 +125,9 @@ describe('inference model listing', () => {
       'xai/grok-4.20-0309-reasoning',
       'xai/grok-4.20-0309-non-reasoning',
       'xai/grok-build-0.1',
-      'xai/grok-4.20-multi-agent-0309',
       'xai/grok-2-vision-1212',
     ])
-    expect(result.models.map(model => model.id).join('\n')).to.not.match(/imagine|image|video|voice|embed|latest/)
+    expect(result.models.map(model => model.id).join('\n')).to.not.match(/imagine|image|video|voice|embed|latest|multi-agent/)
   })
 
   it('uses xAI fallback chat ids when the live list fails or the key is missing', async () => {
