@@ -2,6 +2,7 @@
 
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -72,6 +73,25 @@ def test_base_url_prefers_config_over_manifest(home):
     assert resolved == "https://inference.example/v1"
     monkey_home = Path(os.environ["HOME"])
     assert monkey_home == home
+
+
+def test_create_llm_uses_token_file_and_config_base_url(home, monkeypatch):
+    monkeypatch.delenv("DIGITALOCEAN_MODEL_ACCESS_KEY", raising=False)
+    monkeypatch.delenv("DIGITALOCEAN_INFERENCE_BASE_URL", raising=False)
+    token = home / ".cast" / "tokens" / "inference" / "digitalocean.token"
+    token.parent.mkdir(parents=True)
+    token.write_text("do-file-secret\n")
+    (home / ".cast" / "config.yaml").write_text(
+        "providers:\n  digitalocean_inference:\n    base_url: https://inference.example/v1\n"
+    )
+    from cast.providers.digitalocean import DigitalOceanProvider
+
+    with patch("cast.providers.digitalocean_inference.ChatOpenAI") as mock_chat:
+        DigitalOceanProvider().create_llm("digitalocean/llama3.3-70b-instruct")
+    kwargs = mock_chat.call_args.kwargs
+    assert kwargs["api_key"] == "do-file-secret"
+    assert kwargs["base_url"] == "https://inference.example/v1"
+    assert kwargs["model"] == "llama3.3-70b-instruct"
 
 
 def test_deploy_token_is_not_the_inference_key(home, monkeypatch):

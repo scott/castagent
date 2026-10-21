@@ -6,6 +6,7 @@ import crypto from 'crypto'
 import YAML from 'yaml'
 import { db } from '../sqlite'
 import { keychain, type TokenStore } from '../keychain'
+import {resolvedBaseUrl, resolvedInferenceToken} from '../inference-credentials'
 import {runtimeDockerfileCmd} from '../runtime-args'
 import {PAST_AGENT_DOCKERFILES} from './past-agent-dockerfiles'
 import {writeRequirementsTxt} from './requirements'
@@ -1270,6 +1271,14 @@ export interface InferenceCatalogEntry {
   /** Set when a non-default base URL should be forwarded to a deployment. */
   baseUrlEnv?: string
   acceptsAnyModel: boolean
+  /** Shown in `cast provider`. Falls back to `name`. */
+  displayName?: string
+  /** OpenAI-compatible path, for example `/models`, joined onto the base URL. */
+  modelsPath?: string
+  /** Unprefixed ids used when the live catalog cannot be loaded. */
+  fallbackModels?: string[]
+  /** Stored builder model when this provider is selected and has no remembered id. */
+  defaultModel?: string
 }
 
 export interface InstallPin {
@@ -1373,67 +1382,16 @@ export function loadInferenceCatalog(): InferenceCatalogEntry[] {
   return parsed
 }
 
-function expandConfigSecret(value: string | undefined): string | undefined {
-  if (!value) return undefined
-  let missing = false
-  const expanded = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name) => {
-    const found = process.env[name]
-    if (!found) {
-      missing = true
-      return ''
-    }
-    return found
-  })
-  if (missing || !expanded.trim()) return undefined
-  return expanded
-}
-
-function readInferenceTokenFile(providerKey: string): string | undefined {
-  if (!/^[a-z0-9-]+$/.test(providerKey)) return undefined
-  const file = path.join(os.homedir(), '.cast', 'tokens', 'inference', `${providerKey}.token`)
-  try {
-    const text = fs.readFileSync(file, 'utf8').trim()
-    return text || undefined
-  } catch {
-    return undefined
-  }
-}
-
-function providerBaseUrl(entry: InferenceCatalogEntry, config: any): string {
-  if (entry.baseUrlEnv) {
-    const fromEnv = process.env[entry.baseUrlEnv]
-    if (fromEnv) return fromEnv
-  }
-  const urlKey = entry.configKey.endsWith('.api_key')
-    ? `${entry.configKey.slice(0, -'api_key'.length)}base_url`
-    : ''
-  const stored = expandConfigSecret(configValue(config, urlKey))
-  return stored || entry.baseUrl
-}
-
-function configValue(config: any, dotted: string | undefined): string | undefined {
-  if (!dotted) return undefined
-  let current = config
-  for (const part of dotted.split('.')) {
-    if (!current || typeof current !== 'object' || !(part in current)) return undefined
-    current = current[part]
-  }
-  if (typeof current !== 'string' || current.length === 0) return undefined
-  return current
-}
-
-// Env first, then configKey. Omits pairs with no value.
+// Env, keychain, token file, then configKey. Omits pairs with no value.
 // Does not read providers.digitalocean.token; that key is not in the catalog.
-export function inferenceEnv(config: any = loadConfig()): Record<string, string> {
+export async function inferenceEnv(config: any = loadConfig()): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
   for (const entry of loadInferenceCatalog()) {
     if (!entry.envVar) continue
-    const fromEnv = process.env[entry.envVar]
-    const fromFile = readInferenceTokenFile(entry.key)
-    const value = fromEnv || fromFile || expandConfigSecret(configValue(config, entry.configKey))
+    const value = await resolvedInferenceToken(entry, config)
     if (value) out[entry.envVar] = value
     if (entry.baseUrlEnv) {
-      const baseUrl = providerBaseUrl(entry, config)
+      const baseUrl = resolvedBaseUrl(entry, config)
       if (baseUrl && baseUrl !== entry.baseUrl) out[entry.baseUrlEnv] = baseUrl
     }
   }
@@ -1515,8 +1473,8 @@ export function filterInferenceEnv(
   return kept
 }
 
-export function inferenceEnvForAgent(agentPath: string, config: any = loadConfig()): Record<string, string> {
-  return filterInferenceEnv(readAgentModel(agentPath), inferenceEnv(config))
+export async function inferenceEnvForAgent(agentPath: string, config: any = loadConfig()): Promise<Record<string, string>> {
+  return filterInferenceEnv(readAgentModel(agentPath), await inferenceEnv(config))
 }
 
 /** Credential values. Runtime names such as CAST_AGENT_NAME are omitted. */
@@ -1593,18 +1551,19 @@ export function railwaySecretSetArgs(key: string): string[] {
   return ['variables', 'set', key, '--stdin']
 }
 
-export function inferenceModelStatus(model: string): {
+export async function inferenceModelStatus(model: string): Promise<{
   valid: boolean
   warning?: string
   error?: string
   provider?: string
-} {
+}> {
   const {command, env} = castPython()
+  const resolved = await inferenceEnv()
   const stdout = execFileSync(command, [
     '-c',
     'import json,sys\nfrom cast.providers.registry import model_status\njson.dump(model_status(sys.argv[1]), sys.stdout)\n',
     model,
-  ], {encoding: 'utf8', env})
+  ], {encoding: 'utf8', env: {...env, ...resolved}})
   const parsed = JSON.parse(stdout) as {
     valid?: boolean
     warning?: string | null

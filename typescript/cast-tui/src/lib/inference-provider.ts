@@ -13,6 +13,7 @@ export interface InferenceProviderRow {
   current: boolean
   baseUrl: string
   defaultBaseUrl: string
+  prefixes: string[]
 }
 
 export type ProviderField = 'list' | 'token' | 'url'
@@ -57,6 +58,7 @@ export function maskSecret(secret: string): string {
   return '•'.repeat(secret.length)
 }
 
+/** Same rule as the CLI: https, or http on literal 127.0.0.1, ::1, or localhost. */
 export function parseInferenceUrl(raw: string): string | null {
   let url: URL
   try {
@@ -64,12 +66,26 @@ export function parseInferenceUrl(raw: string): string | null {
   } catch {
     return null
   }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+  const host = url.hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  const loopback = host === '127.0.0.1' || host === '::1' || host === 'localhost'
+  const https = url.protocol === 'https:'
+  const loopbackHttp = url.protocol === 'http:' && loopback
+  if (!https && !loopbackHttp) return null
   if (!url.hostname) return null
   if (url.username || url.password) return null
   if (url.search || url.hash) return null
   const pathname = url.pathname.replace(/\/+$/, '')
   return `${url.origin}${pathname}`
+}
+
+export function providerPrefixes(rows: readonly {prefixes?: readonly string[]}[]): string[] {
+  const prefixes: string[] = []
+  for (const row of rows) {
+    for (const prefix of row.prefixes ?? []) {
+      if (prefix && !prefixes.includes(prefix)) prefixes.push(prefix)
+    }
+  }
+  return prefixes
 }
 
 export function parseProviderList(stdout: string): InferenceProviderRow[] {
@@ -85,6 +101,9 @@ export function parseProviderList(stdout: string): InferenceProviderRow[] {
       current: Boolean(item.current),
       baseUrl: typeof item.baseUrl === 'string' ? item.baseUrl : '',
       defaultBaseUrl: typeof item.defaultBaseUrl === 'string' ? item.defaultBaseUrl : '',
+      prefixes: Array.isArray(item.prefixes)
+        ? item.prefixes.filter((prefix: unknown): prefix is string => typeof prefix === 'string' && prefix.length > 0)
+        : [],
     })
   }
   return rows

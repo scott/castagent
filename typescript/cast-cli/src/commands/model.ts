@@ -1,9 +1,8 @@
 import {Args, Command, Flags} from '@oclif/core'
-import {activeModelCatalog} from '../lib/inference-provider'
+import {activeModelCatalog, applyBuilderModel} from '../lib/inference-provider'
 import {
   formatModelCatalog,
   getCurrentBuilderModel,
-  setBuilderModel,
 } from '../lib/models'
 
 export default class Model extends Command {
@@ -21,7 +20,7 @@ export default class Model extends Command {
   static args = {
     model: Args.string({
       description:
-        'Builder model id to store in defaults.builder_model. A curated id, or the same id with a leading openrouter/ prefix.',
+        'Builder model id. A curated id, openrouter/<id>, or <prefix>/<id> for an enabled provider. A freeform provider accepts any id with its prefix.',
       required: false,
     }),
   }
@@ -65,7 +64,7 @@ export default class Model extends Command {
 
       const modelId = args.model?.trim()
       if (modelId) {
-        const stored = setBuilderModel(modelId, catalog.models)
+        const stored = await applyBuilderModel(modelId)
         this.log(`✓ Builder model set to: ${stored}`)
         this.log('  Restart the builder to take effect (run `cast dev <agent>` again).')
         return

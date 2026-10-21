@@ -19,6 +19,14 @@ from typing import Optional
 _PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 
 
+def _home() -> Optional[Path]:
+    """HOME only. An unset HOME must not fall back to the passwd entry."""
+    raw = os.environ.get("HOME")
+    if not raw:
+        return None
+    return Path(raw)
+
+
 def expand_config_string(value: Optional[str]) -> Optional[str]:
     """Expand ``${VAR}``. An unsubstituted placeholder is not a secret."""
     if not isinstance(value, str):
@@ -53,14 +61,19 @@ def dotted(config: dict, key: str) -> Optional[str]:
     return current
 
 
-def inference_token_path(provider_key: str) -> Path:
-    return Path.home() / ".cast" / "tokens" / "inference" / f"{provider_key}.token"
+def inference_token_path(provider_key: str) -> Optional[Path]:
+    home = _home()
+    if home is None:
+        return None
+    return home / ".cast" / "tokens" / "inference" / f"{provider_key}.token"
 
 
 def read_token_file(provider_key: str) -> Optional[str]:
     if not provider_key or not re.fullmatch(r"[a-z0-9-]+", provider_key):
         return None
     path = inference_token_path(provider_key)
+    if path is None:
+        return None
     try:
         if not path.is_file():
             return None
@@ -73,8 +86,8 @@ def read_token_file(provider_key: str) -> Optional[str]:
 def resolve_token(env_var: str, config_key: str, provider_key: str) -> Optional[str]:
     if env_var:
         from_env = os.environ.get(env_var)
-        if from_env:
-            return from_env
+        if isinstance(from_env, str) and from_env.strip():
+            return from_env.strip()
     from_file = read_token_file(provider_key)
     if from_file:
         return from_file
@@ -91,7 +104,7 @@ def base_url_config_key(config_key: str) -> str:
 def resolve_base_url(base_url_env: str, config_key: str, manifest_base: str) -> str:
     if base_url_env:
         from_env = os.environ.get(base_url_env)
-        if from_env:
+        if isinstance(from_env, str) and from_env.strip():
             return from_env.strip()
     from .registry import load_cast_config
     stored = expand_config_string(dotted(load_cast_config(), base_url_config_key(config_key)))

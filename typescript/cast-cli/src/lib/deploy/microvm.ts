@@ -1155,7 +1155,7 @@ export default class MicrovmDeploy extends Command {
     const env = deploymentEnv({
       agentName,
       authToken,
-      inference: filterInferenceEnv(readAgentModel(agentPath), inferenceEnv()),
+      inference: filterInferenceEnv(readAgentModel(agentPath), await inferenceEnv()),
       edgeAuthOnly: config.authMode === 'edge-only',
     })
 
@@ -1256,7 +1256,7 @@ export default class MicrovmDeploy extends Command {
       const env = deploymentEnv({
         agentName,
         authToken,
-        inference: filterInferenceEnv(readAgentModel(agentPath), inferenceEnv()),
+        inference: filterInferenceEnv(readAgentModel(agentPath), await inferenceEnv()),
         edgeAuthOnly,
       })
       created = await createAndWait(token, {

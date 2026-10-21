@@ -51,14 +51,15 @@ records as the docs model catalog: `id`, `provider`, and `family`.
 `--current --json` prints the raw id, for example
 `{"id":"openrouter/minimax/minimax-m2.5"}`.
 
-Only ids from that curated list are accepted. A single leading
+OpenRouter accepts only ids from that curated list. A single leading
 `openrouter/` on one of those ids is also accepted and stored as given.
 `cast model openrouter/minimax/minimax-m2.5` writes the shipped default
 back, which is the id `cast model --current` prints on a fresh install.
 `cast model minimax/minimax-m2.5` writes the catalog id without that
 prefix. Both select the same model, and either stored string can be
-passed to `cast model` again. An unknown id exits non-zero and the
-message includes the available ids. There is no custom-id escape hatch.
+passed to `cast model` again. An unknown OpenRouter id exits non-zero and
+the message includes the available ids. There is no custom-id escape hatch
+for OpenRouter.
 If `~/.cast/config.yaml` is not valid YAML, the
 command exits non-zero and tells you to fix the file or delete it. It
 does not overwrite a broken file. If the file cannot be written, the OS
@@ -69,13 +70,20 @@ it, the builder stays in echo mode. A stored id such as
 `anthropic/claude-sonnet-4.6` is sent to
 `https://openrouter.ai/api/v1/chat/completions`.
 
+The active provider follows the prefix on `defaults.builder_model`.
+`cast model digitalocean/llama3.3-70b-instruct` switches to DigitalOcean
+when that provider is enabled, and a freeform provider accepts any
+`<prefix>/<id>`. A provider that is not enabled exits non-zero and tells
+you to run `cast provider enable <key> --token -`. It does not write the
+config.
+
 `cast provider digitalocean` switches the builder to DigitalOcean
 serverless inference when that provider is enabled. `cast model` and
 `/model` then list that provider's models. The list is loaded from
 `GET <base-url>/models`. A custom base URL comes from
-`cast provider enable digitalocean --token <key> --url <api-url>`.
-When the live list cannot be loaded, the picker shows
-`llama3.3-70b-instruct` and `deepseek-v3.2`. See
+`cast provider enable digitalocean --token - --url <api-url>`.
+`--token -` reads the key from stdin. When the live list cannot be loaded,
+the picker shows `llama3.3-70b-instruct` and `deepseek-v3.2`. See
 [Global settings](getting-started/global-settings).
 
 ## TUI

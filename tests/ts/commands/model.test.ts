@@ -44,6 +44,8 @@ function knownIdsFromRegistry(): string[] {
 describe('cast model', () => {
   let home: string
   let Model: any
+  const previousOpenRouter = process.env.OPENROUTER_API_KEY
+  const previousDoBase = process.env.DIGITALOCEAN_INFERENCE_BASE_URL
 
   before(async () => {
     Model = await loadCommand()
@@ -56,6 +58,10 @@ describe('cast model', () => {
 
   afterEach(() => {
     process.env.HOME = privateHome
+    if (previousOpenRouter === undefined) delete process.env.OPENROUTER_API_KEY
+    else process.env.OPENROUTER_API_KEY = previousOpenRouter
+    if (previousDoBase === undefined) delete process.env.DIGITALOCEAN_INFERENCE_BASE_URL
+    else process.env.DIGITALOCEAN_INFERENCE_BASE_URL = previousDoBase
     fs.rmSync(home, {recursive: true, force: true})
   })
 
@@ -241,7 +247,6 @@ describe('cast model', () => {
     for (const id of [
       'openrouter/not-a-real-model',
       'openrouter/openrouter/minimax/minimax-m2.5',
-      'digitalocean/llama3.3-70b-instruct',
     ]) {
       const {errors} = await runCommand(
         Model,
@@ -253,6 +258,45 @@ describe('cast model', () => {
       expect(errors[0]).to.include('minimax/minimax-m2.5')
       expect(fs.existsSync(configPath())).to.equal(false)
     }
+  })
+
+  it('refuses a disabled provider prefix and does not write config', async () => {
+    const {errors} = await runCommand(
+      Model,
+      {model: 'digitalocean/llama3.3-70b-instruct'},
+      {list: false, json: false, current: false},
+    )
+    expect(errors).to.have.length(1)
+    expect(errors[0]).to.include('not enabled')
+    expect(errors[0]).to.include('--token -')
+    expect(fs.existsSync(configPath())).to.equal(false)
+  })
+
+  it('stores a freeform id and switches back to an enabled provider', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test'
+    process.env.DIGITALOCEAN_INFERENCE_BASE_URL = 'http://127.0.0.1:1'
+    const token = path.join(home, '.cast', 'tokens', 'inference', 'digitalocean.token')
+    fs.mkdirSync(path.dirname(token), {recursive: true})
+    fs.writeFileSync(token, 'do-file-token\n', {mode: 0o600})
+    const switched = await runCommand(
+      Model,
+      {model: 'digitalocean/my-custom-model'},
+      {list: false, json: false, current: false},
+    )
+    expect(switched.errors, switched.errors.join('\n')).to.deep.equal([])
+    const config = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(config.defaults.builder_model).to.equal('digitalocean/my-custom-model')
+    expect(config.defaults.inference_provider).to.equal('digitalocean')
+    expect(JSON.stringify(config)).to.not.include('do-file-token')
+    const back = await runCommand(
+      Model,
+      {model: 'openrouter/minimax/minimax-m2.5'},
+      {list: false, json: false, current: false},
+    )
+    expect(back.errors, back.errors.join('\n')).to.deep.equal([])
+    const restored = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(restored.defaults.builder_model).to.equal('openrouter/minimax/minimax-m2.5')
+    expect(restored.defaults.inference_provider).to.equal('openrouter')
   })
 
   it('prints one model per line for --list', async () => {

@@ -45,6 +45,10 @@ describe('inference provider picker', () => {
   it('rejects a URL that carries userinfo', () => {
     expect(helper.parseInferenceUrl('https://user:secret@inference.example/v1')).to.equal(null)
     expect(helper.parseInferenceUrl('https://inference.example/v1')).to.equal('https://inference.example/v1')
+    expect(helper.parseInferenceUrl('http://evil.example/v1')).to.equal(null)
+    expect(helper.parseInferenceUrl('http://127.0.0.1:9/v1')).to.equal('http://127.0.0.1:9/v1')
+    expect(helper.parseInferenceUrl('http://[::1]/v1')).to.equal('http://[::1]/v1')
+    expect(helper.parseInferenceUrl('http://localhost/v1')).to.equal('http://localhost/v1')
   })
 
   it('registers /provider only in dev mode', () => {

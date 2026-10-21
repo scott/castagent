@@ -13,9 +13,19 @@ Run this test manually:
     PYTHONPATH=/Users/scott/Workspace/castagent/python pytest tests/test_integration.py -v -k llm
 """
 import os
+import tempfile
 import pytest
 import asyncio
 from unittest.mock import patch, MagicMock, AsyncMock
+
+_ISOLATED_HOME = tempfile.mkdtemp(prefix="cast-pytest-home-")
+
+
+def _env(extra=None):
+    env = {"HOME": _ISOLATED_HOME, "PATH": os.environ.get("PATH", "")}
+    if extra:
+        env.update(extra)
+    return env
 
 from cast.agent.base import AgentConfig
 from cast.agent.runtime import RuntimeAgent
@@ -88,7 +98,7 @@ tools:
         
         config = AgentConfig(str(agent_dir))
         
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             agent = RuntimeAgent(config)
             server = A2AServer(agent, port=0)
             
@@ -127,7 +137,7 @@ tools:
         
         config = AgentConfig(str(agent_dir))
         
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             agent = RuntimeAgent(config)
             server = A2AServer(agent, port=0)
             
@@ -150,7 +160,7 @@ tools:
         
         config = AgentConfig(str(agent_dir))
         
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             agent = RuntimeAgent(config)
             server = A2AServer(agent, port=0)
             

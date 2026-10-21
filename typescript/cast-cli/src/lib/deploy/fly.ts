@@ -476,7 +476,7 @@ export interface FlyDeployDeps {
   saveDeployment: typeof saveDeployment
   listDeployments(agentName: string): Array<{id?: string; provider?: string; volume_id?: string | null}>
   discardTokens(agentName: string, deploymentSha?: string, recordedId?: string): Promise<void>
-  inferenceEnv(): Record<string, string>
+  inferenceEnv(): Record<string, string> | Promise<Record<string, string>>
   /** When set, secret filtering uses this catalog instead of the Python one. */
   inferenceCatalog?: InferenceCatalogEntry[]
   importSecrets(cwd: string, appName: string, secrets: Record<string, string>): Promise<FlyCommandResult>
@@ -719,7 +719,7 @@ export async function deployFlyAgent(input: {
     const secrets: Record<string, string> = {
       CAST_AGENT_NAME: agentName,
       AUTH_TOKEN: authToken,
-      ...filterInferenceEnv(readAgentModel(agentPath), deps.inferenceEnv(), deps.inferenceCatalog),
+      ...filterInferenceEnv(readAgentModel(agentPath), await deps.inferenceEnv(), deps.inferenceCatalog),
     }
     const secretResult = await deps.importSecrets(agentPath, appName, secrets)
     if (secretResult.exitCode !== 0) {

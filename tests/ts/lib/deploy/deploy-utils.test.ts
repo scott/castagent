@@ -1,4 +1,6 @@
 import {expect} from 'chai'
+import {keychain} from '../../../../typescript/cast-cli/src/lib/keychain'
+import {primeInferenceProcessEnv} from '../../../../typescript/cast-cli/src/lib/inference-provider'
 import {
   loadConfig,
   getAgentPath,
@@ -115,18 +117,18 @@ describe('Deploy Utils', () => {
       restoreEnv('HOME', originalHome)
     })
 
-    it('returns keys that resolve and omits keys that do not', () => {
+    it('returns keys that resolve and omits keys that do not', async () => {
       process.env.OPENROUTER_API_KEY = 'or-env'
       delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
-      const env = inferenceEnv({})
+      const env = await inferenceEnv({})
       expect(env.OPENROUTER_API_KEY).to.equal('or-env')
       expect(env).to.not.have.property('DIGITALOCEAN_MODEL_ACCESS_KEY')
     })
 
-    it('prefers the environment over configKey', () => {
+    it('prefers the environment over configKey', async () => {
       process.env.OPENROUTER_API_KEY = 'or-env'
       process.env.DIGITALOCEAN_MODEL_ACCESS_KEY = 'do-env'
-      const env = inferenceEnv({
+      const env = await inferenceEnv({
         providers: {
           openrouter: {api_key: 'or-config'},
           digitalocean_inference: {api_key: 'do-config'},
@@ -138,10 +140,10 @@ describe('Deploy Utils', () => {
       expect(JSON.stringify(env)).to.not.include('deploy-token')
     })
 
-    it('reads configKey when the environment variable is unset', () => {
+    it('reads configKey when the environment variable is unset', async () => {
       delete process.env.OPENROUTER_API_KEY
       delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
-      const env = inferenceEnv({
+      const env = await inferenceEnv({
         providers: {
           openrouter: {api_key: 'or-config'},
           digitalocean_inference: {api_key: 'do-config'},
@@ -151,10 +153,10 @@ describe('Deploy Utils', () => {
       expect(env.DIGITALOCEAN_MODEL_ACCESS_KEY).to.equal('do-config')
     })
 
-    it('does not read providers.digitalocean.token', () => {
+    it('does not read providers.digitalocean.token', async () => {
       delete process.env.OPENROUTER_API_KEY
       delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
-      const env = inferenceEnv({
+      const env = await inferenceEnv({
         providers: {
           digitalocean: {token: 'deploy-token', api_key: 'also-deploy'},
         },
@@ -164,7 +166,7 @@ describe('Deploy Utils', () => {
       expect(JSON.stringify(env)).to.not.include('also-deploy')
     })
 
-    it('includes an external provider variable', () => {
+    it('includes an external provider variable', async () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-inference-env-'))
       const folder = path.join(home, '.cast', 'inference-providers', 'example')
       fs.mkdirSync(folder, {recursive: true})
@@ -194,11 +196,43 @@ describe('Deploy Utils', () => {
       delete process.env.OPENROUTER_API_KEY
       delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
       process.env.EXAMPLE_API_KEY = 'example-env'
-      const env = inferenceEnv({
+      const env = await inferenceEnv({
         providers: {digitalocean: {token: 'deploy-token'}},
       })
       expect(env.EXAMPLE_API_KEY).to.equal('example-env')
       expect(JSON.stringify(env)).to.not.include('deploy-token')
+    })
+
+    it('reads a keychain-only token and forwards a custom base URL for that provider', async () => {
+      delete process.env.OPENROUTER_API_KEY
+      delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
+      delete process.env.DIGITALOCEAN_INFERENCE_BASE_URL
+      delete process.env.OPENROUTER_BASE_URL
+      await keychain.setInferenceToken('digitalocean', 'do-keychain-only')
+      const env = await inferenceEnv({
+        providers: {
+          openrouter: {api_key: 'or-config'},
+          digitalocean_inference: {base_url: 'https://inference.example/v1'},
+        },
+      })
+      expect(env.DIGITALOCEAN_MODEL_ACCESS_KEY).to.equal('do-keychain-only')
+      expect(env.DIGITALOCEAN_INFERENCE_BASE_URL).to.equal('https://inference.example/v1')
+      expect(env.OPENROUTER_API_KEY).to.equal('or-config')
+      const {filterInferenceEnv} = await import('../../../../typescript/cast-cli/src/lib/deploy/deploy-utils')
+      const filtered = filterInferenceEnv('digitalocean/custom-model', env)
+      expect(filtered).to.deep.equal({
+        DIGITALOCEAN_MODEL_ACCESS_KEY: 'do-keychain-only',
+        DIGITALOCEAN_INFERENCE_BASE_URL: 'https://inference.example/v1',
+      })
+      expect(JSON.stringify(filtered)).to.not.include('or-config')
+    })
+
+    it('primeInferenceProcessEnv copies a keychain token into the environment', async () => {
+      delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
+      await keychain.setInferenceToken('digitalocean', 'do-primed-token')
+      await primeInferenceProcessEnv()
+      expect(process.env.DIGITALOCEAN_MODEL_ACCESS_KEY).to.equal('do-primed-token')
+      delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
     })
   })
 })

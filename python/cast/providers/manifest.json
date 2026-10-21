@@ -11,6 +11,8 @@
     "baseUrl": "https://openrouter.ai/api/v1",
     "baseUrlEnv": "OPENROUTER_BASE_URL",
     "acceptsAnyModel": false,
+    "displayName": "OpenRouter",
+    "defaultModel": "openrouter/minimax/minimax-m2.5",
     "knownModels": [
       "anthropic/claude-opus-4.5",
       "anthropic/claude-sonnet-4.6",
@@ -47,6 +49,10 @@
     "baseUrl": "https://inference.do-ai.run/v1",
     "baseUrlEnv": "DIGITALOCEAN_INFERENCE_BASE_URL",
     "acceptsAnyModel": true,
+    "displayName": "DigitalOcean Serverless Inference",
+    "modelsPath": "/models",
+    "fallbackModels": ["llama3.3-70b-instruct", "deepseek-v3.2"],
+    "defaultModel": "digitalocean/llama3.3-70b-instruct",
     "knownModels": []
   }
 ]

@@ -158,13 +158,18 @@ def check_and_prompt_for_release(agent_name: str) -> Optional[str]:
 
 def load_global_config() -> dict:
     """Load the global Cast config from ~/.cast/config.yaml."""
-    config_path = Path.home() / ".cast" / "config.yaml"
-    if config_path.exists():
-        try:
-            return yaml.safe_load(config_path.read_text()) or {}
-        except Exception:
-            pass
-    return {}
+    home = os.environ.get("HOME")
+    if not home:
+        return {}
+    config_path = Path(home) / ".cast" / "config.yaml"
+    try:
+        if not config_path.is_file():
+            return {}
+        return yaml.safe_load(config_path.read_text()) or {}
+    except OSError:
+        return {}
+    except Exception:
+        return {}
 
 
 def get_builder_model_id() -> str:

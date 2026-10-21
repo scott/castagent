@@ -1,8 +1,18 @@
 import os
+import tempfile
 import pytest
 from unittest.mock import patch, MagicMock
 
 from cast.providers.openrouter import OpenRouterProvider
+
+_ISOLATED_HOME = tempfile.mkdtemp(prefix="cast-pytest-home-")
+
+
+def _env(extra=None):
+    env = {"HOME": _ISOLATED_HOME, "PATH": os.environ.get("PATH", "")}
+    if extra:
+        env.update(extra)
+    return env
 
 
 class TestOpenRouterProvider:
@@ -13,11 +23,11 @@ class TestOpenRouterProvider:
             assert OpenRouterProvider.is_available() is True
     
     def test_is_available_without_key(self):
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             assert OpenRouterProvider.is_available() is False
     
     def test_init_raises_without_key(self):
-        with patch.dict(os.environ, {}, clear=True):
+        with patch.dict(os.environ, _env(), clear=True):
             with pytest.raises(ValueError, match="OPENROUTER_API_KEY"):
                 OpenRouterProvider()
     

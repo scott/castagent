@@ -6,6 +6,12 @@ import {
 } from './deploy/deploy-utils'
 import {keychain} from './keychain'
 import {
+  baseUrlConfigKey,
+  parseInferenceUrl,
+  resolvedBaseUrl,
+  resolvedInferenceToken,
+} from './inference-credentials'
+import {
   DEFAULT_BUILDER_MODEL,
   ensureConfigDefaults,
   getCurrentBuilderModel,
@@ -14,11 +20,12 @@ import {
   ModelInfo,
   readCastConfig,
   resolveBuilderModelId,
+  setBuilderModel,
+  unknownModelMessage,
   writeCastConfig,
 } from './models'
 
-export const DIGITALOCEAN_FALLBACK_IDS = ['llama3.3-70b-instruct', 'deepseek-v3.2']
-export const DIGITALOCEAN_DEFAULT_MODEL = 'digitalocean/llama3.3-70b-instruct'
+export {parseInferenceUrl} from './inference-credentials'
 
 export interface InferenceProviderStatus {
   key: string
@@ -32,98 +39,51 @@ export interface InferenceProviderStatus {
   acceptsAnyModel: boolean
   envVar: string
   freeform: boolean
+  modelsPath?: string
+  fallbackModels: string[]
+  defaultModel: string
 }
 
-export function providerDisplayName(key: string, fallback: string): string {
-  if (key === 'digitalocean') return 'DigitalOcean Serverless Inference'
-  return fallback
-}
-
-export function parseInferenceUrl(raw: string): string | null {
-  let url: URL
-  try {
-    url = new URL(raw.trim())
-  } catch {
-    return null
-  }
-  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
-  if (!url.hostname) return null
-  if (url.username || url.password) return null
-  if (url.search || url.hash) return null
-  const pathname = url.pathname.replace(/\/+$/, '')
-  return `${url.origin}${pathname}`
-}
-
-function expandSecret(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  let missing = false
-  const expanded = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name) => {
-    const found = process.env[name]
-    if (!found) {
-      missing = true
-      return ''
-    }
-    return found
-  })
-  if (missing || !expanded.trim()) return undefined
-  return expanded.trim()
-}
-
-function configString(config: Record<string, any>, dotted: string): string | undefined {
-  if (!dotted) return undefined
-  let current: any = config
-  for (const part of dotted.split('.')) {
-    if (!current || typeof current !== 'object' || !(part in current)) return undefined
-    current = current[part]
-  }
-  return typeof current === 'string' ? current : undefined
-}
-
-function baseUrlConfigKey(configKey: string): string {
-  if (!configKey.endsWith('.api_key')) return ''
-  return `${configKey.slice(0, -'api_key'.length)}base_url`
-}
-
-export function resolvedBaseUrl(entry: InferenceCatalogEntry, config = readCastConfig()): string {
-  if (entry.baseUrlEnv) {
-    const fromEnv = process.env[entry.baseUrlEnv]
-    if (fromEnv && fromEnv.trim()) return fromEnv.trim()
-  }
-  const stored = expandSecret(configString(config, baseUrlConfigKey(entry.configKey)))
-  return stored || entry.baseUrl
+export function providerDisplayName(entry: {key?: string; name: string; displayName?: string}): string {
+  return entry.displayName || entry.name
 }
 
 export async function resolvedToken(entry: InferenceCatalogEntry, config = readCastConfig()): Promise<string | undefined> {
-  if (entry.envVar) {
-    const fromEnv = process.env[entry.envVar]
-    if (fromEnv) return fromEnv
-  }
-  const fromKeychain = await keychain.getInferenceToken(entry.key)
-  if (fromKeychain) return fromKeychain
-  return expandSecret(configString(config, entry.configKey))
+  return resolvedInferenceToken(entry, config)
 }
 
-export function activeProviderKey(
-  config: Record<string, any>,
+function providerByPrefix(
+  model: string,
   catalog: readonly InferenceCatalogEntry[],
-): string {
-  const stored = config.defaults?.inference_provider
-  if (typeof stored === 'string' && catalog.some(entry => entry.key === stored)) return stored
-  const model = typeof config.defaults?.builder_model === 'string'
-    ? config.defaults.builder_model
-    : getCurrentBuilderModel()
+): InferenceCatalogEntry | undefined {
   let best: InferenceCatalogEntry | undefined
   let bestLen = -1
   for (const entry of catalog) {
-    if (entry.default) continue
     for (const prefix of entry.prefixes ?? []) {
-      if (model.startsWith(prefix) && prefix.length > bestLen) {
+      if (prefix && model.startsWith(prefix) && prefix.length > bestLen) {
         best = entry
         bestLen = prefix.length
       }
     }
   }
-  if (best) return best.key
+  return best
+}
+
+/**
+ * The builder model prefix selects the provider. `defaults.inference_provider`
+ * is only a hint when the model has no registered prefix.
+ */
+export function activeProviderKey(
+  config: Record<string, any>,
+  catalog: readonly InferenceCatalogEntry[],
+): string {
+  const model = typeof config.defaults?.builder_model === 'string' && config.defaults.builder_model
+    ? config.defaults.builder_model
+    : getCurrentBuilderModel()
+  const matched = providerByPrefix(model, catalog)
+  if (matched) return matched.key
+  const hint = config.defaults?.inference_provider
+  if (typeof hint === 'string' && catalog.some(entry => entry.key === hint)) return hint
   return catalog.find(entry => entry.default)?.key ?? 'openrouter'
 }
 
@@ -138,7 +98,7 @@ export async function listInferenceProviders(): Promise<InferenceProviderStatus[
     rows.push({
       key: entry.key,
       name: entry.name,
-      displayName: providerDisplayName(entry.key, entry.name),
+      displayName: providerDisplayName(entry),
       enabled: Boolean(token),
       current: entry.key === active,
       baseUrl,
@@ -147,6 +107,9 @@ export async function listInferenceProviders(): Promise<InferenceProviderStatus[
       acceptsAnyModel: entry.acceptsAnyModel,
       envVar: entry.envVar,
       freeform: entry.acceptsAnyModel,
+      modelsPath: entry.modelsPath,
+      fallbackModels: entry.fallbackModels ?? [],
+      defaultModel: entry.defaultModel ?? '',
     })
   }
   rows.sort((a, b) => a.displayName.localeCompare(b.displayName))
@@ -174,6 +137,8 @@ function providerOrThrow(catalog: InferenceCatalogEntry[], key: string): Inferen
   return found
 }
 
+const INFERENCE_URL_ERROR = 'Inference URL must be https, or http on 127.0.0.1, ::1, or localhost, with a host and no userinfo or query.'
+
 export async function enableInferenceProvider(
   key: string,
   options: {token?: string; url?: string},
@@ -187,9 +152,7 @@ export async function enableInferenceProvider(
   let parsedUrl: string | null = null
   if (options.url) {
     parsedUrl = parseInferenceUrl(options.url)
-    if (!parsedUrl) {
-      throw new Error('Inference URL must be an http(s) URL with a host and no userinfo or query.')
-    }
+    if (!parsedUrl) throw new Error(INFERENCE_URL_ERROR)
   }
   let token = options.token
   if (token === '-') token = readStdin()
@@ -200,7 +163,7 @@ export async function enableInferenceProvider(
   if (!token) {
     const existing = await resolvedToken(entry, config)
     if (!existing) {
-      throw new Error(`Provider '${key}' has no token. Pass --token.`)
+      throw new Error(`Provider '${key}' has no token. Pass --token -.`)
     }
   } else {
     tokenStore = await keychain.setInferenceToken(key, token)
@@ -230,16 +193,26 @@ export interface ModelCatalogResult {
   providerKey: string
 }
 
-async function digitalOceanModels(
+function prefixedModelId(prefix: string, id: string): string {
+  if (!prefix || id.startsWith(prefix)) return id
+  return `${prefix}${id}`
+}
+
+async function fetchModels(
+  entry: InferenceCatalogEntry,
   baseUrl: string,
   token: string | undefined,
   fetchImpl: typeof fetch,
 ): Promise<{ids: string[]; fallback: boolean}> {
-  if (!token) {
-    return {ids: DIGITALOCEAN_FALLBACK_IDS.map(id => `digitalocean/${id}`), fallback: true}
+  const prefix = entry.prefixes?.[0] ?? ''
+  const fallbackIds = (entry.fallbackModels ?? []).map(id => prefixedModelId(prefix, id))
+  if (!entry.modelsPath || !token) {
+    return {ids: fallbackIds, fallback: true}
   }
+  const root = baseUrl.replace(/\/+$/, '')
+  const modelsPath = entry.modelsPath.startsWith('/') ? entry.modelsPath : `/${entry.modelsPath}`
   try {
-    const response = await fetchImpl(`${baseUrl.replace(/\/+$/, '')}/models`, {
+    const response = await fetchImpl(`${root}${modelsPath}`, {
       headers: {Authorization: `Bearer ${token}`},
       signal: AbortSignal.timeout(8000),
     })
@@ -248,11 +221,11 @@ async function digitalOceanModels(
     const ids = (body.data ?? [])
       .map(row => row.id)
       .filter((id): id is string => typeof id === 'string' && id.length > 0)
-      .map(id => id.startsWith('digitalocean/') ? id : `digitalocean/${id}`)
+      .map(id => prefixedModelId(prefix, id))
     if (ids.length === 0) throw new Error('empty catalog')
     return {ids, fallback: false}
   } catch {
-    return {ids: DIGITALOCEAN_FALLBACK_IDS.map(id => `digitalocean/${id}`), fallback: true}
+    return {ids: fallbackIds, fallback: true}
   }
 }
 
@@ -260,20 +233,20 @@ export async function modelsForProvider(
   entry: InferenceCatalogEntry,
   options: {fetchImpl?: typeof fetch; knownModels?: Record<string, string[]>} = {},
 ): Promise<ModelCatalogResult> {
-  if (entry.key === 'openrouter') {
-    return {models: MODELS, fallback: false, freeform: false, providerKey: entry.key}
-  }
-  const config = readCastConfig()
-  const baseUrl = resolvedBaseUrl(entry, config)
-  if (entry.key === 'digitalocean') {
+  if (entry.modelsPath) {
+    const config = readCastConfig()
+    const baseUrl = resolvedBaseUrl(entry, config)
     const token = await resolvedToken(entry, config)
-    const fetched = await digitalOceanModels(baseUrl, token, options.fetchImpl ?? fetch)
+    const fetched = await fetchModels(entry, baseUrl, token, options.fetchImpl ?? fetch)
     return {
       models: fetched.ids.map(modelInfo),
       fallback: fetched.fallback,
-      freeform: true,
+      freeform: entry.acceptsAnyModel,
       providerKey: entry.key,
     }
+  }
+  if (entry.default && !entry.modelsPath) {
+    return {models: MODELS, fallback: false, freeform: false, providerKey: entry.key}
   }
   const known = options.knownModels ?? loadInferenceKnownModels()
   const ids = known[entry.key] ?? []
@@ -299,12 +272,68 @@ export async function activeModelCatalog(
 }
 
 function defaultModelId(entry: InferenceCatalogEntry, models: readonly {id: string}[]): string {
-  if (entry.key === 'openrouter') return DEFAULT_BUILDER_MODEL
-  if (entry.key === 'digitalocean') {
-    if (models.some(model => model.id === DIGITALOCEAN_DEFAULT_MODEL)) return DIGITALOCEAN_DEFAULT_MODEL
-    return models[0]?.id ?? DIGITALOCEAN_DEFAULT_MODEL
+  const preferred = entry.defaultModel || (entry.default ? DEFAULT_BUILDER_MODEL : '')
+  if (preferred && modelAccepted(preferred, entry, models)) return preferred
+  return models[0]?.id ?? preferred
+}
+
+function longestPrefix(id: string, prefixes: readonly string[]): string {
+  let best = ''
+  for (const prefix of prefixes) {
+    if (prefix && id.startsWith(prefix) && prefix.length > best.length) best = prefix
   }
-  return models[0]?.id ?? ''
+  return best
+}
+
+function modelAccepted(id: string, entry: InferenceCatalogEntry, models: readonly {id: string}[]): boolean {
+  if (resolveBuilderModelId(id, models)) return true
+  if (!entry.acceptsAnyModel) return false
+  const prefix = longestPrefix(id, entry.prefixes ?? [])
+  if (!prefix) return false
+  const rest = id.slice(prefix.length)
+  return rest.length > 0 && !/\s/.test(rest)
+}
+
+function acceptModelId(
+  id: string,
+  entry: InferenceCatalogEntry,
+  models: readonly {id: string}[],
+): string | null {
+  const resolved = resolveBuilderModelId(id, models)
+  if (resolved) return resolved
+  if (!entry.acceptsAnyModel) return null
+  const prefix = longestPrefix(id, entry.prefixes ?? [])
+  if (!prefix) return null
+  const rest = id.slice(prefix.length)
+  if (!rest || /\s/.test(rest)) return null
+  return id
+}
+
+function rememberedMap(defaults: Record<string, any>): Record<string, string> {
+  const current = defaults.provider_models
+  if (!current || typeof current !== 'object' || Array.isArray(current)) return {}
+  return current
+}
+
+function writeSwitchedModel(
+  config: Record<string, any>,
+  fromKey: string,
+  toKey: string,
+  model: string,
+): void {
+  const defaults = ensureConfigDefaults(config)
+  const remembered = rememberedMap(defaults)
+  remembered[fromKey] = getCurrentBuilderModel()
+  defaults.provider_models = remembered
+  defaults.builder_model = model
+  defaults.inference_provider = toKey
+  writeCastConfig(config)
+  const confirmed = readCastConfig()
+  if (confirmed.defaults?.builder_model !== model) {
+    throw new Error(
+      `Failed to confirm builder model write. Read back ${String(confirmed.defaults?.builder_model)}, expected ${model}.`,
+    )
+  }
 }
 
 export async function switchInferenceProvider(
@@ -317,44 +346,66 @@ export async function switchInferenceProvider(
   const token = await resolvedToken(entry, config)
   if (!token) {
     throw new Error(
-      `'${key}' is not enabled.\nEnable it with: cast provider enable ${key} --token <model-access-key>`,
+      `'${key}' is not enabled.\nEnable it with: cast provider enable ${key} --token -`,
     )
   }
   const currentKey = activeProviderKey(config, catalog)
-  const currentModel = getCurrentBuilderModel()
   const defaults = ensureConfigDefaults(config)
-  const remembered = defaults.provider_models && typeof defaults.provider_models === 'object' && !Array.isArray(defaults.provider_models)
-    ? defaults.provider_models
-    : {}
-  remembered[currentKey] = currentModel
-  defaults.provider_models = remembered
-  defaults.inference_provider = key
-  const catalogResult = await modelsForProvider(entry, options)
+  const remembered = rememberedMap(defaults)
   const rememberedModel = typeof remembered[key] === 'string' ? remembered[key] : ''
-  const accepted = rememberedModel
-    ? resolveBuilderModelId(rememberedModel, catalogResult.models)
-    : null
+  const catalogResult = await modelsForProvider(entry, options)
+  const accepted = rememberedModel ? acceptModelId(rememberedModel, entry, catalogResult.models) : null
   let model = accepted ?? ''
-  const prefix = entry.prefixes?.[0] ?? ''
-  if (!model && catalogResult.freeform && prefix && rememberedModel.startsWith(prefix)) {
-    model = rememberedModel
-  }
   if (!model && catalogResult.models.length > 0) {
     model = defaultModelId(entry, catalogResult.models)
   }
   const needsModel = !model
-  if (model) defaults.builder_model = model
-  writeCastConfig(config)
-  return {provider: providerDisplayName(entry.key, entry.name), model, needsModel}
+  if (needsModel) {
+    return {provider: providerDisplayName(entry), model: '', needsModel: true}
+  }
+  writeSwitchedModel(config, currentKey, key, model)
+  return {provider: providerDisplayName(entry), model, needsModel: false}
 }
 
-/** Copy keychain tokens into the process environment for a child Python process. */
+/**
+ * Store a builder model. A `<prefix>/<id>` for another enabled provider
+ * switches to that provider. A freeform provider accepts any id with its prefix.
+ */
+export async function applyBuilderModel(rawId: string): Promise<string> {
+  const trimmed = rawId.trim()
+  const catalog = loadInferenceCatalog()
+  const config = readCastConfig()
+  const currentKey = activeProviderKey(config, catalog)
+  const target = providerByPrefix(trimmed, catalog)
+  const entry = target
+    ?? catalog.find(item => item.key === currentKey)
+    ?? catalog.find(item => item.default)
+  if (!entry) throw new Error(unknownModelMessage(trimmed))
+  if (target && target.key !== currentKey) {
+    const token = await resolvedToken(entry, config)
+    if (!token) {
+      throw new Error(
+        `'${entry.key}' is not enabled.\nEnable it with: cast provider enable ${entry.key} --token -`,
+      )
+    }
+  }
+  const result = await modelsForProvider(entry)
+  const stored = acceptModelId(trimmed, entry, result.models)
+  if (!stored) throw new Error(unknownModelMessage(trimmed, result.models))
+  const switching = Boolean(target && target.key !== currentKey)
+  const inCatalog = result.models.some(model => model.id === stored)
+  if (!switching && inCatalog) return setBuilderModel(stored, result.models)
+  writeSwitchedModel(config, currentKey, entry.key, stored)
+  return stored
+}
+
+/** Copy resolved tokens into the process environment for a child Python process. */
 export async function primeInferenceProcessEnv(): Promise<void> {
   const catalog = loadInferenceCatalog()
   const config = readCastConfig()
   for (const entry of catalog) {
     if (entry.envVar && !process.env[entry.envVar]) {
-      const token = await keychain.getInferenceToken(entry.key)
+      const token = await resolvedInferenceToken(entry, config)
       if (token) process.env[entry.envVar] = token
     }
     if (entry.baseUrlEnv && !process.env[entry.baseUrlEnv]) {

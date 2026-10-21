@@ -374,7 +374,7 @@ export async function deployToSprites(
     await execOnSprite(spriteName, `${AGENT_DIR}/venv/bin/pip install -r ${AGENT_DIR}/requirements.txt`, longTimeout)
 
     hooks.log('Starting agent service...')
-    const resolvedEnv = options.serviceEnv ? options.serviceEnv() : inferenceEnv()
+    const resolvedEnv = options.serviceEnv ? options.serviceEnv() : await inferenceEnv()
     const inference = filterInferenceEnv(readAgentModel(agentPath), resolvedEnv, options.inferenceCatalog)
     const attemptMarker = spriteAttemptMarker(options.now?.())
     await setupBackgroundService(spriteName, agentName, authToken, inference, attemptMarker)

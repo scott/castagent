@@ -118,7 +118,7 @@ describe('deployment secret handling', () => {
       expect(env).to.deep.equal({})
     })
 
-    it('reads brain.model and forwards only that provider key', () => {
+    it('reads brain.model and forwards only that provider key', async () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), 'cast-secret-agent-'))
       const previousHome = process.env.HOME
       const previousOpenRouter = process.env.OPENROUTER_API_KEY
@@ -131,7 +131,7 @@ describe('deployment secret handling', () => {
       fs.writeFileSync(path.join(agent, 'agent.yaml'), 'brain:\n  model: digitalocean/llama3.3-70b-instruct\n')
       try {
         expect(readAgentModel(agent)).to.equal('digitalocean/llama3.3-70b-instruct')
-        const env = inferenceEnvForAgent(agent, {})
+        const env = await inferenceEnvForAgent(agent, {})
         expect(env).to.deep.equal({DIGITALOCEAN_MODEL_ACCESS_KEY: DIGITALOCEAN})
         expect(JSON.stringify(env)).to.not.include(OPENROUTER)
       } finally {

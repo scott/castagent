@@ -930,7 +930,7 @@ exit 0
       let inferenceValue = 'inference-token-not-in-argv'
       sandbox.stub(deployUtils, 'resolveDeploymentAuthToken').callsFake(async () => authToken)
       sandbox.stub(deployUtils, 'readAgentModel').returns('openrouter/test')
-      sandbox.stub(deployUtils, 'inferenceEnv').returns({OPENROUTER_API_KEY: inferenceValue})
+      sandbox.stub(deployUtils, 'inferenceEnv').resolves({OPENROUTER_API_KEY: inferenceValue})
       sandbox.stub(deployUtils, 'filterInferenceEnv').callsFake(() => ({OPENROUTER_API_KEY: inferenceValue}))
       const commands: string[] = []
       stubSsh(remote => {

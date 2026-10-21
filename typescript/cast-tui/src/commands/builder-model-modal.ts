@@ -1,4 +1,4 @@
-import {execFileSync} from 'child_process'
+import {execFile} from 'child_process'
 import * as os from 'os'
 import {BoxRenderable, TextRenderable, StyledText, white, dim, red} from '@opentui/core'
 import type {KeyEvent} from '@opentui/core'
@@ -19,6 +19,7 @@ import {
   wrapBuilderModelIndex,
   type BuilderModelInfo,
 } from '../lib/builder-model.js'
+import {parseProviderList, providerListArgv, providerPrefixes} from '../lib/inference-provider.js'
 
 /**
  * Host surface the slash command passes in. Kept narrow so this file does
@@ -38,23 +39,25 @@ interface CastResult {
   stderr: string
 }
 
-function runCast(binary: string, args: string[]): CastResult {
-  try {
-    const stdout = execFileSync(binary, args, {
+function runCast(binary: string, args: string[]): Promise<CastResult> {
+  return new Promise(resolve => {
+    execFile(binary, args, {
       encoding: 'utf8',
       cwd: os.homedir(),
       timeout: 15000,
+    }, (err, stdout, stderr) => {
+      if (!err) {
+        resolve({status: 0, stdout: stdout ?? '', stderr: stderr ?? ''})
+        return
+      }
+      const error = err as NodeJS.ErrnoException & {status?: number; stdout?: string; stderr?: string}
+      resolve({
+        status: typeof error.status === 'number' ? error.status : 1,
+        stdout: typeof error.stdout === 'string' ? error.stdout : stdout ?? '',
+        stderr: typeof error.stderr === 'string' ? error.stderr : stderr || error.message || String(err),
+      })
     })
-    return {status: 0, stdout: stdout ?? '', stderr: ''}
-  } catch (err: any) {
-    const stdout = typeof err?.stdout === 'string' ? err.stdout : err?.stdout?.toString?.() ?? ''
-    const stderr = typeof err?.stderr === 'string' ? err.stderr : err?.stderr?.toString?.() ?? ''
-    return {
-      status: typeof err?.status === 'number' ? err.status : 1,
-      stdout,
-      stderr: stderr || err?.message || String(err),
-    }
-  }
+  })
 }
 
 function failureText(result: CastResult): string {
@@ -115,29 +118,38 @@ export function openBuilderModelModal(
   })
 
   let models: BuilderModelInfo[] = []
+  let prefixes: string[] = []
   let currentId = ''
   let selected = 0
   let inlineError: string | null = null
 
-  const binary = findCastBinary()
-  if (!binary) {
-    inlineError = CAST_CLI_NOT_FOUND
-  } else {
-    const listed = runCast(binary, builderModelListArgv())
-    const current = runCast(binary, builderModelCurrentArgv())
+  const load = async () => {
+    const binary = findCastBinary()
+    if (!binary) {
+      inlineError = CAST_CLI_NOT_FOUND
+      return
+    }
+    const [listed, current, providers] = await Promise.all([
+      runCast(binary, builderModelListArgv()),
+      runCast(binary, builderModelCurrentArgv()),
+      runCast(binary, providerListArgv()),
+    ])
     if (listed.status !== 0) {
       inlineError = failureText(listed)
-    } else if (current.status !== 0) {
+      return
+    }
+    if (current.status !== 0) {
       inlineError = failureText(current)
-    } else {
-      try {
-        models = parseModelList(listed.stdout)
-        currentId = parseCurrentId(current.stdout)
-        selected = initialBuilderModelIndex(models, currentId)
-      } catch (err: any) {
-        inlineError = err?.message ?? String(err)
-        models = []
-      }
+      return
+    }
+    try {
+      if (providers.status === 0) prefixes = providerPrefixes(parseProviderList(providers.stdout))
+      models = parseModelList(listed.stdout)
+      currentId = parseCurrentId(current.stdout)
+      selected = initialBuilderModelIndex(models, currentId, prefixes)
+    } catch (err: any) {
+      inlineError = err?.message ?? String(err)
+      models = []
     }
   }
 
@@ -168,6 +180,7 @@ export function openBuilderModelModal(
       currentId,
       termHeight: height,
       columns: builderModelContentColumns(width),
+      prefixes,
       error: inlineError,
     })
     for (const line of lines) addLine(line.text, line.tone)
@@ -181,8 +194,8 @@ export function openBuilderModelModal(
 
   modal.setContent(contentBox)
   ctx.renderer.root.add(modal.box)
-  render()
   modal.show()
+  void load().then(() => render())
 
   const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
   modal.box.handleKeyPress = (key: KeyEvent): boolean => {
@@ -206,7 +219,7 @@ export function openBuilderModelModal(
     }
     if (key.name === 'return' || key.name === 'enter') {
       const chosen = models[selected]
-      if (!chosen || !shouldApplyBuilderModel(currentId, chosen.id)) {
+      if (!chosen || !shouldApplyBuilderModel(currentId, chosen.id, prefixes)) {
         return true
       }
       const castBinary = findCastBinary()
@@ -215,15 +228,17 @@ export function openBuilderModelModal(
         render()
         return true
       }
-      const result = runCast(castBinary, builderModelApplyArgv(chosen.id))
-      if (result.status !== 0) {
-        ctx.messages.addAgentMessage(failureText(result), ctx.mode)
-        inlineError = failureText(result)
-        render()
-        return true
-      }
-      ctx.messages.addAgentMessage(builderModelSuccessMessage(chosen.id, ctx.agentName), ctx.mode)
-      close()
+      const chosenId = chosen.id
+      void runCast(castBinary, builderModelApplyArgv(chosenId)).then(result => {
+        if (result.status !== 0) {
+          ctx.messages.addAgentMessage(failureText(result), ctx.mode)
+          inlineError = failureText(result)
+          render()
+          return
+        }
+        ctx.messages.addAgentMessage(builderModelSuccessMessage(chosenId, ctx.agentName), ctx.mode)
+        close()
+      })
       return true
     }
     return originalHandleKeyPress ? originalHandleKeyPress(key) : false

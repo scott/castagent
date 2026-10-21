@@ -117,6 +117,24 @@ describe('cast provider', () => {
     expect(result.logs.join('\n')).to.not.include('do-file-token')
   })
 
+  it('rejects a remote http URL and accepts loopback http', async () => {
+    const Enable = await loadCommand('enable')
+    const remote = await runCommand(Enable, {provider: 'digitalocean'}, {
+      token: 'do-secret-token',
+      url: 'http://evil.example/v1',
+    })
+    expect(remote.errors.join('\n')).to.match(/https/)
+    expect(fs.existsSync(configPath())).to.equal(false)
+    const local = await runCommand(Enable, {provider: 'digitalocean'}, {
+      token: 'do-secret-token',
+      url: 'http://127.0.0.1:9/v1',
+    })
+    expect(local.errors, local.errors.join('\n')).to.deep.equal([])
+    const config = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(config.providers.digitalocean_inference.base_url).to.equal('http://127.0.0.1:9/v1')
+    expect(JSON.stringify(config)).to.not.include('do-secret-token')
+  })
+
   it('writes nothing when the URL has userinfo', async () => {
     const Enable = await loadCommand('enable')
     const result = await runCommand(Enable, {provider: 'digitalocean'}, {
@@ -159,5 +177,25 @@ describe('cast provider', () => {
     const restored = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
     expect(restored.defaults.inference_provider).to.equal('openrouter')
     expect(restored.defaults.builder_model).to.equal('openrouter/minimax/minimax-m2.5')
+  })
+
+  it('treats the builder model prefix as the active provider', async () => {
+    process.env.OPENROUTER_API_KEY = 'sk-test'
+    fs.mkdirSync(path.join(home, '.cast'), {recursive: true})
+    fs.writeFileSync(configPath(), yaml.stringify({
+      defaults: {
+        builder_model: 'openrouter/minimax/minimax-m2.5',
+        inference_provider: 'digitalocean',
+      },
+    }))
+    const Provider = await loadCommand('index')
+    const result = await runCommand(Provider, {}, {json: true, current: false})
+    expect(result.errors, result.errors.join('\n')).to.deep.equal([])
+    const rows = JSON.parse(result.logs.join('\n'))
+    const openrouter = rows.find((row: {key: string}) => row.key === 'openrouter')
+    const digitalocean = rows.find((row: {key: string}) => row.key === 'digitalocean')
+    expect(openrouter.current).to.equal(true)
+    expect(digitalocean.current).to.equal(false)
+    expect(result.logs.join('\n')).to.not.include('sk-test')
   })
 })

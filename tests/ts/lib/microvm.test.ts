@@ -557,7 +557,7 @@ describe('failed MicroVM deploy cleanup', () => {
     sandbox.stub(db, 'createDeployment').callsFake((...args: unknown[]) => {
       saved.push(args)
     })
-    sandbox.stub(deployUtils, 'inferenceEnv').returns({})
+    sandbox.stub(deployUtils, 'inferenceEnv').resolves({})
     sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = [], options?: {env?: NodeJS.ProcessEnv}) => {
       calls.push([command, ...args])
       assertDoctlKeepsTokenOffArgv(command, args, options)
@@ -907,7 +907,7 @@ describe('failed MicroVM deploy cleanup', () => {
     await keychain.setToken(agentName, 'agent-secret')
     fs.mkdirSync(path.join(home, '.cast', 'agents', agentName), {recursive: true})
     const calls: string[][] = []
-    sandbox.stub(deployUtils, 'inferenceEnv').returns({})
+    sandbox.stub(deployUtils, 'inferenceEnv').resolves({})
     sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = [], options?: {env?: NodeJS.ProcessEnv}) => {
       calls.push([command, ...args])
       assertDoctlKeepsTokenOffArgv(command, args, options)
@@ -976,7 +976,7 @@ describe('failed MicroVM deploy cleanup', () => {
   it('keeps the replacement tag when the new MicroVM cannot be deleted', async () => {
     fs.mkdirSync(path.join(home, '.cast', 'agents', agentName), {recursive: true})
     const calls: string[][] = []
-    sandbox.stub(deployUtils, 'inferenceEnv').returns({})
+    sandbox.stub(deployUtils, 'inferenceEnv').resolves({})
     sandbox.stub(deployUtils, 'execCommand').callsFake(async (command: string, args: string[] = [], options?: {env?: NodeJS.ProcessEnv}) => {
       calls.push([command, ...args])
       assertDoctlKeepsTokenOffArgv(command, args, options)

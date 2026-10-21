@@ -40,11 +40,13 @@ export default class Provider extends Command {
       const key = args.provider?.trim()
       if (key) {
         const switched = await switchInferenceProvider(key)
+        if (switched.needsModel) {
+          this.log(`'${key}' needs a model before it becomes the builder provider.`)
+          this.log(`  Set a model with: cast model ${key}/<model-id>`)
+          return
+        }
         this.log(`✓ Inference provider set to: ${switched.provider}`)
         if (switched.model) this.log(`  Builder model: ${switched.model}`)
-        if (switched.needsModel) {
-          this.log(`  Set a model with: cast model ${key}/<model-id>`)
-        }
         this.log('  Restart the builder to take effect (run `cast dev <agent>` again).')
         return
       }

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `cast provider` switches the builder's inference provider. The active provider follows the `defaults.builder_model` prefix. Model access keys are read with `--token -` and stored in the system keychain, or in `~/.cast/tokens/inference/<key>.token` (mode 0600) when the keychain cannot load. `cast model <prefix>/<id>` switches to another enabled provider, including a freeform catalog id. Inference URLs must be https, or http on 127.0.0.1, ::1, or localhost. ([#402](https://github.com/scott/castagent/pull/402))
+
 ## [2.6.0] - 2026-10-20
 
 ### Added

@@ -2738,7 +2738,7 @@ export default class DigitalOceanDeploy extends Command {
     // Stopping the old container also drops a previous public 8080 publish.
     await execSsh(ip, 'docker stop cast-agent && docker rm cast-agent', true)
 
-    const inferred = filterInferenceEnv(readAgentModel(getAgentPath(agentName)), inferenceEnv())
+    const inferred = filterInferenceEnv(readAgentModel(getAgentPath(agentName)), await inferenceEnv())
     const secrets = [authToken, ...Object.values(inferred)].filter(value => value.length > 0)
 
     // Drop a public allow rule left by an older deploy. Do not add one.

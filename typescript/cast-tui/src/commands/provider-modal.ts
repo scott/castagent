@@ -1,4 +1,4 @@
-import {execFileSync} from 'child_process'
+import {execFile} from 'child_process'
 import * as os from 'os'
 import {BoxRenderable, TextRenderable, StyledText, white, dim, red} from '@opentui/core'
 import type {KeyEvent} from '@opentui/core'
@@ -32,20 +32,35 @@ interface CastResult {
   stderr: string
 }
 
-function runCast(binary: string, args: string[], input?: string): CastResult {
-  try {
-    const stdout = execFileSync(binary, args, {
+function runCast(binary: string, args: string[], input?: string): Promise<CastResult> {
+  return new Promise(resolve => {
+    const child = execFile(binary, args, {
       encoding: 'utf8',
       cwd: os.homedir(),
       timeout: 15000,
-      input,
+    }, (err, stdout, stderr) => {
+      if (!err) {
+        resolve({status: 0, stdout: stdout ?? '', stderr: stderr ?? ''})
+        return
+      }
+      const error = err as NodeJS.ErrnoException & {status?: number; stdout?: string; stderr?: string}
+      resolve({
+        status: typeof error.status === 'number' ? error.status : 1,
+        stdout: typeof error.stdout === 'string' ? error.stdout : stdout ?? '',
+        stderr: typeof error.stderr === 'string' ? error.stderr : stderr || error.message || String(err),
+      })
     })
-    return {status: 0, stdout: stdout ?? '', stderr: ''}
-  } catch (err: any) {
-    const stdout = typeof err?.stdout === 'string' ? err.stdout : err?.stdout?.toString?.() ?? ''
-    const stderr = typeof err?.stderr === 'string' ? err.stderr : err?.stderr?.toString?.() ?? ''
-    return {status: typeof err?.status === 'number' ? err.status : 1, stdout, stderr}
+    if (input !== undefined) child.stdin?.end(input)
+  })
+}
+
+function modelFromSwitch(stdout: string): string {
+  for (const line of stdout.split('\n')) {
+    const marker = 'Builder model:'
+    const at = line.indexOf(marker)
+    if (at >= 0) return line.slice(at + marker.length).trim()
   }
+  return ''
 }
 
 function failureText(result: CastResult): string {
@@ -82,14 +97,15 @@ export function openInferenceProviderModal(
   let token = ''
   let url = ''
   let inlineError: string | null = null
+  let busy = false
 
-  const reload = (binary: string | null) => {
+  const reload = async (binary: string | null) => {
     if (!binary) {
       inlineError = 'cast CLI not found in PATH.'
       rows = []
       return
     }
-    const listed = runCast(binary, providerListArgv())
+    const listed = await runCast(binary, providerListArgv())
     if (listed.status !== 0) {
       inlineError = failureText(listed)
       return
@@ -104,8 +120,6 @@ export function openInferenceProviderModal(
       rows = []
     }
   }
-
-  reload(findCastBinary())
 
   const clear = () => {
     for (const child of [...contentBox.getChildren()]) contentBox.remove(child.id)
@@ -162,8 +176,8 @@ export function openInferenceProviderModal(
 
   modal.setContent(contentBox)
   ctx.renderer.root.add(modal.box)
-  render()
   modal.show()
+  void reload(findCastBinary()).then(() => render())
 
   const originalHandleKeyPress = modal.box.handleKeyPress?.bind(modal.box)
   modal.box.handleKeyPress = (key: KeyEvent): boolean => {
@@ -204,21 +218,31 @@ export function openInferenceProviderModal(
           render()
           return true
         }
-        if (action !== 'switch' || !row) return true
+        if (action !== 'switch' || !row || busy) return true
         const binary = findCastBinary()
         if (!binary) {
           inlineError = 'cast CLI not found in PATH.'
           render()
           return true
         }
-        const result = runCast(binary, providerSwitchArgv(row.key))
-        if (result.status !== 0) {
-          inlineError = failureText(result)
-          render()
-          return true
-        }
-        ctx.messages.addAgentMessage(providerSuccessMessage(row.displayName, ''), ctx.mode)
-        close()
+        busy = true
+        const rowKey = row.key
+        const rowName = row.displayName
+        void runCast(binary, providerSwitchArgv(rowKey)).then(result => {
+          busy = false
+          if (result.status !== 0) {
+            inlineError = failureText(result)
+            render()
+            return
+          }
+          const needsModel = result.stdout.includes('needs a model')
+          const model = needsModel ? '' : modelFromSwitch(result.stdout)
+          const hint = needsModel ? `\n${result.stdout.trim()}` : ''
+          ctx.messages.addAgentMessage(`${providerSuccessMessage(rowName, model)}${hint}`, ctx.mode)
+          close()
+        }).catch(() => {
+          busy = false
+        })
         return true
       }
       return originalHandleKeyPress ? originalHandleKeyPress(key) : false
@@ -253,31 +277,35 @@ export function openInferenceProviderModal(
       }
       const parsed = parseInferenceUrl(url)
       if (!parsed) {
-        inlineError = 'Enter an http(s) URL with a host and no userinfo or query.'
+        inlineError = 'Enter an https URL, or http on 127.0.0.1, ::1, or localhost, with no userinfo or query.'
         render()
         return true
       }
       const binary = findCastBinary()
-      if (!binary) {
-        inlineError = 'cast CLI not found in PATH.'
+      if (!binary || busy) {
+        if (!binary) inlineError = 'cast CLI not found in PATH.'
         render()
         return true
       }
-      const result = runCast(
-        binary,
-        providerEnableArgv(row.key, parsed, row.defaultBaseUrl),
-        `${token}\n`,
-      )
+      busy = true
+      const secret = token
+      const argv = providerEnableArgv(row.key, parsed, row.defaultBaseUrl)
       token = ''
-      if (result.status !== 0) {
-        inlineError = failureText(result)
-        field = 'token'
+      void runCast(binary, argv, `${secret}\n`).then(async result => {
+        if (result.status !== 0) {
+          inlineError = failureText(result)
+          field = 'token'
+          busy = false
+          render()
+          return
+        }
+        field = 'list'
+        await reload(binary)
+        busy = false
         render()
-        return true
-      }
-      field = 'list'
-      reload(binary)
-      render()
+      }).catch(() => {
+        busy = false
+      })
       return true
     }
     if (key.sequence && key.sequence.length === 1 && !key.ctrl && !key.meta) {

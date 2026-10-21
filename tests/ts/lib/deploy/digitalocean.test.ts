@@ -600,7 +600,7 @@ describe('DigitalOcean Deploy Provider', () => {
           return {stdout: '', stderr: '', exitCode: 0}
         })
       }
-      sandbox.stub(deployUtils, 'inferenceEnv').returns(
+      sandbox.stub(deployUtils, 'inferenceEnv').resolves(
         extra?.inference ?? (extra?.openRouterKey ? {OPENROUTER_API_KEY: extra.openRouterKey} : {}),
       )
       sandbox.stub(motd, 'buildHostMotd').returns(extra?.buildMotdReturn ?? 'Welcome!\n')
