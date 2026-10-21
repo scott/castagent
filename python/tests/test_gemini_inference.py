@@ -24,7 +24,7 @@ def _home(monkeypatch, tmp_path):
 
 
 class TestGeminiRow:
-    def test_registers_from_the_manifest_without_a_module(self, monkeypatch, tmp_path):
+    def test_registers_from_the_manifest(self, monkeypatch, tmp_path):
         _home(monkeypatch, tmp_path)
         provider = get_provider("gemini/gemini-3.8-flash")
         assert provider.key == "gemini"
@@ -43,6 +43,7 @@ class TestGeminiRow:
         assert provider.default_model == "gemini/gemini-3.8-flash"
         assert provider.default_params == {}
         assert provider.impl.resolve_model_id("gemini/gemini-3.8-flash") == "gemini-3.8-flash"
+        assert provider.impl.resolve_model_id("gemini/models/gemini-3.8-flash") == "gemini-3.8-flash"
         assert provider.impl.resolve_model_id("gemini/gemini-3.1-pro-preview") == "gemini-3.1-pro-preview"
         assert "temperature" not in provider.llm_params("gemini/gemini-3.8-flash")
         assert "temperature" not in provider.llm_params("gemini/gemini-3.1-pro-preview")
@@ -66,12 +67,13 @@ class TestGeminiRow:
         assert row["modelsPath"] == "/models"
         assert row["stripModelIdPrefix"] == "models/"
         assert row["modelsFilter"].startswith("^gemini")
+        assert "omni" in row["modelsFilter"]
         assert row["fallbackModels"] == ["gemini-3.8-flash", "gemini-3.1-pro-preview"]
         assert row["defaultModel"] == "gemini/gemini-3.8-flash"
         assert "knownModels" not in row
         assert "api_key" not in row
 
-    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    @patch("cast.providers.gemini.GeminiChatOpenAI")
     def test_create_llm_uses_the_compat_endpoint_and_omits_temperature(self, mock_chat, monkeypatch, tmp_path):
         from cast.builder import create_llm
 
@@ -92,7 +94,7 @@ class TestGeminiRow:
         assert mock_chat.call_args.kwargs["model"] == "gemini-3.1-pro-preview"
         assert "temperature" not in mock_chat.call_args.kwargs
 
-    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    @patch("cast.providers.gemini.GeminiChatOpenAI")
     def test_base_url_override_stays_on_the_builder(self, mock_chat, monkeypatch, tmp_path):
         _home(monkeypatch, tmp_path)
         monkeypatch.setenv("GEMINI_API_KEY", "gemini-test-key")

@@ -149,10 +149,14 @@ builder setting and is not copied onto a deployed agent. Deploy forwards
 `GEMINI_API_KEY` (`cast provider enable gemini --token -`). Requests go to
 `https://generativelanguage.googleapis.com/v1beta/openai`. `/model` loads
 `GET /models`, drops a leading `models/` from each id, and keeps chat
-models. When that list cannot be loaded, the picker shows
+models (video ids such as `gemini-omni-1.1-flash` are left out). A
+hand-typed `gemini/models/<id>` drops that `models/` prefix before the
+request. When that list cannot be loaded, the picker shows
 `gemini-3.8-flash` and `gemini-3.1-pro-preview`. The builder does not
 send temperature. Gemini 3 thinking models are tuned for the API default
-of 1.0, and a lower value can loop. `google/gemini-2.5-pro` and the bare
+of 1.0, and a lower value can loop. Gemini 3 and 4 tool calls include
+`extra_content.google.thought_signature`, and Cast echoes that object on
+the next request. `google/gemini-2.5-pro` and the bare
 alias `gemini-2.5-pro` stay on OpenRouter. Deploy forwards
 `GEMINI_API_KEY` and does not forward `GEMINI_BASE_URL`.
 

@@ -127,7 +127,7 @@
     "acceptsAnyModel": true,
     "displayName": "Google Gemini",
     "modelsPath": "/models",
-    "modelsFilter": "^gemini(?!.*(?:embed|image|tts|live|transcribe|aqa|robot|imagen|veo|audio|nano|computer-use))",
+    "modelsFilter": "^gemini(?!.*(?:embed|image|tts|live|transcribe|aqa|robot|imagen|veo|audio|nano|omni|computer-use))",
     "stripModelIdPrefix": "models/",
     "fallbackModels": ["gemini-3.8-flash", "gemini-3.1-pro-preview"],
     "defaultModel": "gemini/gemini-3.8-flash",

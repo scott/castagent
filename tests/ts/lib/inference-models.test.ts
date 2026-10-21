@@ -340,6 +340,7 @@ describe('inference model listing', () => {
             {id: 'models/gemini-embedding-001'},
             {id: 'models/gemini-3.8-live'},
             {id: 'models/imagen-3.0-generate-002'},
+            {id: 'models/gemini-omni-1.1-flash'},
           ],
         })
       },

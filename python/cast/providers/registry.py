@@ -2,7 +2,7 @@
 
 Load order:
 
-1. Built-ins (OpenRouter default, then DigitalOcean).
+1. Built-ins (OpenRouter default, then DigitalOcean, then Gemini).
 2. ``cast.inference`` entry points, sorted by key.
 3. ``~/.cast/inference-providers/<key>/``, sorted by directory name.
 4. ``inferenceProviders`` entries in ``~/.cast/config.yaml``, in listed order.
@@ -36,6 +36,7 @@ PREFIX_RE = re.compile(r"^[a-z0-9-]+/$")
 BUILTIN_MODULES = (
     "cast.providers.openrouter",
     "cast.providers.digitalocean",
+    "cast.providers.gemini",
 )
 
 
