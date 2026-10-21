@@ -12,6 +12,7 @@ not invent a signature.
 from __future__ import annotations
 
 import copy
+import logging
 from typing import Any
 
 from langchain_core.messages import AIMessage
@@ -19,9 +20,16 @@ from langchain_openai import ChatOpenAI
 
 from .openai_compatible import OpenAICompatibleProvider
 
-# Stream chunks key this by tool-call index. A finished response keys it
-# by tool-call id. Chunk merge keeps both next to the tool-call ids.
+logger = logging.getLogger(__name__)
+
+# A finished response keys this by tool-call id. Stream chunks do not use
+# it: chunk merge concatenates string values under the same dict key, so a
+# signature that arrives twice would be replayed doubled.
 _EXTRA_KEY = "gemini_tool_call_extra"
+# One entry per stream chunk. The field is ``i``, not ``index``: chunk
+# merge joins list items that carry ``index``. Reading keeps the first
+# entry for each ``i``.
+_STREAM_EXTRA_KEY = "gemini_tool_call_extra_stream"
 # Index to id, recorded on the chunk that carried the id. The merged
 # message still has it after tool-call chunks are dropped.
 _INDEX_KEY = "gemini_tool_call_index"
@@ -48,9 +56,9 @@ def _index_key(index: Any) -> str | None:
     return str(index)
 
 
-def _stream_maps(chunk: dict) -> tuple[dict, dict]:
-    """Extras and ids from one stream chunk. Neither map needs the other."""
-    extras: dict[str, dict] = {}
+def _stream_maps(chunk: dict) -> tuple[list[dict], dict]:
+    """Signature entries and ids from one stream chunk."""
+    entries: list[dict] = []
     indexes: dict[str, dict] = {}
     for choice in chunk.get("choices") or []:
         delta = (choice or {}).get("delta") or {}
@@ -64,13 +72,10 @@ def _stream_maps(chunk: dict) -> tuple[dict, dict]:
             extra = _usable_extra(tool_call.get("extra_content"))
             if key is not None and isinstance(tool_id, str) and tool_id:
                 indexes[key] = {"id": tool_id}
-            if extra is None:
+            if extra is None or key is None:
                 continue
-            if key is not None:
-                extras[key] = extra
-            elif isinstance(tool_id, str) and tool_id:
-                extras[tool_id] = extra
-    return extras, indexes
+            entries.append({"i": int(key), "extra": extra})
+    return entries, indexes
 
 
 def _response_extras(response: Any) -> list[dict[str, dict]]:
@@ -106,11 +111,45 @@ def _put_map(message: Any, key: str, value: dict) -> None:
         message.additional_kwargs[key] = dict(value)
 
 
+def _put_entries(message: Any, entries: list[dict]) -> None:
+    if not entries:
+        return
+    current = message.additional_kwargs.get(_STREAM_EXTRA_KEY)
+    if isinstance(current, list):
+        current.extend(entries)
+    else:
+        message.additional_kwargs[_STREAM_EXTRA_KEY] = list(entries)
+
+
+def _first_stream_extras(raw: Any) -> dict[int, dict]:
+    """First signature for each tool-call ``i``. Later copies are ignored."""
+    found: dict[int, dict] = {}
+    if not isinstance(raw, list):
+        return found
+    for entry in raw:
+        if not isinstance(entry, dict) or "i" not in entry:
+            continue
+        marker = entry["i"]
+        if isinstance(marker, bool):
+            continue
+        try:
+            index = int(marker)
+        except (TypeError, ValueError):
+            continue
+        if index in found:
+            continue
+        extra = entry.get("extra")
+        if not isinstance(extra, dict) or _usable_extra(extra) is None:
+            continue
+        found[index] = extra
+    return found
+
+
 def _extras_by_tool_id(message: AIMessage) -> dict[str, dict]:
     """Join signatures stored on the message to tool-call ids."""
     raw = message.additional_kwargs.get(_EXTRA_KEY) or {}
     if not isinstance(raw, dict):
-        return {}
+        raw = {}
     call_ids = [
         tool_call.get("id")
         for tool_call in (message.tool_calls or [])
@@ -134,6 +173,8 @@ def _extras_by_tool_id(message: AIMessage) -> dict[str, dict]:
             continue
         if isinstance(key, str):
             found[key] = usable
+    for index, extra in _first_stream_extras(message.additional_kwargs.get(_STREAM_EXTRA_KEY)).items():
+        by_index.setdefault(index, extra)
 
     index_to_id: dict[int, str] = {}
     for tool_chunk in getattr(message, "tool_call_chunks", None) or []:
@@ -176,8 +217,8 @@ class GeminiChatOpenAI(ChatOpenAI):
         )
         if generation is None or not isinstance(chunk, dict):
             return generation
-        extras, indexes = _stream_maps(chunk)
-        _put_map(generation.message, _EXTRA_KEY, extras)
+        entries, indexes = _stream_maps(chunk)
+        _put_entries(generation.message, entries)
         _put_map(generation.message, _INDEX_KEY, indexes)
         return generation
 
@@ -192,6 +233,13 @@ class GeminiChatOpenAI(ChatOpenAI):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
         outgoing = payload.get("messages")
         if not isinstance(outgoing, list) or len(outgoing) != len(source):
+            payload_count = len(outgoing) if isinstance(outgoing, list) else None
+            logger.debug(
+                "Not attaching Gemini thought signatures; input message count %s "
+                "does not match payload message count %s",
+                len(source),
+                payload_count,
+            )
             return payload
         for message, encoded in zip(source, outgoing):
             if not isinstance(message, AIMessage) or not isinstance(encoded, dict):

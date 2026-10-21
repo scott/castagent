@@ -10,10 +10,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import threading
 import time
 from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, HTTPServer, ThreadingHTTPServer
+from unittest.mock import patch
 
 import pytest
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -375,7 +377,12 @@ class _IssuingHandler(BaseHTTPRequestHandler):
         if body.get("stream"):
             completion_id = f"comp-{time.time_ns()}"
             if tool_calls:
-                events = _issuing_tool_events(completion_id, tool_calls, self.server.signature_first)
+                events = _issuing_tool_events(
+                    completion_id,
+                    tool_calls,
+                    self.server.signature_first,
+                    self.server.repeat_signature,
+                )
             else:
                 events = [
                     _chunk(completion_id, {"role": "assistant", "content": "3"}),
@@ -416,7 +423,12 @@ class _IssuingHandler(BaseHTTPRequestHandler):
         })
 
 
-def _issuing_tool_events(completion_id: str, tool_calls: list[dict], signature_first: bool) -> list[dict]:
+def _issuing_tool_events(
+    completion_id: str,
+    tool_calls: list[dict],
+    signature_first: bool,
+    repeat_signature: bool = False,
+) -> list[dict]:
     id_events = []
     extra_events = []
     for position, call in enumerate(tool_calls):
@@ -428,6 +440,8 @@ def _issuing_tool_events(completion_id: str, tool_calls: list[dict], signature_f
                 "function": {"name": "add", "arguments": ""},
             }],
         }
+        if repeat_signature and "extra_content" in call:
+            delta["tool_calls"][0]["extra_content"] = call["extra_content"]
         if position == 0:
             delta["role"] = "assistant"
         id_events.append(_chunk(completion_id, delta))
@@ -441,19 +455,38 @@ def _issuing_tool_events(completion_id: str, tool_calls: list[dict], signature_f
 
 
 class _IssuingServer(ThreadingHTTPServer):
-    def __init__(self, mode: str, *, chunk_delay: float = 0.0, signature_first: bool = False):
+    def __init__(
+        self,
+        mode: str,
+        *,
+        chunk_delay: float = 0.0,
+        signature_first: bool = False,
+        repeat_signature: bool = False,
+    ):
         super().__init__(("127.0.0.1", 0), _IssuingHandler)
         self.mode = mode
         self.chunk_delay = chunk_delay
         self.signature_first = signature_first
+        self.repeat_signature = repeat_signature
         self.counter = 0
         self.lock = threading.Lock()
         self.bodies: list[dict] = []
 
 
 @contextmanager
-def issuing_server(mode: str, *, chunk_delay: float = 0.0, signature_first: bool = False):
-    server = _IssuingServer(mode, chunk_delay=chunk_delay, signature_first=signature_first)
+def issuing_server(
+    mode: str,
+    *,
+    chunk_delay: float = 0.0,
+    signature_first: bool = False,
+    repeat_signature: bool = False,
+):
+    server = _IssuingServer(
+        mode,
+        chunk_delay=chunk_delay,
+        signature_first=signature_first,
+        repeat_signature=repeat_signature,
+    )
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:
@@ -527,6 +560,19 @@ async def test_parallel_tool_calls_replay_each_signature(monkeypatch, tmp_path):
         assert [call["id"] for call in first.tool_calls] == ["pa1", "pb1"]
 
 
+async def test_repeated_signature_on_two_chunks_is_replayed_once(monkeypatch, tmp_path):
+    with issuing_server("single", repeat_signature=True) as server:
+        llm = _bind_issuing(monkeypatch, tmp_path, server)
+        first = await _two_turn(llm, stream=True)
+        stored = first.additional_kwargs["gemini_tool_call_extra_stream"]
+        assert [entry["i"] for entry in stored] == [0, 0]
+        assert [entry["extra"]["google"]["thought_signature"] for entry in stored] == ["SIG1", "SIG1"]
+        follow_up = next(body for body in server.bodies if any(m.get("role") == "tool" for m in body["messages"]))
+        replayed = json.dumps(follow_up)
+        assert "SIG1SIG1" not in replayed
+        assert "gemini_tool_call_extra" not in replayed
+
+
 async def test_astream_keeps_a_signature_that_arrives_before_the_id(monkeypatch, tmp_path):
     with issuing_server("single", signature_first=True) as server:
         llm = _bind_issuing(monkeypatch, tmp_path, server)
@@ -542,6 +588,38 @@ async def test_concurrent_astreams_on_one_instance(monkeypatch, tmp_path):
         follow_ups = [body for body in server.bodies if any(m.get("role") == "tool" for m in body["messages"])]
         assert len(follow_ups) == 6
         assert not hasattr(llm.bound, "_gemini_extra_content")
+
+
+def test_debug_log_when_payload_message_count_differs(caplog):
+    from cast.providers.gemini import GeminiChatOpenAI
+
+    secret = "do-not-log-this-prompt"
+    llm = GeminiChatOpenAI(
+        model="gemini-3.8-flash",
+        api_key="gemini-test-key",
+        base_url="http://127.0.0.1/v1",
+    )
+
+    def short_payload(self, input_, *, stop=None, **kwargs):
+        return {"messages": [{"role": "user", "content": "only-one"}]}
+
+    with caplog.at_level(logging.DEBUG, logger="cast.providers.gemini"):
+        with patch("cast.providers.gemini.ChatOpenAI._get_request_payload", short_payload):
+            payload = llm._get_request_payload([
+                HumanMessage(content=secret),
+                HumanMessage(content="second"),
+            ])
+    assert payload == {"messages": [{"role": "user", "content": "only-one"}]}
+    assert len(caplog.records) == 1
+    record = caplog.records[0]
+    assert record.levelno == logging.DEBUG
+    assert record.message.startswith("Not attaching Gemini thought signatures")
+    assert "2" in record.message
+    assert "1" in record.message
+    assert secret not in caplog.text
+    assert "gemini-test-key" not in caplog.text
+    assert "only-one" not in caplog.text
+    assert "second" not in caplog.text
 
 
 def _runtime_agent(tmp_path, monkeypatch, server):
