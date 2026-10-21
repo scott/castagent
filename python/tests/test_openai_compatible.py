@@ -488,6 +488,7 @@ class TestOpenAIDirect:
             "o1-mini",
             "o4-mini",
             "chatgpt-4o-latest",
+            "gpt-5-chat-latest",
             "ft:gpt-4o:org:name:id",
         ]
         dropped = [
@@ -502,6 +503,16 @@ class TestOpenAIDirect:
             "gpt-4o-transcribe",
             "omni-moderation-latest",
             "babbage-002",
+            "o1-pro",
+            "o3-pro",
+            "gpt-5-pro",
+            "o3-deep-research",
+            "o4-mini-deep-research",
+            "gpt-5-codex",
+            "gpt-5.1-codex",
+            "gpt-3.5-turbo-instruct",
+            "gpt-4o-search-preview",
+            "gpt-4o-mini-search-preview",
         ]
         for model_id in kept:
             assert compiled.search(model_id), model_id

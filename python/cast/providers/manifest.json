@@ -86,7 +86,7 @@
     "acceptsAnyModel": true,
     "displayName": "OpenAI",
     "modelsPath": "/models",
-    "modelsFilter": "^(?:ft:)?(?:chatgpt-|o[0-9]|gpt-(?:3\\.5|4|5))(?!.*(?:tts|transcribe|realtime|audio|moderation|embedding|image))",
+    "modelsFilter": "^(?:ft:)?(?:chatgpt-|o[0-9]|gpt-(?:3\\.5|4|5))(?!.*(?:tts|transcribe|realtime|audio|moderation|embedding|image|search|-pro\\b|deep-research|codex|instruct))",
     "fallbackModels": ["gpt-4o", "gpt-4o-mini"],
     "defaultModel": "openai-api/gpt-4o",
     "knownModels": [],

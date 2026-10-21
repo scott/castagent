@@ -105,7 +105,9 @@ Requests go to `https://api.openai.com/v1`. Cast does not read
 `providers.openai.base_url`. Deploy does not send that URL.
 `/model` and `cast model` list chat ids from `GET /models` (gpt-4, gpt-5,
 o-series, and chatgpt ids, including fine-tunes). Embedding, TTS, image,
-moderation, realtime, audio, and transcribe ids are left out. When the
+moderation, realtime, audio, transcribe, search, pro, deep-research,
+codex, and instruct ids are left out. Search-preview models reject
+temperature, so they are not listed. When the
 list cannot be loaded, the picker shows `gpt-4o` and `gpt-4o-mini`.
 Any other `openai-api/<id>` is accepted. Reasoning models (`o1`, `o3`,
 `o4`, `gpt-5`, and the same families) omit temperature. Other OpenAI chat

@@ -185,7 +185,18 @@ describe('inference model listing', () => {
             {id: 'o1-mini'},
             {id: 'o4-mini'},
             {id: 'chatgpt-4o-latest'},
+            {id: 'gpt-5-chat-latest'},
             {id: 'ft:gpt-4o:org:name:id'},
+            {id: 'o1-pro'},
+            {id: 'o3-pro'},
+            {id: 'gpt-5-pro'},
+            {id: 'o3-deep-research'},
+            {id: 'o4-mini-deep-research'},
+            {id: 'gpt-5-codex'},
+            {id: 'gpt-5.1-codex'},
+            {id: 'gpt-3.5-turbo-instruct'},
+            {id: 'gpt-4o-search-preview'},
+            {id: 'gpt-4o-mini-search-preview'},
             {id: 'text-embedding-3-small'},
             {id: 'text-embedding-ada-002'},
             {id: 'tts-1'},
@@ -219,9 +230,10 @@ describe('inference model listing', () => {
       'openai-api/o1-mini',
       'openai-api/o4-mini',
       'openai-api/chatgpt-4o-latest',
+      'openai-api/gpt-5-chat-latest',
       'openai-api/ft:gpt-4o:org:name:id',
     ])
-    expect(result.models.map(model => model.id).join('\n')).to.not.match(/embedding|tts|whisper|dall-e|image|realtime|audio|transcribe|moderation|babbage|davinci/)
+    expect(result.models.map(model => model.id).join('\n')).to.not.match(/embedding|tts|whisper|dall-e|image|realtime|audio|transcribe|moderation|babbage|davinci|search|-pro\b|deep-research|codex|instruct/)
   })
 
   it('uses OpenAI fallback ids when the live list fails or the key is missing', async () => {
