@@ -102,7 +102,11 @@ and `xai/`. `cast model openai-api/gpt-4o` exits non-zero. The message
 says that prefix is reserved and that `openai/gpt-4o` still uses
 OpenRouter. `xai/grok-2` names `x-ai/grok-2` the same way. An unknown
 prefix such as `unknown/model`, and a bare id OpenRouter does not already
-accept such as `gpt-5`, is also an error. The config is not written.
+accept such as `gpt-5` or `not-a-real-model`, is also an error. That
+error names the prefix convention. It does not list the OpenRouter
+catalog. `cast model openrouter/not-a-real-model` is still an unknown
+OpenRouter id, and that message includes the available ids. The config
+is not written.
 
 OpenRouter and DigitalOcean both use one OpenAI-compatible provider.
 Their prefixes, keys, and model lists are unchanged. A future

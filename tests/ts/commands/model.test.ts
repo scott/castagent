@@ -146,7 +146,7 @@ describe('cast model', () => {
     expect(fs.readdirSync(castDir).some(name => name.includes('.tmp'))).to.equal(false)
   })
 
-  it('rejects an unknown id and lists available ids', async () => {
+  it('rejects a bare id that is not an OpenRouter alias', async () => {
     const {errors} = await runCommand(
       Model,
       {model: 'not-a-real-model'},
@@ -154,8 +154,8 @@ describe('cast model', () => {
     )
     expect(errors).to.have.length(1)
     expect(errors[0]).to.include('not-a-real-model')
-    expect(errors[0]).to.include('anthropic/claude-sonnet-4.6')
-    expect(errors[0]).to.include('minimax/minimax-m2.5')
+    expect(errors[0]).to.include('has no provider prefix')
+    expect(errors[0]).to.include('openai/gpt-4o')
     expect(fs.existsSync(configPath())).to.equal(false)
   })
 
