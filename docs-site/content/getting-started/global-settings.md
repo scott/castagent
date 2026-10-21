@@ -91,7 +91,9 @@ builder on this machine and is not copied to a deploy.
 `https://generativelanguage.googleapis.com/v1beta/openai`).
 `google/...` stays on OpenRouter. `anthropic-api/<model>` is direct
 Anthropic (`ANTHROPIC_API_KEY`, `https://api.anthropic.com/v1`, native
-`ChatAnthropic`). `anthropic/...` stays on OpenRouter. `bedrock/` and
+`ChatAnthropic`). An exported `ANTHROPIC_BASE_URL` routes builder calls
+through that proxy, with or without a trailing `/v1`. `anthropic/...`
+stays on OpenRouter. `bedrock/` and
 `ollama/` are reserved and are not providers yet. Deploy forwards
 `ANTHROPIC_API_KEY` only for an `anthropic-api/` model and does not copy
 `ANTHROPIC_BASE_URL`. `defaults.builder_model`

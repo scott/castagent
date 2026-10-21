@@ -112,6 +112,8 @@
     "displayName": "Anthropic",
     "modelsPath": "/models?limit=1000",
     "modelsFilter": "^claude-",
+    "modelsLifecycle": "active",
+    "normalizeV1Base": true,
     "modelsHeaders": {
       "x-api-key": "${token}",
       "anthropic-version": "2023-06-01"

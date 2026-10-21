@@ -144,12 +144,16 @@ class OpenAICompatibleProvider:
             text = self.rewrite_model(text)
         return text
 
+    def _should_omit_temperature(self, model: Optional[str], model_id: str) -> bool:
+        """Regex fallback. A subclass may prefer a model profile before this."""
+        return omits_temperature(self.omit_temperature_models, model) or omits_temperature(
+            self.omit_temperature_models, model_id
+        )
+
     def llm_params(self, model: Optional[str] = None) -> dict:
         params = dict(self.default_params)
         model_id = self.resolve_model_id(model) if model else ""
-        if omits_temperature(self.omit_temperature_models, model) or omits_temperature(
-            self.omit_temperature_models, model_id
-        ):
+        if self._should_omit_temperature(model, model_id):
             params.pop("temperature", None)
         return params
 
@@ -172,9 +176,7 @@ class OpenAICompatibleProvider:
             base_url = self.chat_base_url(base_url)
         model_id = self.resolve_model_id(model)
         params = dict(kwargs)
-        if omits_temperature(self.omit_temperature_models, model) or omits_temperature(
-            self.omit_temperature_models, model_id
-        ):
+        if self._should_omit_temperature(model, model_id):
             params.pop("temperature", None)
         chat = self.chat_factory()
         return chat(

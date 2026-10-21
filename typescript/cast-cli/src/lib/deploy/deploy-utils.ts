@@ -1284,6 +1284,10 @@ export interface InferenceCatalogEntry {
   keyless?: boolean
   /** Regex applied to unprefixed ids from the live model list. */
   modelsFilter?: string
+  /** Lifecycle query and row filter, for example `active`. A rejected query is retried without it. */
+  modelsLifecycle?: string
+  /** Model listing appends `/v1` when the builder base URL omitted it. */
+  normalizeV1Base?: boolean
   /** Header template for the model list. `${token}` is replaced when a token exists. */
   modelsHeaders?: Record<string, string>
   /** Use knownModels instead of a live fetch. */

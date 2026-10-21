@@ -226,6 +226,30 @@ function modelListHeaders(
   return headers
 }
 
+function modelListRoot(entry: InferenceCatalogEntry, baseUrl: string): string {
+  let root = baseUrl.replace(/\/+$/, '')
+  if (entry.normalizeV1Base && !root.endsWith('/v1')) root = `${root}/v1`
+  return root
+}
+
+function withQuery(url: string, key: string, value: string): string {
+  const join = url.includes('?') ? '&' : '?'
+  return `${url}${join}${encodeURIComponent(key)}=${encodeURIComponent(value)}`
+}
+
+async function readModelList(
+  fetchImpl: typeof fetch,
+  url: string,
+  headers: Record<string, string>,
+): Promise<{data?: Array<{id?: string; lifecycle?: string}>}> {
+  const response = await fetchImpl(url, {
+    headers,
+    signal: AbortSignal.timeout(8000),
+  })
+  if (!response.ok) throw new Error(`HTTP ${response.status}`)
+  return await response.json() as {data?: Array<{id?: string; lifecycle?: string}>}
+}
+
 async function fetchModels(
   entry: InferenceCatalogEntry,
   baseUrl: string,
@@ -237,18 +261,31 @@ async function fetchModels(
   if (!entry.modelsPath || (!token && !entry.keyless)) {
     return {ids: fallbackIds, fallback: true}
   }
-  const root = baseUrl.replace(/\/+$/, '')
+  const root = modelListRoot(entry, baseUrl)
   const modelsPath = entry.modelsPath.startsWith('/') ? entry.modelsPath : `/${entry.modelsPath}`
+  const plainUrl = `${root}${modelsPath}`
+  const headers = modelListHeaders(entry, token)
   try {
-    const response = await fetchImpl(`${root}${modelsPath}`, {
-      headers: modelListHeaders(entry, token),
-      signal: AbortSignal.timeout(8000),
-    })
-    if (!response.ok) throw new Error(`HTTP ${response.status}`)
-    const body = await response.json() as {data?: Array<{id?: string}>}
+    let body: {data?: Array<{id?: string; lifecycle?: string}>}
+    if (entry.modelsLifecycle) {
+      try {
+        body = await readModelList(fetchImpl, withQuery(plainUrl, 'lifecycle', entry.modelsLifecycle), headers)
+      } catch {
+        // The host does not support the lifecycle query. List without it.
+        body = await readModelList(fetchImpl, plainUrl, headers)
+      }
+    } else {
+      body = await readModelList(fetchImpl, plainUrl, headers)
+    }
     let ids = (body.data ?? [])
-      .map(row => row.id)
-      .filter((id): id is string => typeof id === 'string' && id.length > 0)
+      .filter(row => {
+        if (!row || typeof row.id !== 'string' || row.id.length === 0) return false
+        if (!entry.modelsLifecycle) return true
+        // A row with no lifecycle field is kept. The host did not report one.
+        if (typeof row.lifecycle !== 'string' || row.lifecycle.length === 0) return true
+        return row.lifecycle === entry.modelsLifecycle
+      })
+      .map(row => row.id as string)
     if (entry.stripModelIdPrefix) {
       const strip = entry.stripModelIdPrefix
       ids = ids.map(id => id.startsWith(strip) ? id.slice(strip.length) : id)

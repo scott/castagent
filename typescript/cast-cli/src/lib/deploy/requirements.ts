@@ -29,6 +29,7 @@ langgraph-checkpoint>=4.0.3
 langgraph-prebuilt>=1.0.12
 langgraph-sdk>=0.3.13
 openai>=2.33.0
+anthropic>=0.120.0
 orjson>=3.11.8
 packaging>=26.2
 pydantic>=2.13.3

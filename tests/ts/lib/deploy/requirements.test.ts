@@ -229,6 +229,7 @@ exit 1
       expect(floorAtLeast(line as string, dep), `${line} is below ${dep}`).to.equal(true)
     }
     expect(FALLBACK_REQUIREMENTS).to.include('langchain-anthropic>=1.7.6')
+    expect(FALLBACK_REQUIREMENTS).to.include('anthropic>=0.120.0')
     expect(FALLBACK_REQUIREMENTS).to.include('langchain-core>=1.6.12')
     expect(FALLBACK_REQUIREMENTS).to.include('langchain-openai>=1.7.2')
     expect(FALLBACK_REQUIREMENTS).to.include('langgraph>=1.2.16')

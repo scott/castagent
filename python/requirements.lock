@@ -7,11 +7,19 @@
 annotated-types==0.8.0 \
     --hash=sha256:13b2beaad985e05e2d6407ee4c4f35590b11f8d693a258a561055cac8f64cab7 \
     --hash=sha256:f072f4d804ea359e4eaf198b1af7a8b0943881a87f31bb764f8bf219bb9419e0
-    # via pydantic
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   pydantic
+anthropic==1.17.0 \
+    --hash=sha256:ccb98b85e1a14f81cf1e2ba348393f341f342bad9e07e014f96c9b69f853aaa7 \
+    --hash=sha256:dcf77a74dde89a9fd12405fca798b012725a107f7c9488454234a74e275c2163
+    # via langchain-anthropic
 anyio==4.15.1 \
     --hash=sha256:6152fdbbf9a77fdec97731721bebf7c4c44f7c29b424b0065826173efc7ed101 \
     --hash=sha256:9f28306018cbd6d329e64a36d58256edff76dd996fe423bc957326e578b82a94
     # via
+    #   -c /tmp/lock-constraints.txt
+    #   anthropic
     #   httpx
     #   httpx2
     #   langsmith
@@ -21,6 +29,7 @@ certifi==2026.10.19 \
     --hash=sha256:035c1e85572b141bf1c3a3eff0e33a8eb74917522f2559075ff8d2fea780a1ae \
     --hash=sha256:42d35340cc5b9ba78e818ddbff0c5b1c2b779de448a340fd1b989f5fa8670e1b
     # via
+    #   -c /tmp/lock-constraints.txt
     #   httpcore
     #   httpx
     #   langchain-openai
@@ -198,54 +207,77 @@ charset-normalizer==3.5.2 \
     --hash=sha256:fcff63213e8e6e47770541a4607175404f47cbb3ebea7b6058cc82d524a0e424 \
     --hash=sha256:fd1fbe0f116b6e55da77aca2c6ddcddcfac2186cbf78bdebf40fc156efca389d \
     --hash=sha256:fe9753dfee015c570d73df76f899f18444d41388bffcde097deba51c4fadbb9f
-    # via requests
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   requests
 click==8.5.0 \
     --hash=sha256:255bc9599cf7748b4b1a446ccc735421bd08a2ae529a8b88597d3de5664ee360 \
     --hash=sha256:ba0d2089de75ea0310e2dde03160e6ca10009947fb95a182f9b54021bb272e34
-    # via uvicorn
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   uvicorn
 distro==1.9.0 \
     --hash=sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed \
     --hash=sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2
-    # via langsmith
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   langsmith
+docstring-parser==0.18.0 \
+    --hash=sha256:292510982205c12b1248696f44959db3cdd1740237a968ea1e2e7a900eeb2015 \
+    --hash=sha256:b3fcbed555c47d8479be0796ef7e19c2670d428d72e96da63f3a40122860374b
+    # via anthropic
 gitdb==4.0.12 \
     --hash=sha256:5ef71f855d191a3326fcfbc0d5da835f26b13fbcba60c32c21091c349ffdb571 \
     --hash=sha256:67073e15955400952c6565cc3e707c554a4eea2e428946f7a4c162fab9bd9bcf
-    # via gitpython
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   gitpython
 gitpython==3.2.1 \
     --hash=sha256:0f1229ec5c057bdabdeeda8bda4f17bda679ab33dbccc00f24e6a480553c8613 \
     --hash=sha256:d66b0832aa8755c1a84892937282df0befb16c97e5a64aeebd68be9c5e323f53
-    # via cast (pyproject.toml)
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   cast (pyproject.toml)
 h11==0.16.0 \
     --hash=sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1 \
     --hash=sha256:63cf8bbe7522de3bf65932fda1d9c2772064ffb3dae62d55932da54b31cb6c86
     # via
+    #   -c /tmp/lock-constraints.txt
     #   httpcore
     #   httpcore2
     #   uvicorn
 httpcore==1.0.9 \
     --hash=sha256:2d400746a40668fc9dec9810239072b40b4484b640a8c38fd654a024c7a1bf55 \
     --hash=sha256:6e34463af53fd2ab5d807f399a9b45ea31c3dfa2276f15a2c3f00afff6e176e8
-    # via httpx
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   httpx
 httpcore2==2.15.1 \
     --hash=sha256:730f603058c260a3288378217b464713350c23e3b8fe8bba753701054032d98a \
     --hash=sha256:a94b6b3e6260e1a3f035915408d3dcd7dc8e844c2b544b642e227cf98a747af0
-    # via httpx2
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   httpx2
 httpx==0.28.1 \
     --hash=sha256:75e98c5f16b0f35b567856f597f06ff2270a374470a5c2392242528e3e3e42fc \
     --hash=sha256:d909fcccc110f8c7faf814ca82a9a4d816bc5a6dbfea25d6591d6985b8ba59ad
     # via
+    #   -c /tmp/lock-constraints.txt
     #   langchain-core
     #   langgraph-sdk
 httpx2==2.15.1 \
     --hash=sha256:75841cd83d16b417f7d6da8f2089ce8120806efdbf96af37d46c5129c49015be \
     --hash=sha256:ff75485308fbe441e75b1218546e4e78d884df41e1a9741c1f79335ed8fcfef7
     # via
+    #   -c /tmp/lock-constraints.txt
+    #   anthropic
     #   langsmith
     #   openai
 idna==3.20 \
     --hash=sha256:a7db850025b95ded1eae8a46181a1a6c56c92c96f0e2b005d9ff8dc0210cab44 \
     --hash=sha256:ab7ae7122974553370f0bdb919e1a960b2cd1bc1ef0276416d896db81c14582c
     # via
+    #   -c /tmp/lock-constraints.txt
     #   anyio
     #   httpx
     #   httpx2
@@ -370,20 +402,33 @@ jiter==0.17.0 \
     --hash=sha256:fd7790aa79c8b518e512ebcdfce9f11d8ef5f30efd43720c8a19a548b39fa489 \
     --hash=sha256:fe15ddf316f1f1f643347d3a474e74ce61880c79a11ec5dca53df20c071bd3e8 \
     --hash=sha256:ffa0380ad091de7d3fc33e17a97ff479851ee18a0a2a3ee56ff3215cdc886656
-    # via openai
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   anthropic
+    #   openai
 jsonpatch==1.36 \
     --hash=sha256:7e110cb3c5a1c8768f7170bf8fb9887c4aa575fba74c95239e868b494bd9a522 \
     --hash=sha256:aa3ffbc15816644ffcc6b13712dacbc99f6f6dde302abc66983f9831d35630a5
-    # via langchain-core
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   langchain-core
 jsonpointer==3.4 \
     --hash=sha256:136e2e3273fd82a1502274f56ec172f331b6a1703d86a1824d503af4d9a96142 \
     --hash=sha256:e57015ae65af3821c6a3976069860789cf326103f38b22b2178d41d021adad25
-    # via jsonpatch
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   jsonpatch
+langchain-anthropic==1.7.6 \
+    --hash=sha256:06bee97006d99e9a04abc4bd56599fc356c0c7f7f2a97629645cb603d9785c73 \
+    --hash=sha256:e5b41959a39810e69bc608fd6622b7d5d017bde93f858b09332fbb6ac764c393
+    # via cast (pyproject.toml)
 langchain-core==1.6.12 \
     --hash=sha256:39b07aed976baac14c47b7a21e3c7d4073362bccf06cf8799c585dcc9548547d \
     --hash=sha256:dc6b2a965c351b4cc94df1c80220bcf3c5472e14437d2186c8290ea22f4d0219
     # via
+    #   -c /tmp/lock-constraints.txt
     #   cast (pyproject.toml)
+    #   langchain-anthropic
     #   langchain-openai
     #   langgraph
     #   langgraph-checkpoint
@@ -392,39 +437,57 @@ langchain-core==1.6.12 \
 langchain-openai==1.7.2 \
     --hash=sha256:9be7980edf355ca2dd595b795a5125836ccf04515ef9377228913246156e59f5 \
     --hash=sha256:e1fcbc7a96f7c8c94679d61639a979bba88f27889c0a68dfa225b8057345328d
-    # via cast (pyproject.toml)
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   cast (pyproject.toml)
 langchain-protocol==0.0.19 \
     --hash=sha256:4cdf879a492a35980fd859ae792d3c65458ccaae504e183c9a10d7eac1f0720f \
     --hash=sha256:79d90a1425122ac87e8052e2ec054fbd09c3edbf341bdfb6397112a495c7bf8c
     # via
+    #   -c /tmp/lock-constraints.txt
     #   langchain-core
     #   langgraph-sdk
 langgraph==1.2.16 \
     --hash=sha256:aeceb1bc49488409f12b02f1e51881099391d9e85bcfd78e1dbead71831c41b5 \
     --hash=sha256:e4dd63480bfd3ee14a6ab80ecf1311698780519693d8e3b67a28f3486e69e1f7
-    # via cast (pyproject.toml)
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   cast (pyproject.toml)
 langgraph-checkpoint==4.3.0 \
     --hash=sha256:bedfafe2f997ded60e4fa593e79f56f436a6e45586392dc382aa810d0c751c64 \
     --hash=sha256:c75965d84cc2c1d549163e910a15bcb577758001b141619d05297c463280b018
     # via
+    #   -c /tmp/lock-constraints.txt
     #   langgraph
     #   langgraph-prebuilt
 langgraph-prebuilt==1.1.1 \
     --hash=sha256:f1b1a4772e7f9f15ba736411aad3877183ad40cd9349748df76bd2b9f58a83c7 \
     --hash=sha256:fae17c22562e501940eb7aa052a15c58a431febbabf33f8ad172e1b44354a7e4
-    # via langgraph
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   langgraph
 langgraph-sdk==0.4.8 \
     --hash=sha256:6dd0c55d0d9040686716581c9e302c21c31ad6e2eebda0defc944a8bb38ec011 \
     --hash=sha256:bef8ac54bdfe3ac2f7eba5be2f322dde296701b39e1c1aa403302f08d273fab5
-    # via langgraph
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   langgraph
 langsmith==0.14.11 \
     --hash=sha256:9ecca7633df228ef2c44563f7187e426b8a79e7c5c2351c5dd8c9074c61512e7 \
     --hash=sha256:d9e7ffe587e12ce51573cab654d02e84feb924d3b1f582274c4b1412ebeabf4c
-    # via langchain-core
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   langchain-core
 openai==3.35.1 \
     --hash=sha256:264fd0fafc889021f526b7c1e5a2df5ca3e8dea874738ecd31da666434f25967 \
     --hash=sha256:b33e6561b90586e450def8a388e7d364755325da6884fc71348be5542e043bd0
-    # via langchain-openai
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   langchain-openai
+opentelemetry-api==1.45.1 \
+    --hash=sha256:aa38ed19bcc084ba42782a73255b3582283eced7ad6dddbd6695189e69adfb75 \
+    --hash=sha256:b31553efa588ae44bc306f863c785c5333a9ecc091248c6ee68b4b6c87fdedfb
+    # via anthropic
 orjson==3.13.0 \
     --hash=sha256:0526a3456db67b264c6d661b5f090077f326b6cd074d0ef53a72763595dec5d7 \
     --hash=sha256:08bf722f923d2100bc5e5a5dcf72c656db557049c1bea26582fdd5dd9d5395a1 \
@@ -486,6 +549,7 @@ orjson==3.13.0 \
     --hash=sha256:fb8644dc6d705e1269ed2842bf4dbe2b4e50d670de503bf79d5cef3a5148a4c7 \
     --hash=sha256:fbbad6b9b1da43f25c1f5b20cd5a268e028a2fc95d5a8d1ade6059973bc71584
     # via
+    #   -c /tmp/lock-constraints.txt
     #   langgraph-sdk
     #   langsmith
 ormsgpack==1.13.0 \
@@ -538,17 +602,23 @@ ormsgpack==1.13.0 \
     --hash=sha256:fc4a6f98828cbe0a4fce3171806504f3926d658b696ae4c7c6cf4bc44d462373 \
     --hash=sha256:fc8eff22184cbfef56f0a4a6ca4fedc38174b2447ecef517fc050d6340546345 \
     --hash=sha256:ffa23ab2fe9188f24c3f68428a2cb61b37c8b7f103af75a4700ad199339d6bfc
-    # via langgraph-checkpoint
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   langgraph-checkpoint
 packaging==26.3 \
     --hash=sha256:94edc256424af38762eb31306eed28beb9f0efc50a8837492c9d6fd6004aed79 \
     --hash=sha256:d7193f7c8e4e93f444fde0262bf90af30e16fa0ad0ad44cb553c87339b23cd1c
     # via
+    #   -c /tmp/lock-constraints.txt
     #   langchain-core
     #   langsmith
 pydantic==2.14.1 \
     --hash=sha256:9195d967ec791692a04438115466764fb8b9a27b31f14a760437694f40d6b454 \
     --hash=sha256:94f478203dd03404682a1ada216965651dd74b1d2d5ffd62e00e0837caab5c26
     # via
+    #   -c /tmp/lock-constraints.txt
+    #   anthropic
+    #   langchain-anthropic
     #   langchain-core
     #   langgraph
     #   langsmith
@@ -691,7 +761,9 @@ pydantic-core==2.50.1 \
     --hash=sha256:f5187624823423e1d1b82b1072ac41dc837389e18d3d0572cc19bbee46cd550a \
     --hash=sha256:f77ac30b19221cd9bd3fcfa3d4614eff93140d0572ab730cded17b64adca05f3 \
     --hash=sha256:fe90228920fd8ff2be62622b6bb8a2b11acd65046d50c6b130614b5879605a20
-    # via pydantic
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   pydantic
 pyyaml==6.0.3 \
     --hash=sha256:00c4bdeba853cc34e7dd471f16b4114f4162dc03e6b7afcc2128711f0eca823c \
     --hash=sha256:0150219816b6a1fa26fb4699fb7daa9caf09eb1999f3b70fb6e786805e80375a \
@@ -767,6 +839,7 @@ pyyaml==6.0.3 \
     --hash=sha256:fa160448684b4e94d80416c0fa4aac48967a969efe22931448d853ada8baf926 \
     --hash=sha256:fc09d0aa354569bc501d4e787133afc08552722d3ab34836a80547331bb5d4a0
     # via
+    #   -c /tmp/lock-constraints.txt
     #   cast (pyproject.toml)
     #   langchain-core
 regex==2026.9.29 \
@@ -900,36 +973,49 @@ regex==2026.9.29 \
     --hash=sha256:fb99cc9d45f48895d9d67f6a0b8a57f08d39c174d9f25ad97a313e0470267b1c \
     --hash=sha256:fdd88ed5e20b1bcdd234421e454962c971aa44b653bdb7f1ea9ef683e90fb649 \
     --hash=sha256:fe3fa1dd453ed5c7f5ea23a26218329790ed7197a99b90e94330e313959a7f52
-    # via tiktoken
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   tiktoken
 requests==2.34.2 \
     --hash=sha256:2a0d60c172f83ac6ab31e4554906c0f3b3588d37b5cb939b1c061f4907e278e0 \
     --hash=sha256:f288924cae4e29463698d6d60bc6a4da69c89185ad1e0bcc4104f584e960b9ed
     # via
+    #   -c /tmp/lock-constraints.txt
     #   langsmith
     #   requests-toolbelt
     #   tiktoken
 requests-toolbelt==1.0.0 \
     --hash=sha256:7681a0a3d047012b5bdc0ee37d7f8f07ebe76ab08caeccfc3921ce23c88d5bc6 \
     --hash=sha256:cccfdd665f0a24fcf4726e690f65639d272bb0637b9b92dfd91a5568ccf6bd06
-    # via langsmith
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   langsmith
 smmap==5.0.3 \
     --hash=sha256:4d9debb8b99007ae47165abc08670bd74cb74b5227dda7f643eccc4e9eb5642c \
     --hash=sha256:c106e05d5a61449cf6ba9a1e650227ecfb141590d2a98412103ff35d89fc7b2f
-    # via gitdb
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   gitdb
 sniffio==1.3.1 \
     --hash=sha256:2f6da418d1f1e0fddd844478f41680e794e6051915791a034ff65e5f100525a2 \
     --hash=sha256:f4324edc670a0f49750a81b895f35c3adb843cca46f0530f79fc1babb23789dc
     # via
+    #   -c /tmp/lock-constraints.txt
+    #   anthropic
     #   langsmith
     #   openai
 starlette==1.9.0 \
     --hash=sha256:3d931de246ed870e35ce605974440816ef895e592f255d1396cfdf191d4c4318 \
     --hash=sha256:fd3f159936e882d06c1108f84688f7cda2cf85fc6a592a50edbd175e882c2ddc
-    # via cast (pyproject.toml)
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   cast (pyproject.toml)
 tenacity==9.2.1 \
     --hash=sha256:9e56f17539296baab7beabb08b92f6ee3d7be92d8be72d763360677c2ad6580e \
     --hash=sha256:a606b5c808d0cded4a359d5b9932d867ff2a6a6b64d37350260fd01bbdf83839
-    # via langchain-core
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   langchain-core
 tiktoken==0.14.0 \
     --hash=sha256:087538c080e5ff421abd3a0785ed63c5111d06af98e6cd0d374dbe5969147ca3 \
     --hash=sha256:10f31e63e40313f2e518d87f7086cfa44e45f64cc14d8ae14103b41220c30a14 \
@@ -995,17 +1081,22 @@ tiktoken==0.14.0 \
     --hash=sha256:f3d6cf93fbe2e7117eb7bedca684216fbe328a41f0843ce34245451d8eb2df1c \
     --hash=sha256:f5e7665f6624e052e5e7f6a36919ab69279decdc976d7b16b4fa15e1897d0513 \
     --hash=sha256:f702e0aeeb6506e57687e881c59e844ebe8f0a6a097ddafe20e3ab25f387be4e
-    # via langchain-openai
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   langchain-openai
 truststore==0.10.5 \
     --hash=sha256:30d36967ccaded5cbb38d602c433f53600036c79d502f4533a49b60a03bbefcd \
     --hash=sha256:9aaaedaefaf06d8b206278cf8b5012bc897f485a874503501e12d776df78951c
     # via
+    #   -c /tmp/lock-constraints.txt
     #   httpcore2
     #   httpx2
 typing-extensions==4.16.0 \
     --hash=sha256:481caa481374e813c1b176ada14e97f1f67a4539ce9cfeb3f350d78d6370c2e8 \
     --hash=sha256:dc983d19a509c94dba722ee6abd33940f7c05a89e243c47e907eb4db6f1a43e5
     # via
+    #   -c /tmp/lock-constraints.txt
+    #   anthropic
     #   anyio
     #   cast (pyproject.toml)
     #   httpx2
@@ -1013,6 +1104,7 @@ typing-extensions==4.16.0 \
     #   langchain-protocol
     #   langsmith
     #   openai
+    #   opentelemetry-api
     #   pydantic
     #   pydantic-core
     #   starlette
@@ -1020,11 +1112,15 @@ typing-extensions==4.16.0 \
 typing-inspection==0.4.4 \
     --hash=sha256:547274fa6b0a561ccf549cc9524b999a578e737d015d8709d021f9d0d13bea47 \
     --hash=sha256:65b8397ba37ccbce054456aaccddfc91e6e3083c92824df348d96ca832f3f147
-    # via pydantic
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   pydantic
 urllib3==2.8.0 \
     --hash=sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3 \
     --hash=sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63
-    # via requests
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   requests
 uuid-utils==0.18.0 \
     --hash=sha256:01b1e5b0eacdf7e7115eb9abcca3d183da59f1da212f235a82d7d8c379715a95 \
     --hash=sha256:075bb6d4aacbb0c22c8018f9ec14f79be28f4eea077ce1d8ec4dbea34a6719c3 \
@@ -1149,12 +1245,15 @@ uuid-utils==0.18.0 \
     --hash=sha256:fece49529e997ec2148a182bbf99e193a6319f5db34b059c8314eae2c88bcc85 \
     --hash=sha256:ff3116dd2bf5079b715f06319dc141d7dbaeadf34f9f3a06eb0d6351a35dd4ac
     # via
+    #   -c /tmp/lock-constraints.txt
     #   langchain-core
     #   langsmith
 uvicorn==0.54.0 \
     --hash=sha256:505bdb0f318731d45f1f712071fc781a8981f6847a31c902c9f5e652d4f67faf \
     --hash=sha256:a2e33cbfaa0306f8e6b0c13e0cb89d7d7a2da3e62b90c66e18c33d9807b28620
-    # via cast (pyproject.toml)
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   cast (pyproject.toml)
 websockets==16.1.1 \
     --hash=sha256:01fbdcbac298efe19360b94bc0039c8f746f0220ba570f327577bfee81059175 \
     --hash=sha256:024193f8551a2b0eafbdd160911012c4e6c228c28430c84433253299a9e42d6a \
@@ -1266,6 +1365,7 @@ websockets==16.1.1 \
     --hash=sha256:fce6c48559c86d1ac3632ccb1bebc7d5442fbe79bd9bb0e40379ee54be2a4051 \
     --hash=sha256:fd46fff7eb62c24804d234f0051c7a8ea81285ad63e0337d3dcf33ca82aee58a
     # via
+    #   -c /tmp/lock-constraints.txt
     #   langgraph-sdk
     #   langsmith
 xxhash==4.0.2 \
@@ -1494,6 +1594,7 @@ xxhash==4.0.2 \
     --hash=sha256:fe765b3c7e7fcd14ef9b77836295847cb73229cdbe7eced958ed013d2f1c4025 \
     --hash=sha256:fe86ae86241d0aee7561b19bf892c9250a976e4a56fc052405cd537180e7af15
     # via
+    #   -c /tmp/lock-constraints.txt
     #   langgraph
     #   langsmith
 zstandard==0.25.0 \
@@ -1596,4 +1697,6 @@ zstandard==0.25.0 \
     --hash=sha256:f67e8f1a324a900e75b5e28ffb152bcac9fbed1cc7b43f99cd90f395c4375344 \
     --hash=sha256:fd7a5004eb1980d3cefe26b2685bcb0b17989901a70a1040d1ac86f1d898c551 \
     --hash=sha256:ffef5a74088f1e09947aecf91011136665152e0b4b359c42be3373897fb39b01
-    # via langsmith
+    # via
+    #   -c /tmp/lock-constraints.txt
+    #   langsmith

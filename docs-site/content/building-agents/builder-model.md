@@ -166,21 +166,32 @@ class. `cast.providers.anthropic` builds `ChatAnthropic` from the manifest
 row. The key is `ANTHROPIC_API_KEY`
 (`cast provider enable anthropic-api --token -`). The catalog base URL is
 `https://api.anthropic.com/v1`. `ChatAnthropic` receives the host root,
-because its SDK appends `/v1/messages`. `/model` loads
-`GET /v1/models?limit=1000` with `x-api-key` and
-`anthropic-version: 2023-06-01`. Ids that start with `claude-` are kept.
-Anything else is left out. One response is the whole list, capped at 1000
-ids. When that list cannot be loaded, the picker shows
+because its SDK appends `/v1/messages`. An exported `ANTHROPIC_BASE_URL`
+routes builder calls through that proxy. The value may include `/v1` or
+omit it. Chat strips a trailing `/v1`. The model list adds `/v1` when it
+is missing, so a Claude Code style host still loads `/v1/models` instead
+of the offline ids. `/model` loads
+`GET /v1/models?limit=1000&lifecycle=active` with `x-api-key` and
+`anthropic-version: 2023-06-01`. If that query is rejected, the list is
+requested again without it. Rows that report another lifecycle are
+dropped. Rows with no lifecycle field are kept. Ids that start with
+`claude-` are kept. Anything else is left out. One response is the whole
+list, capped at 1000 ids. When that list cannot be loaded, the picker shows
 `claude-sonnet-5-5`, `claude-opus-5-5`, and `claude-haiku-5-5`.
-The builder sends temperature `0.7` and omits it for opus, sonnet, haiku,
-fable, and mythos 4.7 and later, including `claude-sonnet-5-5`. Earlier
-ids such as `claude-sonnet-4-6` still receive `0.7`. Cast does not set
-`max_tokens` or a forced `tool_choice`. Direct ids are not rewritten:
-`anthropic-api/claude-sonnet-4` is sent as `claude-sonnet-4`.
-`anthropic/claude-sonnet-4.6` and the bare alias `claude-sonnet-4` stay
-on OpenRouter. `ANTHROPIC_BASE_URL` is a builder setting and is not copied
-onto a deployed agent. Deploy forwards `ANTHROPIC_API_KEY` only when
-`brain.model` uses `anthropic-api/`.
+The builder sends temperature `0.7`. A langchain-anthropic profile that
+does not accept temperature omits it. When the profile has no row, the
+manifest pattern is the fallback: opus, sonnet, haiku, fable, and mythos
+4.7 and later, including `claude-sonnet-5-5`. Earlier ids such as
+`claude-sonnet-4-6` still receive `0.7` unless their profile says
+otherwise. A known profile supplies `max_tokens`. An unknown id uses
+`max_tokens` from `GET /v1/models/{id}` when that field is present, and
+otherwise a family floor so the request does not stop at 4096. The client
+uses a 600 second request timeout. Cast does not force `tool_choice`.
+Direct ids are not rewritten: `anthropic-api/claude-sonnet-4` is sent as
+`claude-sonnet-4`. `anthropic/claude-sonnet-4.6` and the bare alias
+`claude-sonnet-4` stay on OpenRouter. `ANTHROPIC_BASE_URL` is a builder
+setting and is not copied onto a deployed agent. Deploy forwards
+`ANTHROPIC_API_KEY` only when `brain.model` uses `anthropic-api/`.
 
 ## TUI
 
