@@ -36,6 +36,10 @@ def _home(monkeypatch, tmp_path):
         "DIGITALOCEAN_INFERENCE_BASE_URL",
         "XAI_API_KEY",
         "XAI_BASE_URL",
+        "OLLAMA_API_KEY",
+        "OLLAMA_BASE_URL",
+        "GEMINI_API_KEY",
+        "GEMINI_BASE_URL",
     ):
         monkeypatch.delenv(name, raising=False)
     return home
@@ -109,6 +113,15 @@ class TestBothProvidersUseTheSharedClass:
         assert payload["openai-api"]["fallbackModels"] == ["gpt-4o", "gpt-4o-mini"]
         assert payload["openai-api"]["defaultModel"] == "openai-api/gpt-4o"
         assert payload["openai-api"]["modelsFilter"]
+        assert payload["ollama"]["keyless"] is True
+        assert payload["ollama"]["envVar"] == "OLLAMA_API_KEY"
+        assert payload["ollama"]["baseUrl"] == "http://localhost:11434/v1"
+        assert payload["ollama"]["baseUrlEnv"] == "OLLAMA_BASE_URL"
+        assert payload["ollama"]["modelsPath"] == "/models"
+        assert payload["ollama"]["fallbackModels"] == ["qwen3", "llama3.1", "gpt-oss"]
+        assert payload["ollama"]["defaultModel"] == "ollama/qwen3"
+        assert payload["ollama"]["prefixes"] == ["ollama/"]
+        assert "placeholderKey" not in payload["ollama"]
         assert "fakeai" not in payload
         for item in payload.values():
             assert "knownModels" not in item
@@ -140,7 +153,6 @@ class TestPrefixErrors:
         _home(monkeypatch, tmp_path)
         cases = {
             "bedrock/us.anthropic.claude": "bedrock/",
-            "ollama/qwen3": "ollama/",
         }
         for model, prefix in cases.items():
             with pytest.raises(InferenceProviderError) as exc:
@@ -179,26 +191,27 @@ class TestPrefixErrors:
         assert "no provider prefix" in message
         assert "openai-api/" in message
         assert "xai/" in message
+        assert "ollama/" in message
         assert "claude-sonnet-4" in message
 
     def test_external_cannot_take_a_reserved_prefix(self, monkeypatch, tmp_path):
         home = _home(monkeypatch, tmp_path)
-        folder = home / ".cast" / "inference-providers" / "ollama"
+        folder = home / ".cast" / "inference-providers" / "bedrock"
         folder.mkdir(parents=True)
         (folder / "provider.json").write_text(json.dumps({
-            "key": "ollama",
-            "name": "Ollama",
-            "prefixes": ["ollama/"],
-            "envVar": "OLLAMA_API_KEY",
-            "configKey": "providers.ollama.api_key",
-            "baseUrl": "http://localhost:11434/v1",
+            "key": "bedrock",
+            "name": "Amazon Bedrock",
+            "prefixes": ["bedrock/"],
+            "envVar": "AWS_BEARER_TOKEN_BEDROCK",
+            "configKey": "providers.bedrock.api_key",
+            "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1",
             "acceptsAnyModel": True,
         }))
         (folder / "provider.py").write_text(
             "class P:\n"
-            "    key = 'ollama'\n"
-            "    prefixes = ('ollama/',)\n"
-            "    env_var = 'OLLAMA_API_KEY'\n"
+            "    key = 'bedrock'\n"
+            "    prefixes = ('bedrock/',)\n"
+            "    env_var = 'AWS_BEARER_TOKEN_BEDROCK'\n"
             "    def is_available(self):\n"
             "        return False\n"
             "    def create_llm(self, model=None, **kwargs):\n"
@@ -208,7 +221,7 @@ class TestPrefixErrors:
         with pytest.raises(InferenceProviderError) as exc:
             load_registry()
         assert "reserved" in str(exc.value)
-        assert "ollama/" in str(exc.value)
+        assert "bedrock/" in str(exc.value)
 
     def test_external_cannot_reclaim_xai(self, monkeypatch, tmp_path):
         home = _home(monkeypatch, tmp_path)
@@ -267,6 +280,35 @@ class TestPrefixErrors:
             load_registry()
         assert "openai-api" in str(exc.value)
         assert "built-in openai-api" in str(exc.value)
+
+    def test_external_cannot_reclaim_ollama(self, monkeypatch, tmp_path):
+        home = _home(monkeypatch, tmp_path)
+        folder = home / ".cast" / "inference-providers" / "ollama"
+        folder.mkdir(parents=True)
+        (folder / "provider.json").write_text(json.dumps({
+            "key": "ollama",
+            "name": "Ollama",
+            "prefixes": ["ollama/"],
+            "envVar": "OLLAMA_API_KEY",
+            "configKey": "providers.ollama.api_key",
+            "baseUrl": "http://localhost:11434/v1",
+            "acceptsAnyModel": True,
+        }))
+        (folder / "provider.py").write_text(
+            "class P:\n"
+            "    key = 'ollama'\n"
+            "    prefixes = ('ollama/',)\n"
+            "    env_var = 'OLLAMA_API_KEY'\n"
+            "    def is_available(self):\n"
+            "        return False\n"
+            "    def create_llm(self, model=None, **kwargs):\n"
+            "        return model\n"
+            "provider = P()\n"
+        )
+        with pytest.raises(InferenceProviderError) as exc:
+            load_registry()
+        assert "ollama" in str(exc.value)
+        assert "built-in ollama" in str(exc.value)
 
 
 class TestSamplingParams:
@@ -596,3 +638,59 @@ class TestFakeProviderRow:
     def test_bare_alias_file_matches_the_rewrite_table(self):
         aliases = json.loads((ROOT / "python" / "cast" / "providers" / "bare-aliases.json").read_text())
         assert set(aliases) == set(MODEL_ALIASES)
+
+
+class TestOllama:
+    def test_row_is_the_shared_class_with_no_module(self, monkeypatch, tmp_path):
+        _home(monkeypatch, tmp_path)
+        provider = get_provider("ollama/qwen3")
+        assert provider.key == "ollama"
+        assert provider.source == "built-in ollama"
+        assert isinstance(provider.impl, OpenAICompatibleProvider)
+        assert provider.impl.rewrite_model is None
+        assert provider.keyless is True
+        assert provider.is_available() is True
+        assert provider.impl.placeholder_key == "ollama"
+
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_missing_key_sends_a_placeholder_not_an_empty_bearer(self, mock_chat, monkeypatch, tmp_path):
+        _home(monkeypatch, tmp_path)
+        monkeypatch.setenv("OLLAMA_API_KEY", "   ")
+        provider = get_provider("ollama/qwen3")
+        provider.create_llm("ollama/qwen3", **provider.llm_params("ollama/qwen3"))
+        kwargs = mock_chat.call_args.kwargs
+        assert kwargs["model"] == "qwen3"
+        assert kwargs["api_key"] == "ollama"
+        assert kwargs["api_key"] != ""
+        assert kwargs["base_url"] == "http://localhost:11434/v1"
+        assert kwargs["temperature"] == 0.7
+        provider.create_llm("ollama/llama3.1:8b", api_key="")
+        assert mock_chat.call_args.kwargs["model"] == "llama3.1:8b"
+        assert mock_chat.call_args.kwargs["api_key"] == "ollama"
+
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_cloud_key_and_base_url_are_used_when_set(self, mock_chat, monkeypatch, tmp_path):
+        _home(monkeypatch, tmp_path)
+        monkeypatch.setenv("OLLAMA_API_KEY", "cloud-key")
+        monkeypatch.setenv("OLLAMA_BASE_URL", "https://ollama.com/v1")
+        provider = get_provider("ollama/gpt-oss")
+        provider.create_llm("ollama/gpt-oss", **provider.llm_params("ollama/gpt-oss"))
+        kwargs = mock_chat.call_args.kwargs
+        assert kwargs["model"] == "gpt-oss"
+        assert kwargs["api_key"] == "cloud-key"
+        assert kwargs["base_url"] == "https://ollama.com/v1"
+        assert kwargs["temperature"] == 0.7
+
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_builder_sends_temperature_without_a_key(self, mock_chat, monkeypatch, tmp_path):
+        from cast.builder import create_llm
+
+        _home(monkeypatch, tmp_path)
+        config = {"defaults": {"builder_model": "ollama/qwen3"}}
+        with patch("cast.builder.load_global_config", return_value=config):
+            create_llm()
+        kwargs = mock_chat.call_args.kwargs
+        assert kwargs["model"] == "qwen3"
+        assert kwargs["api_key"] == "ollama"
+        assert kwargs["base_url"] == "http://localhost:11434/v1"
+        assert kwargs["temperature"] == 0.7

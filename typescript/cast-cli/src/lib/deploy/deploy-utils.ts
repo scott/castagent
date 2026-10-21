@@ -1409,7 +1409,8 @@ function blockedInferenceEnvName(name: string): boolean {
 export async function inferenceEnv(config: any = loadConfig()): Promise<Record<string, string>> {
   const out: Record<string, string> = {}
   for (const entry of loadInferenceCatalog()) {
-    if (entry.envVar && !blockedInferenceEnvName(entry.envVar)) {
+    // A keyless row's envVar is optional (Ollama cloud). It stays on the builder.
+    if (entry.envVar && !entry.keyless && !blockedInferenceEnvName(entry.envVar)) {
       const value = await resolvedInferenceToken(entry, config)
       if (value) out[entry.envVar] = value
     }
@@ -1473,8 +1474,9 @@ export function inferenceProviderForModel(
  * Keep the API key for the provider that serves `model`.
  * Base URL variables are builder settings and are dropped even when
  * `resolved` already contains them.
- * `resolved` is the output of inferenceEnv(), so callers that stub that
- * helper still control which values are available.
+ * A keyless provider does not forward its optional token. Non-secret
+ * settings still go through. `resolved` is the output of inferenceEnv(),
+ * so callers that stub that helper still control which values are available.
  */
 export function filterInferenceEnv(
   model: string,
@@ -1484,6 +1486,15 @@ export function filterInferenceEnv(
   if (Object.keys(resolved).length === 0) return {}
   const entries = catalog ?? loadInferenceCatalog()
   const provider = inferenceProviderForModel(model, entries)
+  if (provider?.keyless) {
+    const kept: Record<string, string> = {}
+    for (const setting of provider.settings ?? []) {
+      if (!setting?.env || blockedInferenceEnvName(setting.env)) continue
+      const value = resolved[setting.env]
+      if (value) kept[setting.env] = value
+    }
+    return kept
+  }
   if (!provider?.envVar && !(provider?.settings && provider.settings.length > 0)) return {}
   const kept: Record<string, string> = {}
   if (provider?.envVar && !blockedInferenceEnvName(provider.envVar)) {

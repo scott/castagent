@@ -2,7 +2,8 @@ import {Flags} from '@oclif/core'
 import * as fs from 'fs'
 import * as path from 'path'
 import MicrovmDeploy from '../microvm'
-import {resolveDigitalOceanToken} from '../deploy-utils'
+import {readAgentModel, resolveDigitalOceanToken} from '../deploy-utils'
+import {ollamaDeployRefusal} from '../ollama'
 import type {DeploymentProvider} from '../types'
 import {DIGITALOCEAN_AUTH, DOCTL_CLI} from './shared'
 
@@ -86,6 +87,8 @@ export const microvmProvider: DeploymentProvider = {
     if (ctx.versionTarballPath && fs.existsSync(ctx.versionTarballPath)) {
       await extractVersionTarball(ctx.agentPath, ctx.versionTarballPath, ctx.log, ctx.version)
     }
+    const refusal = ollamaDeployRefusal('microvm', readAgentModel(ctx.agentPath))
+    if (refusal) ctx.error(refusal)
     await MicrovmDeploy.upgrade(ctx.agentName, ctx.deployment, message => ctx.log(message))
   },
   async connect(ctx) {

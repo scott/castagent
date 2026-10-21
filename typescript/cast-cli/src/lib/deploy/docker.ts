@@ -23,6 +23,7 @@ import {
   ensureCastRuntimeDockerfile,
   appendCompilerHint,
 } from './deploy-utils'
+import {ollamaDeployRefusal, prepareOllamaDocker} from './ollama'
 import {writeRequirementsTxt} from './requirements'
 
 // Helper to run a shell command and return its exit code
@@ -75,6 +76,8 @@ export function dockerContainerRunArgs(input: {
   publish: string
   image: string
   volumeId?: string
+  /** Map host.docker.internal on Linux, where Docker Desktop does not define it. */
+  hostGateway?: boolean
 }): string[] {
   const args = [
     'run',
@@ -83,6 +86,9 @@ export function dockerContainerRunArgs(input: {
     '-p', input.publish,
     '--env-file', '/dev/stdin',
   ]
+  if (input.hostGateway) {
+    args.push('--add-host', 'host.docker.internal:host-gateway')
+  }
   if (input.volumeId) {
     args.push('-v', `${input.volumeId}:/app/agent/memory`)
   }
@@ -455,16 +461,24 @@ export default class DockerDeploy extends Command {
 
     // Run container. The env file is the docker CLI's stdin.
     this.log('Starting Docker container...')
+    const agentModel = readAgentModel(agentPath)
+    const ollamaRefusal = ollamaDeployRefusal('docker', agentModel)
+    if (ollamaRefusal) this.error(ollamaRefusal)
+    const ollama = prepareOllamaDocker(agentModel, filterInferenceEnv(agentModel, await inferenceEnv()))
+    if (ollama.hostGateway) {
+      this.log(`Ollama base URL for this container: ${ollama.inference.OLLAMA_BASE_URL}`)
+    }
     const containerEnv = dockerContainerEnv({
       agentName,
       authToken,
-      inference: filterInferenceEnv(readAgentModel(agentPath), await inferenceEnv()),
+      inference: ollama.inference,
     })
     const dockerRunArgs = dockerContainerRunArgs({
       containerName,
       publish: `${flags.port}:8080`,
       image: imageName,
       volumeId,
+      hostGateway: ollama.hostGateway,
     })
     const runCode = await startDockerAgentContainer(dockerRunArgs, containerEnv)
     if (runCode !== 0) {

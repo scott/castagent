@@ -317,7 +317,7 @@ class TestRuntimeAgentProviderSelection:
         from cast.memory.reflection import ReflectionAgent
 
         with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
-            agent = ReflectionAgent("ollama/qwen3")
+            agent = ReflectionAgent("bedrock/us.anthropic.claude")
         assert agent.llm is None
 
     def test_anthropic_without_its_key_stays_in_echo(self, agent_config):
@@ -387,6 +387,31 @@ class TestRuntimeAgentProviderSelection:
             response = agent._echo_response("random message")
             assert "OPENAI_API_KEY" in response
             assert "OPENROUTER_API_KEY" not in response
+
+    @patch("cast.agent.runtime.create_react_agent")
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_ollama_starts_with_no_key(self, mock_chat, mock_graph, agent_config):
+        self._set_model(agent_config, "ollama/qwen3")
+        mock_graph.return_value = MagicMock()
+        with patch.dict(os.environ, _env(), clear=True):
+            agent = RuntimeAgent(agent_config)
+        assert agent.graph is not None
+        assert agent._provider.key == "ollama"
+        assert mock_chat.call_args.kwargs["model"] == "qwen3"
+        assert mock_chat.call_args.kwargs["api_key"] == "ollama"
+        assert mock_chat.call_args.kwargs["base_url"] == "http://localhost:11434/v1"
+        assert "temperature" not in mock_chat.call_args.kwargs
+
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_ollama_reflection_needs_no_key(self, mock_chat):
+        from cast.memory.reflection import ReflectionAgent
+
+        with patch.dict(os.environ, _env({"OLLAMA_BASE_URL": "http://127.0.0.1:11434/v1"}), clear=True):
+            agent = ReflectionAgent("ollama/llama3.1:8b")
+        assert agent.llm is not None
+        assert mock_chat.call_args.kwargs["model"] == "llama3.1:8b"
+        assert mock_chat.call_args.kwargs["api_key"] == "ollama"
+        assert mock_chat.call_args.kwargs["base_url"] == "http://127.0.0.1:11434/v1"
 
     def test_digitalocean_model_does_not_fall_back_to_openrouter(self, agent_config):
         self._set_model(agent_config, "digitalocean/llama3.3-70b-instruct")

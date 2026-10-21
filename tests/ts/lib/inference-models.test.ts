@@ -23,6 +23,8 @@ describe('inference model listing', () => {
   const previousGemini = process.env.GEMINI_API_KEY
   const previousAnthropic = process.env.ANTHROPIC_API_KEY
   const previousAnthropicBase = process.env.ANTHROPIC_BASE_URL
+  const previousOllamaKey = process.env.OLLAMA_API_KEY
+  const previousOllamaUrl = process.env.OLLAMA_BASE_URL
   const catalog = loadInferenceCatalog()
   let home: string
 
@@ -36,6 +38,8 @@ describe('inference model listing', () => {
     delete process.env.GEMINI_API_KEY
     delete process.env.ANTHROPIC_API_KEY
     delete process.env.ANTHROPIC_BASE_URL
+    delete process.env.OLLAMA_API_KEY
+    delete process.env.OLLAMA_BASE_URL
   })
 
   afterEach(() => {
@@ -55,6 +59,10 @@ describe('inference model listing', () => {
     else process.env.ANTHROPIC_API_KEY = previousAnthropic
     if (previousAnthropicBase === undefined) delete process.env.ANTHROPIC_BASE_URL
     else process.env.ANTHROPIC_BASE_URL = previousAnthropicBase
+    if (previousOllamaKey === undefined) delete process.env.OLLAMA_API_KEY
+    else process.env.OLLAMA_API_KEY = previousOllamaKey
+    if (previousOllamaUrl === undefined) delete process.env.OLLAMA_BASE_URL
+    else process.env.OLLAMA_BASE_URL = previousOllamaUrl
     fs.rmSync(home, {recursive: true, force: true})
   })
 
@@ -571,6 +579,72 @@ describe('inference model listing', () => {
     expect(result.models.map(model => model.id)).to.deep.equal([
       'fakelocal/tiny',
       'fakelocal/small',
+    ])
+  })
+
+  it('lists pulled Ollama models from /v1/models without a token', async () => {
+    const entry = catalog.find(item => item.key === 'ollama')
+    const seen: Array<{url: string; authorization: string | null}> = []
+    const result = await modelsForProvider(entry!, {
+      fetchImpl: async (input, init) => {
+        const headers = new Headers(init?.headers)
+        seen.push({url: String(input), authorization: headers.get('authorization')})
+        return jsonResponse({
+          data: [
+            {id: 'qwen3:8b'},
+            {id: 'llama3.1:8b'},
+            {id: 'nomic-embed-text'},
+          ],
+        })
+      },
+    })
+    expect(seen).to.deep.equal([{
+      url: 'http://localhost:11434/v1/models',
+      authorization: null,
+    }])
+    expect(result.fallback).to.equal(false)
+    expect(result.freeform).to.equal(true)
+    expect(result.models.map(model => model.id)).to.deep.equal([
+      'ollama/qwen3:8b',
+      'ollama/llama3.1:8b',
+      'ollama/nomic-embed-text',
+    ])
+    expect(JSON.stringify(seen)).to.not.include('Bearer')
+  })
+
+  it('sends a real Ollama cloud key and does not invent a placeholder bearer', async () => {
+    const entry = catalog.find(item => item.key === 'ollama')
+    process.env.OLLAMA_API_KEY = 'ollama-cloud-key-0123456789'
+    process.env.OLLAMA_BASE_URL = 'https://ollama.com/v1'
+    const seen: Array<{url: string; authorization: string | null}> = []
+    const result = await modelsForProvider(entry!, {
+      fetchImpl: async (input, init) => {
+        const headers = new Headers(init?.headers)
+        seen.push({url: String(input), authorization: headers.get('authorization')})
+        return jsonResponse({data: [{id: 'gpt-oss:20b'}]})
+      },
+    })
+    expect(seen).to.deep.equal([{
+      url: 'https://ollama.com/v1/models',
+      authorization: 'Bearer ollama-cloud-key-0123456789',
+    }])
+    expect(seen[0].authorization).to.not.equal('Bearer ')
+    expect(seen[0].authorization).to.not.equal('Bearer ollama')
+    expect(result.models.map(model => model.id)).to.deep.equal(['ollama/gpt-oss:20b'])
+  })
+
+  it('uses the recommended Ollama ids when the local server does not answer', async () => {
+    const entry = catalog.find(item => item.key === 'ollama')
+    const result = await modelsForProvider(entry!, {
+      fetchImpl: async () => {
+        throw new Error('connection refused')
+      },
+    })
+    expect(result.fallback).to.equal(true)
+    expect(result.models.map(model => model.id)).to.deep.equal([
+      'ollama/qwen3',
+      'ollama/llama3.1',
+      'ollama/gpt-oss',
     ])
   })
 })

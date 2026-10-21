@@ -48,5 +48,9 @@
   {"id": "gemini/gemini-2.5-pro", "provider": "gemini", "model": "gemini-2.5-pro", "temperature": null},
   {"id": "gemini/gemini-3.8-flash", "provider": "gemini", "model": "gemini-3.8-flash", "temperature": null},
   {"id": "gemini/gemini-3.1-pro-preview", "provider": "gemini", "model": "gemini-3.1-pro-preview", "temperature": null},
-  {"id": "gemini/models/gemini-3.8-flash", "provider": "gemini", "model": "gemini-3.8-flash", "temperature": null}
+  {"id": "gemini/models/gemini-3.8-flash", "provider": "gemini", "model": "gemini-3.8-flash", "temperature": null},
+  {"id": "ollama/qwen3", "provider": "ollama", "model": "qwen3", "temperature": 0.7},
+  {"id": "ollama/llama3.1", "provider": "ollama", "model": "llama3.1", "temperature": 0.7},
+  {"id": "ollama/gpt-oss", "provider": "ollama", "model": "gpt-oss", "temperature": 0.7},
+  {"id": "ollama/llama3.1:8b", "provider": "ollama", "model": "llama3.1:8b", "temperature": 0.7}
 ]

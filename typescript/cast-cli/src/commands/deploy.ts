@@ -6,7 +6,8 @@ import * as path from 'path'
 import * as readline from 'readline'
 import {AgentYamlError, agentConfigFromDocument, parseAgentYamlDocument} from '../lib/agent-yaml'
 import {MISSING_AGENT_VERSION, isSemverLike, versionFromAgentYamlDocument, type AgentYamlVersion} from '../lib/agent-version'
-import {checkCli, generateAuthToken, generateDeploymentSha} from '../lib/deploy/deploy-utils'
+import {checkCli, generateAuthToken, generateDeploymentSha, readAgentModel} from '../lib/deploy/deploy-utils'
+import {ollamaDeployRefusal} from '../lib/deploy/ollama'
 import {beginRequirementWarnings, RequirementError, stagePythonRequirements} from '../lib/deploy/requirements'
 import {
   deploymentProviderKeys,
@@ -515,6 +516,9 @@ export default class Deploy extends Command {
         `Valid providers: ${deploymentProviderKeys().join(', ')}`
       )
     }
+
+    const ollamaRefusal = ollamaDeployRefusal(provider, readAgentModel(agentPath))
+    if (ollamaRefusal) this.error(ollamaRefusal)
 
     this.log(`Deploying ${agentName} to ${provider}...`)
 

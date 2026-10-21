@@ -18,6 +18,7 @@ import {
 import {deployToSprites, type SpriteDeployOptions} from './sprites'
 import {SPRITE_SERVICE_LOG} from './sprites-service'
 import {dockerContainerEnv, dockerContainerRunArgs, startDockerAgentContainer, writeDockerCompose} from './docker'
+import {ollamaDeployRefusal, prepareOllamaDocker} from './ollama'
 import {writeHostMotdOverSsh} from './motd'
 import {stagePythonRequirements, writeRequirementsTxt} from './requirements'
 import {
@@ -118,6 +119,9 @@ export async function upgradeDockerDeployment(
     await tar.extract({file: versionTarballPath, cwd: agentPath})
   }
 
+  const dockerOllamaRefusal = ollamaDeployRefusal('docker', readAgentModel(agentPath))
+  if (dockerOllamaRefusal) host.error(dockerOllamaRefusal)
+
   const castRuntimeDir = path.join(agentPath, '.cast-runtime', 'cast')
   fs.mkdirSync(path.dirname(castRuntimeDir), {recursive: true})
   if (fs.existsSync(castRuntimeDir)) {
@@ -170,16 +174,22 @@ export async function upgradeDockerDeployment(
   host.log('Starting Docker container...')
 
   const authToken = deployment ? await resolveDeploymentAuthToken(deployment) : null
+  const upgradedModel = readAgentModel(agentPath)
+  const ollama = prepareOllamaDocker(upgradedModel, filterInferenceEnv(upgradedModel, await inferenceEnv()))
+  if (ollama.hostGateway) {
+    host.log(`Ollama base URL for this container: ${ollama.inference.OLLAMA_BASE_URL}`)
+  }
   const containerEnv = dockerContainerEnv({
     agentName,
     authToken,
-    inference: filterInferenceEnv(readAgentModel(agentPath), await inferenceEnv()),
+    inference: ollama.inference,
   })
   const dockerRunArgs = dockerContainerRunArgs({
     containerName,
     publish: '8080:8080',
     image: `cast-${agentName}:latest`,
     volumeId: existingVolumeId || undefined,
+    hostGateway: ollama.hostGateway,
   })
   const runCode = await startDockerAgentContainer(dockerRunArgs, containerEnv)
   if (runCode !== 0) {
@@ -231,6 +241,9 @@ export async function upgradeRailwayDeployment(
     await tar.extract({file: versionTarballPath, cwd: agentPath})
   }
 
+  const railwayOllamaRefusal = ollamaDeployRefusal('railway', readAgentModel(agentPath))
+  if (railwayOllamaRefusal) host.error(railwayOllamaRefusal)
+
   stagePythonRequirements(agentPath)
 
   host.log('Triggering Railway redeploy...')
@@ -281,6 +294,9 @@ export async function upgradeFlyDeployment(
     }
     await tar.extract({file: versionTarballPath, cwd: agentPath})
   }
+
+  const flyOllamaRefusal = ollamaDeployRefusal('fly', readAgentModel(agentPath))
+  if (flyOllamaRefusal) host.error(flyOllamaRefusal)
 
   stageCastRuntime(agentPath)
   host.log('Triggering Fly.io deploy...')
@@ -349,6 +365,9 @@ export async function upgradeDigitalOceanDeployment(
     }
     await tar.extract({file: versionTarballPath, cwd: agentPath})
   }
+
+  const dropletOllamaRefusal = ollamaDeployRefusal('digitalocean', readAgentModel(agentPath))
+  if (dropletOllamaRefusal) host.error(dropletOllamaRefusal)
 
   stageCastRuntime(agentPath)
   host.log('Building and pushing Docker image to DigitalOcean...')
@@ -640,6 +659,9 @@ export async function upgradeSpritesDeployment(
       }
       await tar.extract({file: versionTarballPath, cwd: agentPath})
     }
+
+    const spriteOllamaRefusal = ollamaDeployRefusal('sprites', readAgentModel(agentPath))
+    if (spriteOllamaRefusal) host.error(spriteOllamaRefusal)
 
     // An unsatisfiable pin fails here, before the sprite is touched.
     // The catch restores the local directory and does not redeploy.

@@ -23,6 +23,7 @@ import {
   resolveDigitalOceanToken,
   saveDeployment,
 } from './deploy-utils'
+import {ollamaDeployRefusal} from './ollama'
 
 const MIN_DOCTL: [number, number, number] = [1, 173, 0]
 const REGION = 'mkc1'
@@ -1140,6 +1141,9 @@ export default class MicrovmDeploy extends Command {
         `Cast Python package not found under ${projectRoot}. Run cast upgrade from a Cast Agent checkout so the image includes the current runtime.`,
       )
     }
+
+    const ollamaRefusal = ollamaDeployRefusal('microvm', readAgentModel(agentPath))
+    if (ollamaRefusal) throw new Error(ollamaRefusal)
 
     const sha = deployment.id as string
     const stamp = Date.now().toString(36)
