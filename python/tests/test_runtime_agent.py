@@ -291,7 +291,7 @@ class TestRuntimeAgentProviderSelection:
             assert agent.graph is None
             assert agent._provider is not None
             assert agent._provider.key == "xai"
-            response = agent._echo_response("hello")
+            response = agent._echo_response("random message")
             assert "XAI_API_KEY" in response
             assert "OPENROUTER_API_KEY" not in response
 
