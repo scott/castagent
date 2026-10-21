@@ -9,6 +9,7 @@ export default class ProviderEnable extends Command {
   static examples = [
     '<%= config.bin %> <%= command.id %> digitalocean --token -',
     '<%= config.bin %> <%= command.id %> openrouter --token -',
+    '<%= config.bin %> <%= command.id %> gemini --token -',
     '<%= config.bin %> <%= command.id %> digitalocean --token - --url https://inference.do-ai.run/v1',
   ]
 

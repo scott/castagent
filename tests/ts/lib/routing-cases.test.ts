@@ -28,11 +28,13 @@ const OPENROUTER = 'sk-or-v1-secret-openrouter-key'
 const DIGITALOCEAN = 'do-model-secret-key-0123456789'
 const XAI = 'xai-secret-key-0123456789'
 const OPENAI = 'sk-openai-test-key-0123456789'
+const GEMINI = 'gemini-test-key-0123456789'
 const SECRET_BY_ENV: Record<string, string> = {
   OPENROUTER_API_KEY: OPENROUTER,
   DIGITALOCEAN_MODEL_ACCESS_KEY: DIGITALOCEAN,
   XAI_API_KEY: XAI,
   OPENAI_API_KEY: OPENAI,
+  GEMINI_API_KEY: GEMINI,
 }
 const BOTH = {
   ...SECRET_BY_ENV,
@@ -40,6 +42,7 @@ const BOTH = {
   DIGITALOCEAN_INFERENCE_BASE_URL: 'https://inference.example/v1',
   XAI_BASE_URL: 'https://xai.example/v1',
   OPENAI_BASE_URL: 'https://proxy.example/v1',
+  GEMINI_BASE_URL: 'https://generativelanguage.example/v1beta/openai',
 }
 
 describe('shared inference routing cases', () => {

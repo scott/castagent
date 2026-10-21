@@ -937,6 +937,7 @@ Non-default providers match first. A provider matches when the model starts with
 | Model string | Provider |
 |---|---|
 | `digitalocean/llama3.3-70b-instruct` | DigitalOcean serverless inference |
+| `gemini/gemini-3.8-flash` | Google Gemini |
 | `openrouter/anthropic/claude-sonnet-4.6` | OpenRouter |
 | `anthropic/claude-sonnet-4.6` | OpenRouter |
 | `openai/gpt-4o` | OpenRouter |
@@ -949,15 +950,15 @@ Non-default providers match first. A provider matches when the model starts with
 | `openai-api/gpt-4o` | OpenAI. `openai/gpt-4o` stays on OpenRouter. |
 | `openai-api/o3`, `openai-api/gpt-5` | OpenAI, temperature omitted |
 
-`vendor-prefixes.json` stops an external provider from registering `openai/`, `anthropic/`, `google/`, `x-ai/`, and the other listed vendor prefixes. It does not decide routing. Any slash prefix that is not a registered provider and not a reserved direct prefix uses OpenRouter, and deploy forwards `OPENROUTER_API_KEY`. `openai-api/` is the direct OpenAI provider (`OPENAI_API_KEY`, `https://api.openai.com/v1`). Deploy forwards that key only when `brain.model` uses `openai-api/`. `xai/` is registered. Deploy forwards `XAI_API_KEY` for an `xai/` model and does not forward `XAI_BASE_URL`. `anthropic-api/`, `gemini/`, `bedrock/`, and `ollama/` are reserved and are not providers until a later change registers them. Deploy forwards no inference key for those ids.
+`vendor-prefixes.json` stops an external provider from registering `openai/`, `anthropic/`, `google/`, `x-ai/`, and the other listed vendor prefixes. It does not decide routing. Any slash prefix that is not a registered provider and not a reserved direct prefix uses OpenRouter, and deploy forwards `OPENROUTER_API_KEY`. `openai-api/` is the direct OpenAI provider (`OPENAI_API_KEY`, `https://api.openai.com/v1`). Deploy forwards that key only when `brain.model` uses `openai-api/`. `xai/` is registered. Deploy forwards `XAI_API_KEY` for an `xai/` model and does not forward `XAI_BASE_URL`. `gemini/` is registered. Deploy forwards `GEMINI_API_KEY` for that prefix and does not forward `GEMINI_BASE_URL`. `anthropic-api/`, `bedrock/`, and `ollama/` are reserved and are not providers until a later change registers them. Deploy forwards no inference key for those ids.
 
 Several API keys may be set. The prefix wins. If the selected provider's token is missing, Cast stays in echo mode and names that variable. It does not try another provider. A reserved direct prefix, or a bare id OpenRouter does not already accept, is an error. The runtime and reflection catch that error and stay in echo mode.
 
 ### Registration
 
-An OpenAI-compatible built-in is one row in `python/cast/providers/manifest.json` with `"impl": "openai-compatible"`. The registry builds `OpenAICompatibleProvider` from that row. A module is only required when the provider rewrites model ids, and that module is one line in `BUILTIN_MODULES`. OpenRouter (`https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`) is the default and keeps its alias rewrite. DigitalOcean (`https://inference.do-ai.run/v1`, `DIGITALOCEAN_MODEL_ACCESS_KEY`, config key `providers.digitalocean_inference.api_key`) accepts any catalog id and does not rewrite it. OpenAI (`https://api.openai.com/v1`, `OPENAI_API_KEY`, config key `providers.openai.api_key`, prefix `openai-api/`) is a manifest row with no module. Its model list is `GET /models`, filtered to chat ids. Cast does not read `OPENAI_BASE_URL`. xAI (`https://api.x.ai/v1`, `XAI_API_KEY`, config key `providers.xai.api_key`, prefix `xai/`) is a manifest row with no module. Its model list is `GET /models`, filtered to chat ids. All four use the shared class. `providers.digitalocean` remains the Droplet and MicroVM deploy token.
+An OpenAI-compatible built-in is one row in `python/cast/providers/manifest.json` with `"impl": "openai-compatible"`. The registry builds `OpenAICompatibleProvider` from that row. A module is only required when the provider rewrites model ids, and that module is one line in `BUILTIN_MODULES`. OpenRouter (`https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`) is the default and keeps its alias rewrite. DigitalOcean (`https://inference.do-ai.run/v1`, `DIGITALOCEAN_MODEL_ACCESS_KEY`, config key `providers.digitalocean_inference.api_key`) accepts any catalog id and does not rewrite it. OpenAI (`https://api.openai.com/v1`, `OPENAI_API_KEY`, config key `providers.openai.api_key`, prefix `openai-api/`) is a manifest row with no module. Its model list is `GET /models`, filtered to chat ids. Cast does not read `OPENAI_BASE_URL`. xAI (`https://api.x.ai/v1`, `XAI_API_KEY`, config key `providers.xai.api_key`, prefix `xai/`) is a manifest row with no module. Its model list is `GET /models`, filtered to chat ids. Google Gemini (`https://generativelanguage.googleapis.com/v1beta/openai`, `GEMINI_API_KEY`, config key `providers.gemini.api_key`) is a manifest row with no module. It accepts any chat id, strips a leading `models/` from the model list, and does not rewrite catalog ids. All five use the shared class. `providers.digitalocean` remains the Droplet and MicroVM deploy token.
 
-Builder sampling params come from the row's `defaultParams`. OpenRouter, DigitalOcean, OpenAI, and xAI request temperature `0.7`. `omitTemperatureModels` drops temperature for a matching model. OpenAI omits it for o-series and `gpt-5` ids. xAI does not list any omit pattern: reasoning ids still receive `0.7`, and the row does not send `stop`, `presence_penalty`, or `frequency_penalty`. The runtime and reflection do not pass temperature. A custom OpenAI base URL stays on the builder in `providers.openai.base_url`.
+Builder sampling params come from the row's `defaultParams`. OpenRouter, DigitalOcean, OpenAI, and xAI request temperature `0.7`. `omitTemperatureModels` drops temperature for a matching model. OpenAI omits it for o-series and `gpt-5` ids. xAI does not list any omit pattern: reasoning ids still receive `0.7`, and the row does not send `stop`, `presence_penalty`, or `frequency_penalty`. Gemini has no `defaultParams`, so the builder omits temperature and Gemini 3 thinking models keep the API default of 1.0. The runtime and reflection do not pass temperature. A custom OpenAI base URL stays on the builder in `providers.openai.base_url`.
 
 External providers load after built-ins, with no edit to this repository:
 
@@ -976,16 +977,18 @@ An external key or prefix that collides with a provider loaded earlier fails at 
 | OpenRouter | `providers/openrouter.py` (shared class plus alias rewrite) | v1, default |
 | DigitalOcean serverless inference | `providers/digitalocean.py` (shared class) | v1 |
 | xAI | manifest row `xai`, shared class, no module | v1 |
+| Google Gemini | manifest row `gemini` (shared class, no module) | v1 |
 | Anthropic direct | reserved `anthropic-api/` | Not registered |
 | OpenAI direct | manifest row `openai-api` (shared class, no module) | v1 |
 | Ollama | reserved `ollama/` | Not registered |
-| Gemini, Bedrock | reserved `gemini/`, `bedrock/` | Not registered |
+| Bedrock | reserved `bedrock/` | Not registered |
 
 ### Model string examples
 
 - `openrouter/minimax/minimax-m2.5` (default builder model)
 - `digitalocean/llama3.3-70b-instruct`
 - `digitalocean/deepseek-v3.2`
+- `gemini/gemini-3.8-flash`
 - `example/my-model` (external provider)
 - `openai-api/gpt-4o`
 - `openai-api/o3` (temperature omitted)

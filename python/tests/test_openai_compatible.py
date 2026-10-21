@@ -140,7 +140,6 @@ class TestPrefixErrors:
         _home(monkeypatch, tmp_path)
         cases = {
             "anthropic-api/claude-sonnet-4.6": "anthropic-api/",
-            "gemini/gemini-2.5-flash": "gemini/",
             "bedrock/us.anthropic.claude": "bedrock/",
             "ollama/qwen3": "ollama/",
         }

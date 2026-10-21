@@ -114,7 +114,7 @@ Any other `openai-api/<id>` is accepted. Reasoning models (`o1`, `o3`,
 models use `0.7`.
 
 These prefixes are reserved for a direct provider and are not registered
-yet: `anthropic-api/`, `gemini/`, `bedrock/`, and `ollama/`.
+yet: `anthropic-api/`, `bedrock/`, and `ollama/`.
 `xai/grok-4.7` is direct xAI. `x-ai/grok-2` still uses OpenRouter.
 A bare id
 OpenRouter does not already accept, such as `gpt-5` or `not-a-real-model`,
@@ -128,7 +128,7 @@ dashed, and 5.x) are sent as written and omit temperature. Earlier
 aliases such as `claude-opus-4` and `claude-sonnet-4` still pin to 4.5
 and 4.6.
 
-OpenRouter, DigitalOcean, OpenAI, and xAI use one OpenAI-compatible provider.
+OpenRouter, DigitalOcean, OpenAI, xAI, and Google Gemini use one OpenAI-compatible provider.
 A new provider of that kind is a row in `python/cast/providers/manifest.json`
 with `"impl": "openai-compatible"`. The builder requests temperature `0.7`
 from each row's `defaultParams`, and omits temperature for models that match
@@ -144,6 +144,17 @@ xAI reasoning ids still receive temperature `0.7`. The row does not send
 `stop`, `presence_penalty`, or `frequency_penalty`. `XAI_BASE_URL` is a
 builder setting and is not copied onto a deployed agent. Deploy forwards
 `XAI_API_KEY` only when `brain.model` uses `xai/`.
+
+`gemini/<model>` is Google Gemini on the same shared class. The key is
+`GEMINI_API_KEY` (`cast provider enable gemini --token -`). Requests go to
+`https://generativelanguage.googleapis.com/v1beta/openai`. `/model` loads
+`GET /models`, drops a leading `models/` from each id, and keeps chat
+models. When that list cannot be loaded, the picker shows
+`gemini-3.8-flash` and `gemini-3.1-pro-preview`. The builder does not
+send temperature. Gemini 3 thinking models are tuned for the API default
+of 1.0, and a lower value can loop. `google/gemini-2.5-pro` and the bare
+alias `gemini-2.5-pro` stay on OpenRouter. Deploy forwards
+`GEMINI_API_KEY` and does not forward `GEMINI_BASE_URL`.
 
 ## TUI
 
