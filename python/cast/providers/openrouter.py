@@ -14,6 +14,18 @@ def chat_cls():
     return ChatOpenAI
 
 
+# Claude 4.7 and later keep the id the caller wrote. Earlier 4.x aliases
+# still pin to the shipped snapshot (opus 4.5, sonnet 4.6).
+_CLAUDE_47_OR_LATER = re.compile(
+    r"claude-(?:opus|sonnet|haiku)-(?:4[.-][7-9]|[5-9](?:[.-]\d+)?)",
+    re.IGNORECASE,
+)
+
+
+def _claude_version_passes_through(model_name: str) -> bool:
+    return bool(_CLAUDE_47_OR_LATER.search(model_name or ""))
+
+
 def rewrite_openrouter_model(model_name: str) -> str:
     """Alias table and vendor-prefix rules. The shared class strips ``openrouter/`` first."""
     if not model_name:
@@ -31,11 +43,21 @@ def rewrite_openrouter_model(model_name: str) -> str:
     if model_lower in MODEL_ALIASES:
         model_name = MODEL_ALIASES[model_lower]
     # Check for partial matches and add appropriate dates
-    elif model_name.lower().startswith("anthropic/claude-sonnet-4") or model_name.lower() == "claude-sonnet-4":
+    elif not _claude_version_passes_through(model_name) and (
+        model_name.lower().startswith("anthropic/claude-sonnet-4")
+        or model_name.lower() == "claude-sonnet-4"
+    ):
         model_name = "anthropic/claude-sonnet-4.6"
-    elif model_name.lower().startswith("anthropic/claude-opus-4") or model_name.lower() == "claude-opus-4":
+    elif not _claude_version_passes_through(model_name) and (
+        model_name.lower().startswith("anthropic/claude-opus-4")
+        or model_name.lower() == "claude-opus-4"
+    ):
         model_name = "anthropic/claude-opus-4.5"  # Latest Opus 4.5
-    elif model_name.lower().startswith("anthropic/claude-opus") and "4.6" in model_name:
+    elif (
+        not _claude_version_passes_through(model_name)
+        and model_name.lower().startswith("anthropic/claude-opus")
+        and "4.6" in model_name
+    ):
         model_name = "anthropic/claude-opus-4.5"
     # Normalize old-style ids: claude-3-7-sonnet -> claude-3.7-sonnet.
     # re.match is start-anchored, so it misses a provider prefix

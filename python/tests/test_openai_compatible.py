@@ -134,15 +134,16 @@ class TestPrefixErrors:
             get_provider("xai/grok-4")
         assert "x-ai/grok-4 still routes to OpenRouter" in str(exc.value)
 
-    def test_unknown_prefix_names_registered_and_reserved(self, monkeypatch, tmp_path):
+    def test_unlisted_vendor_prefixes_stay_on_openrouter(self, monkeypatch, tmp_path):
         _home(monkeypatch, tmp_path)
-        with pytest.raises(InferenceProviderError) as exc:
-            get_provider("nope/model")
-        message = str(exc.value)
-        assert "Unknown provider prefix 'nope/'" in message
-        assert "openrouter/" in message
-        assert "digitalocean/" in message
-        assert "gemini/" in message
+        for model in (
+            "qwen/qwen3-coder",
+            "z-ai/glm-4.6",
+            "moonshotai/kimi-k2",
+            "nope/model",
+            "~anthropic/claude-sonnet-latest",
+        ):
+            assert get_provider(model).key == "openrouter", model
 
     def test_missing_prefix_names_direct_prefixes(self, monkeypatch, tmp_path):
         _home(monkeypatch, tmp_path)
@@ -224,25 +225,6 @@ class TestSamplingParams:
             create_llm()
         assert "temperature" not in mock_chat.call_args.kwargs
         assert mock_chat.call_args.kwargs["model"] == "openai/o3"
-
-    def test_rejected_param_is_named(self, monkeypatch, tmp_path, capsys):
-        from cast.builder import EchoChatModel, create_llm
-
-        _home(monkeypatch, tmp_path)
-        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
-        config = {"defaults": {"builder_model": "openrouter/minimax/minimax-m2.5"}}
-
-        def explode(*_args, **_kwargs):
-            raise ValueError("unsupported temperature for this model")
-
-        with patch("cast.builder.load_global_config", return_value=config):
-            with patch("cast.providers.openrouter.ChatOpenAI", side_effect=explode):
-                llm = create_llm()
-        assert isinstance(llm, EchoChatModel)
-        err = capsys.readouterr().err
-        assert "Rejected param: temperature" in err
-        assert "openrouter/minimax/minimax-m2.5" in err
-
 
 class TestFakeProviderRow:
     def test_row_works_end_to_end_without_a_module(self, monkeypatch, tmp_path):

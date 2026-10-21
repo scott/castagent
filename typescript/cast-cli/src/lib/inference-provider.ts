@@ -430,7 +430,7 @@ export async function applyBuilderModel(rawId: string): Promise<string> {
     ?? catalog.find(item => item.key === currentKey)
     ?? catalog.find(item => item.default)
   if (!entry) throw new Error(unknownModelMessage(trimmed))
-    if (target && target.key !== currentKey) {
+  if (target && target.key !== currentKey) {
     const token = await resolvedToken(entry, config)
     if (!token && !entry.keyless) {
       throw new Error(

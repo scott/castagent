@@ -20,15 +20,15 @@ Non-default providers match first. A provider matches when the model starts with
 | `x-ai/grok-2` | OpenRouter |
 | `claude-sonnet-4` | OpenRouter, then the alias table |
 | `example/my-model` | The external provider that registered `example/` |
+| `qwen/qwen3-coder`, `z-ai/glm-4.6`, `unknown/model` | OpenRouter. Any slash prefix that is not registered and not reserved uses the default. |
 | `openai-api/gpt-4o` | Error. That direct prefix is reserved and not registered yet. `openai/gpt-4o` still uses OpenRouter. |
-| `unknown/model` | Error. The message names registered, reserved, and OpenRouter vendor prefixes. |
 | `gpt-5` | Error. A bare id OpenRouter does not already rewrite needs a prefix. |
 
-`openai/`, `anthropic/`, `google/`, `meta-llama/`, `kimi/`, `minimax/`, `deepseek/`, `mistralai/`, `cohere/`, `x-ai/`, and `perplexity/` are OpenRouter model ids. Do not register them. The list lives in `vendor-prefixes.json`.
+`vendor-prefixes.json` lists vendor prefixes an external provider must not claim (`openai/`, `anthropic/`, `google/`, `x-ai/`, and the rest of that file). It does not limit which slash ids OpenRouter can serve. `qwen/`, `z-ai/`, `moonshotai/`, and any later vendor still route to OpenRouter.
 
-`openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`, and `xai/` are reserved in `manifest.json` with `"impl": "reserved"`. They are not providers. An external cannot claim one. Using one raises `InferenceProviderError` and, when the row sets `openrouterVendor`, names the OpenRouter id (`x-ai/` for `xai/`).
+`openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`, and `xai/` are reserved in `manifest.json` with `"impl": "reserved"`. They are not providers. An external cannot claim one. Using one raises `InferenceProviderError` and, when the row sets `openrouterVendor`, names the OpenRouter id (`x-ai/` for `xai/`). The runtime and reflection catch that error and stay in echo mode.
 
-A prefix that is not registered, reserved, or a vendor id is an error. It does not fall through to OpenRouter. A bare alias such as `claude-sonnet-4`, a known OpenRouter id, a date suffix, or a dashed Claude id such as `claude-3-7-sonnet` still uses OpenRouter.
+A bare alias such as `claude-sonnet-4`, a known OpenRouter id, a date suffix, or a dashed Claude id such as `claude-3-7-sonnet` still uses OpenRouter. A bare id OpenRouter does not already rewrite, such as `gpt-5`, is an error in `cast model` and `cast update`. The runtime and reflection catch it and stay in echo mode.
 
 Both API keys may be set. The prefix wins. A provider is available when its environment variable is set, or `~/.cast/tokens/inference/<key>.token` exists, or its config key resolves to a real value. Environment values are trimmed. An unsubstituted `${VAR}` is missing. When `HOME` is unset, or `~/.cast/config.yaml` cannot be read, that file is treated as empty. `create_llm` uses `baseUrlEnv`, then config `base_url`, then the manifest `baseUrl`. If the selected provider's token is missing, Cast stays in echo mode and names that variable. It does not try the other provider.
 

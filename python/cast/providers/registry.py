@@ -583,10 +583,6 @@ def _registered_prefixes(registry: Registry) -> str:
     return ", ".join(prefixes) or "none"
 
 
-def _vendor_list() -> str:
-    return ", ".join(sorted(RESERVED_VENDOR_PREFIXES))
-
-
 def _reserved_list() -> str:
     return ", ".join(item["prefix"] for item in _reserved_direct_by_prefix().values())
 
@@ -620,7 +616,13 @@ def _openrouter_known() -> set[str]:
 
 
 def prefix_route_error(model: Optional[str], registry: Registry) -> Optional[str]:
-    """Helpful error for a reserved, unknown, or missing prefix. None when the default provider applies."""
+    """Error for a reserved direct prefix or a bare id. None when the default applies.
+
+    A slash prefix that is not registered and not reserved routes to the
+    default provider, the same as main. ``vendor-prefixes.json`` only stops
+    an external provider from claiming ``openai/`` and the other listed
+    vendor prefixes.
+    """
     text = model or ""
     if not text:
         return None
@@ -639,15 +641,7 @@ def prefix_route_error(model: Optional[str], registry: Registry) -> Optional[str
                 f"Registered prefixes: {_registered_prefixes(registry)}."
             )
     if "/" in text:
-        head = text.split("/", 1)[0] + "/"
-        if head in RESERVED_VENDOR_PREFIXES or head in registry.by_prefix:
-            return None
-        return (
-            f"Unknown provider prefix '{head}' on model '{text}'. "
-            f"Registered prefixes: {_registered_prefixes(registry)}. "
-            f"Reserved direct prefixes: {_reserved_list()}. "
-            f"OpenRouter vendor ids ({_vendor_list()}) stay on OpenRouter."
-        )
+        return None
     if _openrouter_handles_bare(text):
         return None
     return (
@@ -683,8 +677,10 @@ def get_provider(model: Optional[str] = None) -> ProviderRecord:
     """Return the provider for ``model``.
 
     Non-default prefixes match first. The longest matching prefix wins.
-    A reserved direct prefix that is not registered yet is an error, as is
-    an unknown prefix. A bare OpenRouter alias still uses the default.
+    A slash id that is not registered and not reserved uses the default.
+    A reserved direct prefix that is not registered yet is an error.
+    A bare OpenRouter alias still uses the default. A bare id OpenRouter
+    does not already rewrite is an error.
     """
     return select_provider(model, load_registry())
 

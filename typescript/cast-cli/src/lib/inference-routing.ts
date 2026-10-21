@@ -32,17 +32,17 @@ interface ManifestRow {
 function repoRoot(): string {
   const marker = 'python/cast/providers/manifest.json'
   const candidates = [
-    process.cwd(),
     path.resolve(__dirname, '..'),
     path.resolve(__dirname, '../..'),
     path.resolve(__dirname, '../../..'),
     path.resolve(__dirname, '../../../..'),
     path.resolve(__dirname, '../../../../..'),
+    process.cwd(),
   ]
   for (const candidate of candidates) {
     if (fs.existsSync(path.join(candidate, marker))) return candidate
   }
-  return process.cwd()
+  throw new Error(`Could not find ${marker} starting from ${__dirname}`)
 }
 
 function readJson(relative: string): unknown {
@@ -138,7 +138,8 @@ export function matchingProvider<T extends PrefixCatalogEntry>(
 
 /**
  * Error when a model id cannot be routed. Null when the default provider
- * (OpenRouter) should serve it: a vendor id, a bare alias, or an empty id.
+ * (OpenRouter) should serve it: any slash prefix that is not reserved,
+ * a bare alias, or an empty id.
  */
 export function inferencePrefixError(
   model: string,
@@ -161,18 +162,10 @@ export function inferencePrefixError(
       + `Registered prefixes: ${registered}.`
     )
   }
-  if (text.includes('/')) {
-    const head = `${text.split('/', 1)[0]}/`
-    if (loadVendorPrefixes().includes(head)) return null
-    const vendors = [...loadVendorPrefixes()].sort().join(', ')
-    const reserved = loadReservedDirectPrefixes().map(item => item.prefix).join(', ')
-    return (
-      `Unknown provider prefix '${head}' on model '${text}'. `
-      + `Registered prefixes: ${registered}. `
-      + `Reserved direct prefixes: ${reserved}. `
-      + `OpenRouter vendor ids (${vendors}) stay on OpenRouter.`
-    )
-  }
+  // Registered prefixes already returned above. Any other slash id,
+  // including OpenRouter vendors that are not in vendor-prefixes.json,
+  // stays on the default provider.
+  if (text.includes('/')) return null
   if (openrouterHandlesBare(text)) return null
   const reserved = loadReservedDirectPrefixes().map(item => item.prefix).join(', ')
   return (

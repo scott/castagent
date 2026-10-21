@@ -159,6 +159,19 @@ describe('cast model', () => {
     expect(fs.existsSync(configPath())).to.equal(false)
   })
 
+  it('lists the curated catalog for an unlisted OpenRouter vendor', async () => {
+    const {errors} = await runCommand(
+      Model,
+      {model: 'qwen/qwen3-coder'},
+      {list: false, json: false, current: false},
+    )
+    expect(errors).to.have.length(1)
+    expect(errors[0]).to.include("Unknown model 'qwen/qwen3-coder'")
+    expect(errors[0]).to.include('minimax/minimax-m2.5')
+    expect(errors[0]).to.not.include('Unknown provider prefix')
+    expect(fs.existsSync(configPath())).to.equal(false)
+  })
+
   it('resolves a catalog id and one leading openrouter prefix', () => {
     expect(resolveBuilderModelId('minimax/minimax-m2.5')).to.equal('minimax/minimax-m2.5')
     expect(resolveBuilderModelId('openrouter/minimax/minimax-m2.5')).to.equal('openrouter/minimax/minimax-m2.5')

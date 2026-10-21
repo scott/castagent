@@ -262,6 +262,34 @@ class TestRuntimeAgentProviderSelection:
         assert agent.graph is not None
         assert mock_chat.call_args.kwargs["model"] == "llama3.3-70b-instruct"
 
+    @patch("cast.agent.runtime.create_react_agent")
+    @patch("cast.providers.openrouter.ChatOpenAI")
+    def test_unlisted_openrouter_vendors_start(self, mock_chat, mock_graph, agent_config):
+        """qwen/ and z-ai/ stay on OpenRouter and the process starts."""
+        mock_graph.return_value = MagicMock()
+        for model in ("qwen/qwen3-coder", "z-ai/glm-4.6"):
+            mock_chat.reset_mock()
+            self._set_model(agent_config, model)
+            with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
+                agent = RuntimeAgent(agent_config)
+            assert agent.graph is not None, model
+            assert agent._provider.key == "openrouter"
+            assert mock_chat.call_args.kwargs["model"] == model
+            assert mock_chat.call_args.kwargs["api_key"] == "or-key"
+
+    def test_reserved_prefix_falls_back_to_echo(self, agent_config):
+        self._set_model(agent_config, "xai/grok-4")
+        with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
+            agent = RuntimeAgent(agent_config)
+        assert agent.graph is None
+        assert agent._provider is None
+
+    def test_reflection_catches_a_reserved_prefix(self):
+        from cast.memory.reflection import ReflectionAgent
+
+        agent = ReflectionAgent("openai-api/gpt-4o")
+        assert agent.llm is None
+
     def test_digitalocean_model_does_not_fall_back_to_openrouter(self, agent_config):
         self._set_model(agent_config, "digitalocean/llama3.3-70b-instruct")
         with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):

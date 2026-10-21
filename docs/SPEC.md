@@ -944,12 +944,12 @@ Non-default providers match first. A provider matches when the model starts with
 | `x-ai/grok-2` | OpenRouter |
 | `claude-sonnet-4` | OpenRouter, then the alias table |
 | `example/my-model` | The external provider that registered `example/` |
+| `qwen/qwen3-coder`, `z-ai/glm-4.6` | OpenRouter. Unregistered slash prefixes use the default. |
 | `openai-api/gpt-4o` | Error. Reserved direct prefix, not registered yet |
-| `unknown/model` | Error. Unknown prefix |
 
-`openai/`, `anthropic/`, `google/`, `meta-llama/`, `kimi/`, `minimax/`, `deepseek/`, `mistralai/`, `cohere/`, `x-ai/`, and `perplexity/` are OpenRouter model ids, not provider prefixes. `openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`, and `xai/` are reserved and are not providers until a later change registers them.
+`vendor-prefixes.json` stops an external provider from registering `openai/`, `anthropic/`, `google/`, `x-ai/`, and the other listed vendor prefixes. It does not decide routing. Any slash prefix that is not a registered provider and not a reserved direct prefix uses OpenRouter, and deploy forwards `OPENROUTER_API_KEY`. `openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`, and `xai/` are reserved and are not providers until a later change registers them. Deploy forwards no inference key for those ids.
 
-Both API keys may be set. The prefix wins. If the selected provider's token is missing, Cast stays in echo mode and names that variable. It does not try the other provider. An unknown prefix, a reserved direct prefix, or a bare id OpenRouter does not already accept is an error. Deploy then forwards no inference key.
+Both API keys may be set. The prefix wins. If the selected provider's token is missing, Cast stays in echo mode and names that variable. It does not try the other provider. A reserved direct prefix, or a bare id OpenRouter does not already accept, is an error. The runtime and reflection catch that error and stay in echo mode.
 
 ### Registration
 

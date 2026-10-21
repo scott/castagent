@@ -901,15 +901,6 @@ class EchoChatModel(BaseChatModel):
         return {"model": "echo"}
 
 
-def _rejected_param(exc: BaseException, params: dict) -> Optional[str]:
-    """Name a sampling param the provider rejected, when the error text mentions it."""
-    text = str(exc).lower()
-    for name in params:
-        if name.lower() in text:
-            return name
-    return None
-
-
 def create_llm() -> BaseChatModel:
     """Create an LLM instance, falling back to echo mode if no API key.
 
@@ -939,10 +930,8 @@ def create_llm() -> BaseChatModel:
     try:
         return provider.create_llm(model=model, **params)
     except Exception as e:
-        rejected = _rejected_param(e, params)
-        detail = f" Rejected param: {rejected}." if rejected else ""
         print(
-            f"Warning: Failed to create {provider.name} LLM for model {model}.{detail} {e}",
+            f"Warning: Failed to create {provider.name} LLM for model {model}. {e}",
             file=sys.stderr,
         )
         return EchoChatModel()

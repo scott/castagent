@@ -303,12 +303,15 @@ class TestSelection:
         unknown = model_status("unknown/model")
         assert unknown["valid"] is False
         assert unknown["warning"] is None
-        assert unknown["error"].startswith("Unknown provider prefix 'unknown/'")
-        assert "openrouter/" in unknown["error"]
-        assert "openai-api/" in unknown["error"]
+        assert unknown["provider"] == "openrouter"
+        assert unknown["error"].startswith("Unknown model 'unknown/model'")
         bogus = model_status("zzz/notreal")
         assert bogus["valid"] is False
-        assert "Unknown provider prefix 'zzz/'" in bogus["error"]
+        assert bogus["provider"] == "openrouter"
+        assert bogus["error"].startswith("Unknown model 'zzz/notreal'")
+        qwen = model_status("qwen/qwen3-coder")
+        assert qwen["provider"] == "openrouter"
+        assert qwen["error"].startswith("Unknown model 'qwen/qwen3-coder'")
         known = model_status("anthropic/claude-sonnet-4.6")
         assert known["valid"] is True
         assert known["warning"] is None

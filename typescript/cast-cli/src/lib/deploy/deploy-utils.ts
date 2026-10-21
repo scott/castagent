@@ -1344,12 +1344,12 @@ function pinnedBunRun(): string {
 function findCastRoot(): string {
   const markers = ['python/cast/providers/manifest.json', 'typescript/cast-cli']
   const candidates = [
-    process.cwd(),
     path.resolve(__dirname, '..'),
     path.resolve(__dirname, '../..'),
     path.resolve(__dirname, '../../..'),
     path.resolve(__dirname, '../../../..'),
     path.resolve(__dirname, '../../../../..'),
+    process.cwd(),
   ]
   for (const candidate of candidates) {
     if (markers.every(marker => fs.existsSync(path.join(candidate, marker)))) {

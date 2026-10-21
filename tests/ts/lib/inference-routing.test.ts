@@ -60,7 +60,7 @@ describe('inference prefix routing', () => {
     expect(matchingProvider('digitalocean/llama3.3-70b-instruct', catalog)?.key).to.equal('digitalocean')
   })
 
-  it('names reserved direct prefixes and unknown prefixes', () => {
+  it('names reserved direct prefixes and routes other slash ids to OpenRouter', () => {
     const reserved = loadReservedDirectPrefixes().map(item => item.prefix)
     expect(reserved).to.include.members([
       'openai-api/',
@@ -76,9 +76,10 @@ describe('inference prefix routing', () => {
     const xai = inferencePrefixError('xai/grok-2', catalog)
     expect(xai).to.include("reserved prefix 'xai/'")
     expect(xai).to.include('x-ai/grok-2 still routes to OpenRouter')
-    const unknown = inferencePrefixError('unknown/model', catalog)
-    expect(unknown).to.include("Unknown provider prefix 'unknown/'")
-    expect(unknown).to.include('openai-api/')
+    expect(inferencePrefixError('qwen/qwen3-coder', catalog)).to.equal(null)
+    expect(inferencePrefixError('z-ai/glm-4.6', catalog)).to.equal(null)
+    expect(inferencePrefixError('unknown/model', catalog)).to.equal(null)
+    expect(matchingProvider('qwen/qwen3-coder', catalog)).to.equal(undefined)
     expect(loadVendorPrefixes()).to.include.members(['openai/', 'anthropic/', 'google/', 'x-ai/'])
     const bare = inferencePrefixError('gpt-5', catalog)
     expect(bare).to.include('has no provider prefix')
@@ -107,8 +108,16 @@ describe('inference prefix routing', () => {
     expect(filterInferenceEnv('digitalocean/llama3.3-70b-instruct', BOTH, catalog)).to.deep.equal({
       DIGITALOCEAN_MODEL_ACCESS_KEY: DIGITALOCEAN,
     })
+    expect(filterInferenceEnv('qwen/qwen3-coder', BOTH, catalog)).to.deep.equal({
+      OPENROUTER_API_KEY: OPENROUTER,
+    })
+    expect(filterInferenceEnv('z-ai/glm-4.6', BOTH, catalog)).to.deep.equal({
+      OPENROUTER_API_KEY: OPENROUTER,
+    })
+    expect(filterInferenceEnv('unknown/model', BOTH, catalog)).to.deep.equal({
+      OPENROUTER_API_KEY: OPENROUTER,
+    })
     expect(filterInferenceEnv('openai-api/gpt-4o', BOTH, catalog)).to.deep.equal({})
-    expect(filterInferenceEnv('unknown/model', BOTH, catalog)).to.deep.equal({})
     expect(filterInferenceEnv('gpt-5', BOTH, catalog)).to.deep.equal({})
     const forwarded = JSON.stringify(filterInferenceEnv('digitalocean/llama3.3-70b-instruct', BOTH, catalog))
     expect(forwarded).to.not.include('BASE_URL')

@@ -20,7 +20,7 @@
     "omitTemperatureModels": [
       "(?:^|/)o[0-9]",
       "(?:^|/)gpt-5",
-      "claude-(?:opus|sonnet|haiku)-4\\.7"
+      "claude-(?:opus|sonnet|haiku)-(?:4[.-][7-9]|[5-9](?:[.-]\\d+)?)"
     ],
     "knownModels": [
       "anthropic/claude-opus-4.5",
@@ -70,7 +70,7 @@
     "omitTemperatureModels": [
       "(?:^|/)o[0-9]",
       "(?:^|/)gpt-5",
-      "claude-(?:opus|sonnet|haiku)-4\\.7"
+      "claude-(?:opus|sonnet|haiku)-(?:4[.-][7-9]|[5-9](?:[.-]\\d+)?)"
     ]
   },
   {
