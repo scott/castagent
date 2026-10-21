@@ -54,6 +54,11 @@ function envRef(name: string): string {
 /**
  * Same default document install.sh writes before `cast new`. `cast new`
  * does not create this file itself.
+ *
+ * A new OpenAI-compatible inference provider does not need a block here.
+ * `cast provider enable <key> --token -` stores the key in the keychain or
+ * the private token file. This scaffold only lists the providers that
+ * shipped with the installer.
  */
 export const DEFAULT_CONFIG_SCAFFOLD = `cast:
   version: "1.0"

@@ -1,0 +1,13 @@
+[
+  "openai/",
+  "anthropic/",
+  "google/",
+  "meta-llama/",
+  "kimi/",
+  "minimax/",
+  "deepseek/",
+  "mistralai/",
+  "cohere/",
+  "x-ai/",
+  "perplexity/"
+]

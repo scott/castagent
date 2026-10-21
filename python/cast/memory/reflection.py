@@ -6,7 +6,7 @@ from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, SystemMessage
 from .store import MemoryHighlight
 from .filter import PrivacyFilter
-from ..providers.registry import get_provider
+from ..providers.registry import InferenceProviderError, get_provider
 
 
 REFLECTION_PROMPT = """You are a reflection agent that identifies notable moments worth remembering.
@@ -57,7 +57,11 @@ class ReflectionAgent:
         self.filter = PrivacyFilter()
         self.system_message = SystemMessage(content=REFLECTION_PROMPT)
         self.llm = None
-        provider = get_provider(model_name)
+        try:
+            provider = get_provider(model_name)
+        except InferenceProviderError as exc:
+            print(f"Warning: {exc} Using echo mode.", file=sys.stderr)
+            return
         if not provider.is_available():
             print(
                 f"Warning: No {provider.env_var} found. Using echo mode.",

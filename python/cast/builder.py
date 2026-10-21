@@ -915,17 +915,25 @@ def create_llm() -> BaseChatModel:
         print("Using echo mode for the meta-builder harness.", file=sys.stderr)
         return EchoChatModel()
 
-    from .providers.registry import get_provider
+    from .providers.registry import InferenceProviderError, get_provider
 
     model = get_builder_model_id()
-    provider = get_provider(model)
+    try:
+        provider = get_provider(model)
+    except InferenceProviderError as exc:
+        print(f"Warning: {exc} Using echo mode.", file=sys.stderr)
+        return EchoChatModel()
     if not provider.is_available():
         print(f"Warning: No {provider.env_var} found. Using echo mode.", file=sys.stderr)
         return EchoChatModel()
+    params = provider.llm_params(model)
     try:
-        return provider.create_llm(model=model, temperature=0.7)
+        return provider.create_llm(model=model, **params)
     except Exception as e:
-        print(f"Warning: Failed to create {provider.name} LLM: {e}", file=sys.stderr)
+        print(
+            f"Warning: Failed to create {provider.name} LLM for model {model}. {e}",
+            file=sys.stderr,
+        )
         return EchoChatModel()
 
 

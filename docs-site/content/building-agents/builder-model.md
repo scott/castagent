@@ -86,6 +86,37 @@ serverless inference when that provider is enabled. `cast model` and
 the picker shows `llama3.3-70b-instruct` and `deepseek-v3.2`. See
 [Global settings](getting-started/global-settings).
 
+## Prefixes
+
+The model id selects the provider. The longest registered prefix wins.
+
+`openai/gpt-4o`, `anthropic/claude-sonnet-4.6`, `google/gemini-2.5-pro`,
+`x-ai/grok-2`, `qwen/qwen3-coder`, and `z-ai/glm-4.6` stay on OpenRouter.
+Any slash prefix that is not a registered provider and not reserved uses
+OpenRouter too, including vendors that are not in the curated list.
+A bare alias such as `claude-sonnet-4` also stays on OpenRouter.
+
+These prefixes are reserved for a direct provider and are not registered
+yet: `openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`,
+and `xai/`. `cast model openai-api/gpt-4o` exits non-zero. The message
+says that prefix is reserved and that `openai/gpt-4o` still uses
+OpenRouter. `xai/grok-2` names `x-ai/grok-2` the same way. A bare id
+OpenRouter does not already accept, such as `gpt-5` or `not-a-real-model`,
+is also an error. That error names the prefix convention. It does not
+list the OpenRouter catalog. `cast model qwen/qwen3-coder` and
+`cast model openrouter/not-a-real-model` are unknown curated ids, and
+those messages include the available ids. The config is not written.
+
+Claude 4.7 and later (opus, sonnet, or haiku, dotted or dashed, and 5.x)
+are sent as written and omit temperature. Earlier aliases such as
+`claude-opus-4` and `claude-sonnet-4` still pin to 4.5 and 4.6.
+
+OpenRouter and DigitalOcean both use one OpenAI-compatible provider.
+Their prefixes, keys, and model lists are unchanged. A future
+OpenAI-compatible provider is a row in `python/cast/providers/manifest.json`.
+The builder still requests temperature `0.7` for both current providers,
+and omits temperature for models that reject it.
+
 ## TUI
 
 `/model` is registered only in dev mode (`cast dev`, and the builder

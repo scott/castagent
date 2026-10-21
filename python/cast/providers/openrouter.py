@@ -6,6 +6,70 @@ from langchain_openai import ChatOpenAI
 
 from ._manifest import row_for
 from .credentials import resolve_base_url, resolve_token
+from .openai_compatible import OpenAICompatibleProvider
+
+
+def chat_cls():
+    """ChatOpenAI looked up at call time so tests can patch this module."""
+    return ChatOpenAI
+
+
+# Claude 4.7 and later keep the id the caller wrote. Earlier 4.x aliases
+# still pin to the shipped snapshot (opus 4.5, sonnet 4.6).
+_CLAUDE_47_OR_LATER = re.compile(
+    r"claude-(?:opus|sonnet|haiku)-(?:4[.-][7-9]|[5-9](?:[.-]\d+)?)",
+    re.IGNORECASE,
+)
+
+
+def _claude_version_passes_through(model_name: str) -> bool:
+    return bool(_CLAUDE_47_OR_LATER.search(model_name or ""))
+
+
+def rewrite_openrouter_model(model_name: str) -> str:
+    """Alias table and vendor-prefix rules. The shared class strips ``openrouter/`` first."""
+    if not model_name:
+        model_name = "anthropic/claude-3.7-sonnet"
+
+    # If model already has a date in it (e.g., "claude-opus-4.5"), pass through as-is
+    if re.search(r"-\d{8}$", model_name) or re.search(r":\w+$", model_name):
+        # Already has version date or suffix, just ensure provider prefix
+        if "/" not in model_name:
+            model_name = f"anthropic/{model_name}"
+        return model_name
+
+    # Check if model matches an alias exactly
+    model_lower = model_name.lower()
+    if model_lower in MODEL_ALIASES:
+        model_name = MODEL_ALIASES[model_lower]
+    # Check for partial matches and add appropriate dates
+    elif not _claude_version_passes_through(model_name) and (
+        model_name.lower().startswith("anthropic/claude-sonnet-4")
+        or model_name.lower() == "claude-sonnet-4"
+    ):
+        model_name = "anthropic/claude-sonnet-4.6"
+    elif not _claude_version_passes_through(model_name) and (
+        model_name.lower().startswith("anthropic/claude-opus-4")
+        or model_name.lower() == "claude-opus-4"
+    ):
+        model_name = "anthropic/claude-opus-4.5"  # Latest Opus 4.5
+    elif (
+        not _claude_version_passes_through(model_name)
+        and model_name.lower().startswith("anthropic/claude-opus")
+        and "4.6" in model_name
+    ):
+        model_name = "anthropic/claude-opus-4.5"
+    # Normalize old-style ids: claude-3-7-sonnet -> claude-3.7-sonnet.
+    # re.match is start-anchored, so it misses a provider prefix
+    # (anthropic/claude-3-7-sonnet) left after stripping openrouter/.
+    elif re.search(r"(?:^|/)claude-\d-\d-", model_name):
+        model_name = model_name.replace("claude-3-5-", "claude-3.5-")
+        model_name = model_name.replace("claude-3-7-", "claude-3.7-")
+
+    # Ensure model has provider prefix
+    if "/" not in model_name:
+        model_name = f"anthropic/{model_name}"
+    return model_name
 
 
 # Model ID mappings for common models
@@ -18,6 +82,7 @@ MODEL_ALIASES = {
     "claude-opus-4.5": "anthropic/claude-opus-4.5",
     "claude-opus-4.6": "anthropic/claude-opus-4.5",
     "claude-haiku-4": "anthropic/claude-haiku-4",
+    "claude-haiku-latest": "anthropic/claude-haiku-latest",
     # Anthropic models - Claude 3.7 series
     "claude-3.7-sonnet": "anthropic/claude-3.7-sonnet",
     "claude-3.7-sonnet:thinking": "anthropic/claude-3.7-sonnet:thinking",
@@ -107,81 +172,33 @@ class OpenRouterProvider:
 
     def create_llm(self, model: Optional[str] = None, **kwargs) -> ChatOpenAI:
         """Create a LangChain ChatOpenAI instance configured for OpenRouter."""
-        model_name = model or "anthropic/claude-3.7-sonnet"
-
-        # Strip openrouter/ prefix if present (e.g., "openrouter/anthropic/claude-3.7-sonnet")
-        if model_name.startswith("openrouter/"):
-            model_name = model_name[len("openrouter/"):]
-
-        # If model already has a date in it (e.g., "claude-opus-4.5"), pass through as-is
-        if re.search(r"-\d{8}$", model_name) or re.search(r":\w+$", model_name):
-            # Already has version date or suffix, just ensure provider prefix
-            if "/" not in model_name:
-                model_name = f"anthropic/{model_name}"
-            return ChatOpenAI(
-                model=model_name,
-                api_key=self.api_key,
-                base_url=self.default_base_url,
-                **kwargs
-            )
-
-        # Check if model matches an alias exactly
-        model_lower = model_name.lower()
-        if model_lower in MODEL_ALIASES:
-            model_name = MODEL_ALIASES[model_lower]
-        # Check for partial matches and add appropriate dates
-        elif model_name.lower().startswith("anthropic/claude-sonnet-4") or model_name.lower() == "claude-sonnet-4":
-            model_name = "anthropic/claude-sonnet-4.6"
-        elif model_name.lower().startswith("anthropic/claude-opus-4") or model_name.lower() == "claude-opus-4":
-            model_name = "anthropic/claude-opus-4.5"  # Latest Opus 4.5
-        elif model_name.lower().startswith("anthropic/claude-opus") and "4.6" in model_name:
-            model_name = "anthropic/claude-opus-4.5"
-        # Normalize old-style ids: claude-3-7-sonnet -> claude-3.7-sonnet.
-        # re.match is start-anchored, so it misses a provider prefix
-        # (anthropic/claude-3-7-sonnet) left after stripping openrouter/.
-        elif re.search(r"(?:^|/)claude-\d-\d-", model_name):
-            model_name = model_name.replace("claude-3-5-", "claude-3.5-")
-            model_name = model_name.replace("claude-3-7-", "claude-3.7-")
-
-        # Ensure model has provider prefix
-        if "/" not in model_name:
-            model_name = f"anthropic/{model_name}"
-
-        return ChatOpenAI(
-            model=model_name,
+        shared = OpenAICompatibleProvider(
+            "openrouter",
+            rewrite_model=rewrite_openrouter_model,
+            chat_factory=chat_cls,
+        )
+        return shared.create_llm(
+            model=model,
             api_key=self.api_key,
             base_url=self.default_base_url,
-            **kwargs
+            **kwargs,
         )
-    
+
     @classmethod
     def is_available(cls) -> bool:
         """Check if an OpenRouter API key is configured."""
-        row = row_for("openrouter")
-        return bool(resolve_token(row["envVar"], row["configKey"], row["key"]))
+        return OpenAICompatibleProvider("openrouter").is_available()
 
 
-class OpenRouterInference:
-    """Registry binding. Alias rewrites stay on ``OpenRouterProvider``."""
+class OpenRouterInference(OpenAICompatibleProvider):
+    """Registry binding. Alias rewrites stay on this row; ChatOpenAI comes from the shared class."""
 
     def __init__(self):
-        row = row_for("openrouter")
-        self.key = row["key"]
-        self.name = row["name"]
-        self.prefixes = tuple(row["prefixes"])
-        self.default = bool(row["default"])
-        self.env_var = row["envVar"]
-        self.config_key = row["configKey"]
-        self.base_url = row["baseUrl"]
-        self.base_url_env = row.get("baseUrlEnv") or ""
-        self.accepts_any_model = bool(row["acceptsAnyModel"])
-        self.known_models = tuple(row.get("knownModels") or ())
-
-    def is_available(self) -> bool:
-        return bool(resolve_token(self.env_var, self.config_key, self.key))
-
-    def create_llm(self, model: Optional[str] = None, **kwargs):
-        return OpenRouterProvider().create_llm(model=model, **kwargs)
+        super().__init__(
+            "openrouter",
+            rewrite_model=rewrite_openrouter_model,
+            chat_factory=chat_cls,
+        )
 
 
 provider = OpenRouterInference()

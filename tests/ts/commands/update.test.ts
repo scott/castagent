@@ -68,13 +68,12 @@ describe('update command', () => {
       expect(known.warning).to.equal(undefined)
     })
 
-    it('rejects unknown OpenRouter models with the cast model message', async () => {
+    it('treats an unlisted vendor id as an unknown OpenRouter model', async () => {
       const update = new Update(['update', 'agent'], {} as any)
-      const result = await (update as any).validateModel('unknown/model')
-      expect(result).to.deep.equal({
-        valid: false,
-        error: unknownModelMessage('unknown/model'),
-      })
+      const result = await (update as any).validateModel('qwen/qwen3-coder')
+      expect(result.valid).to.equal(false)
+      expect(result.error).to.equal(unknownModelMessage('qwen/qwen3-coder'))
+      expect(result.error).to.not.include('Unknown provider prefix')
     })
 
     it('rejects zzz/notreal and still accepts the shipped openrouter default', async () => {
@@ -83,10 +82,9 @@ describe('update command', () => {
       const shipped = await (update as any).validateModel('openrouter/minimax/minimax-m2.5')
       const prefixed = await (update as any).validateModel('openrouter/anthropic/claude-sonnet-4.6')
       const retired = await (update as any).validateModel('google/gemini-2.0-flash')
-      expect(unknown).to.deep.equal({
-        valid: false,
-        error: unknownModelMessage('zzz/notreal'),
-      })
+      expect(unknown.valid).to.equal(false)
+      expect(unknown.error).to.equal(unknownModelMessage('zzz/notreal'))
+      expect(unknown.error).to.not.include('Unknown provider prefix')
       expect(shipped).to.deep.equal({valid: true})
       expect(prefixed).to.deep.equal({valid: true})
       expect(retired).to.deep.equal({
@@ -423,7 +421,8 @@ describe('update command', () => {
     it('rejects an unknown model id and keeps the shipped default', async () => {
       const {errors, logs} = await runUpdate({model: 'zzz/notreal', description: 'should not stick'})
       expect(errors).to.have.length(1)
-      expect(errors[0]).to.equal(unknownModelMessage('zzz/notreal'))
+      expect(errors[0]).to.include("Unknown model 'zzz/notreal'")
+      expect(errors[0]).to.not.include('Unknown provider prefix')
       expect(logs.join('\n')).to.not.include('configuration updated successfully')
       expect(written()).to.equal(original)
       expect(yaml.parse(written()).brain.model).to.equal('openrouter/minimax/minimax-m2.5')

@@ -3,6 +3,7 @@
 import importlib
 import json
 import os
+import site
 import subprocess
 import sys
 from pathlib import Path
@@ -267,7 +268,15 @@ class TestSelection:
         env = os.environ.copy()
         env["HOME"] = str(home)
         prior = env.get("PYTHONPATH")
-        env["PYTHONPATH"] = str(PYTHON) if not prior else f"{PYTHON}{os.pathsep}{prior}"
+        # HOME is isolated so ~/.cast does not leak. User-site packages are
+        # keyed off HOME, so keep the interpreter's original user site.
+        parts = [str(PYTHON)]
+        user_site = site.getusersitepackages()
+        if isinstance(user_site, str) and os.path.isdir(user_site):
+            parts.append(user_site)
+        if prior:
+            parts.append(prior)
+        env["PYTHONPATH"] = os.pathsep.join(parts)
         result = subprocess.run(
             [sys.executable, "-m", "cast.providers.catalog"],
             cwd=str(ROOT),
@@ -294,12 +303,15 @@ class TestSelection:
         unknown = model_status("unknown/model")
         assert unknown["valid"] is False
         assert unknown["warning"] is None
-        assert unknown["error"].startswith("Unknown model 'unknown/model'.")
-        assert "anthropic/claude-sonnet-4.6" in unknown["error"]
-        assert "minimax/minimax-m2.5" in unknown["error"]
+        assert unknown["provider"] == "openrouter"
+        assert unknown["error"].startswith("Unknown model 'unknown/model'")
         bogus = model_status("zzz/notreal")
         assert bogus["valid"] is False
-        assert "Unknown model 'zzz/notreal'." in bogus["error"]
+        assert bogus["provider"] == "openrouter"
+        assert bogus["error"].startswith("Unknown model 'zzz/notreal'")
+        qwen = model_status("qwen/qwen3-coder")
+        assert qwen["provider"] == "openrouter"
+        assert qwen["error"].startswith("Unknown model 'qwen/qwen3-coder'")
         known = model_status("anthropic/claude-sonnet-4.6")
         assert known["valid"] is True
         assert known["warning"] is None
@@ -316,7 +328,8 @@ class TestSelection:
 
     def test_manifest_rows_match_provider_modules(self):
         manifest = json.loads((PROVIDERS / "manifest.json").read_text())
-        manifest_keys = {row["key"] for row in manifest}
+        live = [row for row in manifest if row.get("impl") != "reserved"]
+        manifest_keys = {row["key"] for row in live}
         module_keys = set()
         for path in PROVIDERS.glob("*.py"):
             if path.name.startswith("_"):
@@ -329,7 +342,28 @@ class TestSelection:
         for module_name in BUILTIN_MODULES:
             module = importlib.import_module(module_name)
             bound.add(module.provider.key)
-        assert module_keys == manifest_keys == bound
+        # A module that exports provider is a built-in binding. An
+        # openai-compatible row with no module registers itself.
+        assert module_keys == bound
+        assert module_keys <= manifest_keys
+        auto = {
+            row["key"]
+            for row in live
+            if row.get("impl") == "openai-compatible" and row["key"] not in module_keys
+        }
+        assert manifest_keys - module_keys == auto
+        registry = load_registry()
+        for key in auto:
+            assert registry.by_key[key].source == f"built-in {key}"
+        reserved = [prefix for row in manifest if row.get("impl") == "reserved" for prefix in row["prefixes"]]
+        assert reserved == [
+            "openai-api/",
+            "anthropic-api/",
+            "gemini/",
+            "bedrock/",
+            "ollama/",
+            "xai/",
+        ]
         for name in ("openai", "anthropic", "ollama"):
             module = importlib.import_module(f"cast.providers.{name}")
             assert not hasattr(module, "provider")

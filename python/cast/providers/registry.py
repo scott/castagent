@@ -24,19 +24,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 # Vendor segments of OpenRouter known models. Not provider prefixes.
-RESERVED_VENDOR_PREFIXES = frozenset({
-    "openai/",
-    "anthropic/",
-    "google/",
-    "meta-llama/",
-    "kimi/",
-    "minimax/",
-    "deepseek/",
-    "mistralai/",
-    "cohere/",
-    "x-ai/",
-    "perplexity/",
-})
+# Shared with the TypeScript resolver (vendor-prefixes.json).
+RESERVED_VENDOR_PREFIXES = frozenset(
+    json.loads(Path(__file__).with_name("vendor-prefixes.json").read_text())
+)
 
 KEY_RE = re.compile(r"^[a-z0-9-]+$")
 PREFIX_RE = re.compile(r"^[a-z0-9-]+/$")
@@ -70,6 +61,14 @@ class ProviderRecord:
         known_models: tuple[str, ...],
         source: str,
         base_url_env: str = "",
+        default_params: Optional[dict] = None,
+        omit_temperature_models: tuple[str, ...] = (),
+        settings: tuple[dict, ...] = (),
+        keyless: bool = False,
+        models_filter: str = "",
+        models_headers: Optional[dict] = None,
+        curated_models: bool = False,
+        strip_model_id_prefix: str = "",
     ):
         self.impl = impl
         self.key = key
@@ -87,12 +86,38 @@ class ProviderRecord:
         self.models_path = ""
         self.fallback_models: tuple[str, ...] = ()
         self.default_model = ""
+        self.default_params = dict(default_params or {})
+        self.omit_temperature_models = tuple(omit_temperature_models or ())
+        self.settings = tuple(settings or ())
+        self.keyless = bool(keyless)
+        self.models_filter = models_filter or ""
+        self.models_headers = dict(models_headers or {})
+        self.curated_models = bool(curated_models)
+        self.strip_model_id_prefix = strip_model_id_prefix or ""
 
     def is_available(self) -> bool:
         return bool(self.impl.is_available())
 
     def create_llm(self, model: Optional[str] = None, **kwargs):
         return self.impl.create_llm(model=model, **kwargs)
+
+    def llm_params(self, model: Optional[str] = None) -> dict:
+        """Sampling params for the builder. Temperature is omitted when the model rejects it."""
+        from .openai_compatible import omits_temperature
+
+        params = dict(self.default_params)
+        model_id = ""
+        resolve = getattr(self.impl, "resolve_model_id", None)
+        if model and callable(resolve):
+            try:
+                model_id = resolve(model)
+            except Exception:
+                model_id = ""
+        if omits_temperature(self.omit_temperature_models, model) or omits_temperature(
+            self.omit_temperature_models, model_id
+        ):
+            params.pop("temperature", None)
+        return params
 
 
 class Registry:
@@ -138,6 +163,12 @@ class Registry:
                     f"it is an OpenRouter known-model vendor prefix "
                     f"owned by built-in openrouter"
                 )
+            reserved_owner = _reserved_direct_by_prefix().get(prefix)
+            if reserved_owner and not record.source.startswith("built-in "):
+                raise InferenceProviderError(
+                    f"Cannot register prefix {prefix!r} from {record.source}: "
+                    f"it is reserved for the direct provider {reserved_owner['key']}"
+                )
             if prefix in self.by_prefix:
                 other = self.by_prefix[prefix]
                 raise InferenceProviderError(
@@ -166,14 +197,59 @@ def _coerce_provider(obj: Any) -> Any:
     return obj
 
 
+def _reserved_direct_by_prefix() -> dict[str, dict]:
+    from ._manifest import reserved_rows
+
+    found = {}
+    for row in reserved_rows():
+        display = row.get("displayName") or row.get("name") or row.get("key")
+        for prefix in _as_tuple(row.get("prefixes")):
+            found[prefix] = {
+                "prefix": prefix,
+                "key": row.get("key") or prefix[:-1],
+                "displayName": display,
+                "openrouterVendor": row.get("openrouterVendor") or "",
+            }
+    return found
+
+
 def _apply_row_meta(record: ProviderRecord, meta: dict) -> None:
     """Copy optional catalog fields. A new provider sets these in its row."""
+    from .openai_compatible import settings_from_row
+
     display = meta.get("displayName") or meta.get("display_name") or record.name
     record.display_name = display or record.name
     record.models_path = meta.get("modelsPath") or meta.get("models_path") or ""
     fallback = meta.get("fallbackModels", meta.get("fallback_models", ()))
     record.fallback_models = _as_tuple(fallback)
     record.default_model = meta.get("defaultModel") or meta.get("default_model") or ""
+    if "defaultParams" in meta or "default_params" in meta:
+        record.default_params = dict(meta.get("defaultParams") or meta.get("default_params") or {})
+    elif getattr(record.impl, "default_params", None):
+        record.default_params = dict(record.impl.default_params)
+    omit = meta.get("omitTemperatureModels", meta.get("omit_temperature_models"))
+    if omit is not None:
+        record.omit_temperature_models = _as_tuple(omit)
+    elif getattr(record.impl, "omit_temperature_models", None):
+        record.omit_temperature_models = _as_tuple(record.impl.omit_temperature_models)
+    if "settings" in meta or "forwardEnv" in meta:
+        record.settings = settings_from_row(meta)
+    elif getattr(record.impl, "settings", None):
+        record.settings = tuple(record.impl.settings)
+    record.keyless = bool(meta.get("keyless", getattr(record.impl, "keyless", False)))
+    record.models_filter = meta.get("modelsFilter") or meta.get("models_filter") or getattr(record.impl, "models_filter", "") or ""
+    headers = meta.get("modelsHeaders", meta.get("models_headers"))
+    if isinstance(headers, dict):
+        record.models_headers = dict(headers)
+    elif getattr(record.impl, "models_headers", None):
+        record.models_headers = dict(record.impl.models_headers)
+    record.curated_models = bool(meta.get("curatedModels", getattr(record.impl, "curated_models", False)))
+    record.strip_model_id_prefix = (
+        meta.get("stripModelIdPrefix")
+        or meta.get("strip_model_id_prefix")
+        or getattr(record.impl, "strip_model_id_prefix", "")
+        or ""
+    )
 
 
 def record_from_impl(impl: Any, source: str) -> ProviderRecord:
@@ -197,6 +273,14 @@ def record_from_impl(impl: Any, source: str) -> ProviderRecord:
         known_models=_as_tuple(getattr(impl, "known_models", ())),
         source=source,
         base_url_env=getattr(impl, "base_url_env", "") or "",
+        default_params=getattr(impl, "default_params", None) or {},
+        omit_temperature_models=_as_tuple(getattr(impl, "omit_temperature_models", ())),
+        settings=tuple(getattr(impl, "settings", ()) or ()),
+        keyless=bool(getattr(impl, "keyless", False)),
+        models_filter=getattr(impl, "models_filter", "") or "",
+        models_headers=getattr(impl, "models_headers", None) or {},
+        curated_models=bool(getattr(impl, "curated_models", False)),
+        strip_model_id_prefix=getattr(impl, "strip_model_id_prefix", "") or "",
     )
     _apply_row_meta(record, {
         "displayName": getattr(impl, "display_name", None) or getattr(impl, "name", None),
@@ -227,9 +311,9 @@ def _report_import_error(registry: Registry, path: Any, exc: BaseException) -> N
 
 
 def _manifest_by_key() -> dict[str, dict]:
-    path = Path(__file__).with_name("manifest.json")
-    rows = json.loads(path.read_text())
-    return {row["key"]: row for row in rows}
+    from ._manifest import provider_rows
+
+    return {row["key"]: row for row in provider_rows()}
 
 
 def _check_manifest(record: ProviderRecord, module_name: str) -> None:
@@ -266,6 +350,32 @@ def _check_manifest(record: ProviderRecord, module_name: str) -> None:
         )
 
 
+def _load_compatible_rows(registry: Registry) -> None:
+    """Register ``impl: openai-compatible`` rows that have no module of their own."""
+    from .openai_compatible import OpenAICompatibleProvider
+
+    for row in _manifest_by_key().values():
+        if row.get("impl") != "openai-compatible":
+            continue
+        if row["key"] in registry.by_key:
+            continue
+        impl = OpenAICompatibleProvider(row=row)
+        record = record_from_impl(impl, source=f"built-in {impl.key}")
+        _apply_row_meta(record, row)
+        registry.add(record)
+
+
+def register_compatible_row(registry: Registry, row: dict, source: str = "test fixture") -> ProviderRecord:
+    """Attach one OpenAI-compatible row. Tests use this for a fake provider."""
+    from .openai_compatible import OpenAICompatibleProvider
+
+    impl = OpenAICompatibleProvider(row=row)
+    record = record_from_impl(impl, source=source)
+    _apply_row_meta(record, row)
+    registry.add(record)
+    return record
+
+
 def _load_builtins(registry: Registry) -> None:
     for module_name in BUILTIN_MODULES:
         module = importlib.import_module(module_name)
@@ -273,6 +383,7 @@ def _load_builtins(registry: Registry) -> None:
         _check_manifest(record, module_name)
         _apply_row_meta(record, _manifest_by_key()[record.key])
         registry.add(record)
+    _load_compatible_rows(registry)
 
 
 def iter_entry_points():
@@ -465,13 +576,84 @@ def load_registry() -> Registry:
     return registry
 
 
-def get_provider(model: Optional[str] = None) -> ProviderRecord:
-    """Return the provider for ``model``.
+def _registered_prefixes(registry: Registry) -> str:
+    prefixes = []
+    for provider in registry.providers:
+        prefixes.extend(provider.prefixes)
+    return ", ".join(prefixes) or "none"
 
-    Non-default prefixes match first. The longest matching prefix wins.
-    Otherwise the default provider (OpenRouter) is used.
+
+def _reserved_list() -> str:
+    return ", ".join(item["prefix"] for item in _reserved_direct_by_prefix().values())
+
+
+def _bare_alias(text: str) -> bool:
+    from .openrouter import MODEL_ALIASES
+
+    return text.lower() in MODEL_ALIASES
+
+
+def _openrouter_handles_bare(text: str) -> bool:
+    """True when OpenRouter's alias rewrite already accepts this unprefixed id.
+
+    A bare id the rewrite does not recognize, such as ``gpt-5``, is not
+    handled here. ``claude-3-7-sonnet`` is handled: the rewrite normalizes it.
     """
-    registry = load_registry()
+    if _bare_alias(text) or text in _openrouter_known():
+        return True
+    if re.search(r"-\d{8}$", text) or re.search(r":\w+$", text):
+        return True
+    from .openrouter import rewrite_openrouter_model
+
+    rewritten = rewrite_openrouter_model(text)
+    return rewritten != text and rewritten != f"anthropic/{text}"
+
+
+def _openrouter_known() -> set[str]:
+    from ._manifest import row_for
+
+    return set(row_for("openrouter").get("knownModels") or [])
+
+
+def prefix_route_error(model: Optional[str], registry: Registry) -> Optional[str]:
+    """Error for a reserved direct prefix or a bare id. None when the default applies.
+
+    A slash prefix that is not registered and not reserved routes to the
+    default provider, the same as main. ``vendor-prefixes.json`` only stops
+    an external provider from claiming ``openai/`` and the other listed
+    vendor prefixes.
+    """
+    text = model or ""
+    if not text:
+        return None
+    for item in _reserved_direct_by_prefix().values():
+        prefix = item["prefix"]
+        if text.startswith(prefix):
+            rest = text[len(prefix):]
+            vendor = item.get("openrouterVendor") or ""
+            vendor_sentence = ""
+            if vendor:
+                vendor_sentence = f" {vendor}{rest} still routes to OpenRouter."
+            return (
+                f"Model '{text}' uses the reserved prefix '{prefix}' "
+                f"for {item['displayName']}. That direct provider is not registered yet."
+                f"{vendor_sentence} "
+                f"Registered prefixes: {_registered_prefixes(registry)}."
+            )
+    if "/" in text:
+        return None
+    if _openrouter_handles_bare(text):
+        return None
+    return (
+        f"Model '{text}' has no provider prefix. "
+        f"OpenRouter models look like openai/gpt-4o or openrouter/openai/gpt-4o. "
+        f"Direct providers use {_reserved_list()}. "
+        f"A bare alias such as claude-sonnet-4 still uses OpenRouter."
+    )
+
+
+def select_provider(model: Optional[str], registry: Registry) -> ProviderRecord:
+    """Longest matching prefix wins. Otherwise the default, or a prefix error."""
     text = model or ""
     best: Optional[ProviderRecord] = None
     best_len = -1
@@ -482,10 +664,25 @@ def get_provider(model: Optional[str] = None) -> ProviderRecord:
                 best_len = len(prefix)
     if best is not None:
         return best
+    error = prefix_route_error(text, registry)
+    if error:
+        raise InferenceProviderError(error)
     for provider in registry.providers:
         if provider.default:
             return provider
     raise InferenceProviderError("No default inference provider is registered")
+
+
+def get_provider(model: Optional[str] = None) -> ProviderRecord:
+    """Return the provider for ``model``.
+
+    Non-default prefixes match first. The longest matching prefix wins.
+    A slash id that is not registered and not reserved uses the default.
+    A reserved direct prefix that is not registered yet is an error.
+    A bare OpenRouter alias still uses the default. A bare id OpenRouter
+    does not already rewrite is an error.
+    """
+    return select_provider(model, load_registry())
 
 
 def model_status(model: str) -> dict:
@@ -500,7 +697,10 @@ def model_status(model: str) -> dict:
     ``openrouter/minimax/minimax-m2.5`` stays valid. Unknown ids are
     rejected. ``cast model`` keeps its own prefix rules.
     """
-    provider = get_provider(model)
+    try:
+        provider = get_provider(model)
+    except InferenceProviderError as exc:
+        return {"valid": False, "warning": None, "error": str(exc), "provider": None}
     if provider.accepts_any_model:
         return {"valid": True, "warning": None, "error": None, "provider": provider.key}
     candidate = model
@@ -534,5 +734,11 @@ def catalog_entries(registry: Optional[Registry] = None) -> list[dict]:
             **({"modelsPath": provider.models_path} if provider.models_path else {}),
             **({"fallbackModels": list(provider.fallback_models)} if provider.fallback_models else {}),
             **({"defaultModel": provider.default_model} if provider.default_model else {}),
+            **({"keyless": True} if provider.keyless else {}),
+            **({"modelsFilter": provider.models_filter} if provider.models_filter else {}),
+            **({"modelsHeaders": provider.models_headers} if provider.models_headers else {}),
+            **({"curatedModels": True} if provider.curated_models else {}),
+            **({"stripModelIdPrefix": provider.strip_model_id_prefix} if provider.strip_model_id_prefix else {}),
+            **({"settings": [dict(item) for item in provider.settings]} if provider.settings else {}),
         })
     return payload

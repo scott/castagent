@@ -142,18 +142,24 @@ class TestProviderSelection:
 class TestBuilderProviderSelection:
     def test_display_model_is_not_the_api_model(self):
         from cast.builder import create_llm, get_builder_model
+        from cast.providers.openai_compatible import OpenAICompatibleProvider
 
         config = {"defaults": {"builder_model": "openrouter/minimax/minimax-m2.5"}}
+        seen = {}
+        original = OpenAICompatibleProvider.create_llm
+
+        def wrapped(self, model=None, **kwargs):
+            seen["model"] = model
+            return original(self, model=model, **kwargs)
+
         with patch("cast.builder.load_global_config", return_value=config):
             assert get_builder_model() == "minimax/minimax-m2.5"
             with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
-                with patch("cast.providers.openrouter.OpenRouterProvider") as mock_or:
-                    instance = MagicMock()
-                    instance.create_llm.return_value = MagicMock()
-                    mock_or.return_value = instance
-                    mock_or.is_available.return_value = True
-                    create_llm()
-                    assert instance.create_llm.call_args.kwargs["model"] == "openrouter/minimax/minimax-m2.5"
+                with patch.object(OpenAICompatibleProvider, "create_llm", wrapped):
+                    with patch("cast.providers.openrouter.ChatOpenAI") as mock_chat:
+                        create_llm()
+        assert seen["model"] == "openrouter/minimax/minimax-m2.5"
+        assert mock_chat.call_args.kwargs["model"] == "minimax/minimax-m2.5"
 
     def test_digitalocean_builder_model_uses_digitalocean(self):
         from cast.builder import create_llm

@@ -7,10 +7,13 @@ import {
 import {keychain} from './keychain'
 import {
   baseUrlConfigKey,
+  dottedConfigString,
+  expandConfigSecret,
   parseInferenceUrl,
   resolvedBaseUrl,
   resolvedInferenceToken,
 } from './inference-credentials'
+import {inferencePrefixError} from './inference-routing'
 import {
   DEFAULT_BUILDER_MODEL,
   ensureConfigDefaults,
@@ -99,7 +102,7 @@ export async function listInferenceProviders(): Promise<InferenceProviderStatus[
       key: entry.key,
       name: entry.name,
       displayName: providerDisplayName(entry),
-      enabled: Boolean(token),
+      enabled: Boolean(token) || Boolean(entry.keyless),
       current: entry.key === active,
       baseUrl,
       defaultBaseUrl: entry.baseUrl,
@@ -143,11 +146,11 @@ export async function enableInferenceProvider(
   key: string,
   options: {token?: string; url?: string},
 ): Promise<{baseUrl: string; tokenStore?: 'keychain' | 'file'}> {
-  if (!options.token && !options.url) {
-    throw new Error('Pass --token, --url, or both.')
-  }
   const catalog = loadInferenceCatalog()
   const entry = providerOrThrow(catalog, key)
+  if (!options.token && !options.url && !entry.keyless) {
+    throw new Error('Pass --token, --url, or both.')
+  }
   const config = readCastConfig()
   let parsedUrl: string | null = null
   if (options.url) {
@@ -161,9 +164,11 @@ export async function enableInferenceProvider(
   }
   let tokenStore: 'keychain' | 'file' | undefined
   if (!token) {
-    const existing = await resolvedToken(entry, config)
-    if (!existing) {
-      throw new Error(`Provider '${key}' has no token. Pass --token -.`)
+    if (!entry.keyless) {
+      const existing = await resolvedToken(entry, config)
+      if (!existing) {
+        throw new Error(`Provider '${key}' has no token. Pass --token -.`)
+      }
     }
   } else {
     tokenStore = await keychain.setInferenceToken(key, token)
@@ -198,6 +203,29 @@ function prefixedModelId(prefix: string, id: string): string {
   return `${prefix}${id}`
 }
 
+function renderHeader(template: string, token: string | undefined): string | undefined {
+  if (!template.includes('${token}')) return template
+  if (!token) return undefined
+  return template.split('${token}').join(token)
+}
+
+function modelListHeaders(
+  entry: InferenceCatalogEntry,
+  token: string | undefined,
+): Record<string, string> {
+  const headers: Record<string, string> = {}
+  const custom = entry.modelsHeaders
+  if (custom && Object.keys(custom).length > 0) {
+    for (const [name, value] of Object.entries(custom)) {
+      const rendered = renderHeader(value, token)
+      if (rendered) headers[name] = rendered
+    }
+    return headers
+  }
+  if (token) headers.Authorization = `Bearer ${token}`
+  return headers
+}
+
 async function fetchModels(
   entry: InferenceCatalogEntry,
   baseUrl: string,
@@ -206,22 +234,30 @@ async function fetchModels(
 ): Promise<{ids: string[]; fallback: boolean}> {
   const prefix = entry.prefixes?.[0] ?? ''
   const fallbackIds = (entry.fallbackModels ?? []).map(id => prefixedModelId(prefix, id))
-  if (!entry.modelsPath || !token) {
+  if (!entry.modelsPath || (!token && !entry.keyless)) {
     return {ids: fallbackIds, fallback: true}
   }
   const root = baseUrl.replace(/\/+$/, '')
   const modelsPath = entry.modelsPath.startsWith('/') ? entry.modelsPath : `/${entry.modelsPath}`
   try {
     const response = await fetchImpl(`${root}${modelsPath}`, {
-      headers: {Authorization: `Bearer ${token}`},
+      headers: modelListHeaders(entry, token),
       signal: AbortSignal.timeout(8000),
     })
     if (!response.ok) throw new Error(`HTTP ${response.status}`)
     const body = await response.json() as {data?: Array<{id?: string}>}
-    const ids = (body.data ?? [])
+    let ids = (body.data ?? [])
       .map(row => row.id)
       .filter((id): id is string => typeof id === 'string' && id.length > 0)
-      .map(id => prefixedModelId(prefix, id))
+    if (entry.stripModelIdPrefix) {
+      const strip = entry.stripModelIdPrefix
+      ids = ids.map(id => id.startsWith(strip) ? id.slice(strip.length) : id)
+    }
+    if (entry.modelsFilter) {
+      const pattern = new RegExp(entry.modelsFilter)
+      ids = ids.filter(id => pattern.test(id))
+    }
+    ids = ids.map(id => prefixedModelId(prefix, id))
     if (ids.length === 0) throw new Error('empty catalog')
     return {ids, fallback: false}
   } catch {
@@ -233,6 +269,17 @@ export async function modelsForProvider(
   entry: InferenceCatalogEntry,
   options: {fetchImpl?: typeof fetch; knownModels?: Record<string, string[]>} = {},
 ): Promise<ModelCatalogResult> {
+  if (entry.curatedModels) {
+    const known = options.knownModels ?? loadInferenceKnownModels()
+    const prefix = entry.prefixes?.[0] ?? ''
+    const ids = (known[entry.key] ?? entry.fallbackModels ?? []).map(id => prefixedModelId(prefix, id))
+    return {
+      models: ids.map(modelInfo),
+      fallback: false,
+      freeform: entry.acceptsAnyModel && ids.length === 0,
+      providerKey: entry.key,
+    }
+  }
   if (entry.modelsPath) {
     const config = readCastConfig()
     const baseUrl = resolvedBaseUrl(entry, config)
@@ -344,7 +391,7 @@ export async function switchInferenceProvider(
   const entry = providerOrThrow(catalog, key)
   const config = readCastConfig()
   const token = await resolvedToken(entry, config)
-  if (!token) {
+  if (!token && !entry.keyless) {
     throw new Error(
       `'${key}' is not enabled.\nEnable it with: cast provider enable ${key} --token -`,
     )
@@ -374,6 +421,8 @@ export async function switchInferenceProvider(
 export async function applyBuilderModel(rawId: string): Promise<string> {
   const trimmed = rawId.trim()
   const catalog = loadInferenceCatalog()
+  const routeError = inferencePrefixError(trimmed, catalog)
+  if (routeError) throw new Error(routeError)
   const config = readCastConfig()
   const currentKey = activeProviderKey(config, catalog)
   const target = providerByPrefix(trimmed, catalog)
@@ -383,7 +432,7 @@ export async function applyBuilderModel(rawId: string): Promise<string> {
   if (!entry) throw new Error(unknownModelMessage(trimmed))
   if (target && target.key !== currentKey) {
     const token = await resolvedToken(entry, config)
-    if (!token) {
+    if (!token && !entry.keyless) {
       throw new Error(
         `'${entry.key}' is not enabled.\nEnable it with: cast provider enable ${entry.key} --token -`,
       )
@@ -411,6 +460,11 @@ export async function primeInferenceProcessEnv(): Promise<void> {
     if (entry.baseUrlEnv && !process.env[entry.baseUrlEnv]) {
       const baseUrl = resolvedBaseUrl(entry, config)
       if (baseUrl && baseUrl !== entry.baseUrl) process.env[entry.baseUrlEnv] = baseUrl
+    }
+    for (const setting of entry.settings ?? []) {
+      if (!setting?.env || setting.env.includes('BASE_URL') || process.env[setting.env]) continue
+      const fromConfig = expandConfigSecret(dottedConfigString(config, setting.configKey))
+      if (fromConfig) process.env[setting.env] = fromConfig
     }
   }
 }

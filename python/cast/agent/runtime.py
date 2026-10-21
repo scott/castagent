@@ -17,7 +17,7 @@ from ..harness.permissions import (
 from ..mcp.loader import load_mcp_tools
 from ..memory import MemoryMiddleware
 from ..memory.prompt import append_persistent_memory_instructions
-from ..providers.registry import get_provider
+from ..providers.registry import InferenceProviderError, get_provider
 from ..tools.bash import bash_tool
 from ..tools.read import read_tool
 from ..tools.glob import glob_tool
@@ -71,7 +71,13 @@ class RuntimeAgent:
         self.tools: list = []
         self.mcp_sessions: list = []
         self.mcp_tools: list = []
-        self._provider = get_provider(self.config.model)
+        try:
+            self._provider = get_provider(self.config.model)
+        except InferenceProviderError as exc:
+            # A reserved prefix or a bare id is not a crash. Echo mode is
+            # the same fallback a missing key uses.
+            print(f"Warning: {exc} Using echo mode.", file=sys.stderr, flush=True)
+            self._provider = None
         self._warn_if_tools_unreadable()
         # MCP servers start with the agent and stay up until close().
         self._load_configured_tools()
@@ -86,7 +92,7 @@ class RuntimeAgent:
         self.memory.bind_permissions(self.config.permissions)
 
         # A missing key stays in echo mode and does not fall back.
-        if self._provider.is_available():
+        if self._provider is not None and self._provider.is_available():
             self._setup_llm()
 
     def close(self) -> None:
@@ -151,7 +157,7 @@ class RuntimeAgent:
         A configured key that still gets a 400 or 404 is a model or
         provider failure. Telling the user to set the key is wrong then.
         """
-        if self._provider.is_available():
+        if self._provider is not None and self._provider.is_available():
             return ""
         return f"\n\n{self._llm_key_hint()}"
 

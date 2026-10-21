@@ -3,6 +3,13 @@ from typing import Optional
 
 from langchain_openai import ChatOpenAI
 
+from .openai_compatible import OpenAICompatibleProvider
+
+
+def chat_cls():
+    """ChatOpenAI looked up at call time so tests can patch this module."""
+    return ChatOpenAI
+
 
 class DigitalOceanInferenceProvider:
     """DigitalOcean serverless inference (OpenAI-compatible chat completions).
@@ -29,11 +36,9 @@ class DigitalOceanInferenceProvider:
         Strips a leading ``digitalocean/`` and passes the rest through.
         Catalog ids are not rewritten and are not given a vendor prefix.
         """
-        model_name = model or "llama3.3-70b-instruct"
-        if model_name.startswith("digitalocean/"):
-            model_name = model_name[len("digitalocean/"):]
-        return ChatOpenAI(
-            model=model_name,
+        shared = OpenAICompatibleProvider("digitalocean", chat_factory=chat_cls)
+        return shared.create_llm(
+            model=model,
             api_key=self.api_key,
             base_url=self.default_base_url,
             **kwargs,
@@ -42,7 +47,4 @@ class DigitalOceanInferenceProvider:
     @classmethod
     def is_available(cls) -> bool:
         """True when the model access key is set in the environment, the private token file, or config."""
-        from .credentials import resolve_token
-        from ._manifest import row_for
-        row = row_for("digitalocean")
-        return bool(resolve_token(row["envVar"], row["configKey"], row["key"]))
+        return OpenAICompatibleProvider("digitalocean").is_available()

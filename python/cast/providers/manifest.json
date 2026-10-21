@@ -13,6 +13,15 @@
     "acceptsAnyModel": false,
     "displayName": "OpenRouter",
     "defaultModel": "openrouter/minimax/minimax-m2.5",
+    "impl": "openai-compatible",
+    "llmDefaultModel": "anthropic/claude-3.7-sonnet",
+    "missingKeyMessage": "OPENROUTER_API_KEY environment variable is required. Get one at https://openrouter.ai/keys",
+    "defaultParams": {"temperature": 0.7},
+    "omitTemperatureModels": [
+      "(?:^|/)o[0-9]",
+      "(?:^|/)gpt-5",
+      "claude-(?:opus|sonnet|haiku)-(?:4[.-][7-9]|[5-9](?:[.-]\\d+)?)"
+    ],
     "knownModels": [
       "anthropic/claude-opus-4.5",
       "anthropic/claude-sonnet-4.6",
@@ -53,6 +62,99 @@
     "modelsPath": "/models",
     "fallbackModels": ["llama3.3-70b-instruct", "deepseek-v3.2"],
     "defaultModel": "digitalocean/llama3.3-70b-instruct",
-    "knownModels": []
+    "knownModels": [],
+    "impl": "openai-compatible",
+    "llmDefaultModel": "llama3.3-70b-instruct",
+    "missingKeyMessage": "DIGITALOCEAN_MODEL_ACCESS_KEY environment variable is required for DigitalOcean serverless inference",
+    "defaultParams": {"temperature": 0.7},
+    "omitTemperatureModels": [
+      "(?:^|/)o[0-9]",
+      "(?:^|/)gpt-5",
+      "claude-(?:opus|sonnet|haiku)-(?:4[.-][7-9]|[5-9](?:[.-]\\d+)?)"
+    ]
+  },
+  {
+    "key": "openai-api",
+    "impl": "reserved",
+    "name": "OpenAI",
+    "displayName": "OpenAI",
+    "prefixes": ["openai-api/"],
+    "default": false,
+    "envVar": "OPENAI_API_KEY",
+    "configKey": "providers.openai.api_key",
+    "baseUrl": "https://api.openai.com/v1",
+    "acceptsAnyModel": true,
+    "knownModels": [],
+    "openrouterVendor": "openai/"
+  },
+  {
+    "key": "anthropic-api",
+    "impl": "reserved",
+    "name": "Anthropic",
+    "displayName": "Anthropic",
+    "prefixes": ["anthropic-api/"],
+    "default": false,
+    "envVar": "ANTHROPIC_API_KEY",
+    "configKey": "providers.anthropic.api_key",
+    "baseUrl": "https://api.anthropic.com/v1",
+    "acceptsAnyModel": true,
+    "knownModels": [],
+    "openrouterVendor": "anthropic/"
+  },
+  {
+    "key": "gemini",
+    "impl": "reserved",
+    "name": "Google Gemini",
+    "displayName": "Google Gemini",
+    "prefixes": ["gemini/"],
+    "default": false,
+    "envVar": "GEMINI_API_KEY",
+    "configKey": "providers.gemini.api_key",
+    "baseUrl": "https://generativelanguage.googleapis.com/v1beta/openai",
+    "acceptsAnyModel": true,
+    "knownModels": [],
+    "openrouterVendor": "google/"
+  },
+  {
+    "key": "bedrock",
+    "impl": "reserved",
+    "name": "Amazon Bedrock",
+    "displayName": "Amazon Bedrock",
+    "prefixes": ["bedrock/"],
+    "default": false,
+    "envVar": "AWS_BEARER_TOKEN_BEDROCK",
+    "configKey": "providers.bedrock.api_key",
+    "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1",
+    "acceptsAnyModel": true,
+    "knownModels": [],
+    "openrouterVendor": ""
+  },
+  {
+    "key": "ollama",
+    "impl": "reserved",
+    "name": "Ollama",
+    "displayName": "Ollama",
+    "prefixes": ["ollama/"],
+    "default": false,
+    "envVar": "OLLAMA_API_KEY",
+    "configKey": "providers.ollama.api_key",
+    "baseUrl": "http://localhost:11434/v1",
+    "acceptsAnyModel": true,
+    "knownModels": [],
+    "openrouterVendor": ""
+  },
+  {
+    "key": "xai",
+    "impl": "reserved",
+    "name": "xAI",
+    "displayName": "xAI",
+    "prefixes": ["xai/"],
+    "default": false,
+    "envVar": "XAI_API_KEY",
+    "configKey": "providers.xai.api_key",
+    "baseUrl": "https://api.x.ai/v1",
+    "acceptsAnyModel": true,
+    "knownModels": [],
+    "openrouterVendor": "x-ai/"
   }
 ]
