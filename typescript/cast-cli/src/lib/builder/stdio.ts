@@ -64,6 +64,14 @@ export class StdioJsonRpcBridge extends EventEmitter {
         return
       }
 
+      // The builder can exit before stdin.write finishes. Node reports
+      // that as EPIPE. The close handler rejects the request with the
+      // builder error, so this must not become an uncaught exception.
+      this.process.stdin.on('error', (err: NodeJS.ErrnoException) => {
+        if (err.code === 'EPIPE' || err.code === 'ERR_STREAM_DESTROYED') return
+        this.failPending(err)
+      })
+
       this.process.stderr?.on('data', (chunk: Buffer | string) => {
         const text = chunk.toString()
         this.stderrText = (this.stderrText + text).slice(-4000)
@@ -139,6 +147,25 @@ export class StdioJsonRpcBridge extends EventEmitter {
 
       if (!this.process?.stdin) {
         reject(new Error('Process not started'))
+        return
+      }
+
+      // exitCode is set on 'exit', before 'close' copies stderr into
+      // exitError. Writing in that window breaks the pipe. Wait for
+      // close instead of sending another request.
+      if (this.process.exitCode !== null || this.process.signalCode !== null) {
+        const finish = () => {
+          reject(this.exitError ?? new Error('Builder exited'))
+        }
+        if (this.exitError) {
+          finish()
+          return
+        }
+        this.once('exit', finish)
+        if (this.exitError) {
+          this.off('exit', finish)
+          finish()
+        }
         return
       }
 
