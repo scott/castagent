@@ -583,8 +583,20 @@ def _registered_prefixes(registry: Registry) -> str:
     return ", ".join(prefixes) or "none"
 
 
-def _reserved_list() -> str:
-    return ", ".join(item["prefix"] for item in _reserved_direct_by_prefix().values())
+def _direct_prefix_hint(registry: Registry) -> str:
+    """Registered non-default prefixes, then reserved prefixes not registered yet."""
+    prefixes: list[str] = []
+    for provider in registry.providers:
+        if provider.default:
+            continue
+        for prefix in provider.prefixes:
+            if prefix not in prefixes:
+                prefixes.append(prefix)
+    for item in _reserved_direct_by_prefix().values():
+        prefix = item["prefix"]
+        if prefix not in prefixes:
+            prefixes.append(prefix)
+    return ", ".join(prefixes)
 
 
 def _bare_alias(text: str) -> bool:
@@ -647,7 +659,7 @@ def prefix_route_error(model: Optional[str], registry: Registry) -> Optional[str
     return (
         f"Model '{text}' has no provider prefix. "
         f"OpenRouter models look like openai/gpt-4o or openrouter/openai/gpt-4o. "
-        f"Direct providers use {_reserved_list()}. "
+        f"Direct providers use {_direct_prefix_hint(registry)}. "
         f"A bare alias such as claude-sonnet-4 still uses OpenRouter."
     )
 

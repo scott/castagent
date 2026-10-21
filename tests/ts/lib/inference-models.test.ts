@@ -19,6 +19,7 @@ describe('inference model listing', () => {
   const previousDo = process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
   const previousFake = process.env.FAKEAI_API_KEY
   const previousXai = process.env.XAI_API_KEY
+  const previousOpenAI = process.env.OPENAI_API_KEY
   const catalog = loadInferenceCatalog()
   let home: string
 
@@ -28,6 +29,7 @@ describe('inference model listing', () => {
     delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
     delete process.env.FAKEAI_API_KEY
     delete process.env.XAI_API_KEY
+    delete process.env.OPENAI_API_KEY
   })
 
   afterEach(() => {
@@ -39,6 +41,8 @@ describe('inference model listing', () => {
     else process.env.FAKEAI_API_KEY = previousFake
     if (previousXai === undefined) delete process.env.XAI_API_KEY
     else process.env.XAI_API_KEY = previousXai
+    if (previousOpenAI === undefined) delete process.env.OPENAI_API_KEY
+    else process.env.OPENAI_API_KEY = previousOpenAI
     fs.rmSync(home, {recursive: true, force: true})
   })
 
@@ -156,6 +160,106 @@ describe('inference model listing', () => {
       'xai/grok-4.7',
       'xai/grok-4.20-0309-non-reasoning',
       'xai/grok-4.20-0309-reasoning',
+    ])
+  })
+
+  it('lists OpenAI chat models and drops embedding, TTS, image, and moderation ids', async () => {
+    const entry = catalog.find(item => item.key === 'openai-api')
+    expect(entry?.modelsPath).to.equal('/models')
+    expect(entry?.baseUrl).to.equal('https://api.openai.com/v1')
+    process.env.OPENAI_API_KEY = 'sk-openai-list-key'
+    const seen: {url: string; authorization?: string}[] = []
+    const result = await modelsForProvider(entry!, {
+      fetchImpl: async (url, init) => {
+        const headers = (init?.headers ?? {}) as Record<string, string>
+        seen.push({url: String(url), authorization: headers.Authorization})
+        return jsonResponse({
+          data: [
+            {id: 'gpt-4o'},
+            {id: 'gpt-4o-mini'},
+            {id: 'gpt-4.1'},
+            {id: 'gpt-3.5-turbo'},
+            {id: 'gpt-5'},
+            {id: 'gpt-5-mini'},
+            {id: 'o3'},
+            {id: 'o1-mini'},
+            {id: 'o4-mini'},
+            {id: 'chatgpt-4o-latest'},
+            {id: 'gpt-5-chat-latest'},
+            {id: 'ft:gpt-4o:org:name:id'},
+            {id: 'o1-pro'},
+            {id: 'o3-pro'},
+            {id: 'gpt-5-pro'},
+            {id: 'o3-deep-research'},
+            {id: 'o4-mini-deep-research'},
+            {id: 'gpt-5-codex'},
+            {id: 'gpt-5.1-codex'},
+            {id: 'gpt-3.5-turbo-instruct'},
+            {id: 'gpt-4o-search-preview'},
+            {id: 'gpt-4o-mini-search-preview'},
+            {id: 'text-embedding-3-small'},
+            {id: 'text-embedding-ada-002'},
+            {id: 'tts-1'},
+            {id: 'gpt-4o-mini-tts'},
+            {id: 'whisper-1'},
+            {id: 'dall-e-3'},
+            {id: 'gpt-image-1'},
+            {id: 'gpt-4o-realtime-preview'},
+            {id: 'gpt-4o-audio-preview'},
+            {id: 'gpt-4o-transcribe'},
+            {id: 'omni-moderation-latest'},
+            {id: 'babbage-002'},
+            {id: 'davinci-002'},
+          ],
+        })
+      },
+    })
+    expect(seen).to.deep.equal([{
+      url: 'https://api.openai.com/v1/models',
+      authorization: 'Bearer sk-openai-list-key',
+    }])
+    expect(result.fallback).to.equal(false)
+    expect(result.models.map(model => model.id)).to.deep.equal([
+      'openai-api/gpt-4o',
+      'openai-api/gpt-4o-mini',
+      'openai-api/gpt-4.1',
+      'openai-api/gpt-3.5-turbo',
+      'openai-api/gpt-5',
+      'openai-api/gpt-5-mini',
+      'openai-api/o3',
+      'openai-api/o1-mini',
+      'openai-api/o4-mini',
+      'openai-api/chatgpt-4o-latest',
+      'openai-api/gpt-5-chat-latest',
+      'openai-api/ft:gpt-4o:org:name:id',
+    ])
+    expect(result.models.map(model => model.id).join('\n')).to.not.match(/embedding|tts|whisper|dall-e|image|realtime|audio|transcribe|moderation|babbage|davinci|search|-pro\b|deep-research|codex|instruct/)
+  })
+
+  it('uses OpenAI fallback ids when the live list fails or the key is missing', async () => {
+    const entry = catalog.find(item => item.key === 'openai-api')
+    process.env.OPENAI_API_KEY = 'sk-openai-list-key'
+    const failed = await modelsForProvider(entry!, {
+      fetchImpl: async () => jsonResponse({}, 500),
+    })
+    expect(failed.fallback).to.equal(true)
+    expect(failed.models.map(model => model.id)).to.deep.equal([
+      'openai-api/gpt-4o',
+      'openai-api/gpt-4o-mini',
+    ])
+    delete process.env.OPENAI_API_KEY
+    let called = false
+    const offline = await modelsForProvider(entry!, {
+      fetchImpl: async () => {
+        called = true
+        throw new Error('must not fetch without a key')
+      },
+    })
+    expect(called).to.equal(false)
+    expect(offline.fallback).to.equal(true)
+    expect(offline.models.map(model => model.id)).to.deep.equal([
+      'openai-api/gpt-4o',
+      'openai-api/gpt-4o-mini',
     ])
   })
 

@@ -75,17 +75,29 @@
   },
   {
     "key": "openai-api",
-    "impl": "reserved",
     "name": "OpenAI",
-    "displayName": "OpenAI",
-    "prefixes": ["openai-api/"],
     "default": false,
+    "prefixes": [
+      "openai-api/"
+    ],
     "envVar": "OPENAI_API_KEY",
     "configKey": "providers.openai.api_key",
     "baseUrl": "https://api.openai.com/v1",
     "acceptsAnyModel": true,
+    "displayName": "OpenAI",
+    "modelsPath": "/models",
+    "modelsFilter": "^(?:ft:)?(?:chatgpt-|o[0-9]|gpt-(?:3\\.5|4|5))(?!.*(?:tts|transcribe|realtime|audio|moderation|embedding|image|search|-pro\\b|deep-research|codex|instruct))",
+    "fallbackModels": ["gpt-4o", "gpt-4o-mini"],
+    "defaultModel": "openai-api/gpt-4o",
     "knownModels": [],
-    "openrouterVendor": "openai/"
+    "impl": "openai-compatible",
+    "llmDefaultModel": "gpt-4o",
+    "missingKeyMessage": "OPENAI_API_KEY environment variable is required. Get one at https://platform.openai.com/api-keys",
+    "defaultParams": {"temperature": 0.7},
+    "omitTemperatureModels": [
+      "(?:^|/)o[0-9]",
+      "(?:^|/)gpt-5"
+    ]
   },
   {
     "key": "anthropic-api",

@@ -278,7 +278,7 @@ class TestRuntimeAgentProviderSelection:
             assert mock_chat.call_args.kwargs["api_key"] == "or-key"
 
     def test_reserved_prefix_falls_back_to_echo(self, agent_config):
-        self._set_model(agent_config, "openai-api/gpt-4o")
+        self._set_model(agent_config, "anthropic-api/claude-sonnet-4.6")
         with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
             agent = RuntimeAgent(agent_config)
         assert agent.graph is None
@@ -316,8 +316,43 @@ class TestRuntimeAgentProviderSelection:
     def test_reflection_catches_a_reserved_prefix(self):
         from cast.memory.reflection import ReflectionAgent
 
-        agent = ReflectionAgent("openai-api/gpt-4o")
+        with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
+            agent = ReflectionAgent("anthropic-api/claude-sonnet-4.6")
         assert agent.llm is None
+
+    def test_openai_api_without_a_key_stays_in_echo(self):
+        from cast.memory.reflection import ReflectionAgent
+
+        with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
+            agent = ReflectionAgent("openai-api/gpt-4o")
+        assert agent.llm is None
+
+    @patch("cast.agent.runtime.create_react_agent")
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_openai_api_key_starts_openai_not_openrouter(self, mock_chat, mock_graph, agent_config):
+        self._set_model(agent_config, "openai-api/gpt-4o")
+        mock_graph.return_value = MagicMock()
+        with patch.dict(os.environ, _env({
+            "OPENAI_API_KEY": "sk-test-openai",
+            "OPENROUTER_API_KEY": "or-key",
+            "OPENAI_BASE_URL": "https://proxy.example/v1",
+        }), clear=True):
+            agent = RuntimeAgent(agent_config)
+        assert agent.graph is not None
+        assert agent._provider.key == "openai-api"
+        assert mock_chat.call_args.kwargs["model"] == "gpt-4o"
+        assert mock_chat.call_args.kwargs["api_key"] == "sk-test-openai"
+        assert mock_chat.call_args.kwargs["base_url"] == "https://api.openai.com/v1"
+        assert "temperature" not in mock_chat.call_args.kwargs
+
+    def test_openai_api_model_does_not_fall_back_to_openrouter(self, agent_config):
+        self._set_model(agent_config, "openai-api/gpt-4o")
+        with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):
+            agent = RuntimeAgent(agent_config)
+            assert agent.graph is None
+            response = agent._echo_response("random message")
+            assert "OPENAI_API_KEY" in response
+            assert "OPENROUTER_API_KEY" not in response
 
     def test_digitalocean_model_does_not_fall_back_to_openrouter(self, agent_config):
         self._set_model(agent_config, "digitalocean/llama3.3-70b-instruct")

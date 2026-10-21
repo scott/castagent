@@ -21,15 +21,19 @@ them yourself when you clone the repo and run `./install.sh` from that checkout.
 - **Bun 1.4.3** (the one-liner installs this pinned build). Required to render the TUI.
 - **git**, **gnupg** (the `gpg` command), **tar**, **unzip**, and a C compiler. Linux also needs libsecret.
 
-You will also need an LLM API key to actually run an agent. Either is enough:
+You will also need an LLM API key to actually run an agent. Any one of these is enough:
 
 - an **OpenRouter** key (`OPENROUTER_API_KEY`) from [openrouter.ai](https://openrouter.ai) — the default, or
-- a **DigitalOcean serverless inference** model access key (`DIGITALOCEAN_MODEL_ACCESS_KEY`).
+- a **DigitalOcean serverless inference** model access key (`DIGITALOCEAN_MODEL_ACCESS_KEY`), or
+- an **OpenAI** key (`OPENAI_API_KEY`) from [platform.openai.com](https://platform.openai.com/api-keys).
 
 OpenRouter stays the default. To call DigitalOcean, set the model to
 `digitalocean/<model-id>` (for example `digitalocean/llama3.3-70b-instruct`
 or `digitalocean/deepseek-v3.2`). Requests go to
 `https://inference.do-ai.run/v1`. That key is not the DigitalOcean deploy token.
+To call OpenAI directly, set the model to `openai-api/<model-id>`
+(for example `openai-api/gpt-4o`). Requests go to `https://api.openai.com/v1`.
+`openai/gpt-4o` stays on OpenRouter. Cast does not read `OPENAI_BASE_URL`.
 
 ## One-liner install (recommended)
 

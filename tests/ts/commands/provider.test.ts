@@ -13,6 +13,8 @@ const savedEnv = {
   DIGITALOCEAN_INFERENCE_BASE_URL: process.env.DIGITALOCEAN_INFERENCE_BASE_URL,
   XAI_API_KEY: process.env.XAI_API_KEY,
   XAI_BASE_URL: process.env.XAI_BASE_URL,
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+  OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
 }
 
 function restoreEnv(name: string, value: string | undefined): void {
@@ -57,6 +59,8 @@ describe('cast provider', () => {
     delete process.env.DIGITALOCEAN_INFERENCE_BASE_URL
     delete process.env.XAI_API_KEY
     delete process.env.XAI_BASE_URL
+    delete process.env.OPENAI_API_KEY
+    delete process.env.OPENAI_BASE_URL
   })
 
   afterEach(() => {
@@ -67,6 +71,8 @@ describe('cast provider', () => {
     restoreEnv('DIGITALOCEAN_INFERENCE_BASE_URL', savedEnv.DIGITALOCEAN_INFERENCE_BASE_URL)
     restoreEnv('XAI_API_KEY', savedEnv.XAI_API_KEY)
     restoreEnv('XAI_BASE_URL', savedEnv.XAI_BASE_URL)
+    restoreEnv('OPENAI_API_KEY', savedEnv.OPENAI_API_KEY)
+    restoreEnv('OPENAI_BASE_URL', savedEnv.OPENAI_BASE_URL)
     fs.rmSync(home, {recursive: true, force: true})
   })
 
@@ -86,6 +92,8 @@ describe('cast provider', () => {
     expect(text).to.include('DigitalOcean Serverless Inference')
     expect(text).to.include('xAI')
     expect(text).to.include('https://api.x.ai/v1')
+    expect(text).to.include('openai-api')
+    expect(text).to.include('https://api.openai.com/v1')
     expect(text).to.include('not enabled')
     expect(text).to.not.include('sk-secret-value')
   })
@@ -107,6 +115,30 @@ describe('cast provider', () => {
     expect(xai.enabled).to.equal(true)
     expect(xai.baseUrl).to.equal('https://api.x.ai/v1')
     expect(listed.logs.join('\n')).to.not.include('xai-secret-token')
+  })
+
+  it('stores an OpenAI token without printing it or reading OPENAI_BASE_URL', async () => {
+    process.env.OPENAI_BASE_URL = 'https://proxy.example/v1'
+    const Enable = await loadCommand('enable')
+    const result = await runCommand(Enable, {provider: 'openai-api'}, {
+      token: 'sk-openai-stored-token',
+      url: 'https://api.openai.example/v1',
+    })
+    expect(result.errors, result.errors.join('\n')).to.deep.equal([])
+    expect(result.logs.join('\n')).to.not.include('sk-openai-stored-token')
+    expect(await keytar.getPassword('cast', 'inference:openai-api')).to.equal('sk-openai-stored-token')
+    const config = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(config.providers.openai.base_url).to.equal('https://api.openai.example/v1')
+    expect(JSON.stringify(config)).to.not.include('sk-openai-stored-token')
+    expect(JSON.stringify(config)).to.not.include('https://proxy.example/v1')
+    const Provider = await loadCommand('index')
+    const listed = await runCommand(Provider, {}, {json: true, current: false})
+    const rows = JSON.parse(listed.logs.join('\n'))
+    const openai = rows.find((row: {key: string}) => row.key === 'openai-api')
+    expect(openai.displayName).to.equal('OpenAI')
+    expect(openai.enabled).to.equal(true)
+    expect(openai.baseUrl).to.equal('https://api.openai.example/v1')
+    expect(listed.logs.join('\n')).to.not.include('sk-openai-stored-token')
   })
 
   it('refuses to switch to a provider that has no token', async () => {
