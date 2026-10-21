@@ -155,8 +155,9 @@ request. When that list cannot be loaded, the picker shows
 `gemini-3.8-flash` and `gemini-3.1-pro-preview`. The builder does not
 send temperature. Gemini 3 thinking models are tuned for the API default
 of 1.0, and a lower value can loop. Gemini 3 and 4 tool calls include
-`extra_content.google.thought_signature`, and Cast echoes that object on
-the next request. `google/gemini-2.5-pro` and the bare
+`extra_content.google.thought_signature`, and Cast echoes that object
+from the assistant message on the next request. Concurrent streams on
+one client keep their own signatures. `google/gemini-2.5-pro` and the bare
 alias `gemini-2.5-pro` stay on OpenRouter. Deploy forwards
 `GEMINI_API_KEY` and does not forward `GEMINI_BASE_URL`.
 
