@@ -14,12 +14,15 @@ import {
 
 const OPENROUTER = 'sk-or-v1-secret-openrouter-key'
 const DIGITALOCEAN = 'do-model-secret-key-0123456789'
+const XAI = 'xai-secret-key-0123456789'
 
 const BOTH = {
   OPENROUTER_API_KEY: OPENROUTER,
   DIGITALOCEAN_MODEL_ACCESS_KEY: DIGITALOCEAN,
+  XAI_API_KEY: XAI,
   OPENROUTER_BASE_URL: 'https://openrouter.example/v1',
   DIGITALOCEAN_INFERENCE_BASE_URL: 'https://inference.example/v1',
+  XAI_BASE_URL: 'https://xai.example/v1',
   FAKEAI_REGION: 'sfo3',
   FAKEAI_BASE_URL: 'https://fakeai.example/v1',
 }
@@ -39,6 +42,19 @@ describe('inference prefix routing', () => {
     expect(digitalocean?.modelsPath).to.equal('/models')
     expect(digitalocean?.fallbackModels).to.deep.equal(['llama3.3-70b-instruct', 'deepseek-v3.2'])
     expect(catalog.some(entry => entry.key === 'openai-api')).to.equal(false)
+    const xai = catalog.find(entry => entry.key === 'xai')
+    expect(xai?.envVar).to.equal('XAI_API_KEY')
+    expect(xai?.prefixes).to.deep.equal(['xai/'])
+    expect(xai?.baseUrl).to.equal('https://api.x.ai/v1')
+    expect(xai?.baseUrlEnv).to.equal('XAI_BASE_URL')
+    expect(xai?.modelsPath).to.equal('/models')
+    expect(xai?.defaultModel).to.equal('xai/grok-4.7')
+    expect(xai?.fallbackModels).to.deep.equal([
+      'grok-4.7',
+      'grok-4.20-0309-non-reasoning',
+      'grok-4.20-0309-reasoning',
+    ])
+    expect(xai?.modelsFilter).to.be.a('string')
     for (const entry of catalog) {
       expect(entry).to.not.have.property('knownModels')
     }
@@ -68,14 +84,13 @@ describe('inference prefix routing', () => {
       'gemini/',
       'bedrock/',
       'ollama/',
-      'xai/',
     ])
+    expect(reserved).to.not.include('xai/')
     const direct = inferencePrefixError('openai-api/gpt-4o', catalog)
     expect(direct).to.include("reserved prefix 'openai-api/'")
     expect(direct).to.include('openai/gpt-4o still routes to OpenRouter')
-    const xai = inferencePrefixError('xai/grok-2', catalog)
-    expect(xai).to.include("reserved prefix 'xai/'")
-    expect(xai).to.include('x-ai/grok-2 still routes to OpenRouter')
+    expect(inferencePrefixError('xai/grok-4.7', catalog)).to.equal(null)
+    expect(matchingProvider('xai/grok-4.7', catalog)?.key).to.equal('xai')
     expect(inferencePrefixError('qwen/qwen3-coder', catalog)).to.equal(null)
     expect(inferencePrefixError('z-ai/glm-4.6', catalog)).to.equal(null)
     expect(inferencePrefixError('unknown/model', catalog)).to.equal(null)
@@ -117,8 +132,16 @@ describe('inference prefix routing', () => {
     expect(filterInferenceEnv('unknown/model', BOTH, catalog)).to.deep.equal({
       OPENROUTER_API_KEY: OPENROUTER,
     })
+    expect(filterInferenceEnv('xai/grok-4.7', BOTH, catalog)).to.deep.equal({
+      XAI_API_KEY: XAI,
+    })
     expect(filterInferenceEnv('openai-api/gpt-4o', BOTH, catalog)).to.deep.equal({})
     expect(filterInferenceEnv('gpt-5', BOTH, catalog)).to.deep.equal({})
+    const xaiForwarded = JSON.stringify(filterInferenceEnv('xai/grok-4.7', BOTH, catalog))
+    expect(xaiForwarded).to.not.include('BASE_URL')
+    expect(xaiForwarded).to.not.include(OPENROUTER)
+    expect(xaiForwarded).to.not.include(DIGITALOCEAN)
+    expect(xaiForwarded).to.not.include('https://')
     const forwarded = JSON.stringify(filterInferenceEnv('digitalocean/llama3.3-70b-instruct', BOTH, catalog))
     expect(forwarded).to.not.include('BASE_URL')
     expect(forwarded).to.not.include(OPENROUTER)

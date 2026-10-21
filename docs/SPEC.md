@@ -942,20 +942,21 @@ Non-default providers match first. A provider matches when the model starts with
 | `openai/gpt-4o` | OpenRouter |
 | `google/gemini-2.5-pro` | OpenRouter |
 | `x-ai/grok-2` | OpenRouter |
+| `xai/grok-4.7` | xAI. `x-ai/` stays on OpenRouter. |
 | `claude-sonnet-4` | OpenRouter, then the alias table |
 | `example/my-model` | The external provider that registered `example/` |
 | `qwen/qwen3-coder`, `z-ai/glm-4.6` | OpenRouter. Unregistered slash prefixes use the default. |
 | `openai-api/gpt-4o` | Error. Reserved direct prefix, not registered yet |
 
-`vendor-prefixes.json` stops an external provider from registering `openai/`, `anthropic/`, `google/`, `x-ai/`, and the other listed vendor prefixes. It does not decide routing. Any slash prefix that is not a registered provider and not a reserved direct prefix uses OpenRouter, and deploy forwards `OPENROUTER_API_KEY`. `openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, `ollama/`, and `xai/` are reserved and are not providers until a later change registers them. Deploy forwards no inference key for those ids.
+`vendor-prefixes.json` stops an external provider from registering `openai/`, `anthropic/`, `google/`, `x-ai/`, and the other listed vendor prefixes. It does not decide routing. Any slash prefix that is not a registered provider and not a reserved direct prefix uses OpenRouter, and deploy forwards `OPENROUTER_API_KEY`. `openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, and `ollama/` are reserved and are not providers until a later change registers them. Deploy forwards no inference key for those ids. `xai/` is registered. Deploy forwards `XAI_API_KEY` for an `xai/` model and does not forward `XAI_BASE_URL`.
 
-Both API keys may be set. The prefix wins. If the selected provider's token is missing, Cast stays in echo mode and names that variable. It does not try the other provider. A reserved direct prefix, or a bare id OpenRouter does not already accept, is an error. The runtime and reflection catch that error and stay in echo mode.
+Several API keys may be set. The prefix wins. If the selected provider's token is missing, Cast stays in echo mode and names that variable. It does not try another provider. A reserved direct prefix, or a bare id OpenRouter does not already accept, is an error. The runtime and reflection catch that error and stay in echo mode.
 
 ### Registration
 
-An OpenAI-compatible built-in is one row in `python/cast/providers/manifest.json` with `"impl": "openai-compatible"`. The registry builds `OpenAICompatibleProvider` from that row. A module is only required when the provider rewrites model ids, and that module is one line in `BUILTIN_MODULES`. OpenRouter (`https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`) is the default and keeps its alias rewrite. DigitalOcean (`https://inference.do-ai.run/v1`, `DIGITALOCEAN_MODEL_ACCESS_KEY`, config key `providers.digitalocean_inference.api_key`) accepts any catalog id and does not rewrite it. Both use the shared class. `providers.digitalocean` remains the Droplet and MicroVM deploy token.
+An OpenAI-compatible built-in is one row in `python/cast/providers/manifest.json` with `"impl": "openai-compatible"`. The registry builds `OpenAICompatibleProvider` from that row. A module is only required when the provider rewrites model ids, and that module is one line in `BUILTIN_MODULES`. OpenRouter (`https://openrouter.ai/api/v1`, `OPENROUTER_API_KEY`) is the default and keeps its alias rewrite. DigitalOcean (`https://inference.do-ai.run/v1`, `DIGITALOCEAN_MODEL_ACCESS_KEY`, config key `providers.digitalocean_inference.api_key`) accepts any catalog id and does not rewrite it. xAI (`https://api.x.ai/v1`, `XAI_API_KEY`, config key `providers.xai.api_key`, prefix `xai/`) is a manifest row with no module. Its model list is `GET /models`, filtered to chat ids. All three use the shared class. `providers.digitalocean` remains the Droplet and MicroVM deploy token.
 
-Builder sampling params come from the row's `defaultParams`. OpenRouter and DigitalOcean still request temperature `0.7`. `omitTemperatureModels` drops temperature for a matching model. The runtime and reflection do not pass temperature.
+Builder sampling params come from the row's `defaultParams`. OpenRouter, DigitalOcean, and xAI request temperature `0.7`. `omitTemperatureModels` drops temperature for a matching model. xAI does not list any omit pattern: reasoning ids still receive `0.7`, and the row does not send `stop`, `presence_penalty`, or `frequency_penalty`. The runtime and reflection do not pass temperature.
 
 External providers load after built-ins, with no edit to this repository:
 
@@ -973,10 +974,11 @@ An external key or prefix that collides with a provider loaded earlier fails at 
 |----------|------|--------|
 | OpenRouter | `providers/openrouter.py` (shared class plus alias rewrite) | v1, default |
 | DigitalOcean serverless inference | `providers/digitalocean.py` (shared class) | v1 |
+| xAI | manifest row `xai`, shared class, no module | v1 |
 | Anthropic direct | reserved `anthropic-api/` | Not registered |
 | OpenAI direct | reserved `openai-api/` | Not registered |
 | Ollama | reserved `ollama/` | Not registered |
-| Gemini, Bedrock, xAI | reserved `gemini/`, `bedrock/`, `xai/` | Not registered |
+| Gemini, Bedrock | reserved `gemini/`, `bedrock/` | Not registered |
 
 ### Model string examples
 
@@ -985,7 +987,7 @@ An external key or prefix that collides with a provider loaded earlier fails at 
 - `digitalocean/deepseek-v3.2`
 - `example/my-model` (external provider)
 
-A `digitalocean/<model-id>` string selects DigitalOcean and sends `<model-id>` unchanged. `openrouter/...`, bare aliases, `anthropic/...`, `google/...`, `x-ai/...`, and `openai/...` stay on OpenRouter. Alias rewrites stay inside the OpenRouter module. The shared class strips the provider prefix before that hook runs.
+A `digitalocean/<model-id>` string selects DigitalOcean and sends `<model-id>` unchanged. An `xai/<model-id>` string selects xAI and sends `<model-id>` unchanged. `openrouter/...`, bare aliases, `anthropic/...`, `google/...`, `x-ai/...`, and `openai/...` stay on OpenRouter. Alias rewrites stay inside the OpenRouter module. The shared class strips the provider prefix before that hook runs.
 
 ---
 

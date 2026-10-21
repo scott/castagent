@@ -270,6 +270,19 @@ describe('deployment secret handling', () => {
       expect(source).to.not.include('secrets\', \'set\'')
     })
 
+    it('Fly, Railway, Sprites, and DigitalOcean forward inference through the model filter', () => {
+      for (const file of ['fly.ts', 'railway.ts', 'sprites.ts', 'digitalocean.ts']) {
+        const source = fs.readFileSync(
+          path.join(__dirname, '../../../../typescript/cast-cli/src/lib/deploy', file),
+          'utf8',
+        )
+        expect(source, file).to.include('filterInferenceEnv')
+        expect(source, file).to.not.include('XAI_API_KEY')
+        expect(source, file).to.not.include('XAI_BASE_URL')
+        expect(source, file).to.not.include('OPENROUTER_API_KEY')
+      }
+    })
+
     it('imports Fly secrets from stdin in the deploy source', () => {
       const source = fs.readFileSync(
         path.join(__dirname, '../../../../typescript/cast-cli/src/lib/deploy/fly.ts'),

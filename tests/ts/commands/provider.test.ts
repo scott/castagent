@@ -11,6 +11,8 @@ const savedEnv = {
   DIGITALOCEAN_MODEL_ACCESS_KEY: process.env.DIGITALOCEAN_MODEL_ACCESS_KEY,
   OPENROUTER_BASE_URL: process.env.OPENROUTER_BASE_URL,
   DIGITALOCEAN_INFERENCE_BASE_URL: process.env.DIGITALOCEAN_INFERENCE_BASE_URL,
+  XAI_API_KEY: process.env.XAI_API_KEY,
+  XAI_BASE_URL: process.env.XAI_BASE_URL,
 }
 
 function restoreEnv(name: string, value: string | undefined): void {
@@ -53,6 +55,8 @@ describe('cast provider', () => {
     delete process.env.DIGITALOCEAN_MODEL_ACCESS_KEY
     delete process.env.OPENROUTER_BASE_URL
     delete process.env.DIGITALOCEAN_INFERENCE_BASE_URL
+    delete process.env.XAI_API_KEY
+    delete process.env.XAI_BASE_URL
   })
 
   afterEach(() => {
@@ -61,6 +65,8 @@ describe('cast provider', () => {
     restoreEnv('DIGITALOCEAN_MODEL_ACCESS_KEY', savedEnv.DIGITALOCEAN_MODEL_ACCESS_KEY)
     restoreEnv('OPENROUTER_BASE_URL', savedEnv.OPENROUTER_BASE_URL)
     restoreEnv('DIGITALOCEAN_INFERENCE_BASE_URL', savedEnv.DIGITALOCEAN_INFERENCE_BASE_URL)
+    restoreEnv('XAI_API_KEY', savedEnv.XAI_API_KEY)
+    restoreEnv('XAI_BASE_URL', savedEnv.XAI_BASE_URL)
     fs.rmSync(home, {recursive: true, force: true})
   })
 
@@ -78,8 +84,29 @@ describe('cast provider', () => {
     expect(text).to.include('enabled')
     expect(text).to.include('https://openrouter.ai/api/v1')
     expect(text).to.include('DigitalOcean Serverless Inference')
+    expect(text).to.include('xAI')
+    expect(text).to.include('https://api.x.ai/v1')
     expect(text).to.include('not enabled')
     expect(text).to.not.include('sk-secret-value')
+  })
+
+  it('enables xAI from a token and lists it without printing the key', async () => {
+    const Enable = await loadCommand('enable')
+    const enabled = await runCommand(Enable, {provider: 'xai'}, {
+      token: 'xai-secret-token',
+    })
+    expect(enabled.errors, enabled.errors.join('\n')).to.deep.equal([])
+    expect(enabled.logs.join('\n')).to.not.include('xai-secret-token')
+    expect(await keytar.getPassword('cast', 'inference:xai')).to.equal('xai-secret-token')
+    const Provider = await loadCommand('index')
+    const listed = await runCommand(Provider, {}, {json: true, current: false})
+    expect(listed.errors, listed.errors.join('\n')).to.deep.equal([])
+    const rows = JSON.parse(listed.logs.join('\n'))
+    const xai = rows.find((row: {key: string}) => row.key === 'xai')
+    expect(xai.displayName).to.equal('xAI')
+    expect(xai.enabled).to.equal(true)
+    expect(xai.baseUrl).to.equal('https://api.x.ai/v1')
+    expect(listed.logs.join('\n')).to.not.include('xai-secret-token')
   })
 
   it('refuses to switch to a provider that has no token', async () => {

@@ -24,5 +24,8 @@
   {"id": "digitalocean/llama3.3-70b-instruct", "provider": "digitalocean", "model": "llama3.3-70b-instruct", "temperature": 0.7},
   {"id": "gpt-5", "provider": null, "error": "no provider prefix"},
   {"id": "openai-api/gpt-4o", "provider": null, "error": "reserved prefix 'openai-api/'"},
-  {"id": "xai/grok-4", "provider": null, "error": "reserved prefix 'xai/'"}
+  {"id": "xai/grok-4", "provider": "xai", "model": "grok-4", "temperature": 0.7},
+  {"id": "xai/grok-4.7", "provider": "xai", "model": "grok-4.7", "temperature": 0.7},
+  {"id": "xai/grok-4.20-0309-reasoning", "provider": "xai", "model": "grok-4.20-0309-reasoning", "temperature": 0.7},
+  {"id": "xai/grok-4.20-0309-non-reasoning", "provider": "xai", "model": "grok-4.20-0309-non-reasoning", "temperature": 0.7}
 ]
