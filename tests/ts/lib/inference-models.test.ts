@@ -371,6 +371,26 @@ describe('inference model listing', () => {
     ])
   })
 
+  it('lists curated Bedrock inference profiles and does not fetch /models', async () => {
+    const entry = catalog.find(item => item.key === 'bedrock')
+    expect(entry?.modelsPath).to.equal(undefined)
+    expect(entry?.curatedModels).to.equal(true)
+    let called = false
+    const result = await modelsForProvider(entry!, {
+      fetchImpl: async () => {
+        called = true
+        throw new Error('Bedrock must not fetch /models')
+      },
+    })
+    expect(called).to.equal(false)
+    expect(result.fallback).to.equal(false)
+    expect(result.models.map(model => model.id)).to.deep.equal([
+      'bedrock/global.anthropic.claude-sonnet-4-6',
+      'bedrock/global.anthropic.claude-haiku-5-5',
+      'bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0',
+    ])
+  })
+
   it('lists curated models without a token when the row is keyless', async () => {
     const entry: InferenceCatalogEntry = {
       key: 'fakelocal',

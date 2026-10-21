@@ -9,7 +9,9 @@ import {
   baseUrlConfigKey,
   dottedConfigString,
   expandConfigSecret,
+  normalizeRegion,
   parseInferenceUrl,
+  regionSetting,
   resolvedBaseUrl,
   resolvedInferenceToken,
 } from './inference-credentials'
@@ -142,15 +144,57 @@ function providerOrThrow(catalog: InferenceCatalogEntry[], key: string): Inferen
 
 const INFERENCE_URL_ERROR = 'Inference URL must be https, or http on 127.0.0.1, ::1, or localhost, with a host and no userinfo or query.'
 
+function assignDotted(config: Record<string, any>, dotted: string, value: string): void {
+  const parts = dotted.split('.')
+  let cursor: Record<string, any> = config
+  for (let index = 0; index < parts.length - 1; index++) {
+    const part = parts[index]
+    if (!cursor[part] || typeof cursor[part] !== 'object' || Array.isArray(cursor[part])) {
+      cursor[part] = {}
+    }
+    cursor = cursor[part]
+  }
+  cursor[parts[parts.length - 1]] = value
+}
+
+/**
+ * Region to store for a row that has a region setting.
+ * `--region` wins, then `AWS_REGION`, then `AWS_DEFAULT_REGION`, then the row default.
+ * Undefined when this provider does not take a region.
+ */
+export function regionForEnable(
+  entry: InferenceCatalogEntry,
+  flag: string | undefined,
+): string | undefined {
+  const setting = regionSetting(entry)
+  const takesRegion = Boolean(setting || entry.baseUrlTemplate)
+  if (!takesRegion) {
+    if (flag !== undefined) throw new Error(`Provider '${entry.key}' does not take a region.`)
+    return undefined
+  }
+  if (flag !== undefined && !flag.trim()) {
+    const example = entry.regionDefault || 'us-east-1'
+    throw new Error(`Region '' is not valid for this provider. Expected a region id such as ${example}.`)
+  }
+  const chosen = (flag ?? '').trim()
+    || (process.env.AWS_REGION ?? '').trim()
+    || (process.env.AWS_DEFAULT_REGION ?? '').trim()
+    || (entry.regionDefault ?? '').trim()
+  if (!chosen) return undefined
+  return normalizeRegion(chosen, entry.regionPattern || '', entry.regionDefault || '')
+}
+
 export async function enableInferenceProvider(
   key: string,
-  options: {token?: string; url?: string},
-): Promise<{baseUrl: string; tokenStore?: 'keychain' | 'file'}> {
+  options: {token?: string; url?: string; region?: string},
+): Promise<{baseUrl: string; tokenStore?: 'keychain' | 'file'; region?: string; note?: string}> {
   const catalog = loadInferenceCatalog()
   const entry = providerOrThrow(catalog, key)
-  if (!options.token && !options.url && !entry.keyless) {
+  const askedForRegion = options.region !== undefined
+  if (!options.token && !options.url && !askedForRegion && !entry.keyless) {
     throw new Error('Pass --token, --url, or both.')
   }
+  const region = regionForEnable(entry, options.region)
   const config = readCastConfig()
   let parsedUrl: string | null = null
   if (options.url) {
@@ -173,22 +217,28 @@ export async function enableInferenceProvider(
   } else {
     tokenStore = await keychain.setInferenceToken(key, token)
   }
+  let wrote = false
   if (parsedUrl) {
     const urlKey = baseUrlConfigKey(entry.configKey)
     if (!urlKey) throw new Error(`Provider '${key}' has no config key for a base URL.`)
-    const parts = urlKey.split('.')
-    let cursor: Record<string, any> = config
-    for (let index = 0; index < parts.length - 1; index++) {
-      const part = parts[index]
-      if (!cursor[part] || typeof cursor[part] !== 'object' || Array.isArray(cursor[part])) {
-        cursor[part] = {}
-      }
-      cursor = cursor[part]
-    }
-    cursor[parts[parts.length - 1]] = parsedUrl
-    writeCastConfig(config)
+    assignDotted(config, urlKey, parsedUrl)
+    wrote = true
   }
-  return {baseUrl: parsedUrl || resolvedBaseUrl(entry, readCastConfig()), tokenStore}
+  if (region) {
+    const setting = regionSetting(entry)
+    const regionKey = setting?.configKey
+    if (!regionKey) throw new Error(`Provider '${key}' has no config key for a region.`)
+    assignDotted(config, regionKey, region)
+    wrote = true
+  }
+  if (wrote) writeCastConfig(config)
+  const fresh = readCastConfig()
+  return {
+    baseUrl: parsedUrl || resolvedBaseUrl(entry, fresh),
+    tokenStore,
+    region,
+    note: entry.enableNote,
+  }
 }
 
 export interface ModelCatalogResult {
@@ -458,8 +508,10 @@ export async function primeInferenceProcessEnv(): Promise<void> {
       if (token) process.env[entry.envVar] = token
     }
     if (entry.baseUrlEnv && !process.env[entry.baseUrlEnv]) {
-      const baseUrl = resolvedBaseUrl(entry, config)
-      if (baseUrl && baseUrl !== entry.baseUrl) process.env[entry.baseUrlEnv] = baseUrl
+      // An explicit builder URL only. A region template is rebuilt from the
+      // region setting, which is copied below, so the base URL is not synthesized.
+      const stored = expandConfigSecret(dottedConfigString(config, baseUrlConfigKey(entry.configKey)))
+      if (stored && stored !== entry.baseUrl) process.env[entry.baseUrlEnv] = stored
     }
     for (const setting of entry.settings ?? []) {
       if (!setting?.env || setting.env.includes('BASE_URL') || process.env[setting.env]) continue

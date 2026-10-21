@@ -4,12 +4,14 @@ import {enableInferenceProvider} from '../../lib/inference-provider'
 const ARGV_TOKEN_WARNING = 'Warning: a model access key on the command line is visible in process listings and shell history. Prefer: cast provider enable <key> --token -\n'
 
 export default class ProviderEnable extends Command {
-  static description = 'Store an inference provider token and optional API URL'
+  static description = 'Store an inference provider token, optional API URL, and optional region'
 
   static examples = [
     '<%= config.bin %> <%= command.id %> digitalocean --token -',
     '<%= config.bin %> <%= command.id %> openrouter --token -',
     '<%= config.bin %> <%= command.id %> gemini --token -',
+    '<%= config.bin %> <%= command.id %> bedrock --token -',
+    '<%= config.bin %> <%= command.id %> bedrock --token - --region eu-west-1',
     '<%= config.bin %> <%= command.id %> digitalocean --token - --url https://inference.do-ai.run/v1',
   ]
 
@@ -40,7 +42,10 @@ export default class ProviderEnable extends Command {
       description: 'Model access key. Use --token - to read it from stdin, or --token with no value to type it without echo. The key is stored in the system keychain.',
     }),
     url: Flags.string({
-      description: 'OpenAI-compatible base URL, including the /v1 path',
+      description: 'OpenAI-compatible base URL, including the /v1 path. A custom URL stays on this machine.',
+    }),
+    region: Flags.string({
+      description: 'Region for a provider that builds its endpoint from a region. Bedrock reads this, then AWS_REGION, then AWS_DEFAULT_REGION, then us-east-1.',
     }),
   }
 
@@ -56,11 +61,17 @@ export default class ProviderEnable extends Command {
       const result = await enableInferenceProvider(args.provider, {
         token,
         url: flags.url,
+        region: flags.region,
       })
       this.log(`✓ Inference provider ${args.provider} updated.`)
       this.log(`  Base URL: ${result.baseUrl}`)
+      if (result.region) this.log(`  Region: ${result.region}`)
+      if (flags.url && result.region) {
+        this.log('  A custom base URL stays on this machine. A deployed agent uses the region.')
+      }
       if (result.tokenStore === 'keychain') this.log('  Token stored in the system keychain.')
       if (result.tokenStore === 'file') this.log('  Token stored in ~/.cast/tokens/inference/ (mode 0600).')
+      if (result.note) this.log(`  ${result.note}`)
     } catch (error: any) {
       this.error(error?.message ?? String(error))
     }

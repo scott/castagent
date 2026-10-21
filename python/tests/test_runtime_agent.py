@@ -345,6 +345,32 @@ class TestRuntimeAgentProviderSelection:
         assert mock_chat.call_args.kwargs["base_url"] == "https://api.openai.com/v1"
         assert "temperature" not in mock_chat.call_args.kwargs
 
+    @patch("cast.agent.runtime.create_react_agent")
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_bedrock_profile_in_a_non_default_region_binds_tools(
+        self, mock_chat, mock_graph, agent_config
+    ):
+        self._set_model(agent_config, "bedrock/global.anthropic.claude-sonnet-4-6")
+        mock_graph.return_value = MagicMock()
+        chat = MagicMock()
+        mock_chat.return_value = chat
+        with patch.dict(os.environ, _env({
+            "AWS_BEARER_TOKEN_BEDROCK": "bedrock-key",
+            "BEDROCK_REGION": "eu-west-1",
+            "OPENROUTER_API_KEY": "or-key",
+        }), clear=True):
+            agent = RuntimeAgent(agent_config)
+        assert agent.graph is not None
+        assert agent._provider.key == "bedrock"
+        assert mock_chat.call_args.kwargs["model"] == "global.anthropic.claude-sonnet-4-6"
+        assert mock_chat.call_args.kwargs["api_key"] == "bedrock-key"
+        assert mock_chat.call_args.kwargs["base_url"] == (
+            "https://bedrock-runtime.eu-west-1.amazonaws.com/openai/v1"
+        )
+        assert "temperature" not in mock_chat.call_args.kwargs
+        assert mock_graph.call_args.kwargs["model"] is chat
+        assert len(mock_graph.call_args.kwargs["tools"]) == 3
+
     def test_openai_api_model_does_not_fall_back_to_openrouter(self, agent_config):
         self._set_model(agent_config, "openai-api/gpt-4o")
         with patch.dict(os.environ, _env({"OPENROUTER_API_KEY": "or-key"}), clear=True):

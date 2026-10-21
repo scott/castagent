@@ -114,7 +114,7 @@ Any other `openai-api/<id>` is accepted. Reasoning models (`o1`, `o3`,
 models use `0.7`.
 
 These prefixes are reserved for a direct provider and are not registered
-yet: `anthropic-api/`, `bedrock/`, and `ollama/`.
+yet: `anthropic-api/` and `ollama/`.
 `xai/grok-4.7` is direct xAI. `x-ai/grok-2` still uses OpenRouter.
 A bare id
 OpenRouter does not already accept, such as `gpt-5` or `not-a-real-model`,
@@ -160,6 +160,25 @@ from the assistant message on the next request. Concurrent streams on
 one client keep their own signatures. `google/gemini-2.5-pro` and the bare
 alias `gemini-2.5-pro` stay on OpenRouter. Deploy forwards
 `GEMINI_API_KEY` and does not forward `GEMINI_BASE_URL`.
+
+`bedrock/<inference-profile>` is Amazon Bedrock on the same shared class.
+The key is `AWS_BEARER_TOKEN_BEDROCK`
+(`cast provider enable bedrock --token - --region eu-west-1`). With no
+`--region`, Cast stores `AWS_REGION`, then `AWS_DEFAULT_REGION`, then
+`us-east-1`. Requests go to
+`https://bedrock-runtime.<region>.amazonaws.com/openai/v1`. `bedrock-runtime`
+does not serve `GET /models`, so `/model` shows a curated list of global
+inference profiles. The default is `global.anthropic.claude-sonnet-4-6`.
+A geo profile such as `us.anthropic.claude-sonnet-4-6`, or an application
+inference profile id, is accepted and sent unchanged. Those profiles have
+to be valid in the region you call. Tool calls use the OpenAI `tools`
+schema. The builder sends temperature `0.7`. Long-term Bedrock API keys
+are for exploration and work only in the Region where they were generated.
+Short-term keys expire within 12 hours, so a deployed agent stops when
+that key expires. This version does not use IAM. `amazon/...` stays on
+OpenRouter. Deploy forwards `AWS_BEARER_TOKEN_BEDROCK` and `BEDROCK_REGION`
+and does not forward `BEDROCK_BASE_URL`. A `--url` value stays on this
+machine.
 
 ## TUI
 

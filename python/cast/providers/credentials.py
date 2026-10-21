@@ -6,7 +6,7 @@ file ``~/.cast/tokens/inference/<key>.token``, then the provider config
 key. A value that is only an unsubstituted ``${VAR}`` is missing.
 
 Order for the base URL: ``baseUrlEnv``, then config ``base_url`` next to
-the API key, then the manifest default.
+the API key, then a ``{region}`` template, then the manifest default.
 """
 
 from __future__ import annotations
@@ -17,6 +17,8 @@ from pathlib import Path
 from typing import Optional
 
 _PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
+# One DNS label. Stops a region value from adding a dot, slash, or userinfo.
+_REGION_LABEL = re.compile(r"^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
 
 
 def _home() -> Optional[Path]:
@@ -101,13 +103,53 @@ def base_url_config_key(config_key: str) -> str:
     return ""
 
 
-def resolve_base_url(base_url_env: str, config_key: str, manifest_base: str) -> str:
+def explicit_base_url(base_url_env: str, config_key: str) -> Optional[str]:
+    """Builder override. None when the manifest default or a region template applies."""
     if base_url_env:
         from_env = os.environ.get(base_url_env)
         if isinstance(from_env, str) and from_env.strip():
             return from_env.strip()
     from .registry import load_cast_config
-    stored = expand_config_string(dotted(load_cast_config(), base_url_config_key(config_key)))
-    if stored:
-        return stored
-    return manifest_base
+    return expand_config_string(dotted(load_cast_config(), base_url_config_key(config_key)))
+
+
+def resolve_base_url(base_url_env: str, config_key: str, manifest_base: str) -> str:
+    return explicit_base_url(base_url_env, config_key) or manifest_base
+
+
+def resolve_setting(env_name: str, config_key: str) -> Optional[str]:
+    """Non-secret setting. Environment wins, then the config key."""
+    if env_name:
+        from_env = os.environ.get(env_name)
+        if isinstance(from_env, str) and from_env.strip():
+            return from_env.strip()
+    if not config_key:
+        return None
+    from .registry import load_cast_config
+    return expand_config_string(dotted(load_cast_config(), config_key))
+
+
+def normalize_region(value: Optional[str], pattern: str = "", example: str = "") -> Optional[str]:
+    """A single hostname label, optionally matching a stricter provider pattern.
+
+    Empty is missing. A value with a dot, slash, or other host punctuation
+    is rejected so it cannot be interpolated into a URL.
+    """
+    if not isinstance(value, str):
+        return None
+    text = value.strip()
+    if not text:
+        return None
+    hint = f" Expected a region id such as {example}." if example else ""
+    if _REGION_LABEL.fullmatch(text) is None:
+        raise ValueError(f"Region {text!r} is not a single hostname label.{hint}")
+    if pattern:
+        try:
+            matched = re.fullmatch(pattern, text) is not None
+        except re.error as exc:
+            raise ValueError(
+                f"Region pattern {pattern!r} is not a valid regular expression."
+            ) from exc
+        if not matched:
+            raise ValueError(f"Region {text!r} is not valid for this provider.{hint}")
+    return text

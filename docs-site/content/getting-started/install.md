@@ -26,7 +26,8 @@ You will also need an LLM API key to actually run an agent. Any one of these is 
 - an **OpenRouter** key (`OPENROUTER_API_KEY`) from [openrouter.ai](https://openrouter.ai) — the default, or
 - a **DigitalOcean serverless inference** model access key (`DIGITALOCEAN_MODEL_ACCESS_KEY`), or
 - an **OpenAI** key (`OPENAI_API_KEY`) from [platform.openai.com](https://platform.openai.com/api-keys), or
-- a **Google Gemini** key (`GEMINI_API_KEY`) from [Google AI Studio](https://aistudio.google.com/apikey).
+- a **Google Gemini** key (`GEMINI_API_KEY`) from [Google AI Studio](https://aistudio.google.com/apikey), or
+- an **Amazon Bedrock** API key (`AWS_BEARER_TOKEN_BEDROCK`) from the [Bedrock console](https://console.aws.amazon.com/bedrock). Long-term keys are for exploration and work only in the Region where they were generated. Short-term keys expire within 12 hours.
 
 OpenRouter stays the default. To call DigitalOcean, set the model to
 `digitalocean/<model-id>` (for example `digitalocean/llama3.3-70b-instruct`
@@ -38,6 +39,11 @@ To call OpenAI directly, set the model to `openai-api/<model-id>`
 To call Gemini directly, set the model to `gemini/<model-id>` (for example
 `gemini/gemini-3.8-flash`). Requests go to
 `https://generativelanguage.googleapis.com/v1beta/openai`. `google/...`
+stays on OpenRouter.
+To call Bedrock, set the model to `bedrock/<inference-profile>` (for example
+`bedrock/global.anthropic.claude-sonnet-4-6`) and set the region with
+`cast provider enable bedrock --token - --region us-east-1`. Requests go to
+`https://bedrock-runtime.<region>.amazonaws.com/openai/v1`. `amazon/...`
 stays on OpenRouter.
 
 ## One-liner install (recommended)

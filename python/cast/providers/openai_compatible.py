@@ -14,7 +14,12 @@ from typing import Any, Callable, Optional
 from langchain_openai import ChatOpenAI
 
 from ._manifest import row_for
-from .credentials import resolve_base_url, resolve_token
+from .credentials import (
+    explicit_base_url,
+    normalize_region,
+    resolve_setting,
+    resolve_token,
+)
 
 
 def _default_chat():
@@ -100,6 +105,10 @@ class OpenAICompatibleProvider:
         self.models_headers = dict(row.get("modelsHeaders") or {})
         self.curated_models = bool(row.get("curatedModels", False))
         self.strip_model_id_prefix = row.get("stripModelIdPrefix") or ""
+        self.base_url_template = row.get("baseUrlTemplate") or ""
+        self.region_default = row.get("regionDefault") or ""
+        self.region_pattern = row.get("regionPattern") or ""
+        self.enable_note = row.get("enableNote") or ""
         self.settings = settings_from_row(row)
         self.missing_key_message = row.get("missingKeyMessage") or (
             f"{self.env_var} environment variable is required for {self.display_name}"
@@ -145,6 +154,44 @@ class OpenAICompatibleProvider:
             params.pop("temperature", None)
         return params
 
+    def resolved_region(self) -> str:
+        """Region setting, then ``regionDefault``. Empty when the row has neither."""
+        chosen = ""
+        for item in self.settings:
+            env_name = item.get("env") or ""
+            config_key = item.get("configKey") or ""
+            if not env_name.endswith("_REGION") and not config_key.endswith(".region"):
+                continue
+            found = resolve_setting(env_name, config_key)
+            if found:
+                chosen = found
+                break
+        if not chosen:
+            chosen = self.region_default
+        if not chosen:
+            return ""
+        return normalize_region(chosen, self.region_pattern, self.region_default) or ""
+
+    def resolved_base_url(self, override: Optional[str] = None) -> str:
+        """Explicit builder URL, then ``{region}`` in ``baseUrlTemplate``, then ``baseUrl``.
+
+        ``baseUrlEnv`` and config ``base_url`` stay on the builder. A deployed
+        agent receives the region setting and fills the template itself.
+        """
+        if override:
+            return override
+        explicit = explicit_base_url(self.base_url_env, self.config_key)
+        if explicit:
+            return explicit
+        template = self.base_url_template
+        if template:
+            if "{region}" not in template:
+                raise ValueError("baseUrlTemplate must contain {region}")
+            region = self.resolved_region()
+            if region:
+                return template.replace("{region}", region)
+        return self.base_url
+
     def create_llm(self, model: Optional[str] = None, **kwargs):
         api_key = kwargs.pop("api_key", None)
         base_url_override = kwargs.pop("base_url", None)
@@ -156,10 +203,7 @@ class OpenAICompatibleProvider:
                 api_key = self.placeholder_key
             else:
                 raise ValueError(self.missing_key_message)
-        if base_url_override:
-            base_url = base_url_override
-        else:
-            base_url = resolve_base_url(self.base_url_env, self.config_key, self.base_url)
+        base_url = self.resolved_base_url(base_url_override)
         model_id = self.resolve_model_id(model)
         params = dict(kwargs)
         if omits_temperature(self.omit_temperature_models, model) or omits_temperature(

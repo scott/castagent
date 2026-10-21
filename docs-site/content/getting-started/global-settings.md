@@ -69,7 +69,7 @@ key is written to `~/.cast/tokens/inference/<key>.token` at mode 0600.
 `http` on literal `127.0.0.1`, `::1`, or `localhost`, with a host and no
 userinfo or query. That URL is for the builder on this machine. Deploy
 and upgrade do not copy `OPENROUTER_BASE_URL`,
-`DIGITALOCEAN_INFERENCE_BASE_URL`, `XAI_BASE_URL`, or `GEMINI_BASE_URL` onto the agent. A provider is enabled when its environment variable,
+`DIGITALOCEAN_INFERENCE_BASE_URL`, `XAI_BASE_URL`, `GEMINI_BASE_URL`, or `BEDROCK_BASE_URL` onto the agent. A provider is enabled when its environment variable,
 that stored token, or a real config value is set. An unsubstituted
 `${VAR}` is not a token. Values are trimmed.
 
@@ -89,10 +89,18 @@ builder on this machine and is not copied to a deploy.
 `xai/<model-id>` is direct xAI (`XAI_API_KEY`, `https://api.x.ai/v1`).
 `gemini/<model>` is Google Gemini (`GEMINI_API_KEY`,
 `https://generativelanguage.googleapis.com/v1beta/openai`).
-`google/...` stays on OpenRouter. `anthropic-api/`, `bedrock/`, and
+`google/...` stays on OpenRouter. `bedrock/<inference-profile>` is Amazon
+Bedrock (`AWS_BEARER_TOKEN_BEDROCK`). `cast provider enable bedrock --token -`
+stores the key and a region (`--region`, otherwise `AWS_REGION`, otherwise
+`us-east-1`). The runtime calls
+`https://bedrock-runtime.<region>.amazonaws.com/openai/v1`. Deploy sends
+`AWS_BEARER_TOKEN_BEDROCK` and `BEDROCK_REGION` for a `bedrock/` model and
+does not send `BEDROCK_BASE_URL`. Long-term Bedrock API keys are for
+exploration and are Region-bound. Short-term keys expire within 12 hours.
+`amazon/...` stays on OpenRouter. `anthropic-api/` and
 `ollama/` are reserved and are not providers yet. `defaults.builder_model`
 can be `digitalocean/<model-id>`, `openai-api/<model-id>`, `xai/<model-id>`,
-or `gemini/<model-id>`. The default remains
+`gemini/<model-id>`, or `bedrock/<inference-profile>`. The default remains
 `openrouter/minimax/minimax-m2.5`. Change the
 curated OpenRouter ids with `cast model` or `/model` in the builder TUI.
 The running builder keeps its current model until the next launch.
@@ -125,6 +133,9 @@ selected by the agent's `brain.model`, including an external provider.
 | `XAI_BASE_URL` | Optional builder override for the xAI base URL. Not deployed. |
 | `GEMINI_API_KEY` | Google Gemini inference (`gemini/<model>`). Not forwarded for any other model. |
 | `GEMINI_BASE_URL` | Optional builder override for the Gemini base URL. Not deployed. |
+| `AWS_BEARER_TOKEN_BEDROCK` | Amazon Bedrock API key for `bedrock/<inference-profile>`. Deploy sends it only for that prefix. |
+| `BEDROCK_REGION` | Region used to build the Bedrock runtime URL. Deploy sends it with the Bedrock key. Default `us-east-1`. |
+| `BEDROCK_BASE_URL` | Optional builder override for the Bedrock base URL. Not deployed. |
 | `RAILWAY_API_TOKEN` | Railway deploys (alternative to `railway login`). |
 | `FLY_API_TOKEN` | Fly.io deploys (alternative to `flyctl auth login`). Not a Sprites token. |
 | `DIGITALOCEAN_ACCESS_TOKEN` | DigitalOcean deploys (also accepts `DIGITALOCEAN_API_TOKEN`, `DIGITALOCEAN_API_KEY`). MicroVM passes this value to `doctl` through the child environment, not as `--access-token`. |

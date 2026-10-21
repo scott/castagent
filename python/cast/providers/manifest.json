@@ -138,17 +138,38 @@
   },
   {
     "key": "bedrock",
-    "impl": "reserved",
     "name": "Amazon Bedrock",
-    "displayName": "Amazon Bedrock",
-    "prefixes": ["bedrock/"],
     "default": false,
+    "prefixes": ["bedrock/"],
     "envVar": "AWS_BEARER_TOKEN_BEDROCK",
     "configKey": "providers.bedrock.api_key",
     "baseUrl": "https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1",
+    "baseUrlEnv": "BEDROCK_BASE_URL",
+    "baseUrlTemplate": "https://bedrock-runtime.{region}.amazonaws.com/openai/v1",
+    "regionDefault": "us-east-1",
+    "regionPattern": "^[a-z]{2}(?:-[a-z0-9]+)+$",
     "acceptsAnyModel": true,
-    "knownModels": [],
-    "openrouterVendor": ""
+    "displayName": "Amazon Bedrock",
+    "curatedModels": true,
+    "fallbackModels": [
+      "global.anthropic.claude-sonnet-4-6",
+      "global.anthropic.claude-haiku-5-5",
+      "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    ],
+    "defaultModel": "bedrock/global.anthropic.claude-sonnet-4-6",
+    "knownModels": [
+      "global.anthropic.claude-sonnet-4-6",
+      "global.anthropic.claude-haiku-5-5",
+      "global.anthropic.claude-haiku-4-5-20251001-v1:0"
+    ],
+    "impl": "openai-compatible",
+    "llmDefaultModel": "global.anthropic.claude-sonnet-4-6",
+    "missingKeyMessage": "AWS_BEARER_TOKEN_BEDROCK environment variable is required for Amazon Bedrock. Create a key in the Amazon Bedrock console.",
+    "defaultParams": {"temperature": 0.7},
+    "settings": [
+      {"env": "BEDROCK_REGION", "configKey": "providers.bedrock.region"}
+    ],
+    "enableNote": "Long-term Bedrock API keys are for exploration and work only in the Region where they were generated. Short-term keys expire within 12 hours and are Region-bound, so a deployed agent stops when that key expires. This version forwards the API key and region. It does not use IAM."
   },
   {
     "key": "ollama",

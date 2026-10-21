@@ -17,6 +17,11 @@ const savedEnv = {
   OPENAI_BASE_URL: process.env.OPENAI_BASE_URL,
   GEMINI_API_KEY: process.env.GEMINI_API_KEY,
   GEMINI_BASE_URL: process.env.GEMINI_BASE_URL,
+  AWS_BEARER_TOKEN_BEDROCK: process.env.AWS_BEARER_TOKEN_BEDROCK,
+  BEDROCK_REGION: process.env.BEDROCK_REGION,
+  BEDROCK_BASE_URL: process.env.BEDROCK_BASE_URL,
+  AWS_REGION: process.env.AWS_REGION,
+  AWS_DEFAULT_REGION: process.env.AWS_DEFAULT_REGION,
 }
 
 function restoreEnv(name: string, value: string | undefined): void {
@@ -65,6 +70,11 @@ describe('cast provider', () => {
     delete process.env.OPENAI_BASE_URL
     delete process.env.GEMINI_API_KEY
     delete process.env.GEMINI_BASE_URL
+    delete process.env.AWS_BEARER_TOKEN_BEDROCK
+    delete process.env.BEDROCK_REGION
+    delete process.env.BEDROCK_BASE_URL
+    delete process.env.AWS_REGION
+    delete process.env.AWS_DEFAULT_REGION
   })
 
   afterEach(() => {
@@ -79,6 +89,11 @@ describe('cast provider', () => {
     restoreEnv('OPENAI_BASE_URL', savedEnv.OPENAI_BASE_URL)
     restoreEnv('GEMINI_API_KEY', savedEnv.GEMINI_API_KEY)
     restoreEnv('GEMINI_BASE_URL', savedEnv.GEMINI_BASE_URL)
+    restoreEnv('AWS_BEARER_TOKEN_BEDROCK', savedEnv.AWS_BEARER_TOKEN_BEDROCK)
+    restoreEnv('BEDROCK_REGION', savedEnv.BEDROCK_REGION)
+    restoreEnv('BEDROCK_BASE_URL', savedEnv.BEDROCK_BASE_URL)
+    restoreEnv('AWS_REGION', savedEnv.AWS_REGION)
+    restoreEnv('AWS_DEFAULT_REGION', savedEnv.AWS_DEFAULT_REGION)
     fs.rmSync(home, {recursive: true, force: true})
   })
 
@@ -287,5 +302,71 @@ describe('cast provider', () => {
     const rows = JSON.parse(after.logs.join('\n'))
     expect(rows.find((row: {key: string}) => row.key === 'gemini').enabled).to.equal(true)
     expect(after.logs.join('\n')).to.not.include('gemini-secret-token')
+  })
+
+  it('stores a Bedrock key and region and lists the regional URL', async () => {
+    const Provider = await loadCommand('index')
+    const before = await runCommand(Provider, {}, {json: true, current: false})
+    const listed = JSON.parse(before.logs.join('\n'))
+    const prior = listed.find((row: {key: string}) => row.key === 'bedrock')
+    expect(prior.displayName).to.equal('Amazon Bedrock')
+    expect(prior.enabled).to.equal(false)
+    expect(prior.baseUrl).to.equal('https://bedrock-runtime.us-east-1.amazonaws.com/openai/v1')
+    expect(prior.prefixes).to.deep.equal(['bedrock/'])
+
+    process.env.AWS_REGION = 'eu-central-1'
+    const Enable = await loadCommand('enable')
+    const fromAwsRegion = await runCommand(Enable, {provider: 'bedrock'}, {
+      token: 'bedrock-secret-token',
+    })
+    expect(fromAwsRegion.errors, fromAwsRegion.errors.join('\n')).to.deep.equal([])
+    const fromAwsText = fromAwsRegion.logs.join('\n')
+    expect(fromAwsText).to.include('Region: eu-central-1')
+    expect(fromAwsText).to.include('https://bedrock-runtime.eu-central-1.amazonaws.com/openai/v1')
+    expect(fromAwsText).to.include('exploration')
+    expect(fromAwsText).to.include('12 hours')
+    expect(fromAwsText).to.not.include('bedrock-secret-token')
+    let config = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(config.providers.bedrock.region).to.equal('eu-central-1')
+    expect(config.providers.bedrock.api_key).to.equal(undefined)
+    expect(JSON.stringify(config)).to.not.include('bedrock-secret-token')
+
+    const explicit = await runCommand(Enable, {provider: 'bedrock'}, {
+      region: 'eu-west-1',
+    })
+    expect(explicit.errors, explicit.errors.join('\n')).to.deep.equal([])
+    expect(explicit.logs.join('\n')).to.include('Region: eu-west-1')
+    expect(explicit.logs.join('\n')).to.include('https://bedrock-runtime.eu-west-1.amazonaws.com/openai/v1')
+    config = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(config.providers.bedrock.region).to.equal('eu-west-1')
+
+    const after = await runCommand(Provider, {}, {json: true, current: false})
+    const rows = JSON.parse(after.logs.join('\n'))
+    const bedrock = rows.find((row: {key: string}) => row.key === 'bedrock')
+    expect(bedrock.enabled).to.equal(true)
+    expect(bedrock.baseUrl).to.equal('https://bedrock-runtime.eu-west-1.amazonaws.com/openai/v1')
+    expect(after.logs.join('\n')).to.not.include('bedrock-secret-token')
+    expect(await keytar.getPassword('cast', 'inference:bedrock')).to.equal('bedrock-secret-token')
+  })
+
+  it('rejects a Bedrock region that is not an AWS region id', async () => {
+    const Enable = await loadCommand('enable')
+    const result = await runCommand(Enable, {provider: 'bedrock'}, {
+      token: 'bedrock-secret-token',
+      region: 'not-a-region',
+    })
+    expect(result.errors.join('\n')).to.include('us-east-1')
+    expect(await keytar.getPassword('cast', 'inference:bedrock')).to.equal(null)
+    expect(fs.existsSync(configPath())).to.equal(false)
+  })
+
+  it('refuses --region on a provider that has no region setting', async () => {
+    const Enable = await loadCommand('enable')
+    const result = await runCommand(Enable, {provider: 'xai'}, {
+      token: 'xai-secret-token',
+      region: 'us-east-1',
+    })
+    expect(result.errors.join('\n')).to.include('does not take a region')
+    expect(await keytar.getPassword('cast', 'inference:xai')).to.equal(null)
   })
 })

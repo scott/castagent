@@ -70,6 +70,10 @@ class ProviderRecord:
         models_headers: Optional[dict] = None,
         curated_models: bool = False,
         strip_model_id_prefix: str = "",
+        base_url_template: str = "",
+        region_default: str = "",
+        region_pattern: str = "",
+        enable_note: str = "",
     ):
         self.impl = impl
         self.key = key
@@ -95,6 +99,10 @@ class ProviderRecord:
         self.models_headers = dict(models_headers or {})
         self.curated_models = bool(curated_models)
         self.strip_model_id_prefix = strip_model_id_prefix or ""
+        self.base_url_template = base_url_template or ""
+        self.region_default = region_default or ""
+        self.region_pattern = region_pattern or ""
+        self.enable_note = enable_note or ""
 
     def is_available(self) -> bool:
         return bool(self.impl.is_available())
@@ -251,6 +259,22 @@ def _apply_row_meta(record: ProviderRecord, meta: dict) -> None:
         or getattr(record.impl, "strip_model_id_prefix", "")
         or ""
     )
+    if "baseUrlTemplate" in meta or "base_url_template" in meta:
+        record.base_url_template = meta.get("baseUrlTemplate") or meta.get("base_url_template") or ""
+    elif getattr(record.impl, "base_url_template", ""):
+        record.base_url_template = record.impl.base_url_template
+    if "regionDefault" in meta or "region_default" in meta:
+        record.region_default = meta.get("regionDefault") or meta.get("region_default") or ""
+    elif getattr(record.impl, "region_default", ""):
+        record.region_default = record.impl.region_default
+    if "regionPattern" in meta or "region_pattern" in meta:
+        record.region_pattern = meta.get("regionPattern") or meta.get("region_pattern") or ""
+    elif getattr(record.impl, "region_pattern", ""):
+        record.region_pattern = record.impl.region_pattern
+    if "enableNote" in meta or "enable_note" in meta:
+        record.enable_note = meta.get("enableNote") or meta.get("enable_note") or ""
+    elif getattr(record.impl, "enable_note", ""):
+        record.enable_note = record.impl.enable_note
 
 
 def record_from_impl(impl: Any, source: str) -> ProviderRecord:
@@ -282,6 +306,10 @@ def record_from_impl(impl: Any, source: str) -> ProviderRecord:
         models_headers=getattr(impl, "models_headers", None) or {},
         curated_models=bool(getattr(impl, "curated_models", False)),
         strip_model_id_prefix=getattr(impl, "strip_model_id_prefix", "") or "",
+        base_url_template=getattr(impl, "base_url_template", "") or "",
+        region_default=getattr(impl, "region_default", "") or "",
+        region_pattern=getattr(impl, "region_pattern", "") or "",
+        enable_note=getattr(impl, "enable_note", "") or "",
     )
     _apply_row_meta(record, {
         "displayName": getattr(impl, "display_name", None) or getattr(impl, "name", None),
@@ -752,6 +780,10 @@ def catalog_entries(registry: Optional[Registry] = None) -> list[dict]:
             **({"modelsHeaders": provider.models_headers} if provider.models_headers else {}),
             **({"curatedModels": True} if provider.curated_models else {}),
             **({"stripModelIdPrefix": provider.strip_model_id_prefix} if provider.strip_model_id_prefix else {}),
+            **({"baseUrlTemplate": provider.base_url_template} if provider.base_url_template else {}),
+            **({"regionDefault": provider.region_default} if provider.region_default else {}),
+            **({"regionPattern": provider.region_pattern} if provider.region_pattern else {}),
+            **({"enableNote": provider.enable_note} if provider.enable_note else {}),
             **({"settings": [dict(item) for item in provider.settings]} if provider.settings else {}),
         })
     return payload

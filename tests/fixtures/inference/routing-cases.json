@@ -41,5 +41,9 @@
   {"id": "gemini/gemini-2.5-pro", "provider": "gemini", "model": "gemini-2.5-pro", "temperature": null},
   {"id": "gemini/gemini-3.8-flash", "provider": "gemini", "model": "gemini-3.8-flash", "temperature": null},
   {"id": "gemini/gemini-3.1-pro-preview", "provider": "gemini", "model": "gemini-3.1-pro-preview", "temperature": null},
-  {"id": "gemini/models/gemini-3.8-flash", "provider": "gemini", "model": "gemini-3.8-flash", "temperature": null}
+  {"id": "gemini/models/gemini-3.8-flash", "provider": "gemini", "model": "gemini-3.8-flash", "temperature": null},
+  {"id": "bedrock/global.anthropic.claude-sonnet-4-6", "provider": "bedrock", "model": "global.anthropic.claude-sonnet-4-6", "temperature": 0.7},
+  {"id": "bedrock/global.anthropic.claude-haiku-4-5-20251001-v1:0", "provider": "bedrock", "model": "global.anthropic.claude-haiku-4-5-20251001-v1:0", "temperature": 0.7},
+  {"id": "bedrock/us.anthropic.claude-sonnet-4-6", "provider": "bedrock", "model": "us.anthropic.claude-sonnet-4-6", "temperature": 0.7},
+  {"id": "bedrock/arn:aws:bedrock:eu-west-1:123456789012:application-inference-profile/abc", "provider": "bedrock", "model": "arn:aws:bedrock:eu-west-1:123456789012:application-inference-profile/abc", "temperature": 0.7}
 ]

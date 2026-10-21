@@ -12,12 +12,68 @@ import * as os from 'os'
 import * as path from 'path'
 import {keychain} from './keychain'
 
+export interface InferenceSetting {
+  env: string
+  configKey?: string
+}
+
 export interface InferenceCredentialEntry {
   key: string
   envVar?: string
   configKey: string
   baseUrl: string
   baseUrlEnv?: string
+  /** `{region}` is replaced after an explicit base URL is absent. */
+  baseUrlTemplate?: string
+  regionDefault?: string
+  /** Extra constraint. A region must still be one hostname label. */
+  regionPattern?: string
+  settings?: InferenceSetting[]
+}
+
+const REGION_LABEL = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/
+
+export function regionSetting(entry: {settings?: InferenceSetting[]}): InferenceSetting | undefined {
+  return (entry.settings ?? []).find(item =>
+    item.env.endsWith('_REGION') || (item.configKey ?? '').endsWith('.region'),
+  )
+}
+
+export function normalizeRegion(value: string, pattern = '', example = ''): string {
+  const text = value.trim()
+  const hint = example ? ` Expected a region id such as ${example}.` : ''
+  if (!text || !REGION_LABEL.test(text)) {
+    throw new Error(`Region '${text}' is not a single hostname label.${hint}`)
+  }
+  if (pattern) {
+    let matched = false
+    try {
+      const match = new RegExp(pattern).exec(text)
+      matched = Boolean(match && match.index === 0 && match[0] === text)
+    } catch {
+      throw new Error(`Region pattern '${pattern}' is not a valid regular expression.`)
+    }
+    if (!matched) {
+      throw new Error(`Region '${text}' is not valid for this provider.${hint}`)
+    }
+  }
+  return text
+}
+
+/** Region setting, then `regionDefault`. Undefined when the row has neither. */
+export function resolvedRegion(entry: InferenceCredentialEntry, config: any): string | undefined {
+  const setting = regionSetting(entry)
+  let raw = ''
+  if (setting?.env) {
+    const fromEnv = process.env[setting.env]
+    if (typeof fromEnv === 'string' && fromEnv.trim()) raw = fromEnv.trim()
+  }
+  if (!raw && setting?.configKey) {
+    raw = expandConfigSecret(dottedConfigString(config, setting.configKey)) || ''
+  }
+  if (!raw) raw = entry.regionDefault || ''
+  if (!raw) return undefined
+  return normalizeRegion(raw, entry.regionPattern || '', entry.regionDefault || '')
 }
 
 export function expandConfigSecret(value: unknown): string | undefined {
@@ -103,7 +159,13 @@ export function resolvedBaseUrl(entry: InferenceCredentialEntry, config: any): s
     if (typeof fromEnv === 'string' && fromEnv.trim()) return fromEnv.trim()
   }
   const stored = expandConfigSecret(dottedConfigString(config, baseUrlConfigKey(entry.configKey)))
-  return stored || entry.baseUrl
+  if (stored) return stored
+  const template = entry.baseUrlTemplate
+  if (template && template.includes('{region}')) {
+    const region = resolvedRegion(entry, config)
+    if (region) return template.split('{region}').join(region)
+  }
+  return entry.baseUrl
 }
 
 export async function resolvedInferenceToken(

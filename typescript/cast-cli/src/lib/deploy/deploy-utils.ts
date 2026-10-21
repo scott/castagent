@@ -1290,6 +1290,14 @@ export interface InferenceCatalogEntry {
   curatedModels?: boolean
   /** Prefix stripped from ids returned by the model list, such as `models/`. */
   stripModelIdPrefix?: string
+  /** `{region}` is filled from the region setting when no explicit base URL is set. */
+  baseUrlTemplate?: string
+  /** Used when the region setting is unset. `us-east-1` for Bedrock. */
+  regionDefault?: string
+  /** Stricter than a hostname label. Bedrock requires an AWS region id. */
+  regionPattern?: string
+  /** Printed by `cast provider enable` for this row. */
+  enableNote?: string
   /** Non-secret settings forwarded with the selected provider. Base URLs are never included. */
   settings?: Array<{env: string; configKey?: string}>
 }
@@ -1395,7 +1403,7 @@ export function loadInferenceCatalog(): InferenceCatalogEntry[] {
   return parsed
 }
 
-// API keys only: env, keychain, token file, then configKey. Omits pairs with no value.
+// API keys, then non-secret settings such as a region. Omits pairs with no value.
 // A custom base URL stays on the builder. This map is what deploy and upgrade send.
 // Does not read providers.digitalocean.token; that key is not in the catalog.
 function blockedInferenceEnvName(name: string): boolean {

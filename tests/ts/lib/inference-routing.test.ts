@@ -19,6 +19,7 @@ const DIGITALOCEAN = 'do-model-secret-key-0123456789'
 const XAI = 'xai-secret-key-0123456789'
 const OPENAI = 'sk-openai-test-key-0123456789'
 const GEMINI = 'gemini-test-key-0123456789'
+const BEDROCK = 'bedrock-test-key-0123456789'
 
 const BOTH = {
   OPENROUTER_API_KEY: OPENROUTER,
@@ -31,6 +32,9 @@ const BOTH = {
   XAI_BASE_URL: 'https://xai.example/v1',
   OPENAI_BASE_URL: 'https://proxy.example/v1',
   GEMINI_BASE_URL: 'https://generativelanguage.example/v1beta/openai',
+  AWS_BEARER_TOKEN_BEDROCK: BEDROCK,
+  BEDROCK_REGION: 'eu-west-1',
+  BEDROCK_BASE_URL: 'https://bedrock-runtime.eu-west-1.amazonaws.com/openai/v1',
   FAKEAI_REGION: 'sfo3',
   FAKEAI_BASE_URL: 'https://fakeai.example/v1',
 }
@@ -99,18 +103,20 @@ describe('inference prefix routing', () => {
     const reserved = loadReservedDirectPrefixes().map(item => item.prefix)
     expect(reserved).to.include.members([
       'anthropic-api/',
-      'bedrock/',
       'ollama/',
     ])
     expect(reserved).to.not.include('xai/')
     expect(reserved).to.not.include('openai-api/')
     expect(reserved).to.not.include('gemini/')
+    expect(reserved).to.not.include('bedrock/')
     expect(inferencePrefixError('openai-api/gpt-4o', catalog)).to.equal(null)
     expect(matchingProvider('openai-api/gpt-4o', catalog)?.key).to.equal('openai-api')
     expect(inferencePrefixError('xai/grok-4.7', catalog)).to.equal(null)
     expect(matchingProvider('xai/grok-4.7', catalog)?.key).to.equal('xai')
     expect(inferencePrefixError('gemini/gemini-3.8-flash', catalog)).to.equal(null)
     expect(matchingProvider('gemini/gemini-3.8-flash', catalog)?.key).to.equal('gemini')
+    expect(inferencePrefixError('bedrock/global.anthropic.claude-sonnet-4-6', catalog)).to.equal(null)
+    expect(matchingProvider('bedrock/global.anthropic.claude-sonnet-4-6', catalog)?.key).to.equal('bedrock')
     const reservedDirect = inferencePrefixError('anthropic-api/claude-sonnet-4.6', catalog)
     expect(reservedDirect).to.include("reserved prefix 'anthropic-api/'")
     expect(reservedDirect).to.include('anthropic/claude-sonnet-4.6 still routes to OpenRouter')
@@ -169,6 +175,10 @@ describe('inference prefix routing', () => {
     expect(filterInferenceEnv('gemini/gemini-3.8-flash', BOTH, catalog)).to.deep.equal({
       GEMINI_API_KEY: GEMINI,
     })
+    expect(filterInferenceEnv('bedrock/global.anthropic.claude-sonnet-4-6', BOTH, catalog)).to.deep.equal({
+      AWS_BEARER_TOKEN_BEDROCK: BEDROCK,
+      BEDROCK_REGION: 'eu-west-1',
+    })
     expect(filterInferenceEnv('anthropic-api/claude-sonnet-4.6', BOTH, catalog)).to.deep.equal({})
     expect(filterInferenceEnv('gpt-5', BOTH, catalog)).to.deep.equal({})
     const xaiForwarded = JSON.stringify(filterInferenceEnv('xai/grok-4.7', BOTH, catalog))
@@ -177,11 +187,13 @@ describe('inference prefix routing', () => {
     expect(xaiForwarded).to.not.include(DIGITALOCEAN)
     expect(xaiForwarded).to.not.include(OPENAI)
     expect(xaiForwarded).to.not.include(GEMINI)
+    expect(xaiForwarded).to.not.include(BEDROCK)
     expect(xaiForwarded).to.not.include('https://')
     const openrouterOnly = JSON.stringify(filterInferenceEnv('openai/gpt-4o', BOTH, catalog))
     expect(openrouterOnly).to.not.include(OPENAI)
     expect(openrouterOnly).to.not.include(XAI)
     expect(openrouterOnly).to.not.include(GEMINI)
+    expect(openrouterOnly).to.not.include(BEDROCK)
     expect(openrouterOnly).to.not.include('BASE_URL')
     const geminiForwarded = JSON.stringify(filterInferenceEnv('gemini/gemini-3.1-pro-preview', BOTH, catalog))
     expect(geminiForwarded).to.not.include('BASE_URL')
@@ -189,6 +201,7 @@ describe('inference prefix routing', () => {
     expect(geminiForwarded).to.not.include(DIGITALOCEAN)
     expect(geminiForwarded).to.not.include(OPENAI)
     expect(geminiForwarded).to.not.include(XAI)
+    expect(geminiForwarded).to.not.include(BEDROCK)
     const forwarded = JSON.stringify(filterInferenceEnv('digitalocean/llama3.3-70b-instruct', BOTH, catalog))
     expect(forwarded).to.not.include('BASE_URL')
     expect(forwarded).to.not.include(OPENROUTER)
@@ -211,6 +224,8 @@ describe('inference prefix routing', () => {
       expect(source, file).to.not.include('OPENAI_API_KEY')
       expect(source, file).to.not.include('XAI_API_KEY')
       expect(source, file).to.not.include('GEMINI_API_KEY')
+      expect(source, file).to.not.include('AWS_BEARER_TOKEN_BEDROCK')
+      expect(source, file).to.not.include('BEDROCK_REGION')
     }
   })
 
