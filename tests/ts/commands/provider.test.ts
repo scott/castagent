@@ -352,7 +352,7 @@ describe('cast provider', () => {
     }))
     const seen: Array<{url: string; authorization: string | null}> = []
     const previousFetch = globalThis.fetch
-    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
       const headers = new Headers(init?.headers)
       seen.push({url: String(input), authorization: headers.get('authorization')})
       return new Response(JSON.stringify({data: [{id: 'llama3.1:8b'}]}), {
