@@ -6,7 +6,8 @@ import * as path from 'path'
 import * as readline from 'readline'
 import {AgentYamlError, agentConfigFromDocument, parseAgentYamlDocument} from '../lib/agent-yaml'
 import {MISSING_AGENT_VERSION, isSemverLike, versionFromAgentYamlDocument, type AgentYamlVersion} from '../lib/agent-version'
-import {checkCli, generateAuthToken, generateDeploymentSha} from '../lib/deploy/deploy-utils'
+import {checkCli, generateAuthToken, generateDeploymentSha, readAgentModel} from '../lib/deploy/deploy-utils'
+import {ollamaDeployRefusal, readAgentModelFromTarball} from '../lib/deploy/ollama'
 import {beginRequirementWarnings, RequirementError, stagePythonRequirements} from '../lib/deploy/requirements'
 import {
   deploymentProviderKeys,
@@ -207,6 +208,20 @@ export default class Deploy extends Command {
     }
 
     return providers[index].key
+  }
+
+  /**
+   * Model this deploy would ship. A named release is read from its tarball
+   * so a refusal can happen before that tarball is extracted into the agent.
+   * A missing release record or archive is left for prepareVersionForDeploy,
+   * which already reports it. Returning '' here skips the Ollama check.
+   */
+  private async modelBeingDeployed(agentName: string, agentPath: string, version: string): Promise<string> {
+    if (version === 'latest') return readAgentModel(agentPath)
+    const {getRelease} = await import('../lib/releases')
+    const release = await getRelease(agentName, version)
+    if (!release?.tarball_path || !fs.existsSync(release.tarball_path)) return ''
+    return readAgentModelFromTarball(release.tarball_path)
   }
 
   private async prepareVersionForDeploy(agentName: string, agentPath: string, version: string): Promise<void> {
@@ -445,6 +460,28 @@ export default class Deploy extends Command {
       this.error(missingAgentError(agentName, agentPath))
     }
 
+    // Choose the host before git, a provider login walkthrough, or extract.
+    // An ollama/ model on a remote host stops here, with the agent tree unchanged.
+    if (!provider) {
+      provider = await this.selectProvider()
+    }
+
+    const registered = getDeploymentProvider(provider)
+    if (!registered) {
+      this.error(
+        `Invalid provider '${provider}'.\n` +
+        `Valid providers: ${deploymentProviderKeys().join(', ')}`
+      )
+    }
+
+    const modelToDeploy = await this.modelBeingDeployed(agentName, agentPath, version)
+    const ollamaRefusal = ollamaDeployRefusal(provider, modelToDeploy)
+    if (ollamaRefusal) this.error(ollamaRefusal)
+
+    if (!flags.provider) {
+      await this.walkthroughProviderSetup(provider, flags.force)
+    }
+
     // Prepare version for deploy (extract specific release tarball if needed)
     await this.prepareVersionForDeploy(agentName, agentPath, version)
 
@@ -500,20 +537,6 @@ export default class Deploy extends Command {
           this.log('Proceeding without committing.')
         }
       }
-    }
-
-    // Interactive provider selection if not specified
-    if (!provider) {
-      provider = await this.selectProvider()
-      await this.walkthroughProviderSetup(provider, flags.force)
-    }
-
-    const registered = getDeploymentProvider(provider)
-    if (!registered) {
-      this.error(
-        `Invalid provider '${provider}'.\n` +
-        `Valid providers: ${deploymentProviderKeys().join(', ')}`
-      )
     }
 
     this.log(`Deploying ${agentName} to ${provider}...`)

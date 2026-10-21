@@ -18,6 +18,7 @@ import {
 import {deployToSprites, type SpriteDeployOptions} from './sprites'
 import {SPRITE_SERVICE_LOG} from './sprites-service'
 import {dockerContainerEnv, dockerContainerRunArgs, startDockerAgentContainer, writeDockerCompose} from './docker'
+import {ollamaLinuxDockerHint, ollamaUpgradeDecision, prepareOllamaDocker} from './ollama'
 import {writeHostMotdOverSsh} from './motd'
 import {stagePythonRequirements, writeRequirementsTxt} from './requirements'
 import {
@@ -82,6 +83,12 @@ export async function upgradeDockerDeployment(
   versionTarballPath: string | null,
 ): Promise<void> {
   const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+  const dockerDecision = await ollamaUpgradeDecision('docker', agentPath, versionTarballPath)
+  if (dockerDecision.refusal) host.error(dockerDecision.refusal)
+  if (dockerDecision.model.startsWith('ollama/')) {
+    const hint = ollamaLinuxDockerHint()
+    if (hint) host.log(hint)
+  }
   const deployment = db.getDeployment(agentName)
   const existingVolumeId = deployment?.volume_id
 
@@ -170,16 +177,22 @@ export async function upgradeDockerDeployment(
   host.log('Starting Docker container...')
 
   const authToken = deployment ? await resolveDeploymentAuthToken(deployment) : null
+  const upgradedModel = readAgentModel(agentPath)
+  const ollama = prepareOllamaDocker(upgradedModel, filterInferenceEnv(upgradedModel, await inferenceEnv()))
+  if (ollama.hostGateway) {
+    host.log(`Ollama base URL for this container: ${ollama.inference.OLLAMA_BASE_URL}`)
+  }
   const containerEnv = dockerContainerEnv({
     agentName,
     authToken,
-    inference: filterInferenceEnv(readAgentModel(agentPath), await inferenceEnv()),
+    inference: ollama.inference,
   })
   const dockerRunArgs = dockerContainerRunArgs({
     containerName,
     publish: '8080:8080',
     image: `cast-${agentName}:latest`,
     volumeId: existingVolumeId || undefined,
+    hostGateway: ollama.hostGateway,
   })
   const runCode = await startDockerAgentContainer(dockerRunArgs, containerEnv)
   if (runCode !== 0) {
@@ -211,6 +224,8 @@ export async function upgradeRailwayDeployment(
   versionTarballPath: string | null,
 ): Promise<void> {
   const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+  const railwayDecision = await ollamaUpgradeDecision('railway', agentPath, versionTarballPath)
+  if (railwayDecision.refusal) host.error(railwayDecision.refusal)
   const deployment = db.getDeployment(agentName)
   const existingVolumeId = deployment?.volume_id
 
@@ -262,6 +277,8 @@ export async function upgradeFlyDeployment(
   versionTarballPath: string | null,
 ): Promise<void> {
   const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+  const flyDecision = await ollamaUpgradeDecision('fly', agentPath, versionTarballPath)
+  if (flyDecision.refusal) host.error(flyDecision.refusal)
   const deployment = db.getDeployment(agentName)
   const existingVolumeId = deployment?.volume_id
 
@@ -330,6 +347,8 @@ export async function upgradeDigitalOceanDeployment(
   versionTarballPath: string | null,
 ): Promise<void> {
   const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+  const dropletDecision = await ollamaUpgradeDecision('digitalocean', agentPath, versionTarballPath)
+  if (dropletDecision.refusal) host.error(dropletDecision.refusal)
   const deployment = db.getDeployment(agentName)
   const existingVolumeId = deployment?.volume_id
 
@@ -605,6 +624,8 @@ export async function upgradeSpritesDeployment(
   options: SpriteUpgradeOptions = {},
 ): Promise<void> {
   const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
+  const spriteDecision = await ollamaUpgradeDecision('sprites', agentPath, versionTarballPath)
+  if (spriteDecision.refusal) host.error(spriteDecision.refusal)
   const {deployment: deploymentOverride, ...spriteOptions} = options
   const deployment = deploymentOverride === undefined ? db.getDeployment(agentName) : deploymentOverride
   const existingVolumeId = deployment?.volume_id

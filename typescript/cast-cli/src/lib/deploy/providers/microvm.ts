@@ -3,6 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import MicrovmDeploy from '../microvm'
 import {resolveDigitalOceanToken} from '../deploy-utils'
+import {ollamaUpgradeDecision} from '../ollama'
 import type {DeploymentProvider} from '../types'
 import {DIGITALOCEAN_AUTH, DOCTL_CLI} from './shared'
 
@@ -83,6 +84,8 @@ export const microvmProvider: DeploymentProvider = {
     await MicrovmDeploy.destroy(ctx.agentName, ctx.deployment)
   },
   async upgrade(ctx) {
+    const decision = await ollamaUpgradeDecision('microvm', ctx.agentPath, ctx.versionTarballPath)
+    if (decision.refusal) ctx.error(decision.refusal)
     if (ctx.versionTarballPath && fs.existsSync(ctx.versionTarballPath)) {
       await extractVersionTarball(ctx.agentPath, ctx.versionTarballPath, ctx.log, ctx.version)
     }

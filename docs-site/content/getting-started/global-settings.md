@@ -69,8 +69,11 @@ key is written to `~/.cast/tokens/inference/<key>.token` at mode 0600.
 `http` on literal `127.0.0.1`, `::1`, or `localhost`, with a host and no
 userinfo or query. That URL is for the builder on this machine. Deploy
 and upgrade do not copy `OPENROUTER_BASE_URL`,
-`DIGITALOCEAN_INFERENCE_BASE_URL`, `XAI_BASE_URL`, `GEMINI_BASE_URL`, or `ANTHROPIC_BASE_URL` onto the agent. A provider is enabled when its environment variable,
-that stored token, or a real config value is set. An unsubstituted
+`DIGITALOCEAN_INFERENCE_BASE_URL`, `XAI_BASE_URL`, `GEMINI_BASE_URL`, `ANTHROPIC_BASE_URL`, or
+`OLLAMA_BASE_URL` onto the agent. A keyless provider's optional token is
+not copied either. A provider is enabled when its environment variable,
+that stored token, or a real config value is set. A keyless provider such
+as Ollama is enabled with none of those. An unsubstituted
 `${VAR}` is not a token. Values are trimmed.
 
 `providers.digitalocean` is the **deploy** token for Droplets and MicroVMs.
@@ -93,12 +96,22 @@ builder on this machine and is not copied to a deploy.
 Anthropic (`ANTHROPIC_API_KEY`, `https://api.anthropic.com/v1`, native
 `ChatAnthropic`). An exported `ANTHROPIC_BASE_URL` routes builder calls
 through that proxy, with or without a trailing `/v1`. `anthropic/...`
-stays on OpenRouter. `bedrock/` and
-`ollama/` are reserved and are not providers yet. Deploy forwards
+stays on OpenRouter. `ollama/<model>` is local Ollama at
+`http://localhost:11434/v1`. It is enabled with no token.
+`cast provider ollama` stores a pulled chat model. `qwen3` matches
+`qwen3:latest`. A lone `qwen3:8b` does not match `ollama/qwen3`, so the
+switch stores that pulled id instead. When Ollama does not answer, the
+switch stores `ollama/qwen3` and prints `ollama pull qwen3`. Embedding
+names stay out of the chat list. Ollama's default context length is 4096
+tokens; raise it with `OLLAMA_CONTEXT_LENGTH` or `num_ctx`.
+`cast provider enable ollama` can store an optional `OLLAMA_API_KEY` for
+`https://ollama.com` and can set `providers.ollama.base_url`. Neither value
+is copied onto a deployed agent. `bedrock/` is reserved and is not a
+provider yet. `ollama/` is registered and keyless. Deploy forwards
 `ANTHROPIC_API_KEY` only for an `anthropic-api/` model and does not copy
 `ANTHROPIC_BASE_URL`. `defaults.builder_model`
 can be `digitalocean/<model-id>`, `openai-api/<model-id>`, `xai/<model-id>`,
-`gemini/<model-id>`, or `anthropic-api/<model-id>`. The default remains
+`gemini/<model-id>`, `anthropic-api/<model-id>`, or `ollama/<model-id>`. The default remains
 `openrouter/minimax/minimax-m2.5`. Change the
 curated OpenRouter ids with `cast model` or `/model` in the builder TUI.
 The running builder keeps its current model until the next launch.

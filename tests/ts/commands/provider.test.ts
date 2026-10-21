@@ -19,6 +19,8 @@ const savedEnv = {
   GEMINI_BASE_URL: process.env.GEMINI_BASE_URL,
   ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
   ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
+  OLLAMA_API_KEY: process.env.OLLAMA_API_KEY,
+  OLLAMA_BASE_URL: process.env.OLLAMA_BASE_URL,
 }
 
 function restoreEnv(name: string, value: string | undefined): void {
@@ -69,6 +71,8 @@ describe('cast provider', () => {
     delete process.env.GEMINI_BASE_URL
     delete process.env.ANTHROPIC_API_KEY
     delete process.env.ANTHROPIC_BASE_URL
+    delete process.env.OLLAMA_API_KEY
+    delete process.env.OLLAMA_BASE_URL
   })
 
   afterEach(() => {
@@ -85,6 +89,8 @@ describe('cast provider', () => {
     restoreEnv('GEMINI_BASE_URL', savedEnv.GEMINI_BASE_URL)
     restoreEnv('ANTHROPIC_API_KEY', savedEnv.ANTHROPIC_API_KEY)
     restoreEnv('ANTHROPIC_BASE_URL', savedEnv.ANTHROPIC_BASE_URL)
+    restoreEnv('OLLAMA_API_KEY', savedEnv.OLLAMA_API_KEY)
+    restoreEnv('OLLAMA_BASE_URL', savedEnv.OLLAMA_BASE_URL)
     fs.rmSync(home, {recursive: true, force: true})
   })
 
@@ -316,5 +322,110 @@ describe('cast provider', () => {
     const rows = JSON.parse(after.logs.join('\n'))
     expect(rows.find((row: {key: string}) => row.key === 'gemini').enabled).to.equal(true)
     expect(after.logs.join('\n')).to.not.include('gemini-secret-token')
+  })
+
+  it('shows Ollama as enabled with no token and enable stores nothing', async () => {
+    const Provider = await loadCommand('index')
+    const listed = await runCommand(Provider, {}, {json: true, current: false})
+    expect(listed.errors, listed.errors.join('\n')).to.deep.equal([])
+    const before = JSON.parse(listed.logs.join('\n'))
+    const ollama = before.find((row: {key: string}) => row.key === 'ollama')
+    expect(ollama.displayName).to.equal('Ollama')
+    expect(ollama.enabled).to.equal(true)
+    expect(ollama.baseUrl).to.equal('http://localhost:11434/v1')
+    expect(ollama.prefixes).to.deep.equal(['ollama/'])
+    expect(listed.logs.join('\n')).to.not.include('Bearer')
+
+    const Enable = await loadCommand('enable')
+    const enabled = await runCommand(Enable, {provider: 'ollama'}, {})
+    expect(enabled.errors, enabled.errors.join('\n')).to.deep.equal([])
+    expect(enabled.logs.join('\n')).to.include('http://localhost:11434/v1')
+    expect(enabled.logs.join('\n')).to.not.include('keychain')
+    expect(fs.existsSync(tokenPath('ollama'))).to.equal(false)
+    expect(await keytar.getPassword('cast', 'inference:ollama')).to.equal(null)
+  })
+
+  async function switchOllama(ids: string[] | Error): Promise<{logs: string; errors: string[]; seen: Array<{url: string; authorization: string | null}>}> {
+    fs.mkdirSync(path.join(home, '.cast'), {recursive: true})
+    fs.writeFileSync(configPath(), yaml.stringify({
+      defaults: {builder_model: 'openrouter/minimax/minimax-m2.5'},
+    }))
+    const seen: Array<{url: string; authorization: string | null}> = []
+    const previousFetch = globalThis.fetch
+    globalThis.fetch = (async (input: string | URL, init?: RequestInit) => {
+      const headers = new Headers(init?.headers)
+      seen.push({url: String(input), authorization: headers.get('authorization')})
+      if (ids instanceof Error) throw ids
+      return new Response(JSON.stringify({data: ids.map(id => ({id}))}), {
+        status: 200,
+        headers: {'content-type': 'application/json'},
+      })
+    }) as typeof fetch
+    try {
+      const Provider = await loadCommand('index')
+      const switched = await runCommand(Provider, {provider: 'ollama'}, {json: false, current: false})
+      return {logs: switched.logs.join('\n'), errors: switched.errors, seen}
+    } finally {
+      globalThis.fetch = previousFetch
+    }
+  }
+
+  it('switches to the pulled chat model when qwen3 is not installed', async () => {
+    const switched = await switchOllama(['llama3.1:8b'])
+    expect(switched.errors, switched.errors.join('\n')).to.deep.equal([])
+    expect(switched.logs).to.include('Builder model: ollama/llama3.1:8b')
+    expect(switched.logs).to.not.include('ollama/qwen3')
+    expect(switched.logs).to.not.include('ollama pull')
+    expect(switched.logs).to.not.include('not enabled')
+    expect(switched.logs).to.not.include('--token')
+    const config = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(config.defaults.inference_provider).to.equal('ollama')
+    expect(config.defaults.builder_model).to.equal('ollama/llama3.1:8b')
+    expect(switched.seen.map(item => item.url)).to.deep.equal(['http://localhost:11434/v1/models'])
+    expect(switched.seen[0].authorization).to.equal(null)
+    expect(fs.existsSync(tokenPath('ollama'))).to.equal(false)
+  })
+
+  it('keeps ollama/qwen3 when the live tag is qwen3:latest', async () => {
+    const switched = await switchOllama(['qwen3:latest'])
+    expect(switched.errors, switched.errors.join('\n')).to.deep.equal([])
+    const config = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(config.defaults.builder_model).to.equal('ollama/qwen3')
+    expect(switched.logs).to.include('Builder model: ollama/qwen3')
+    expect(switched.logs).to.not.include('ollama pull')
+  })
+
+  it('does not treat qwen3:8b as the default qwen3 pull', async () => {
+    const switched = await switchOllama(['nomic-embed-text', 'qwen3:8b'])
+    expect(switched.errors, switched.errors.join('\n')).to.deep.equal([])
+    const config = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(config.defaults.builder_model).to.equal('ollama/qwen3:8b')
+    expect(switched.logs).to.include('Builder model: ollama/qwen3:8b')
+  })
+
+  it('stores the default and names ollama pull when the server does not answer', async () => {
+    const switched = await switchOllama(new Error('connection refused'))
+    expect(switched.errors, switched.errors.join('\n')).to.deep.equal([])
+    const config = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(config.defaults.builder_model).to.equal('ollama/qwen3')
+    expect(switched.logs).to.include('Builder model: ollama/qwen3')
+    expect(switched.logs).to.include('ollama pull qwen3')
+  })
+
+  it('keeps a chat id that only contains the letters bge', async () => {
+    const switched = await switchOllama(['nomic-embed-text', 'paraphrase-multilingual', 'qwen-abge', 'bge-m3'])
+    expect(switched.errors, switched.errors.join('\n')).to.deep.equal([])
+    const config = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(config.defaults.builder_model).to.equal('ollama/qwen-abge')
+    expect(switched.logs).to.include('Builder model: ollama/qwen-abge')
+  })
+
+  it('does not store a default when every pulled model is an embedding', async () => {
+    const switched = await switchOllama(['nomic-embed-text', 'bge-m3', 'paraphrase-multilingual'])
+    expect(switched.logs).to.include('needs a model')
+    expect(switched.logs).to.not.include('ollama/qwen3')
+    const config = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(config.defaults.builder_model).to.equal('openrouter/minimax/minimax-m2.5')
+    expect(config.defaults.inference_provider).to.equal(undefined)
   })
 })

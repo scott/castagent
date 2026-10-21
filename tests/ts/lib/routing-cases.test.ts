@@ -30,6 +30,7 @@ const XAI = 'xai-secret-key-0123456789'
 const OPENAI = 'sk-openai-test-key-0123456789'
 const GEMINI = 'gemini-test-key-0123456789'
 const ANTHROPIC = 'sk-ant-test-key-0123456789'
+const OLLAMA = 'ollama-cloud-key-0123456789'
 const SECRET_BY_ENV: Record<string, string> = {
   OPENROUTER_API_KEY: OPENROUTER,
   DIGITALOCEAN_MODEL_ACCESS_KEY: DIGITALOCEAN,
@@ -37,6 +38,7 @@ const SECRET_BY_ENV: Record<string, string> = {
   OPENAI_API_KEY: OPENAI,
   GEMINI_API_KEY: GEMINI,
   ANTHROPIC_API_KEY: ANTHROPIC,
+  OLLAMA_API_KEY: OLLAMA,
 }
 const BOTH = {
   ...SECRET_BY_ENV,
@@ -46,6 +48,7 @@ const BOTH = {
   OPENAI_BASE_URL: 'https://proxy.example/v1',
   GEMINI_BASE_URL: 'https://generativelanguage.example/v1beta/openai',
   ANTHROPIC_BASE_URL: 'https://anthropic.example/v1',
+  OLLAMA_BASE_URL: 'http://127.0.0.1:11434/v1',
 }
 
 describe('shared inference routing cases', () => {
@@ -66,6 +69,16 @@ describe('shared inference routing cases', () => {
       expect(provider, item.id).to.equal(item.provider)
       const entry = catalog.find(row => row.key === item.provider)
       expect(entry, item.id).to.not.equal(undefined)
+      if (entry!.keyless) {
+        const forwarded = filterInferenceEnv(item.id, BOTH, catalog)
+        expect(forwarded, item.id).to.deep.equal({})
+        const encoded = JSON.stringify(forwarded)
+        expect(encoded).to.not.include('BASE_URL')
+        for (const secret of Object.values(SECRET_BY_ENV)) {
+          expect(encoded, item.id).to.not.include(secret)
+        }
+        return
+      }
       const envVar = entry!.envVar
       const value = SECRET_BY_ENV[envVar]
       expect(value, `${item.id} ${envVar}`).to.be.a('string')

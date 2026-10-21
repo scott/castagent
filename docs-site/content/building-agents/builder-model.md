@@ -113,8 +113,8 @@ Any other `openai-api/<id>` is accepted. Reasoning models (`o1`, `o3`,
 `o4`, `gpt-5`, and the same families) omit temperature. Other OpenAI chat
 models use `0.7`.
 
-These prefixes are reserved for a direct provider and are not registered
-yet: `bedrock/` and `ollama/`.
+This prefix is reserved for a direct provider and is not registered
+yet: `bedrock/`. `ollama/` is registered and keyless.
 `xai/grok-4.7` is direct xAI. `x-ai/grok-2` still uses OpenRouter.
 A bare id
 OpenRouter does not already accept, such as `gpt-5` or `not-a-real-model`,
@@ -128,7 +128,7 @@ dashed, and 5.x) are sent as written and omit temperature. Earlier
 aliases such as `claude-opus-4` and `claude-sonnet-4` still pin to 4.5
 and 4.6.
 
-OpenRouter, DigitalOcean, OpenAI, xAI, and Google Gemini use one OpenAI-compatible provider.
+OpenRouter, DigitalOcean, OpenAI, xAI, Google Gemini, and Ollama use one OpenAI-compatible provider.
 A new provider of that kind is a row in `python/cast/providers/manifest.json`
 with `"impl": "openai-compatible"`. The builder requests temperature `0.7`
 from each row's `defaultParams`, and omits temperature for models that match
@@ -196,6 +196,35 @@ Direct ids are not rewritten: `anthropic-api/claude-sonnet-4` is sent as
 `claude-sonnet-4` stay on OpenRouter. `ANTHROPIC_BASE_URL` is a builder
 setting and is not copied onto a deployed agent. Deploy forwards
 `ANTHROPIC_API_KEY` only when `brain.model` uses `anthropic-api/`.
+
+`ollama/<model>` is local Ollama on the same shared class. No key is
+required, and `cast provider ollama` does not ask for one.
+`cast provider enable ollama` with no token is enough to store an optional
+URL. Requests go to `http://localhost:11434/v1`. `OLLAMA_BASE_URL` on the
+builder can point at another loopback port or at `https://ollama.com/v1`.
+Set `OLLAMA_API_KEY` only for Ollama cloud. The chat client sends the
+placeholder `ollama` when that key is absent, so the request does not use
+an empty Bearer token. `/model` loads `GET <base-url>/models` (Ollama's
+OpenAI-compatible `/v1/models`) with no token and lists the ids Ollama
+reports, including a tag such as `llama3.1:8b`. Embedding names such
+as `nomic-embed`, `mxbai-embed`, `paraphrase-multilingual`, `all-minilm`, and
+`snowflake-arctic-embed` are left out of the chat list. A `bge` name is
+left out when it starts with `bge` or contains `-bge-` or `bge-m3`. When Ollama
+answers, `cast provider ollama` keeps `ollama/qwen3` only if that pull is
+present (`qwen3` and `qwen3:latest` are the same pull; `qwen3:8b` is not)
+and otherwise stores the first pulled chat model. When Ollama does not
+answer, it stores `ollama/qwen3` and prints `ollama pull qwen3`. `qwen3`,
+`llama3.1`, and `gpt-oss` are starting points. Tool calling depends on
+the model you pull. Ollama's default context length is 4096 tokens, and
+the builder prompt starts near 1.8k tokens, so raise it with
+`OLLAMA_CONTEXT_LENGTH` (for example `16384`) or `num_ctx` in a Modelfile.
+The builder sends temperature `0.7`. Deploy does not forward `OLLAMA_API_KEY`
+or `OLLAMA_BASE_URL`. `cast deploy` to Fly, Railway, Sprites,
+DigitalOcean, or MicroVM refuses an `ollama/` agent model, because that
+host cannot reach Ollama on this machine. `cast deploy --provider docker`
+rewrites a loopback URL to `http://host.docker.internal:<port>/v1` and
+adds a host-gateway mapping. A builder URL that is not loopback is refused
+for Docker too.
 
 ## TUI
 
