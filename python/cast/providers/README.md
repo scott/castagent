@@ -21,7 +21,7 @@ Non-default providers match first. A provider matches when the model starts with
 
 `openai/`, `anthropic/`, `google/`, `meta-llama/`, `kimi/`, `minimax/`, `deepseek/`, `mistralai/`, `cohere/`, `x-ai/`, and `perplexity/` are OpenRouter model ids. Do not register them. A prefix has to be a provider key plus a slash, such as `example/`.
 
-Both API keys may be set. The prefix wins. If the selected provider's environment variable is missing, Cast stays in echo mode and names that variable. It does not try the other provider.
+Both API keys may be set. The prefix wins. A provider is available when its environment variable is set, or `~/.cast/tokens/inference/<key>.token` exists, or its config key resolves to a real value. An unsubstituted `${VAR}` is missing. `create_llm` uses `baseUrlEnv`, then config `base_url`, then the manifest `baseUrl`. If the selected provider's token is missing, Cast stays in echo mode and names that variable. It does not try the other provider.
 
 ## Add a built-in
 

@@ -14,13 +14,14 @@ class DigitalOceanInferenceProvider:
     name = "digitalocean"
     default_base_url = "https://inference.do-ai.run/v1"
 
-    def __init__(self):
-        self.api_key = os.getenv("DIGITALOCEAN_MODEL_ACCESS_KEY")
+    def __init__(self, api_key: Optional[str] = None, base_url: Optional[str] = None):
+        self.api_key = api_key if api_key is not None else os.getenv("DIGITALOCEAN_MODEL_ACCESS_KEY")
         if not self.api_key:
             raise ValueError(
                 "DIGITALOCEAN_MODEL_ACCESS_KEY environment variable is required "
                 "for DigitalOcean serverless inference"
             )
+        self.default_base_url = base_url or self.default_base_url
 
     def create_llm(self, model: Optional[str] = None, **kwargs) -> ChatOpenAI:
         """Create a ChatOpenAI client for the DigitalOcean catalog id.
@@ -40,5 +41,8 @@ class DigitalOceanInferenceProvider:
 
     @classmethod
     def is_available(cls) -> bool:
-        """True only when the model access key is set."""
-        return bool(os.getenv("DIGITALOCEAN_MODEL_ACCESS_KEY"))
+        """True when the model access key is set in the environment, the private token file, or config."""
+        from .credentials import resolve_token
+        from ._manifest import row_for
+        row = row_for("digitalocean")
+        return bool(resolve_token(row["envVar"], row["configKey"], row["key"]))

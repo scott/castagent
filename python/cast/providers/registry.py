@@ -69,6 +69,7 @@ class ProviderRecord:
         accepts_any_model: bool,
         known_models: tuple[str, ...],
         source: str,
+        base_url_env: str = "",
     ):
         self.impl = impl
         self.key = key
@@ -81,6 +82,7 @@ class ProviderRecord:
         self.accepts_any_model = accepts_any_model
         self.known_models = known_models
         self.source = source
+        self.base_url_env = base_url_env or ""
 
     def is_available(self) -> bool:
         return bool(self.impl.is_available())
@@ -180,6 +182,7 @@ def record_from_impl(impl: Any, source: str) -> ProviderRecord:
         accepts_any_model=bool(getattr(impl, "accepts_any_model", False)),
         known_models=_as_tuple(getattr(impl, "known_models", ())),
         source=source,
+        base_url_env=getattr(impl, "base_url_env", "") or "",
     )
 
 
@@ -341,6 +344,7 @@ def _record_from_directory(impl, meta: dict, directory: Path, json_path: Path, p
         accepts_any_model=bool(meta.get("acceptsAnyModel", getattr(impl, "accepts_any_model", False))),
         known_models=_as_tuple(known),
         source=str(directory),
+        base_url_env=meta.get("baseUrlEnv") or getattr(impl, "base_url_env", "") or "",
     )
 
 
@@ -486,5 +490,6 @@ def catalog_entries(registry: Optional[Registry] = None) -> list[dict]:
             "configKey": provider.config_key,
             "baseUrl": provider.base_url,
             "acceptsAnyModel": provider.accepts_any_model,
+            **({"baseUrlEnv": provider.base_url_env} if provider.base_url_env else {}),
         })
     return payload

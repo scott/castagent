@@ -48,6 +48,18 @@ The file is re-read when a command or a new builder process starts.
 running. Start `cast dev`, `cast new`, or `cast edit` again to apply it.
 See [Changing the builder model](building-agents/builder-model).
 
+`cast provider` chooses the inference provider for the builder.
+`defaults.inference_provider` stores the key (`openrouter` or
+`digitalocean`). A missing key is inferred from `defaults.builder_model`.
+`cast provider enable <key> --token <model-access-key> --url <api-url>`
+stores the model access key in the system keychain, not in this file.
+When the keychain is unavailable, the key is written to
+`~/.cast/tokens/inference/<key>.token` at mode 0600. `--url` writes
+`base_url` next to that provider's `api_key`. `default_base_url` stays
+the shipped host. A provider is enabled when its environment variable,
+that stored token, or a real config value is set. An unsubstituted
+`${VAR}` is not a token.
+
 `providers.digitalocean` is the **deploy** token for Droplets and MicroVMs.
 It is not an inference credential. Serverless inference uses
 `providers.digitalocean_inference` (or `DIGITALOCEAN_MODEL_ACCESS_KEY`).

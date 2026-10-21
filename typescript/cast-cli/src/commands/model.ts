@@ -1,8 +1,8 @@
 import {Args, Command, Flags} from '@oclif/core'
+import {activeModelCatalog} from '../lib/inference-provider'
 import {
   formatModelCatalog,
   getCurrentBuilderModel,
-  MODELS,
   setBuilderModel,
 } from '../lib/models'
 
@@ -44,11 +44,15 @@ export default class Model extends Command {
   async run(): Promise<void> {
     const {args, flags} = await this.parse(Model)
     try {
+      const catalog = await activeModelCatalog()
       if (flags.list) {
         if (flags.json) {
-          this.log(JSON.stringify(MODELS, null, 2))
+          this.log(JSON.stringify(catalog.models, null, 2))
         } else {
-          for (const model of MODELS) this.log(model.id)
+          for (const model of catalog.models) this.log(model.id)
+          if (catalog.fallback) {
+            this.log('Live catalog could not be loaded. Showing starter models.')
+          }
         }
         return
       }
@@ -61,13 +65,16 @@ export default class Model extends Command {
 
       const modelId = args.model?.trim()
       if (modelId) {
-        const stored = setBuilderModel(modelId)
+        const stored = setBuilderModel(modelId, catalog.models)
         this.log(`✓ Builder model set to: ${stored}`)
         this.log('  Restart the builder to take effect (run `cast dev <agent>` again).')
         return
       }
 
-      this.log(formatModelCatalog(getCurrentBuilderModel()))
+      const listing = formatModelCatalog(getCurrentBuilderModel(), catalog.models)
+      this.log(catalog.fallback
+        ? `${listing}\nLive catalog could not be loaded. Showing starter models.`
+        : listing)
     } catch (error: any) {
       this.error(error?.message ?? String(error))
     }

@@ -1267,6 +1267,8 @@ export interface InferenceCatalogEntry {
   envVar: string
   configKey: string
   baseUrl: string
+  /** Set when a non-default base URL should be forwarded to a deployment. */
+  baseUrlEnv?: string
   acceptsAnyModel: boolean
 }
 
@@ -1345,6 +1347,19 @@ function castPython(): {command: string; env: NodeJS.ProcessEnv} {
   return {command, env}
 }
 
+export function loadInferenceKnownModels(): Record<string, string[]> {
+  const {command, env} = castPython()
+  const stdout = execFileSync(command, ['-m', 'cast.providers.known_models'], {
+    encoding: 'utf8',
+    env,
+  })
+  const parsed = JSON.parse(stdout)
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('cast.providers.known_models did not print a JSON object')
+  }
+  return parsed as Record<string, string[]>
+}
+
 export function loadInferenceCatalog(): InferenceCatalogEntry[] {
   const {command, env} = castPython()
   const stdout = execFileSync(command, ['-m', 'cast.providers.catalog'], {
@@ -1356,6 +1371,44 @@ export function loadInferenceCatalog(): InferenceCatalogEntry[] {
     throw new Error('cast.providers.catalog did not print a JSON array')
   }
   return parsed
+}
+
+function expandConfigSecret(value: string | undefined): string | undefined {
+  if (!value) return undefined
+  let missing = false
+  const expanded = value.replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_match, name) => {
+    const found = process.env[name]
+    if (!found) {
+      missing = true
+      return ''
+    }
+    return found
+  })
+  if (missing || !expanded.trim()) return undefined
+  return expanded
+}
+
+function readInferenceTokenFile(providerKey: string): string | undefined {
+  if (!/^[a-z0-9-]+$/.test(providerKey)) return undefined
+  const file = path.join(os.homedir(), '.cast', 'tokens', 'inference', `${providerKey}.token`)
+  try {
+    const text = fs.readFileSync(file, 'utf8').trim()
+    return text || undefined
+  } catch {
+    return undefined
+  }
+}
+
+function providerBaseUrl(entry: InferenceCatalogEntry, config: any): string {
+  if (entry.baseUrlEnv) {
+    const fromEnv = process.env[entry.baseUrlEnv]
+    if (fromEnv) return fromEnv
+  }
+  const urlKey = entry.configKey.endsWith('.api_key')
+    ? `${entry.configKey.slice(0, -'api_key'.length)}base_url`
+    : ''
+  const stored = expandConfigSecret(configValue(config, urlKey))
+  return stored || entry.baseUrl
 }
 
 function configValue(config: any, dotted: string | undefined): string | undefined {
@@ -1376,8 +1429,13 @@ export function inferenceEnv(config: any = loadConfig()): Record<string, string>
   for (const entry of loadInferenceCatalog()) {
     if (!entry.envVar) continue
     const fromEnv = process.env[entry.envVar]
-    const value = fromEnv || configValue(config, entry.configKey)
+    const fromFile = readInferenceTokenFile(entry.key)
+    const value = fromEnv || fromFile || expandConfigSecret(configValue(config, entry.configKey))
     if (value) out[entry.envVar] = value
+    if (entry.baseUrlEnv) {
+      const baseUrl = providerBaseUrl(entry, config)
+      if (baseUrl && baseUrl !== entry.baseUrl) out[entry.baseUrlEnv] = baseUrl
+    }
   }
   return out
 }
@@ -1448,9 +1506,13 @@ export function filterInferenceEnv(
   const entries = catalog ?? loadInferenceCatalog()
   const provider = inferenceProviderForModel(model, entries)
   if (!provider?.envVar) return {}
+  const kept: Record<string, string> = {}
   const value = resolved[provider.envVar]
-  if (!value) return {}
-  return {[provider.envVar]: value}
+  if (value) kept[provider.envVar] = value
+  if (provider.baseUrlEnv && resolved[provider.baseUrlEnv]) {
+    kept[provider.baseUrlEnv] = resolved[provider.baseUrlEnv]
+  }
+  return kept
 }
 
 export function inferenceEnvForAgent(agentPath: string, config: any = loadConfig()): Record<string, string> {

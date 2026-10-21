@@ -22,13 +22,22 @@ export function sortBuilderModels<T extends {id: string}>(models: readonly T[]):
   return [...models].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
 }
 
+const BUILDER_MODEL_PREFIXES = ['openrouter/', 'digitalocean/']
+
 /**
  * Catalog ids have no provider prefix. The default config stores
  * `openrouter/minimax/minimax-m2.5`, which is the same catalog row.
+ * A `digitalocean/<id>` row matches with or without that prefix.
  */
-export function builderModelCatalogId(id: string): string {
-  const prefix = 'openrouter/'
-  return id.startsWith(prefix) ? id.slice(prefix.length) : id
+export function builderModelCatalogId(
+  id: string,
+  prefixes: readonly string[] = BUILDER_MODEL_PREFIXES,
+): string {
+  const ordered = [...prefixes].sort((a, b) => b.length - a.length)
+  for (const prefix of ordered) {
+    if (prefix && id.startsWith(prefix)) return id.slice(prefix.length)
+  }
+  return id
 }
 
 export function isSameBuilderModel(currentId: string, selectedId: string): boolean {

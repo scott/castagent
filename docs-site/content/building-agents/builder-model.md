@@ -69,10 +69,14 @@ it, the builder stays in echo mode. A stored id such as
 `anthropic/claude-sonnet-4.6` is sent to
 `https://openrouter.ai/api/v1/chat/completions`.
 
-An existing `digitalocean/<model-id>` value in the file still selects
-DigitalOcean serverless inference. Those catalog ids are not in the
-curated `cast model` list, so changing to one means editing the file
-directly. See [Global settings](getting-started/global-settings).
+`cast provider digitalocean` switches the builder to DigitalOcean
+serverless inference when that provider is enabled. `cast model` and
+`/model` then list that provider's models. The list is loaded from
+`GET <base-url>/models`. A custom base URL comes from
+`cast provider enable digitalocean --token <key> --url <api-url>`.
+When the live list cannot be loaded, the picker shows
+`llama3.3-70b-instruct` and `deepseek-v3.2`. See
+[Global settings](getting-started/global-settings).
 
 ## TUI
 

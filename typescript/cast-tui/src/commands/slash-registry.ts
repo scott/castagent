@@ -37,6 +37,7 @@ import {
 } from '../lib/shutdown-flow.js'
 import {openBuilderSkillsCommand} from './builder-skills-modal.js'
 import {openBuilderModelModal} from './builder-model-modal.js'
+import {openInferenceProviderModal} from './provider-modal.js'
 import {openAgentUpdateModal, runAgentUpdateFromArgs} from './agent-update-modal.js'
 import {parseUpdateArgs} from '../lib/agent-update.js'
 import {parseGitCommitArgs} from '../lib/git-commit-args.js'
@@ -4206,6 +4207,16 @@ cast dev ${agentName}
     modes: ['dev'],
     handler: async (ctx) => {
       openBuilderModelModal(ctx, findCastBinary)
+    },
+  },
+
+  {
+    name: 'provider',
+    description: 'Switch the inference provider the builder uses',
+    category: 'agent',
+    modes: ['dev'],
+    handler: async (ctx) => {
+      openInferenceProviderModal(ctx, findCastBinary)
     },
   },
 ]

@@ -9,6 +9,7 @@
     "envVar": "OPENROUTER_API_KEY",
     "configKey": "providers.openrouter.api_key",
     "baseUrl": "https://openrouter.ai/api/v1",
+    "baseUrlEnv": "OPENROUTER_BASE_URL",
     "acceptsAnyModel": false,
     "knownModels": [
       "anthropic/claude-opus-4.5",
@@ -44,6 +45,7 @@
     "envVar": "DIGITALOCEAN_MODEL_ACCESS_KEY",
     "configKey": "providers.digitalocean_inference.api_key",
     "baseUrl": "https://inference.do-ai.run/v1",
+    "baseUrlEnv": "DIGITALOCEAN_INFERENCE_BASE_URL",
     "acceptsAnyModel": true,
     "knownModels": []
   }

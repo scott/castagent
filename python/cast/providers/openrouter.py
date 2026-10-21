@@ -5,6 +5,7 @@ from typing import Optional
 from langchain_openai import ChatOpenAI
 
 from ._manifest import row_for
+from .credentials import resolve_base_url, resolve_token
 
 
 # Model ID mappings for common models
@@ -91,7 +92,13 @@ class OpenRouterProvider:
     supported_models = list(row_for("openrouter").get("knownModels") or ())
 
     def __init__(self):
-        self.api_key = os.getenv("OPENROUTER_API_KEY")
+        row = row_for("openrouter")
+        self.api_key = resolve_token(row["envVar"], row["configKey"], row["key"])
+        self.default_base_url = resolve_base_url(
+            row.get("baseUrlEnv") or "",
+            row["configKey"],
+            row["baseUrl"],
+        )
         if not self.api_key:
             raise ValueError(
                 "OPENROUTER_API_KEY environment variable is required. "
@@ -149,8 +156,9 @@ class OpenRouterProvider:
     
     @classmethod
     def is_available(cls) -> bool:
-        """Check if OpenRouter API key is configured."""
-        return bool(os.getenv("OPENROUTER_API_KEY"))
+        """Check if an OpenRouter API key is configured."""
+        row = row_for("openrouter")
+        return bool(resolve_token(row["envVar"], row["configKey"], row["key"]))
 
 
 class OpenRouterInference:
@@ -165,11 +173,12 @@ class OpenRouterInference:
         self.env_var = row["envVar"]
         self.config_key = row["configKey"]
         self.base_url = row["baseUrl"]
+        self.base_url_env = row.get("baseUrlEnv") or ""
         self.accepts_any_model = bool(row["acceptsAnyModel"])
         self.known_models = tuple(row.get("knownModels") or ())
 
     def is_available(self) -> bool:
-        return bool(os.getenv(self.env_var))
+        return bool(resolve_token(self.env_var, self.config_key, self.key))
 
     def create_llm(self, model: Optional[str] = None, **kwargs):
         return OpenRouterProvider().create_llm(model=model, **kwargs)

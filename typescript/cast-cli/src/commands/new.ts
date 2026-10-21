@@ -4,6 +4,7 @@ import * as fs from 'fs'
 import * as os from 'os'
 import {spawn, spawnSync} from 'child_process'
 import {BuilderA2ABridge} from '../lib/builder/bridge'
+import {primeInferenceProcessEnv} from '../lib/inference-provider'
 
 export default class New extends Command {
   static description = 'Create a new agent. On a TTY, opens the Builder wizard. Without a TTY, reads a description from stdin and creates the agent.'
@@ -73,6 +74,7 @@ export default class New extends Command {
   async run(): Promise<void> {
     // A pipe has no TTY. Read the description and create the agent
     // without opening the TUI. A terminal still uses the wizard below.
+    await primeInferenceProcessEnv()
     if (!process.stdin.isTTY) {
       await this.createFromStdin()
       return

@@ -26,11 +26,14 @@ a dynamic port. The header is **purple** and shows just the agent name.
 
 - The runtime is killed when you quit the TUI.
 - `/undo`, `/redo`, `/sessions`, `/session …`, `/releases`, `/release`,
-  `/deploy`, `/upgrade`, `/update`, `/import`, `/shutdown`, and `/model` are available.
+  `/deploy`, `/upgrade`, `/update`, `/import`, `/shutdown`, `/model`, and `/provider` are available.
   You are working on the agent on this machine. `/import` is also available in
   production. `/update` writes the local `agent.yaml` for the current agent and
   does not redeploy. It is hidden on-host. `/model` changes the builder's model only.
-  It is hidden from `/help` in production and on-host, and the running builder does not hot-swap.
+  `/provider` switches the inference provider and, for a provider that is not
+  enabled, asks for a model access key and base URL. Both commands are hidden
+  from `/help` in production and on-host. The running builder does not hot-swap.
+  The provider list and the model list are read again each time the modal opens.
 - `/connect` switches to a *different* deployed agent (useful for
   comparing local behaviour to production).
 - No bearer token is required.

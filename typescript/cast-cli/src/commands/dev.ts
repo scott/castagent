@@ -9,6 +9,7 @@ import {db} from '../lib/sqlite'
 import {ensureMemoryDatabaseIgnored} from '../lib/cast-ignore'
 import {attachRuntimeLog} from '../lib/runtime-logs'
 import {runtimeProcessArgs} from '../lib/runtime-args'
+import {primeInferenceProcessEnv} from '../lib/inference-provider'
 
 export default class Dev extends Command {
   static description = 'Start agent in development mode'
@@ -263,6 +264,7 @@ export default class Dev extends Command {
       )
     }
 
+    await primeInferenceProcessEnv()
     this.log(`Starting ${agentName} in development mode...`)
 
     // Check if port is already in use

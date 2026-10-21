@@ -8,6 +8,7 @@ import {ensurePrivateDir, writePrivateFile} from './private-path'
 const SERVICE_NAME = 'cast'
 const AGENT_NAME = /^[A-Za-z0-9][A-Za-z0-9-]*$/
 const DEPLOYMENT_SHA = /^[a-z0-9]{6}$/
+const INFERENCE_KEY = /^[a-z0-9-]+$/
 
 export type AgentTokenRemoval = {
   result: 'removed' | 'absent' | 'unavailable' | 'failed'
@@ -101,6 +102,43 @@ export class KeychainManager {
   private deploymentTokenPath(deploymentSha: string): string | null {
     if (!DEPLOYMENT_SHA.test(deploymentSha)) return null
     return path.join(path.resolve(this.tokenRoot()), 'deployments', `${deploymentSha}.token`)
+  }
+
+  /** Model access key for an inference provider. Not a deploy token. */
+  private inferenceTokenPath(providerKey: string): string | null {
+    if (!INFERENCE_KEY.test(providerKey)) return null
+    return path.join(path.resolve(this.tokenRoot()), 'inference', `${providerKey}.token`)
+  }
+
+  async getInferenceToken(providerKey: string): Promise<string | null> {
+    const account = `inference:${providerKey}`
+    try {
+      const stored = await keytar.getPassword(SERVICE_NAME, account)
+      if (stored) return stored
+    } catch (error) {
+      if (!isKeychainUnavailable(error)) {
+        console.error('Failed to get inference token from keychain:', error)
+        return null
+      }
+      return readTokenFile(this.inferenceTokenPath(providerKey))
+    }
+    return readTokenFile(this.inferenceTokenPath(providerKey))
+  }
+
+  async setInferenceToken(providerKey: string, token: string): Promise<'keychain' | 'file'> {
+    const filePath = this.inferenceTokenPath(providerKey)
+    if (!filePath) {
+      throw new Error(`Unknown inference provider '${providerKey}'.`)
+    }
+    try {
+      await keytar.setPassword(SERVICE_NAME, `inference:${providerKey}`, token)
+      removeTokenFile(filePath)
+      return 'keychain'
+    } catch (error) {
+      if (isKeychainUnavailable(error) && writeTokenFile(this.tokenRoot(), filePath, token)) return 'file'
+      const message = keychainErrorMessage(error)
+      throw new Error(`Failed to store the inference token: ${message}`)
+    }
   }
 
   async getToken(agentName: string, options?: {silent?: boolean}): Promise<string | null> {
