@@ -27,16 +27,19 @@ const CASES = JSON.parse(fs.readFileSync(
 const OPENROUTER = 'sk-or-v1-secret-openrouter-key'
 const DIGITALOCEAN = 'do-model-secret-key-0123456789'
 const XAI = 'xai-secret-key-0123456789'
-const SECRETS: Record<string, string> = {
+const OPENAI = 'sk-openai-test-key-0123456789'
+const SECRET_BY_ENV: Record<string, string> = {
   OPENROUTER_API_KEY: OPENROUTER,
   DIGITALOCEAN_MODEL_ACCESS_KEY: DIGITALOCEAN,
   XAI_API_KEY: XAI,
+  OPENAI_API_KEY: OPENAI,
 }
 const BOTH = {
-  ...SECRETS,
+  ...SECRET_BY_ENV,
   OPENROUTER_BASE_URL: 'https://openrouter.example/v1',
   DIGITALOCEAN_INFERENCE_BASE_URL: 'https://inference.example/v1',
   XAI_BASE_URL: 'https://xai.example/v1',
+  OPENAI_BASE_URL: 'https://proxy.example/v1',
 }
 
 describe('shared inference routing cases', () => {
@@ -58,11 +61,17 @@ describe('shared inference routing cases', () => {
       const entry = catalog.find(row => row.key === item.provider)
       expect(entry, item.id).to.not.equal(undefined)
       const envVar = entry!.envVar
-      expect(SECRETS[envVar], `${item.id} ${envVar}`).to.be.a('string')
+      const value = SECRET_BY_ENV[envVar]
+      expect(value, `${item.id} ${envVar}`).to.be.a('string')
       const forwarded = filterInferenceEnv(item.id, BOTH, catalog)
-      expect(forwarded, item.id).to.deep.equal({[envVar]: SECRETS[envVar]})
+      expect(forwarded, item.id).to.deep.equal({[envVar]: value})
       expect(JSON.stringify(forwarded)).to.not.include('BASE_URL')
       expect(JSON.stringify(forwarded)).to.not.include('https://')
+      for (const [name, secret] of Object.entries(SECRET_BY_ENV)) {
+        if (name === envVar) continue
+        expect(forwarded, item.id).to.not.have.property(name)
+        expect(JSON.stringify(forwarded), item.id).to.not.include(secret)
+      }
     })
   }
 })

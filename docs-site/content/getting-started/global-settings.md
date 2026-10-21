@@ -81,11 +81,16 @@ Set an agent's model to `digitalocean/llama3.3-70b-instruct` or
 OpenRouter stays the default when the model is `openrouter/...`, any
 other slash prefix that is not registered or reserved (`openai/`,
 `x-ai/`, `qwen/`, `z-ai/`, and the rest), or a bare alias such as `claude-sonnet-4`.
-`openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, and
-`ollama/` are reserved and are not providers yet. `xai/<model-id>` is
-direct xAI (`XAI_API_KEY`, `https://api.x.ai/v1`). `defaults.builder_model` can be
-`digitalocean/<model-id>` or `xai/<model-id>`. The default remains
-`openrouter/minimax/minimax-m2.5`. Change the
+`openai-api/<model-id>` is direct OpenAI. The key is `OPENAI_API_KEY`,
+or the token stored by `cast provider enable openai-api --token -`.
+The base URL is `https://api.openai.com/v1`. Cast does not read
+`OPENAI_BASE_URL`. `--url` writes `providers.openai.base_url` for the
+builder on this machine and is not copied to a deploy.
+`xai/<model-id>` is direct xAI (`XAI_API_KEY`, `https://api.x.ai/v1`).
+`anthropic-api/`, `gemini/`, `bedrock/`, and `ollama/` are reserved and
+are not providers yet. `defaults.builder_model` can be
+`digitalocean/<model-id>`, `openai-api/<model-id>`, or `xai/<model-id>`.
+The default remains `openrouter/minimax/minimax-m2.5`. Change the
 curated OpenRouter ids with `cast model` or `/model` in the builder TUI.
 The running builder keeps its current model until the next launch.
 
@@ -111,6 +116,7 @@ selected by the agent's `brain.model`, including an external provider.
 | Variable | Used for |
 |---|---|
 | `OPENROUTER_API_KEY` | Default LLM provider auth. |
+| `OPENAI_API_KEY` | Direct OpenAI inference for `openai-api/<model-id>`. Not sent when the agent uses another provider. |
 | `DIGITALOCEAN_MODEL_ACCESS_KEY` | DigitalOcean serverless inference. Not the deploy token. |
 | `XAI_API_KEY` | xAI inference for `xai/<model>`. Deploy sends it only when the agent uses that prefix. |
 | `XAI_BASE_URL` | Optional builder override for the xAI base URL. Not deployed. |

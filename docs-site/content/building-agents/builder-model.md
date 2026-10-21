@@ -95,27 +95,42 @@ The model id selects the provider. The longest registered prefix wins.
 Any slash prefix that is not a registered provider and not reserved uses
 OpenRouter too, including vendors that are not in the curated list.
 A bare alias such as `claude-sonnet-4` also stays on OpenRouter.
+`openai/gpt-4o` stays on OpenRouter when `OPENAI_API_KEY` is set.
+
+`openai-api/gpt-4o` is direct OpenAI. Enable it with
+`cast provider enable openai-api --token -`. The key is `OPENAI_API_KEY`.
+Requests go to `https://api.openai.com/v1`. Cast does not read
+`OPENAI_BASE_URL`. A builder-only URL is
+`cast provider enable openai-api --token - --url <https-url>`, stored as
+`providers.openai.base_url`. Deploy does not send that URL.
+`/model` and `cast model` list chat ids from `GET /models` (gpt-4, gpt-5,
+o-series, and chatgpt ids, including fine-tunes). Embedding, TTS, image,
+moderation, realtime, audio, and transcribe ids are left out. When the
+list cannot be loaded, the picker shows `gpt-4o` and `gpt-4o-mini`.
+Any other `openai-api/<id>` is accepted. Reasoning models (`o1`, `o3`,
+`o4`, `gpt-5`, and the same families) omit temperature. Other OpenAI chat
+models use `0.7`.
 
 These prefixes are reserved for a direct provider and are not registered
-yet: `openai-api/`, `anthropic-api/`, `gemini/`, `bedrock/`, and
-`ollama/`. `cast model openai-api/gpt-4o` exits non-zero. The message
-says that prefix is reserved and that `openai/gpt-4o` still uses
-OpenRouter. `xai/grok-4.7` is direct xAI, not that error. `x-ai/grok-2`
-still uses OpenRouter. A bare id
+yet: `anthropic-api/`, `gemini/`, `bedrock/`, and `ollama/`.
+`xai/grok-4.7` is direct xAI. `x-ai/grok-2` still uses OpenRouter.
+A bare id
 OpenRouter does not already accept, such as `gpt-5` or `not-a-real-model`,
 is also an error. That error names the prefix convention. It does not
 list the OpenRouter catalog. `cast model qwen/qwen3-coder` and
 `cast model openrouter/not-a-real-model` are unknown curated ids, and
 those messages include the available ids. The config is not written.
 
-Claude 4.7 and later (opus, sonnet, or haiku, dotted or dashed, and 5.x)
-are sent as written and omit temperature. Earlier aliases such as
-`claude-opus-4` and `claude-sonnet-4` still pin to 4.5 and 4.6.
+Claude 4.7 and later on OpenRouter (opus, sonnet, or haiku, dotted or
+dashed, and 5.x) are sent as written and omit temperature. Earlier
+aliases such as `claude-opus-4` and `claude-sonnet-4` still pin to 4.5
+and 4.6.
 
-OpenRouter, DigitalOcean, and xAI use one OpenAI-compatible provider.
-A new provider of that kind is a row in `python/cast/providers/manifest.json`.
-The builder requests temperature `0.7` from each row's `defaultParams`,
-and omits temperature for models that match `omitTemperatureModels`.
+OpenRouter, DigitalOcean, OpenAI, and xAI use one OpenAI-compatible provider.
+A new provider of that kind is a row in `python/cast/providers/manifest.json`
+with `"impl": "openai-compatible"`. The builder requests temperature `0.7`
+from each row's `defaultParams`, and omits temperature for models that match
+`omitTemperatureModels`.
 
 `xai/<model>` calls `https://api.x.ai/v1` with `XAI_API_KEY`.
 `cast provider enable xai --token -` stores that key.

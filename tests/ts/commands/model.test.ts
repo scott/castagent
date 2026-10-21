@@ -46,6 +46,7 @@ describe('cast model', () => {
   let Model: any
   const previousOpenRouter = process.env.OPENROUTER_API_KEY
   const previousDoBase = process.env.DIGITALOCEAN_INFERENCE_BASE_URL
+  const previousOpenAI = process.env.OPENAI_API_KEY
 
   before(async () => {
     Model = await loadCommand()
@@ -54,6 +55,7 @@ describe('cast model', () => {
   beforeEach(() => {
     home = fs.mkdtempSync(path.join(process.env.TMPDIR || '/tmp', 'cast-model-'))
     process.env.HOME = home
+    delete process.env.OPENAI_API_KEY
   })
 
   afterEach(() => {
@@ -62,6 +64,8 @@ describe('cast model', () => {
     else process.env.OPENROUTER_API_KEY = previousOpenRouter
     if (previousDoBase === undefined) delete process.env.DIGITALOCEAN_INFERENCE_BASE_URL
     else process.env.DIGITALOCEAN_INFERENCE_BASE_URL = previousDoBase
+    if (previousOpenAI === undefined) delete process.env.OPENAI_API_KEY
+    else process.env.OPENAI_API_KEY = previousOpenAI
     fs.rmSync(home, {recursive: true, force: true})
   })
 
@@ -283,6 +287,46 @@ describe('cast model', () => {
     expect(errors[0]).to.include('not enabled')
     expect(errors[0]).to.include('--token -')
     expect(fs.existsSync(configPath())).to.equal(false)
+  })
+
+  it('refuses a direct OpenAI id until that provider is enabled', async () => {
+    const {errors} = await runCommand(
+      Model,
+      {model: 'openai-api/gpt-4o'},
+      {list: false, json: false, current: false},
+    )
+    expect(errors).to.have.length(1)
+    expect(errors[0]).to.include('not enabled')
+    expect(errors[0]).to.include('openai-api')
+    expect(fs.existsSync(configPath())).to.equal(false)
+  })
+
+  it('stores an OpenAI id and leaves openai/ on OpenRouter', async () => {
+    const vendor = await runCommand(
+      Model,
+      {model: 'openai/gpt-4o'},
+      {list: false, json: false, current: false},
+    )
+    expect(vendor.errors, vendor.errors.join('\n')).to.deep.equal([])
+    const onOpenRouter = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(onOpenRouter.defaults.builder_model).to.equal('openai/gpt-4o')
+    expect(onOpenRouter.defaults.inference_provider).to.not.equal('openai-api')
+    onOpenRouter.providers = onOpenRouter.providers || {}
+    onOpenRouter.providers.openai = {base_url: 'http://127.0.0.1:9/v1'}
+    fs.writeFileSync(configPath(), yaml.stringify(onOpenRouter))
+    const token = path.join(home, '.cast', 'tokens', 'inference', 'openai-api.token')
+    fs.mkdirSync(path.dirname(token), {recursive: true})
+    fs.writeFileSync(token, 'sk-openai-file-token\n', {mode: 0o600})
+    const switched = await runCommand(
+      Model,
+      {model: 'openai-api/gpt-4.1'},
+      {list: false, json: false, current: false},
+    )
+    expect(switched.errors, switched.errors.join('\n')).to.deep.equal([])
+    const config = yaml.parse(fs.readFileSync(configPath(), 'utf8'))
+    expect(config.defaults.builder_model).to.equal('openai-api/gpt-4.1')
+    expect(config.defaults.inference_provider).to.equal('openai-api')
+    expect(JSON.stringify(config)).to.not.include('sk-openai-file-token')
   })
 
   it('stores a freeform id and switches back to an enabled provider', async () => {

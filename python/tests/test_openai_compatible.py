@@ -28,6 +28,8 @@ def _home(monkeypatch, tmp_path):
     for name in (
         "OPENROUTER_API_KEY",
         "DIGITALOCEAN_MODEL_ACCESS_KEY",
+        "OPENAI_API_KEY",
+        "OPENAI_BASE_URL",
         "FAKEAI_API_KEY",
         "FAKEAI_BASE_URL",
         "OPENROUTER_BASE_URL",
@@ -52,6 +54,14 @@ class TestBothProvidersUseTheSharedClass:
         assert digitalocean.key == "digitalocean"
         assert isinstance(openrouter.impl, OpenAICompatibleProvider)
         assert isinstance(digitalocean.impl, OpenAICompatibleProvider)
+        openai = get_provider("openai-api/gpt-4o")
+        assert openai.key == "openai-api"
+        assert isinstance(openai.impl, OpenAICompatibleProvider)
+        assert openai.impl.rewrite_model is None
+        xai = get_provider("xai/grok-4.7")
+        assert xai.key == "xai"
+        assert isinstance(xai.impl, OpenAICompatibleProvider)
+        assert xai.impl.rewrite_model is None
         assert openrouter.impl.rewrite_model is rewrite_openrouter_model
         assert digitalocean.impl.rewrite_model is None
 
@@ -91,6 +101,14 @@ class TestBothProvidersUseTheSharedClass:
             "grok-4.20-0309-non-reasoning",
             "grok-4.20-0309-reasoning",
         ]
+        assert payload["xai"]["modelsFilter"]
+        assert payload["openai-api"]["envVar"] == "OPENAI_API_KEY"
+        assert payload["openai-api"]["baseUrl"] == "https://api.openai.com/v1"
+        assert "baseUrlEnv" not in payload["openai-api"]
+        assert payload["openai-api"]["modelsPath"] == "/models"
+        assert payload["openai-api"]["fallbackModels"] == ["gpt-4o", "gpt-4o-mini"]
+        assert payload["openai-api"]["defaultModel"] == "openai-api/gpt-4o"
+        assert payload["openai-api"]["modelsFilter"]
         assert "fakeai" not in payload
         for item in payload.values():
             assert "knownModels" not in item
@@ -121,7 +139,6 @@ class TestPrefixErrors:
     def test_reserved_direct_prefixes_do_not_fall_through(self, monkeypatch, tmp_path):
         _home(monkeypatch, tmp_path)
         cases = {
-            "openai-api/gpt-4o": "openai-api/",
             "anthropic-api/claude-sonnet-4.6": "anthropic-api/",
             "gemini/gemini-2.5-flash": "gemini/",
             "bedrock/us.anthropic.claude": "bedrock/",
@@ -134,11 +151,11 @@ class TestPrefixErrors:
             assert prefix in message
             assert "not registered yet" in message
 
-    def test_openai_api_hint_names_the_openrouter_id(self, monkeypatch, tmp_path):
+    def test_openai_api_does_not_steal_openrouter_vendor_ids(self, monkeypatch, tmp_path):
         _home(monkeypatch, tmp_path)
-        with pytest.raises(InferenceProviderError) as exc:
-            get_provider("openai-api/gpt-4o")
-        assert "openai/gpt-4o still routes to OpenRouter" in str(exc.value)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+        assert get_provider("openai-api/gpt-4o").key == "openai-api"
+        assert get_provider("openai/gpt-4o").key == "openrouter"
 
     def test_xai_prefix_does_not_steal_the_openrouter_vendor(self, monkeypatch, tmp_path):
         _home(monkeypatch, tmp_path)
@@ -163,9 +180,68 @@ class TestPrefixErrors:
         message = str(exc.value)
         assert "no provider prefix" in message
         assert "openai-api/" in message
+        assert "xai/" in message
         assert "claude-sonnet-4" in message
 
     def test_external_cannot_take_a_reserved_prefix(self, monkeypatch, tmp_path):
+        home = _home(monkeypatch, tmp_path)
+        folder = home / ".cast" / "inference-providers" / "ollama"
+        folder.mkdir(parents=True)
+        (folder / "provider.json").write_text(json.dumps({
+            "key": "ollama",
+            "name": "Ollama",
+            "prefixes": ["ollama/"],
+            "envVar": "OLLAMA_API_KEY",
+            "configKey": "providers.ollama.api_key",
+            "baseUrl": "http://localhost:11434/v1",
+            "acceptsAnyModel": True,
+        }))
+        (folder / "provider.py").write_text(
+            "class P:\n"
+            "    key = 'ollama'\n"
+            "    prefixes = ('ollama/',)\n"
+            "    env_var = 'OLLAMA_API_KEY'\n"
+            "    def is_available(self):\n"
+            "        return False\n"
+            "    def create_llm(self, model=None, **kwargs):\n"
+            "        return model\n"
+            "provider = P()\n"
+        )
+        with pytest.raises(InferenceProviderError) as exc:
+            load_registry()
+        assert "reserved" in str(exc.value)
+        assert "ollama/" in str(exc.value)
+
+    def test_external_cannot_reclaim_xai(self, monkeypatch, tmp_path):
+        home = _home(monkeypatch, tmp_path)
+        folder = home / ".cast" / "inference-providers" / "xai"
+        folder.mkdir(parents=True)
+        (folder / "provider.json").write_text(json.dumps({
+            "key": "xai",
+            "name": "xAI",
+            "prefixes": ["xai/"],
+            "envVar": "XAI_API_KEY",
+            "configKey": "providers.xai.api_key",
+            "baseUrl": "https://api.x.ai/v1",
+            "acceptsAnyModel": True,
+        }))
+        (folder / "provider.py").write_text(
+            "class P:\n"
+            "    key = 'xai'\n"
+            "    prefixes = ('xai/',)\n"
+            "    env_var = 'XAI_API_KEY'\n"
+            "    def is_available(self):\n"
+            "        return False\n"
+            "    def create_llm(self, model=None, **kwargs):\n"
+            "        return model\n"
+            "provider = P()\n"
+        )
+        with pytest.raises(InferenceProviderError) as exc:
+            load_registry()
+        assert "xai" in str(exc.value)
+        assert "built-in xai" in str(exc.value)
+
+    def test_external_cannot_reclaim_openai_api(self, monkeypatch, tmp_path):
         home = _home(monkeypatch, tmp_path)
         folder = home / ".cast" / "inference-providers" / "openai-api"
         folder.mkdir(parents=True)
@@ -191,8 +267,8 @@ class TestPrefixErrors:
         )
         with pytest.raises(InferenceProviderError) as exc:
             load_registry()
-        assert "reserved" in str(exc.value)
-        assert "openai-api/" in str(exc.value)
+        assert "openai-api" in str(exc.value)
+        assert "built-in openai-api" in str(exc.value)
 
 
 class TestSamplingParams:
@@ -312,6 +388,125 @@ class TestXaiProvider:
         ]
         assert [model for model in kept if pattern.search(model)] == kept
         assert [model for model in dropped if pattern.search(model)] == []
+
+
+class TestOpenAIDirect:
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_create_llm_strips_the_prefix_and_ignores_openai_base_url(self, mock_chat, monkeypatch, tmp_path):
+        _home(monkeypatch, tmp_path)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://proxy.example/v1")
+        provider = get_provider("openai-api/gpt-4o")
+        provider.create_llm("openai-api/gpt-4o", **provider.llm_params("openai-api/gpt-4o"))
+        kwargs = mock_chat.call_args.kwargs
+        assert kwargs["model"] == "gpt-4o"
+        assert kwargs["api_key"] == "sk-test-openai"
+        assert kwargs["base_url"] == "https://api.openai.com/v1"
+        assert kwargs["temperature"] == 0.7
+        assert "https://proxy.example" not in str(kwargs)
+
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_reasoning_models_omit_temperature(self, mock_chat, monkeypatch, tmp_path):
+        _home(monkeypatch, tmp_path)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+        for model_id, sent in (
+            ("openai-api/o3", "o3"),
+            ("openai-api/o1-mini", "o1-mini"),
+            ("openai-api/gpt-5", "gpt-5"),
+            ("openai-api/gpt-5-mini", "gpt-5-mini"),
+        ):
+            mock_chat.reset_mock()
+            provider = get_provider(model_id)
+            provider.create_llm(model_id, **provider.llm_params(model_id))
+            kwargs = mock_chat.call_args.kwargs
+            assert kwargs["model"] == sent
+            assert "temperature" not in kwargs
+            assert kwargs["base_url"] == "https://api.openai.com/v1"
+
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_builder_sends_temperature_for_gpt_4o(self, mock_chat, monkeypatch, tmp_path):
+        from cast.builder import create_llm
+
+        _home(monkeypatch, tmp_path)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+        config = {"defaults": {"builder_model": "openai-api/gpt-4o"}}
+        with patch("cast.builder.load_global_config", return_value=config):
+            create_llm()
+        assert mock_chat.call_args.kwargs["model"] == "gpt-4o"
+        assert mock_chat.call_args.kwargs["temperature"] == 0.7
+        assert mock_chat.call_args.kwargs["base_url"] == "https://api.openai.com/v1"
+
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_builder_omits_temperature_for_a_reasoning_model(self, mock_chat, monkeypatch, tmp_path):
+        from cast.builder import create_llm
+
+        _home(monkeypatch, tmp_path)
+        monkeypatch.setenv("OPENAI_API_KEY", "sk-test-openai")
+        config = {"defaults": {"builder_model": "openai-api/o3"}}
+        with patch("cast.builder.load_global_config", return_value=config):
+            create_llm()
+        assert mock_chat.call_args.kwargs["model"] == "o3"
+        assert "temperature" not in mock_chat.call_args.kwargs
+
+    @patch("cast.providers.openai_compatible.ChatOpenAI")
+    def test_config_base_url_is_builder_only(self, mock_chat, monkeypatch, tmp_path):
+        home = _home(monkeypatch, tmp_path)
+        monkeypatch.setenv("OPENAI_BASE_URL", "https://proxy.example/v1")
+        token = home / ".cast" / "tokens" / "inference" / "openai-api.token"
+        token.parent.mkdir(parents=True)
+        token.write_text("file-secret\n")
+        (home / ".cast" / "config.yaml").write_text(
+            "providers:\n  openai:\n    base_url: https://from-config.example/v1\n"
+        )
+        provider = get_provider("openai-api/gpt-4o")
+        provider.create_llm("openai-api/gpt-4o")
+        assert mock_chat.call_args.kwargs["api_key"] == "file-secret"
+        assert mock_chat.call_args.kwargs["base_url"] == "https://from-config.example/v1"
+
+    def test_missing_key_names_openai_api_key(self, monkeypatch, tmp_path):
+        _home(monkeypatch, tmp_path)
+        monkeypatch.setenv("OPENROUTER_API_KEY", "or-key")
+        provider = get_provider("openai-api/gpt-4o")
+        assert provider.is_available() is False
+        with pytest.raises(ValueError, match="OPENAI_API_KEY") as exc:
+            provider.create_llm("openai-api/gpt-4o")
+        assert "https://platform.openai.com/api-keys" in str(exc.value)
+
+    def test_models_filter_keeps_chat_ids(self, monkeypatch, tmp_path):
+        import re
+
+        _home(monkeypatch, tmp_path)
+        pattern = get_provider("openai-api/gpt-4o").models_filter
+        compiled = re.compile(pattern)
+        kept = [
+            "gpt-4o",
+            "gpt-4o-mini",
+            "gpt-4.1",
+            "gpt-3.5-turbo",
+            "gpt-5",
+            "o3",
+            "o1-mini",
+            "o4-mini",
+            "chatgpt-4o-latest",
+            "ft:gpt-4o:org:name:id",
+        ]
+        dropped = [
+            "text-embedding-3-small",
+            "tts-1",
+            "gpt-4o-mini-tts",
+            "whisper-1",
+            "dall-e-3",
+            "gpt-image-1",
+            "gpt-4o-realtime-preview",
+            "gpt-4o-audio-preview",
+            "gpt-4o-transcribe",
+            "omni-moderation-latest",
+            "babbage-002",
+        ]
+        for model_id in kept:
+            assert compiled.search(model_id), model_id
+        for model_id in dropped:
+            assert compiled.search(model_id) is None, model_id
 
 
 class TestFakeProviderRow:

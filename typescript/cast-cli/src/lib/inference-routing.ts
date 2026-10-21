@@ -109,6 +109,20 @@ function loadOpenRouterKnown(): Set<string> {
   return openrouterKnown
 }
 
+function directPrefixHint(catalog: readonly PrefixCatalogEntry[]): string {
+  const prefixes: string[] = []
+  for (const entry of catalog) {
+    if (entry.default) continue
+    for (const prefix of entry.prefixes ?? []) {
+      if (prefix && !prefixes.includes(prefix)) prefixes.push(prefix)
+    }
+  }
+  for (const item of loadReservedDirectPrefixes()) {
+    if (!prefixes.includes(item.prefix)) prefixes.push(item.prefix)
+  }
+  return prefixes.join(', ')
+}
+
 function registeredPrefixes(catalog: readonly PrefixCatalogEntry[]): string[] {
   const prefixes: string[] = []
   for (const entry of catalog) {
@@ -167,11 +181,10 @@ export function inferencePrefixError(
   // stays on the default provider.
   if (text.includes('/')) return null
   if (openrouterHandlesBare(text)) return null
-  const reserved = loadReservedDirectPrefixes().map(item => item.prefix).join(', ')
   return (
     `Model '${text}' has no provider prefix. `
     + `OpenRouter models look like openai/gpt-4o or openrouter/openai/gpt-4o. `
-    + `Direct providers use ${reserved}. `
+    + `Direct providers use ${directPrefixHint(catalog)}. `
     + `A bare alias such as claude-sonnet-4 still uses OpenRouter.`
   )
 }
