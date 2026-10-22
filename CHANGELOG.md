@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.1] - 2026-10-22
+
+### Documentation
+
+- The docs site adds an Inference providers page. It lists each shipped provider's prefix, key environment variable, base URL override, how `/model` lists models, and what deploy forwards. OpenRouter stays the default. Direct providers are xAI, OpenAI (`openai-api/`), Google Gemini, Anthropic (`anthropic-api/`), DigitalOcean serverless inference, and local Ollama. `openai/`, `anthropic/`, `google/`, and `x-ai/` stay on OpenRouter. `bedrock/` is reserved and is not shipped. ([#424](https://github.com/scott/castagent/pull/424))
+- A `cast provider` / `/provider` page covers listing providers, enabling one, `--token -`, `--url`, keychain storage, and the token file at `~/.cast/tokens/inference/<key>.token`. The active provider is the prefix on `defaults.builder_model`. ([#424](https://github.com/scott/castagent/pull/424))
+- The builder-model page lists direct provider prefixes next to the OpenRouter ids: `openai-api/`, `xai/`, `gemini/`, `anthropic-api/`, `digitalocean/`, and `ollama/`. ([#424](https://github.com/scott/castagent/pull/424))
+- The Known models reference is rewritten from `python/cast/providers/manifest.json` and `getModels()`. It no longer uses `KNOWN_MODELS`. ([#424](https://github.com/scott/castagent/pull/424))
+- Each model in the docs manifest records a `provider` field (the vendor segment of the id) and an `inferenceProvider` field (the manifest row key). ([#424](https://github.com/scott/castagent/pull/424))
+
 ## [2.8.0] - 2026-10-21
 
 ### Added

@@ -76,6 +76,7 @@ export interface ChangelogEntry {
   deprecated: string[]
   removed: string[]
   security: string[]
+  documentation: string[]
   /** raw markdown below the version heading, for verbatim rendering */
   raw: string
   /** the PR number this release was published under, if discoverable */

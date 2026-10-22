@@ -23,7 +23,8 @@ function entryToSections(entry: typeof entries[number]) {
     { kind: 'Changed',    lines: entry.changed },
     { kind: 'Deprecated', lines: entry.deprecated },
     { kind: 'Removed',    lines: entry.removed },
-    { kind: 'Security',   lines: entry.security },
+    { kind: 'Security',       lines: entry.security },
+    { kind: 'Documentation',  lines: entry.documentation },
   ].filter(s => s.lines.length > 0)
 }
 ---
