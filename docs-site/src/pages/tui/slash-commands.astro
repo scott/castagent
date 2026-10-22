@@ -25,6 +25,18 @@ const sortedCategories = [...byCategory.keys()].sort(
     when a parameter is needed, a modal prompts for it.
     Auto-generated from <code>typescript/cast-tui/src/commands/slash-registry.ts</code>.
   </p>
+  <p>
+    <code>/model</code> and <code>/provider</code> are dev-only. They change the
+    builder on this machine and are hidden from <code>/help</code> in production
+    and on-host.
+    <a href="building-agents/builder-model"><code>/model</code></a> lists the active
+    inference provider's models.
+    <a href="getting-started/provider"><code>/provider</code></a> switches that
+    provider. Deploy hosts are a different list:
+    <a href="deployment/providers">deployment providers</a>.
+    Prefixes and keys are on
+    <a href="getting-started/inference-providers">Inference providers</a>.
+  </p>
 
   <h2 id="contents">Contents</h2>
   <ul>

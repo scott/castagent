@@ -1,0 +1,422 @@
+---
+/**
+ * Inference providers, rendered from python/cast/providers/manifest.json.
+ * A new built-in row appears on the next docs build. Reserved rows
+ * (impl: "reserved") are listed as not shipped.
+ */
+import { readFileSync } from 'node:fs'
+import { dirname, join, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const here = dirname(fileURLToPath(import.meta.url))
+const repo = resolve(here, '../../..')
+
+interface InferenceRow {
+  key: string
+  name: string
+  displayName?: string
+  default?: boolean
+  prefixes?: string[]
+  envVar?: string
+  configKey?: string
+  baseUrl?: string
+  baseUrlEnv?: string
+  acceptsAnyModel?: boolean
+  modelsPath?: string
+  modelsFilter?: string
+  modelsLifecycle?: string
+  modelsHeaders?: Record<string, string>
+  normalizeV1Base?: boolean
+  stripModelIdPrefix?: string
+  fallbackModels?: string[]
+  defaultModel?: string
+  knownModels?: string[]
+  impl?: string
+  keyless?: boolean
+  placeholderKey?: string
+  defaultParams?: { temperature?: number }
+  omitTemperatureModels?: string[]
+  curatedModels?: boolean
+}
+
+type Seg = { kind: 'text' | 'code'; value: string }
+type Block = Seg[]
+
+const rows = JSON.parse(
+  readFileSync(join(repo, 'python/cast/providers/manifest.json'), 'utf8'),
+) as InferenceRow[]
+const vendorPrefixes = JSON.parse(
+  readFileSync(join(repo, 'python/cast/providers/vendor-prefixes.json'), 'utf8'),
+) as string[]
+
+const reserved = rows.filter((row) => row.impl === 'reserved')
+const shipped = rows.filter((row) => row.impl !== 'reserved')
+
+const stayOnOpenRouter = ['openai/', 'anthropic/', 'google/', 'x-ai/'].filter((prefix) =>
+  vendorPrefixes.includes(prefix),
+)
+
+/** Plain-language gloss keyed by the exact modelsFilter string. */
+const FILTER_GLOSS: Record<string, string> = {
+  '^(?:ft:)?(?:chatgpt-|o[0-9]|gpt-(?:3\\.5|4|5))(?!.*(?:tts|transcribe|realtime|audio|moderation|embedding|image|search|-pro\\b|deep-research|codex|instruct))':
+    'Keeps chat ids (an optional ft: prefix, then chatgpt-, o plus a digit, or gpt-3.5, gpt-4, or gpt-5) and drops tts, transcribe, realtime, audio, moderation, embedding, image, search, -pro, deep-research, codex, and instruct.',
+  '^(?!latest$)(?!.*-latest$)(?!.*(?:imagine|image|video|voice|embed|tts|multi-agent)).+':
+    'Drops latest, ids ending in -latest, and ids that contain imagine, image, video, voice, embed, tts, or multi-agent.',
+  '^gemini(?!.*(?:embed|image|tts|live|transcribe|aqa|robot|imagen|veo|audio|nano|omni|computer-use))':
+    'Keeps ids that start with gemini and drops embed, image, tts, live, transcribe, aqa, robot, imagen, veo, audio, nano, omni, and computer-use.',
+  '^(?!bge)(?!.*(?:embed|paraphrase-multilingual|all-minilm|-bge-|bge-m3)).+':
+    'Drops names that start with bge, or that contain embed, paraphrase-multilingual, all-minilm, -bge-, or bge-m3.',
+  '^claude-': 'Keeps ids that start with claude-.',
+}
+
+/**
+ * Facts that are not a manifest field. Keyed by row key so a new row
+ * still renders from its fields alone.
+ */
+const NOTES: Record<string, string[]> = {
+  digitalocean: [
+    'DIGITALOCEAN_MODEL_ACCESS_KEY and providers.digitalocean_inference.api_key are serverless inference. providers.digitalocean.token is the Droplet and MicroVM deploy token. It is not this key.',
+  ],
+  'openai-api': [
+    'There is no OPENAI_BASE_URL. openai/gpt-4o stays on OpenRouter even when OPENAI_API_KEY is set.',
+  ],
+  xai: [
+    'x-ai/ stays on OpenRouter. xai/ is this provider.',
+  ],
+  gemini: [
+    'google/ and a bare alias such as gemini-2.5-pro stay on OpenRouter. The chat client echoes extra_content.google.thought_signature from a Gemini 3 or 4 tool call onto the next request.',
+  ],
+  'anthropic-api': [
+    'impl is module. cast.providers.anthropic builds ChatAnthropic. The catalog URL includes /v1 so the model list is under that path. The client receives the host root because the SDK appends /v1/messages. An exported ANTHROPIC_BASE_URL may include /v1 or omit it. Chat strips a trailing /v1. anthropic/ stays on OpenRouter. Direct ids are not rewritten by the OpenRouter alias table.',
+  ],
+  ollama: [
+    'No key is required for local Ollama. cast provider ollama does not ask for one. When Ollama answers, that switch keeps ollama/qwen3 only if a pulled id matches (qwen3 and qwen3:latest match; qwen3:8b does not) and otherwise stores the first pulled chat model. When Ollama does not answer, it stores ollama/qwen3 and prints ollama pull qwen3.',
+    'cast deploy refuses an ollama/ model on every host except docker and the unimplemented local provider, because a remote host cannot reach Ollama on this machine. Docker rewrites a loopback builder URL (127.0.0.0/8, ::1, localhost, localhost., and IPv4-mapped loopback) to http://host.docker.internal:<port>/v1 and adds a host-gateway mapping. 0.0.0.0 and https on loopback are refused. A builder URL that is not loopback is refused for Docker. On Linux, deploy prints that Ollama must listen beyond 127.0.0.1 (OLLAMA_HOST=0.0.0.0 with a firewall, or the docker0 bridge IP, often 172.17.0.1).',
+    'Ollama\'s default context length is 4096 tokens. Raise it with OLLAMA_CONTEXT_LENGTH or num_ctx. The builder prompt starts near 1.8k tokens.',
+  ],
+}
+
+function text(value: string): Seg {
+  return { kind: 'text', value }
+}
+
+function code(value: string): Seg {
+  return { kind: 'code', value }
+}
+
+function label(row: InferenceRow): string {
+  return row.displayName || row.name
+}
+
+function configBaseUrlKey(row: InferenceRow): string {
+  const key = row.configKey ?? ''
+  if (!key.endsWith('.api_key')) return ''
+  return `${key.slice(0, -'api_key'.length)}base_url`
+}
+
+function sampling(row: InferenceRow): string {
+  const temperature = row.defaultParams?.temperature
+  const patterns = row.omitTemperatureModels?.length ?? 0
+  if (typeof temperature === 'number') {
+    if (patterns > 0) {
+      const label = patterns === 1 ? '1 pattern' : `${patterns} patterns`
+      return `The builder sends temperature ${temperature} unless the model matches omitTemperatureModels (${label} on this row).`
+    }
+    return `The builder sends temperature ${temperature}.`
+  }
+  return 'This row has no defaultParams, so the builder does not send temperature.'
+}
+
+function modelList(row: InferenceRow): Block[] {
+  const blocks: Block[] = []
+  const known = row.knownModels?.length ?? 0
+  if (row.curatedModels) {
+    blocks.push([
+      text('cast model and /model use this row\'s knownModels'),
+      text(known ? ` (${known} ids). There is no live fetch.` : '. There is no live fetch.'),
+    ])
+  } else if (row.modelsPath) {
+    const path = row.modelsPath.startsWith('/') ? row.modelsPath : `/${row.modelsPath}`
+    blocks.push([
+      text('cast model and /model load '),
+      code(`GET <base-url>${path}`),
+      text('. The base URL is the builder override when one is set, otherwise '),
+      code(row.baseUrl || ''),
+      text('.'),
+    ])
+  } else if (row.default && known > 0) {
+    blocks.push([
+      text('This row has no modelsPath. cast model and /model use the curated '),
+      code('knownModels'),
+      text(` (${known} ids), copied in typescript/cast-cli/src/lib/models.ts. There is no live fetch.`),
+    ])
+  } else if (known > 0) {
+    blocks.push([
+      text('cast model and /model use this row\'s '),
+      code('knownModels'),
+      text(` (${known} ids).`),
+    ])
+  } else {
+    blocks.push([text('This row has no curated knownModels and no modelsPath.')])
+  }
+
+  if (row.modelsFilter) {
+    const gloss = FILTER_GLOSS[row.modelsFilter]
+    const line: Block = [text('The live list keeps ids matching '), code(row.modelsFilter), text('.')]
+    if (gloss) line.push(text(` ${gloss}`))
+    blocks.push(line)
+  }
+  if (row.modelsHeaders && Object.keys(row.modelsHeaders).length > 0) {
+    blocks.push([
+      text('The list sends '),
+      code(Object.keys(row.modelsHeaders).join(', ')),
+      text(' instead of a Bearer token. The stored token fills the header template.'),
+    ])
+  }
+  if (row.modelsLifecycle) {
+    blocks.push([
+      text('The request adds '),
+      code(`lifecycle=${row.modelsLifecycle}`),
+      text('. Rows that report another lifecycle are dropped. Rows with no lifecycle field are kept. HTTP 400 or 422 is requested again without that query. A timeout or 401 is not retried.'),
+    ])
+  }
+  if (row.normalizeV1Base) {
+    blocks.push([
+      text('If the builder base URL does not end in '),
+      code('/v1'),
+      text(', the model list appends it.'),
+    ])
+  }
+  if (row.stripModelIdPrefix) {
+    blocks.push([
+      text('Ids from the list drop a leading '),
+      code(row.stripModelIdPrefix),
+      text('. A hand-typed id drops that prefix after the provider prefix, before the request.'),
+    ])
+  }
+  if ((row.fallbackModels?.length ?? 0) > 0) {
+    blocks.push([
+      text('When the live list cannot be loaded, the picker shows '),
+      code((row.fallbackModels ?? []).join(', ')),
+      text('.'),
+    ])
+  }
+  if (row.keyless && row.modelsPath) {
+    blocks.push([text('The list request does not send a token.')])
+  }
+  if (row.acceptsAnyModel) {
+    blocks.push([
+      text('cast model and cast update accept any '),
+      code(`${row.prefixes?.[0] ?? ''}<id>`),
+      text(', including an id that is not in the picker list.'),
+    ])
+  } else if (known > 0) {
+    if (row.key === 'openrouter') {
+      blocks.push([
+        text('Only those curated ids are accepted. One leading '),
+        code('openrouter/'),
+        text(' is also accepted. An unknown id is rejected.'),
+      ])
+    } else {
+      blocks.push([text('Only those curated ids are accepted. An unknown id is rejected.')])
+    }
+  }
+  if (row.keyless && row.placeholderKey) {
+    blocks.push([
+      text('When '),
+      code(row.envVar || 'the key'),
+      text(' is unset, the chat client sends the placeholder '),
+      code(row.placeholderKey),
+      text(' so the request does not use an empty Bearer token. A set key is sent instead.'),
+    ])
+  }
+  return blocks
+}
+
+function deployLines(row: InferenceRow): Block[] {
+  const blocks: Block[] = []
+  const prefs = row.prefixes ?? []
+  if (row.keyless) {
+    blocks.push([
+      text('Keyless. Deploy does not forward '),
+      code(row.envVar || 'the optional key'),
+      text('.'),
+    ])
+  } else if (row.envVar) {
+    const prefixText = prefs.length ? prefs.join(' or ') : 'its prefix'
+    blocks.push([
+      text('Deploy forwards '),
+      code(row.envVar),
+      text(' only when brain.model uses '),
+      code(prefixText),
+      text('. Other inference keys stay on this machine.'),
+    ])
+  }
+  if (row.baseUrlEnv) {
+    blocks.push([
+      code(row.baseUrlEnv),
+      text(' is a builder setting and is not copied onto a deployed agent.'),
+    ])
+  } else {
+    blocks.push([
+      text('This row has no base URL environment variable. A URL stored with --url stays on the builder and is not deployed.'),
+    ])
+  }
+  return blocks
+}
+
+function baseUrlCells(row: InferenceRow): Block {
+  const stored = configBaseUrlKey(row)
+  if (row.baseUrlEnv) {
+    const line: Block = [
+      code(row.baseUrlEnv),
+      text(', then '),
+    ]
+    if (stored) line.push(code(stored), text(', then the manifest URL.'))
+    else line.push(text('the manifest URL.'))
+    return line
+  }
+  const line: Block = [text('None. ')]
+  if (stored) {
+    line.push(text('--url writes '), code(stored), text('.'))
+  }
+  return line
+}
+---
+
+<h2 id="providers">Providers</h2>
+<p>
+  Shipped rows from <code>python/cast/providers/manifest.json</code>.
+  The longest registered prefix wins. OpenRouter is the only default.
+  A missing key does not fall back to another provider.
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Provider</th>
+      <th>Prefix</th>
+      <th>Key</th>
+      <th>Base URL</th>
+      <th>Base URL override</th>
+    </tr>
+  </thead>
+  <tbody>
+    {shipped.map((row) => (
+      <tr>
+        <td><a href={`#${row.key}`}>{label(row)}</a>{row.default ? ' (default)' : ''}{row.keyless ? ' (keyless)' : ''}</td>
+        <td>{(row.prefixes ?? []).map((prefix) => <code>{prefix}</code>)}</td>
+        <td>{row.envVar ? <code>{row.envVar}</code> : 'none'}</td>
+        <td><code>{row.baseUrl}</code></td>
+        <td>{row.baseUrlEnv ? <code>{row.baseUrlEnv}</code> : 'none'}</td>
+      </tr>
+    ))}
+  </tbody>
+</table>
+
+<h2 id="openrouter-prefixes">Prefixes that stay on OpenRouter</h2>
+<p>
+  {stayOnOpenRouter.map((prefix, index) => (
+    <span>{index > 0 ? ', ' : ''}<code>{prefix}</code></span>
+  ))}
+  {' '}stay on OpenRouter. They are vendor prefixes, not direct providers.
+  <code>python/cast/providers/vendor-prefixes.json</code> lists{' '}
+  {vendorPrefixes.map((prefix, index) => (
+    <span>{index === 0 ? '' : index === vendorPrefixes.length - 1 ? ', and ' : ', '}<code>{prefix}</code></span>
+  ))}{'. '}
+  Any other slash prefix that is not registered and not reserved also uses OpenRouter.
+  A bare alias such as <code>claude-sonnet-4</code> stays on OpenRouter.
+  <code>xai/</code> is xAI. <code>x-ai/</code> is not.
+</p>
+
+{shipped.map((row) => (
+  <section id={row.key}>
+    <h2>
+      {label(row)}
+      {row.default && <span class="badge pro">default</span>}
+      {row.keyless && <span class="badge">keyless</span>}
+    </h2>
+    <p>
+      Key <code>{row.key}</code>.
+      Implementation <code>{row.impl || 'module'}</code>.
+      {row.configKey && <> Config <code>{row.configKey}</code>.</>}
+    </p>
+    <table>
+      <tbody>
+        <tr>
+          <th>Prefix</th>
+          <td>{(row.prefixes ?? []).map((prefix) => <code>{prefix}</code>)}</td>
+        </tr>
+        <tr>
+          <th>Key environment variable</th>
+          <td>{row.envVar ? <code>{row.envVar}</code> : 'none'}{row.keyless ? ' (optional)' : ''}</td>
+        </tr>
+        <tr>
+          <th>Base URL</th>
+          <td><code>{row.baseUrl}</code></td>
+        </tr>
+        <tr>
+          <th>Base URL override</th>
+          <td>
+            {baseUrlCells(row).map((seg) => seg.kind === 'code' ? <code>{seg.value}</code> : seg.value)}
+          </td>
+        </tr>
+        {row.defaultModel && (
+          <tr>
+            <th>Default model</th>
+            <td><code>{row.defaultModel}</code></td>
+          </tr>
+        )}
+        <tr>
+          <th>Builder sampling</th>
+          <td>{sampling(row)}</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <h3>How <code>/model</code> lists models</h3>
+    <ul>
+      {modelList(row).map((block) => (
+        <li>
+          {block.map((seg) => seg.kind === 'code' ? <code>{seg.value}</code> : seg.value)}
+        </li>
+      ))}
+    </ul>
+
+    <h3>What deploy forwards</h3>
+    <ul>
+      {deployLines(row).map((block) => (
+        <li>
+          {block.map((seg) => seg.kind === 'code' ? <code>{seg.value}</code> : seg.value)}
+        </li>
+      ))}
+    </ul>
+
+    {(NOTES[row.key] ?? []).length > 0 && (
+      <>
+        <h3>Notes</h3>
+        {(NOTES[row.key] ?? []).map((note) => <p>{note}</p>)}
+      </>
+    )}
+  </section>
+))}
+
+<h2 id="reserved">Reserved, not shipped</h2>
+<p>
+  A row with <code>"impl": "reserved"</code> is not registered. An external
+  provider cannot claim its prefix. <code>cast model</code> and
+  <code>cast update</code> reject that prefix. Deploy forwards no inference
+  key for it.
+</p>
+{reserved.length === 0 ? (
+  <p>The manifest has no reserved prefixes.</p>
+) : (
+  <ul>
+    {reserved.map((row) => (
+      <li>
+        <code>{(row.prefixes ?? []).join(' ')}</code>
+        {' '}{label(row)} (<code>{row.key}</code>) is reserved and is not shipped.
+      </li>
+    ))}
+  </ul>
+)}

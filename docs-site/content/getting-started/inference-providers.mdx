@@ -1,0 +1,26 @@
+---
+title: Inference providers
+section: getting-started
+order: 5
+description: Prefixes, API keys, base URLs, model lists, and what deploy forwards for each inference provider.
+ref: ['cli:model', 'slash:model']
+---
+
+import InferenceCatalog from '../../src/components/InferenceCatalog.astro'
+
+# Inference providers
+
+The model string selects who answers a builder or agent call. That is separate from the host `cast deploy` uses. Hosts such as Railway, Fly.io, and DigitalOcean Droplets are on the [deployment providers](deployment/providers) page.
+
+OpenRouter is the default. Direct providers are xAI, OpenAI (`openai-api/`), Google Gemini, Anthropic (`anthropic-api/`), DigitalOcean serverless inference, and local Ollama. Ollama is keyless. Remote deploys refuse an `ollama/` model. `openai/`, `anthropic/`, `google/`, and `x-ai/` stay on OpenRouter. `bedrock/` is reserved and is not shipped.
+
+The catalog below is read from `python/cast/providers/manifest.json` when the docs site builds. Store a key and switch the builder with [cast provider](getting-started/provider). Pick a model with [Changing the builder model](building-agents/builder-model).
+
+<InferenceCatalog />
+
+## See also
+
+- [cast provider](getting-started/provider)
+- [Changing the builder model](building-agents/builder-model)
+- [Global settings](getting-started/global-settings)
+- [Deployment providers](deployment/providers)

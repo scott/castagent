@@ -753,6 +753,11 @@ The full user documentation lives in `docs-site/` and is built with
 [Astro](https://astro.build). The CLI command reference, TUI slash-command
 reference, deployment provider pages, and changelog are **auto-extracted
 from source on every build**, so the docs cannot drift from the code.
+Inference providers are rendered from `python/cast/providers/manifest.json`
+on the docs site (`getting-started/inference-providers`). `cast provider`
+and `/provider` are on `getting-started/provider`. Deployment hosts stay
+on `deployment/providers`. `bedrock/` is reserved and is not documented as
+available.
 
 ```bash
 # Install + dev server (auto-extracts reference data on every reload)

@@ -15,6 +15,13 @@ const providers = getProviders().sort((a, b) => a.name.localeCompare(b.name))
     <code>typescript/cast-cli/src/lib/deploy</code>.
   </p>
   <p>
+    These keys are hosting providers. The model an agent calls is an
+    <a href="getting-started/inference-providers">inference provider</a>,
+    switched with <a href="getting-started/provider"><code>cast provider</code></a>
+    or <code>/provider</code>. A DigitalOcean Droplet token is not a
+    DigitalOcean inference key.
+  </p>
+  <p>
     Sprites needs the <code>sprite</code> CLI. Set <code>SPRITES_TOKEN</code> to a
     token created at <a href="https://sprites.dev/account">sprites.dev/account</a>
     in the <code>org-slug/org-id/token-id/token-value</code> format.

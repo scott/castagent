@@ -26,7 +26,7 @@ cast:
 defaults:
   agent_storage: ~/.cast/agents
   builder_model: openrouter/minimax/minimax-m2.5
-  deployment_'provider: docker
+  deployment_provider: docker
 
 providers:
   openrouter:
@@ -48,73 +48,14 @@ The file is re-read when a command or a new builder process starts.
 running. Start `cast dev`, `cast new`, or `cast edit` again to apply it.
 See [Changing the builder model](building-agents/builder-model).
 
-`cast provider` lists inference providers. The active provider is the
-one whose prefix matches `defaults.builder_model`.
-`defaults.inference_provider` is only a hint when that model has no
-registered prefix.
+Inference prefixes, keys, base URLs, and what deploy forwards are on
+[Inference providers](getting-started/inference-providers).
+`cast provider` lists those providers and switches the builder. See
+[cast provider](getting-started/provider).
 
-```bash
-cast provider enable digitalocean --token -
-cast provider enable digitalocean --token - --url https://inference.do-ai.run/v1
-```
-
-`--token -` reads the model access key from stdin. `--token` with no
-value prompts without echoing. A literal key on the command line is
-stored, and Cast warns that it is visible in process listings and shell
-history. The key is not written to this file and is not printed. It is
-stored in the system keychain. When the keychain cannot be loaded, the
-key is written to `~/.cast/tokens/inference/<key>.token` at mode 0600.
-`--url` writes `base_url` next to that provider's `api_key`.
-`default_base_url` stays the shipped host. A URL must be `https`, or
-`http` on literal `127.0.0.1`, `::1`, or `localhost`, with a host and no
-userinfo or query. That URL is for the builder on this machine. Deploy
-and upgrade do not copy `OPENROUTER_BASE_URL`,
-`DIGITALOCEAN_INFERENCE_BASE_URL`, `XAI_BASE_URL`, `GEMINI_BASE_URL`, `ANTHROPIC_BASE_URL`, or
-`OLLAMA_BASE_URL` onto the agent. A keyless provider's optional token is
-not copied either. A provider is enabled when its environment variable,
-that stored token, or a real config value is set. A keyless provider such
-as Ollama is enabled with none of those. An unsubstituted
-`${VAR}` is not a token. Values are trimmed.
-
-`providers.digitalocean` is the **deploy** token for Droplets and MicroVMs.
-It is not an inference credential. Serverless inference uses
-`providers.digitalocean_inference` (or `DIGITALOCEAN_MODEL_ACCESS_KEY`).
-Set an agent's model to `digitalocean/llama3.3-70b-instruct` or
-`digitalocean/deepseek-v3.2` to call `https://inference.do-ai.run/v1`.
-OpenRouter stays the default when the model is `openrouter/...`, any
-other slash prefix that is not registered or reserved (`openai/`,
-`x-ai/`, `qwen/`, `z-ai/`, and the rest), or a bare alias such as `claude-sonnet-4`.
-`openai-api/<model-id>` is direct OpenAI. The key is `OPENAI_API_KEY`,
-or the token stored by `cast provider enable openai-api --token -`.
-The base URL is `https://api.openai.com/v1`. Cast does not read
-`OPENAI_BASE_URL`. `--url` writes `providers.openai.base_url` for the
-builder on this machine and is not copied to a deploy.
-`xai/<model-id>` is direct xAI (`XAI_API_KEY`, `https://api.x.ai/v1`).
-`gemini/<model>` is Google Gemini (`GEMINI_API_KEY`,
-`https://generativelanguage.googleapis.com/v1beta/openai`).
-`google/...` stays on OpenRouter. `anthropic-api/<model>` is direct
-Anthropic (`ANTHROPIC_API_KEY`, `https://api.anthropic.com/v1`, native
-`ChatAnthropic`). An exported `ANTHROPIC_BASE_URL` routes builder calls
-through that proxy, with or without a trailing `/v1`. `anthropic/...`
-stays on OpenRouter. `ollama/<model>` is local Ollama at
-`http://localhost:11434/v1`. It is enabled with no token.
-`cast provider ollama` stores a pulled chat model. `qwen3` matches
-`qwen3:latest`. A lone `qwen3:8b` does not match `ollama/qwen3`, so the
-switch stores that pulled id instead. When Ollama does not answer, the
-switch stores `ollama/qwen3` and prints `ollama pull qwen3`. Embedding
-names stay out of the chat list. Ollama's default context length is 4096
-tokens; raise it with `OLLAMA_CONTEXT_LENGTH` or `num_ctx`.
-`cast provider enable ollama` can store an optional `OLLAMA_API_KEY` for
-`https://ollama.com` and can set `providers.ollama.base_url`. Neither value
-is copied onto a deployed agent. `bedrock/` is reserved and is not a
-provider yet. `ollama/` is registered and keyless. Deploy forwards
-`ANTHROPIC_API_KEY` only for an `anthropic-api/` model and does not copy
-`ANTHROPIC_BASE_URL`. `defaults.builder_model`
-can be `digitalocean/<model-id>`, `openai-api/<model-id>`, `xai/<model-id>`,
-`gemini/<model-id>`, `anthropic-api/<model-id>`, or `ollama/<model-id>`. The default remains
-`openrouter/minimax/minimax-m2.5`. Change the
-curated OpenRouter ids with `cast model` or `/model` in the builder TUI.
-The running builder keeps its current model until the next launch.
+`providers.digitalocean` in the example above is the **deploy** token for
+Droplets and MicroVMs. It is not an inference credential. Serverless
+inference uses `providers.digitalocean_inference`.
 
 ## External inference providers
 
@@ -135,15 +76,16 @@ selected by the agent's `brain.model`, including an external provider.
 
 ## Environment variables
 
+Inference keys and base URL overrides (`OPENROUTER_API_KEY`,
+`OPENROUTER_BASE_URL`, `DIGITALOCEAN_MODEL_ACCESS_KEY`,
+`DIGITALOCEAN_INFERENCE_BASE_URL`, `OPENAI_API_KEY`, `XAI_API_KEY`,
+`XAI_BASE_URL`, `GEMINI_API_KEY`, `GEMINI_BASE_URL`, `ANTHROPIC_API_KEY`,
+`ANTHROPIC_BASE_URL`, `OLLAMA_API_KEY`, `OLLAMA_BASE_URL`) are on
+[Inference providers](getting-started/inference-providers). OpenAI has no
+base URL environment variable.
+
 | Variable | Used for |
 |---|---|
-| `OPENROUTER_API_KEY` | Default LLM provider auth. |
-| `OPENAI_API_KEY` | Direct OpenAI inference for `openai-api/<model-id>`. Not sent when the agent uses another provider. |
-| `DIGITALOCEAN_MODEL_ACCESS_KEY` | DigitalOcean serverless inference. Not the deploy token. |
-| `XAI_API_KEY` | xAI inference for `xai/<model>`. Deploy sends it only when the agent uses that prefix. |
-| `XAI_BASE_URL` | Optional builder override for the xAI base URL. Not deployed. |
-| `GEMINI_API_KEY` | Google Gemini inference (`gemini/<model>`). Not forwarded for any other model. |
-| `GEMINI_BASE_URL` | Optional builder override for the Gemini base URL. Not deployed. |
 | `RAILWAY_API_TOKEN` | Railway deploys (alternative to `railway login`). |
 | `FLY_API_TOKEN` | Fly.io deploys (alternative to `flyctl auth login`). Not a Sprites token. |
 | `DIGITALOCEAN_ACCESS_TOKEN` | DigitalOcean deploys (also accepts `DIGITALOCEAN_API_TOKEN`, `DIGITALOCEAN_API_KEY`). MicroVM passes this value to `doctl` through the child environment, not as `--access-token`. |

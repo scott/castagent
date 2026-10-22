@@ -15,7 +15,9 @@ Two kinds of pages:
 1. **Reference** — auto-generated from the Cast Agent source code.
    - `/cli/reference` — every `cast <command>`, parsed from `typescript/cast-cli/src/commands/`. A file named `index.ts` is the oclif topic command (`commands/session/index.ts` is `cast session`). The extractor does not publish a command segment named `index`.
    - `/tui/slash-commands` — every `/command`, parsed from `typescript/cast-tui/src/commands/slash-registry.ts`.
-   - `/deployment/providers` — every built-in provider, read from `typescript/cast-cli/src/lib/deploy/providers.manifest.json`.
+   - `/deployment/providers` — every deploy host, read from `typescript/cast-cli/src/lib/deploy/providers.manifest.json`. Inference providers are a separate page.
+   - `/getting-started/inference-providers` — inference providers rendered from `python/cast/providers/manifest.json` (prefix, key, base URL, `/model` list, deploy forwarding). `bedrock/` is reserved and is not shipped.
+   - `/getting-started/provider` — `cast provider` and `/provider`.
    - `/changelog` — every release, parsed from `CHANGELOG.md`.
 
    These regenerate on every build and cannot drift from the code.

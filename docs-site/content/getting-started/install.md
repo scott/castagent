@@ -21,40 +21,10 @@ them yourself when you clone the repo and run `./install.sh` from that checkout.
 - **Bun 1.4.3** (the one-liner installs this pinned build). Required to render the TUI.
 - **git**, **gnupg** (the `gpg` command), **tar**, **unzip**, and a C compiler. Linux also needs libsecret.
 
-You will also need an LLM API key to actually run an agent, unless you use local Ollama. Any one of these is enough:
-
-- an **OpenRouter** key (`OPENROUTER_API_KEY`) from [openrouter.ai](https://openrouter.ai) — the default, or
-- a **DigitalOcean serverless inference** model access key (`DIGITALOCEAN_MODEL_ACCESS_KEY`), or
-- an **OpenAI** key (`OPENAI_API_KEY`) from [platform.openai.com](https://platform.openai.com/api-keys), or
-- a **Google Gemini** key (`GEMINI_API_KEY`) from [Google AI Studio](https://aistudio.google.com/apikey), or
-- an **Anthropic** key (`ANTHROPIC_API_KEY`) from [platform.claude.com](https://platform.claude.com/settings/keys), or
-- **Ollama** running on this machine (`ollama/<model>`, no key) at `http://localhost:11434`.
-
-OpenRouter stays the default. To call DigitalOcean, set the model to
-`digitalocean/<model-id>` (for example `digitalocean/llama3.3-70b-instruct`
-or `digitalocean/deepseek-v3.2`). Requests go to
-`https://inference.do-ai.run/v1`. That key is not the DigitalOcean deploy token.
-To call OpenAI directly, set the model to `openai-api/<model-id>`
-(for example `openai-api/gpt-4o`). Requests go to `https://api.openai.com/v1`.
-`openai/gpt-4o` stays on OpenRouter. Cast does not read `OPENAI_BASE_URL`.
-To call Gemini directly, set the model to `gemini/<model-id>` (for example
-`gemini/gemini-3.8-flash`). Requests go to
-`https://generativelanguage.googleapis.com/v1beta/openai`. `google/...`
-stays on OpenRouter.
-To call Anthropic directly, set the model to `anthropic-api/<model-id>`
-(for example `anthropic-api/claude-sonnet-5-5`). Requests go to
-`https://api.anthropic.com/v1` through `ChatAnthropic`. `anthropic/...`
-stays on OpenRouter.
-To use a local model, run Ollama and set the model to `ollama/<model-id>`
-(for example `ollama/qwen3`). Requests go to `http://localhost:11434/v1`.
-No API key is required. `cast provider ollama` stores a model Ollama has
-pulled. When Ollama does not answer, it stores `ollama/qwen3` and prints
-`ollama pull qwen3`. Embedding names are left out of the chat list.
-Ollama's default context length is 4096 tokens. Raise it with
-`OLLAMA_CONTEXT_LENGTH` or `num_ctx`, because the builder prompt starts
-near 1.8k tokens. `OLLAMA_BASE_URL=https://ollama.com/v1` plus
-`OLLAMA_API_KEY` points the builder at Ollama cloud. That URL and key stay
-on this machine.
+You will also need an LLM API key to run an agent, unless you use local Ollama.
+OpenRouter (`OPENROUTER_API_KEY`) is the default. Direct providers and keyless
+local Ollama are on [Inference providers](getting-started/inference-providers).
+Store a key and switch the builder with [cast provider](getting-started/provider).
 
 ## One-liner install (recommended)
 
