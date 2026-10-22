@@ -36,6 +36,7 @@ interface ChangelogEntry {
   deprecated: string[]
   removed: string[]
   security: string[]
+  documentation: string[]
   raw: string
   pr?: number
 }
@@ -49,7 +50,8 @@ const SECTION_KEYS: Array<{ heading: string; key: keyof Omit<ChangelogEntry, 've
   { heading: 'Changed',    key: 'changed' },
   { heading: 'Deprecated', key: 'deprecated' },
   { heading: 'Removed',    key: 'removed' },
-  { heading: 'Security',   key: 'security' },
+  { heading: 'Security',       key: 'security' },
+  { heading: 'Documentation',  key: 'documentation' },
 ]
 
 const entries: ChangelogEntry[] = []
@@ -81,7 +83,7 @@ for (const line of lines) {
     current = {
       version: v[1],
       date: v[2],
-      added: [], fixed: [], changed: [], deprecated: [], removed: [], security: [],
+      added: [], fixed: [], changed: [], deprecated: [], removed: [], security: [], documentation: [],
       raw: '',
     }
     currentSection = null

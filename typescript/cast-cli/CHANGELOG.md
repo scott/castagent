@@ -1,5 +1,11 @@
 # cast-cli
 
+## 2.8.1
+
+### Patch Changes
+
+- 4b26270: Document inference providers and `cast provider`. The docs add an Inference providers page and a `cast provider` / `/provider` page. The builder-model page lists direct provider prefixes. The Known models reference is rewritten from the manifest and `getModels()`. Each model in the docs manifest records its provider.
+
 ## 2.8.0
 
 ### Minor Changes
