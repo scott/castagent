@@ -1,5 +1,16 @@
 # cast-tui
 
+## 2.8.0
+
+### Minor Changes
+
+- 3efb13e: Anthropic is a direct inference provider. `anthropic-api/<model>` uses native ChatAnthropic and `ANTHROPIC_API_KEY`. `anthropic/` stays on OpenRouter. Deploy forwards only `ANTHROPIC_API_KEY`. Claude 4.7 and later omit temperature.
+- ba7e195: Google Gemini is a builder and runtime inference provider. `gemini/<model>` uses the OpenAI-compatible Gemini endpoint and `GEMINI_API_KEY`. `google/...` stays on OpenRouter. Deploy forwards only `GEMINI_API_KEY`. The builder omits temperature so Gemini 3 thinking models keep the API default of 1.0. Gemini 3 and 4 tool calls echo `extra_content.google.thought_signature` on the next request.
+- 3f4d997: OpenRouter and DigitalOcean inference share one OpenAI-compatible provider class driven by the manifest. Any slash prefix that is not a registered provider and not a reserved direct prefix stays on OpenRouter, including qwen/ and z-ai/. Direct prefixes that are still reserved are not registered yet. Builder temperature comes from the provider row. OpenRouter and DigitalOcean still send 0.7, and Claude 4.7 and later omit temperature.
+- eee4f00: Add Ollama as a local, keyless inference provider. Model ids use the ollama/ prefix and http://localhost:11434/v1 with no API key. OLLAMA_API_KEY is optional and stays on the builder. The chat list leaves out embedding names. When Ollama answers, the switch keeps ollama/qwen3 only if that pull is present and otherwise stores the first pulled chat model. When it does not answer, the switch stores ollama/qwen3 and prints ollama pull qwen3. Remote deploy refuses an ollama/ model before extract. Docker rewrites loopback to host.docker.internal and does not copy the key.
+- 332d92d: Add OpenAI as a direct inference provider. Model ids use the openai-api/ prefix and OPENAI_API_KEY at https://api.openai.com/v1. openai/ stays on OpenRouter. Reasoning models omit temperature. Deploy forwards only the key the agent's brain.model needs.
+- 9b466cf: xAI is a direct inference provider. `xai/<model>` calls https://api.x.ai/v1 with `XAI_API_KEY`. `x-ai/` still uses OpenRouter. The model list keeps chat models and drops image, video, voice, embedding, multi-agent, and latest aliases. Deploy forwards `XAI_API_KEY` only when the agent uses `xai/`.
+
 ## 2.7.0
 
 ### Minor Changes
