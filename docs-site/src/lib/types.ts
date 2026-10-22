@@ -60,8 +60,11 @@ export interface ProviderInfo {
 
 export interface ModelInfo {
   id: string
+  /** Vendor segment of the id, matching `cast model --list --json`. */
   provider: string
   family: string
+  /** Manifest row key from python/cast/providers/manifest.json. */
+  inferenceProvider: string
 }
 
 export interface ChangelogEntry {
@@ -84,6 +87,6 @@ export interface Manifest {
   cli: { id: string; full: string; description: string }[]
   slash: { name: string; category: string; description: string }[]
   providers: { key: string; name: string }[]
-  models: { id: string }[]
+  models: { id: string; provider: string; family: string; inferenceProvider: string }[]
   changelog: { version: string; date: string }[]
 }

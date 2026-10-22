@@ -28,10 +28,29 @@ stripped). The API call uses the raw stored id.
 cast model
 cast model anthropic/claude-sonnet-4.6
 cast model openrouter/minimax/minimax-m2.5
+cast model openai-api/gpt-4o
+cast model xai/grok-4.7
+cast model gemini/gemini-3.8-flash
+cast model anthropic-api/claude-sonnet-5-5
+cast model digitalocean/llama3.3-70b-instruct
+cast model ollama/qwen3
 cast model --list
 cast model --list --json
 cast model --current --json
 ```
+
+`anthropic/claude-sonnet-4.6` and `openrouter/minimax/minimax-m2.5` stay on
+OpenRouter. `openai/`, `anthropic/`, `google/`, and `x-ai/` do too.
+`openai-api/`, `xai/`, `gemini/`, `anthropic-api/`, `digitalocean/`, and
+`ollama/` call that provider directly. Keys, base URLs, and what deploy
+forwards are on [Inference providers](getting-started/inference-providers).
+Switch the active provider with [cast provider](getting-started/provider).
+
+`cast model --list` and `/model` list the **active** provider's models, not
+every provider at once. OpenRouter shows the curated ids. A provider with a
+live catalog loads `GET <base-url><modelsPath>` and shows that row's fallback
+ids when the request fails. A freeform provider accepts any `<prefix>/<id>`
+once it is enabled. The list is read again each time `/model` opens.
 
 With no arguments, `cast model` prints the current raw id, a numbered
 list of available models, and `Set with: cast model <model-id>`.
@@ -84,7 +103,7 @@ serverless inference when that provider is enabled. `cast model` and
 `cast provider enable digitalocean --token - --url <api-url>`.
 `--token -` reads the key from stdin. When the live list cannot be loaded,
 the picker shows `llama3.3-70b-instruct` and `deepseek-v3.2`. See
-[Global settings](getting-started/global-settings).
+[Inference providers](getting-started/inference-providers).
 
 ## Prefixes
 
@@ -262,6 +281,8 @@ with. Start it again to apply the change.
 
 ## See also
 
+- [Inference providers](getting-started/inference-providers)
+- [cast provider](getting-started/provider)
 - [Create an agent](building-agents/create)
 - [Global settings](getting-started/global-settings)
 - [Run an agent locally](building-agents/run)

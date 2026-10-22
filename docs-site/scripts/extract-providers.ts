@@ -37,8 +37,11 @@ interface ProviderInfo {
 
 interface ModelInfo {
   id: string
+  /** Vendor segment of the id. Same split as typescript/cast-cli/src/lib/models.ts. */
   provider: string
   family: string
+  /** Manifest row key, for example `openrouter`. */
+  inferenceProvider: string
 }
 
 function unquote(text: string): string {
@@ -89,8 +92,11 @@ const inferenceManifest = JSON.parse(readFileSync(INFERENCE_MANIFEST, 'utf8')) a
 const models: ModelInfo[] = []
 for (const row of inferenceManifest) {
   for (const raw of row.knownModels ?? []) {
-    // Format is "openrouter/<provider>/<model>" or "kimi/k2.5" etc.
-    // We normalise away the openrouter/ prefix and split on the first slash.
+    // Format is "openrouter/<provider>/<model>" or "anthropic/claude-sonnet-4.6".
+    // Strip one leading openrouter/ and split on the first slash, matching
+    // modelInfo() in typescript/cast-cli/src/lib/models.ts.
+    // inferenceProvider is the manifest row key so the site can label the
+    // catalog that owns the id.
     const stripped = raw.replace(/^openrouter\//, '')
     const slash = stripped.indexOf('/')
     let provider: string
@@ -102,7 +108,7 @@ for (const row of inferenceManifest) {
       provider = stripped.slice(0, slash)
       family = stripped.slice(slash + 1)
     }
-    models.push({ id: raw, provider, family })
+    models.push({ id: raw, provider, family, inferenceProvider: row.key })
   }
 }
 models.sort((a, b) => a.id.localeCompare(b.id))

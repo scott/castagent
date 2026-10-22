@@ -30,7 +30,7 @@ interface Manifest {
   cli: { id: string; full: string; description: string }[]
   slash: { name: string; category: string; description: string }[]
   providers: { key: string; name: string }[]
-  models: { id: string }[]
+  models: { id: string; provider: string; family: string; inferenceProvider: string }[]
   changelog: { version: string; date: string }[]
 }
 
@@ -45,7 +45,12 @@ const manifest: Manifest = {
   cli:       cli.map((c) => ({ id: c.id, full: c.full, description: c.description })),
   slash:     slash.map((c) => ({ name: c.name, category: c.category, description: c.description })),
   providers: providers.map((p) => ({ key: p.key, name: p.name })),
-  models:    models.map((m) => ({ id: m.id })),
+  models:    models.map((m) => ({
+    id: m.id,
+    provider: m.provider,
+    family: m.family,
+    inferenceProvider: m.inferenceProvider,
+  })),
   changelog: changelog.map((c) => ({ version: c.version, date: c.date })),
 }
 

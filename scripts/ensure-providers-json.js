@@ -47,7 +47,7 @@ for (const row of inferenceManifest) {
     const slash = stripped.indexOf('/')
     const provider = slash === -1 ? stripped : stripped.slice(0, slash)
     const family = slash === -1 ? stripped : stripped.slice(slash + 1)
-    models.push({id: raw, provider, family})
+    models.push({id: raw, provider, family, inferenceProvider: row.key})
   }
 }
 models.sort((a, b) => a.id.localeCompare(b.id))
