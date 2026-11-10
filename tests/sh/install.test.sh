@@ -76,7 +76,7 @@ for dir in /usr/bin /bin; do
                 continue
                 ;;
         esac
-        if [[ ! -e "$HOSTBIN/$base" ]]; then
+        if [[ ! -e "$HOSTBIN/$base" && ! -L "$HOSTBIN/$base" ]]; then
             ln -s "$f" "$HOSTBIN/$base"
         fi
     done
@@ -813,7 +813,7 @@ for dir in /usr/bin /bin; do
         case "$base" in
             gpg|gpg2) continue ;;
         esac
-        if [[ ! -e "$nogpg_bin/$base" ]]; then
+        if [[ ! -e "$nogpg_bin/$base" && ! -L "$nogpg_bin/$base" ]]; then
             ln -s "$f" "$nogpg_bin/$base"
         fi
     done

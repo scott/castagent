@@ -108,6 +108,7 @@ export class CastDatabase {
         deployed_version TEXT,
         remote_version_state TEXT,
         deleted_at DATETIME,
+        managed_by TEXT,
         FOREIGN KEY (agent_name) REFERENCES agents(name)
       );
 
@@ -211,6 +212,11 @@ export class CastDatabase {
     // Migration: Add deleted_at column (idempotent)
     if (!this.columnExists('deployments', 'deleted_at')) {
       this.db.exec('ALTER TABLE deployments ADD COLUMN deleted_at DATETIME')
+    }
+
+    // A castbot-managed row is local bookkeeping. The CLI must not destroy it.
+    if (!this.columnExists('deployments', 'managed_by')) {
+      this.db.exec('ALTER TABLE deployments ADD COLUMN managed_by TEXT')
     }
 
     // Migration: Add releases table (idempotent)
@@ -459,6 +465,11 @@ export class CastDatabase {
   public listActiveDeployments(): any[] {
     const stmt = this.db.prepare('SELECT * FROM deployments WHERE deleted_at IS NULL ORDER BY agent_name, deployed_at DESC, rowid DESC')
     return stmt.all()
+  }
+
+  public markDeploymentManaged(id: string, managedBy: string): void {
+    const stmt = this.db.prepare('UPDATE deployments SET managed_by = ? WHERE id = ? AND deleted_at IS NULL')
+    stmt.run(managedBy, id)
   }
 
   public createDeployment(id: string, agentName: string, provider: string, url: string, tokenHash: string, volumeId?: string | null, volumeConfig?: string | null, deployedVersion?: string | null): void {

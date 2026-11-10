@@ -58,6 +58,7 @@ const TEST_AGENT_PREFIXES = [
   'sha-test-',
   'fk-test-',
   'redeploy-test-',
+  'castbot-import-',
 ]
 
 // Common test agent names (without prefix)
