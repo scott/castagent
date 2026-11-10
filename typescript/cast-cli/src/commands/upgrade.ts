@@ -7,6 +7,7 @@ import {missingAgentError} from '../lib/missing-agent'
 import {getRelease, getCurrentRelease, listReleases, validateSemver} from '../lib/releases'
 import {db} from '../lib/sqlite'
 import {resolveDeploymentTarget} from '../lib/deploy/deploy-utils'
+import {castbotLifecycleMessage, isCastbotManaged} from '../lib/castbot-import'
 import {
   assertDeploymentProvidersLoaded,
   deploymentProviderLoadErrors,
@@ -90,6 +91,10 @@ export default class Upgrade extends Command {
     const deployment = resolution.deployment!
     const agentName = deployment.agent_name
     const deploymentSha = deployment.id
+
+    if (isCastbotManaged(deployment)) {
+      this.error(castbotLifecycleMessage(agentName))
+    }
 
     const agentPath = path.join(os.homedir(), '.cast', 'agents', agentName)
     if (!fs.existsSync(agentPath)) {

@@ -9,6 +9,7 @@ import {
 } from '../lib/deploy/registry'
 import type {DeploymentRow} from '../lib/deploy/types'
 import type {TokenStore} from '../lib/keychain'
+import {castbotLifecycleMessage, isCastbotManaged} from '../lib/castbot-import'
 
 /** Name only the stores that actually held the token. An empty list names none. */
 export function shutdownTokenPlace(stores: ReadonlyArray<TokenStore>): string {
@@ -115,6 +116,10 @@ export default class Shutdown extends Command {
     const deployment = resolution.deployment!
     const agentName = deployment.agent_name
     const deploymentSha = deployment.id
+
+    if (isCastbotManaged(deployment)) {
+      this.error(castbotLifecycleMessage(agentName))
+    }
 
     const provider = deployment.provider
     const url = deployment.deployment_url
