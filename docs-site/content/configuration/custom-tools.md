@@ -108,10 +108,9 @@ harness:
 
 The runtime checks the level when the model calls a built-in tool, including
 calls that arrive over A2A. A built-in tool with no entry runs as `always-allow`,
-except `git_push`, `write_file`, and `edit_file`, which default to `ask`.
-Set `git_push: always-allow`, `write_file: always-allow`, or
-`edit_file: always-allow` when that call should run without a prompt.
-`web_fetch` is a read. A missing `web_fetch` entry stays `always-allow`.
+except `git_push`, `write_file`, `edit_file`, and `web_fetch`, which default to `ask`.
+Set `git_push: always-allow`, `write_file: always-allow`,
+`edit_file: always-allow`, or `web_fetch: always-allow` when that call should run without a prompt.
 An MCP tool with no entry is `deny` until its registered name, `mcp`, or `*`
 is set. See [MCP servers](configuration/mcp-servers).
 

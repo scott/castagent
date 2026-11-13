@@ -177,8 +177,8 @@ class RuntimeAgent:
             # checked before each call. self.tools stays the raw implementations.
             # Built-in permissions use the agent.yaml name (`bash`), not the
             # model-facing name (`bash_tool`). A missing built-in entry stays
-            # always-allow, except git_push, write_file, and edit_file, which
-            # default to ask. web_fetch is a read and stays always-allow.
+            # always-allow, except git_push, write_file, edit_file, and
+            # web_fetch, which default to ask.
             # MCP tools use the registered name and are deny until that name,
             # `mcp`, or `*` is set.
             builtin_tool_names = self.config.tools.get("builtin", [])

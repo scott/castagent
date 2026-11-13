@@ -81,7 +81,7 @@ A call checks `harness.permissions` under the registered tool name.
 That matches the name the server advertised when no other tool already
 uses it. Startup prints those names. An MCP tool with no entry is
 `deny`, including when the advertised name matches a built-in such as
-`read`. A built-in tool with no entry stays `always-allow`.
+`read`. A built-in tool with no entry stays `always-allow`, except `git_push`, `write_file`, `edit_file`, and `web_fetch`, which default to `ask`. An MCP tool does not inherit that default.
 
 `mcp` sets one level for every advertised name that is not listed on
 its own. `*` does the same for MCP tools and other unknown names. A

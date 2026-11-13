@@ -53,11 +53,11 @@ class TestPermissionGate:
         assert gate.action_for("git_push") == ASK
         assert gate.action_for("git_commit") == ALWAYS_ALLOW
 
-    def test_missing_write_tools_ask_and_web_fetch_allows(self):
+    def test_missing_write_and_fetch_tools_ask(self):
         gate = PermissionGate({})
         assert gate.action_for("write_file") == ASK
         assert gate.action_for("edit_file") == ASK
-        assert gate.action_for("web_fetch") == ALWAYS_ALLOW
+        assert gate.action_for("web_fetch") == ASK
         assert gate.action_for("read") == ALWAYS_ALLOW
 
     def test_explicit_git_push_allow_overrides_the_default(self):
@@ -68,6 +68,10 @@ class TestPermissionGate:
         gate = PermissionGate({"write_file": "always-allow", "edit_file": "deny"})
         assert gate.action_for("write_file") == ALWAYS_ALLOW
         assert gate.action_for("edit_file") == DENY
+
+    def test_explicit_web_fetch_allow_overrides_the_default(self):
+        gate = PermissionGate({"web_fetch": "always-allow"})
+        assert gate.action_for("web_fetch") == ALWAYS_ALLOW
 
     def test_unknown_level_is_not_allow(self):
         gate = PermissionGate({"bash": "sometimes"})
@@ -208,7 +212,7 @@ class TestMcpPermissionDefault:
         assert gate.action_for("git_push", origin=MCP_ORIGIN) == DENY
         assert gate.action_for("write_file") == ASK
         assert gate.action_for("write_file", origin=MCP_ORIGIN) == DENY
-        assert gate.action_for("web_fetch") == ALWAYS_ALLOW
+        assert gate.action_for("web_fetch") == ASK
         assert gate.action_for("web_fetch", origin=MCP_ORIGIN) == DENY
 
     def test_exact_name_beats_mcp_deny(self):

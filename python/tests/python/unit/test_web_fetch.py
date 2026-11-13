@@ -4,7 +4,7 @@ import socket
 from urllib import error as urllib_error
 
 import pytest
-from cast.harness.permissions import ALWAYS_ALLOW, PermissionGate, guard_tool
+from cast.harness.permissions import ASK, DENY, MCP_ORIGIN, PermissionGate, guard_tool
 from cast.tools import web_fetch as web_fetch_mod
 from cast.tools.web_fetch import (
     FetchError,
@@ -282,7 +282,19 @@ class TestFetchUrl:
 
     def test_tool_name_and_default_permission(self):
         assert web_fetch.name == "web_fetch"
-        assert PermissionGate({}).action_for("web_fetch") == ALWAYS_ALLOW
-        tool = guard_tool(web_fetch, "web_fetch", PermissionGate({"web_fetch": "deny"}))
-        result = tool.invoke({"url": "https://example.com/"})
-        assert "not executed" in result
+        gate = PermissionGate({})
+        assert gate.action_for("web_fetch") == ASK
+        assert gate.action_for("web_fetch", origin=MCP_ORIGIN) == DENY
+        asked = guard_tool(web_fetch, "web_fetch", gate)
+        blocked = asked.invoke({"url": "https://example.com/?q=secret"})
+        assert "not executed" in blocked
+        denied = guard_tool(web_fetch, "web_fetch", PermissionGate({"web_fetch": "deny"}))
+        assert "not executed" in denied.invoke({"url": "https://example.com/"})
+        allowed = guard_tool(
+            web_fetch,
+            "web_fetch",
+            PermissionGate({"web_fetch": "always-allow"}),
+        )
+        fetched = allowed.invoke({"url": "http://127.0.0.1/"})
+        assert "not executed" not in fetched
+        assert fetched.startswith("Error:")

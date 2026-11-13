@@ -2,8 +2,9 @@
 
 HTML is converted to markdown. Private, loopback, link-local, and
 metadata addresses are refused before a connection, again when the
-name is resolved, and again on each redirect. This is a read tool:
-a missing harness.permissions entry stays always-allow.
+name is resolved, and again on each redirect. A missing
+harness.permissions entry defaults to ask. An explicit always-allow
+still fetches without a prompt.
 """
 
 from __future__ import annotations
@@ -488,7 +489,7 @@ def web_fetch(url: str) -> str:
     are returned as text. The body is limited to 1 MiB and the request
     times out after 20 seconds. Private, loopback, link-local, and
     metadata addresses are refused, including after DNS resolution and
-    on redirects. This is a read tool.
+    on redirects. A missing permission defaults to ask.
 
     Args:
         url: Absolute http or https URL.

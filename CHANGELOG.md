@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `write_file` and `edit_file` built-in tools write UTF-8 text inside the agent workspace (`CAST_AGENT_PATH`). A path that leaves that directory, including with `..` or a symlink, is refused. `edit_file` replaces one exact string and leaves the file unchanged when that string is missing or appears more than once. Both tools default to `ask` when `harness.permissions` has no entry. A write to `memory/notes.md` redacts provider keys. ([#427](https://github.com/scott/castagent/pull/427))
-- `web_fetch` fetches an `http` or `https` URL with GET and returns text. HTML is converted to markdown. The body is limited to 1 MiB and the request times out after 20 seconds. Private, loopback, link-local, and metadata addresses are refused, including after DNS resolution and on redirects. A missing permission stays `always-allow`. ([#427](https://github.com/scott/castagent/pull/427))
+- `web_fetch` fetches an `http` or `https` URL with GET and returns text. HTML is converted to markdown. The body is limited to 1 MiB and the request times out after 20 seconds. Private, loopback, link-local, and metadata addresses are refused, including after DNS resolution and on redirects. A missing permission defaults to `ask`, so a query string cannot leave the workspace without approval. Set `web_fetch: always-allow` to fetch without a prompt. ([#427](https://github.com/scott/castagent/pull/427))
 
 ### Fixed
 
