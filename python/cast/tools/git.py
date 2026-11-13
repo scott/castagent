@@ -6,12 +6,25 @@ import git
 
 
 def get_agent_path() -> str:
-    agent_dir = os.environ.get('CAST_AGENT_DIR')
+    """Directory the git tools treat as the agent repository.
+
+    CAST_AGENT_DIR wins when it is set, so existing callers keep that
+    path. The runtime and `cast dev` set CAST_AGENT_PATH from
+    `--agent-path` and do not set CAST_AGENT_DIR. Fall back to
+    CAST_AGENT_PATH so git status, diff, log, add, commit, and push
+    see the loaded agent. When neither variable is set, use
+    ~/.cast/agents.
+    """
+    agent_dir = os.environ.get("CAST_AGENT_DIR")
     if agent_dir:
         return agent_dir
 
-    home = os.path.expanduser('~')
-    return os.path.join(home, '.cast', 'agents')
+    agent_path = os.environ.get("CAST_AGENT_PATH")
+    if agent_path:
+        return agent_path
+
+    home = os.path.expanduser("~")
+    return os.path.join(home, ".cast", "agents")
 
 
 # Persistent notes can hold credentials. Never stage this path.

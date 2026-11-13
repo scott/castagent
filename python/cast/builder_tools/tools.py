@@ -36,7 +36,14 @@ def apply_process_dirs() -> None:
 
 # Same lists cast update stores. The runtime loads tools.builtin and
 # harness.permissions, and it ignores a top-level model or permissions key.
-VALID_BUILTIN_TOOLS = ("bash", "read", "glob")
+VALID_BUILTIN_TOOLS = (
+    "bash",
+    "read",
+    "glob",
+    "write_file",
+    "edit_file",
+    "web_fetch",
+)
 VALID_PERMISSION_LEVELS = ("always-allow", "ask", "deny")
 SUPPORTED_PYTHON_VERSIONS = ("3.11", "3.12")
 _AGENT_YAML_TOP_LEVEL = {
@@ -558,7 +565,7 @@ def _validate_tools(tools: Any) -> List[str]:
         return [
             "tools must be a mapping with builtin, mcp, and custom. "
             "A list was not written. Built-in tools belong under tools.builtin "
-            "(bash, read, glob)."
+            "(" + ", ".join(VALID_BUILTIN_TOOLS) + ")."
         ]
     errors = []
     for key in tools:
@@ -576,7 +583,9 @@ def _validate_tools(tools: Any) -> List[str]:
                 errors.append(
                     "tools.builtin has unknown tools: "
                     + ", ".join(unknown)
-                    + ". Valid tools: bash, read, glob."
+                    + ". Valid tools: "
+                    + ", ".join(VALID_BUILTIN_TOOLS)
+                    + "."
                 )
     if "mcp" in tools:
         errors.extend(_validate_mcp_entries(tools["mcp"]))

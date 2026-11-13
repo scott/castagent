@@ -115,10 +115,10 @@ changes show up as files on disk.
 | `brain.model` | the LLM the runtime agent calls |
 | `brain.instructions_file` | relative path to the system prompt |
 | `skills` | skills installed on this agent (`name`, `description`, `path`, `source`) |
-| `tools.builtin` | which of `bash` / `read` / `glob` to expose |
+| `tools.builtin` | which of `bash`, `read`, `glob`, `write_file`, `edit_file`, `web_fetch`, and the `git_*` tools to expose |
 | `tools.mcp` | list of MCP server YAMLs to load |
 | `tools.custom` | module name strings or `{path}` entries, printed by `cast describe` |
-| `harness.permissions` | per-tool permission level (`always-allow`, `ask`, or `deny`), enforced before the tool runs. A built-in with no entry stays `always-allow`. An MCP tool with no entry is `deny`. `mcp` and `*` cover advertised MCP names that are not listed on their own. |
+| `harness.permissions` | per-tool permission level (`always-allow`, `ask`, or `deny`), enforced before the tool runs. A built-in with no entry stays `always-allow`, except `git_push`, `write_file`, `edit_file`, and `web_fetch`, which default to `ask`. An MCP tool with no entry is `deny`. `mcp` and `*` cover advertised MCP names that are not listed on their own. |
 | `harness.principles` | constitutional principles appended to the system prompt |
 | `runtime.python_version` | Python version in the deployment image (`3.11` or `3.12`) |
 | `runtime.requirements` | extra pip packages to install in the image |

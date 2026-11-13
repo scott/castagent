@@ -15,7 +15,7 @@ export const UPDATE_USAGE = [
   'Run /update with no arguments to pick a field.',
 ].join('\n')
 
-export const VALID_TOOLS = ['bash', 'read', 'glob'] as const
+export const VALID_TOOLS = ['bash', 'read', 'glob', 'write_file', 'edit_file', 'web_fetch'] as const
 export const VALID_PERMISSION_LEVELS = ['always-allow', 'ask', 'deny'] as const
 export const SUPPORTED_PYTHON_VERSIONS = ['3.11', '3.12'] as const
 

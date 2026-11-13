@@ -21,6 +21,8 @@ from ..providers.registry import InferenceProviderError, get_provider
 from ..tools.bash import bash_tool
 from ..tools.read import read_tool
 from ..tools.glob import glob_tool
+from ..tools.files import edit_file, write_file
+from ..tools.web_fetch import web_fetch
 from ..tools.git import git_status, git_commit, git_push, git_log, git_diff, git_add
 
 def _chunk_text(msg: Any) -> str:
@@ -45,6 +47,9 @@ BUILTIN_TOOLS = {
     "bash": bash_tool,
     "read": read_tool,
     "glob": glob_tool,
+    "write_file": write_file,
+    "edit_file": edit_file,
+    "web_fetch": web_fetch,
     "git_status": git_status,
     "git_commit": git_commit,
     "git_push": git_push,
@@ -172,8 +177,10 @@ class RuntimeAgent:
             # checked before each call. self.tools stays the raw implementations.
             # Built-in permissions use the agent.yaml name (`bash`), not the
             # model-facing name (`bash_tool`). A missing built-in entry stays
-            # always-allow. MCP tools use the registered name and are deny
-            # until that name, `mcp`, or `*` is set.
+            # always-allow, except git_push, write_file, edit_file, and
+            # web_fetch, which default to ask.
+            # MCP tools use the registered name and are deny until that name,
+            # `mcp`, or `*` is set.
             builtin_tool_names = self.config.tools.get("builtin", [])
             if not isinstance(builtin_tool_names, list):
                 builtin_tool_names = []

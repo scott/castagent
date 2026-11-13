@@ -87,10 +87,10 @@ describe('tui /update', () => {
   })
 
   it('lists the same flags and allowed values as cast update', () => {
-    expect(cliSource).to.include("const VALID_TOOLS = ['bash', 'read', 'glob']")
+    expect(cliSource).to.include("const VALID_TOOLS = ['bash', 'read', 'glob', 'write_file', 'edit_file', 'web_fetch']")
     expect(cliSource).to.include("const VALID_PERMISSION_LEVELS = ['always-allow', 'ask', 'deny']")
     expect(cliSource).to.include("const SUPPORTED_PYTHON_VERSIONS = ['3.11', '3.12']")
-    expect(helper.VALID_TOOLS).to.deep.equal(['bash', 'read', 'glob'])
+    expect(helper.VALID_TOOLS).to.deep.equal(['bash', 'read', 'glob', 'write_file', 'edit_file', 'web_fetch'])
     expect(helper.VALID_PERMISSION_LEVELS).to.deep.equal(['always-allow', 'ask', 'deny'])
     expect(helper.SUPPORTED_PYTHON_VERSIONS).to.deep.equal(['3.11', '3.12'])
     for (const field of helper.UPDATE_FIELDS) {
@@ -153,7 +153,14 @@ describe('tui /update', () => {
     expect(helper.currentForField('add-tool', snapshot)).to.equal('bash, read')
     expect(helper.currentForField('permission', snapshot)).to.equal('bash=always-allow, read=ask')
     expect(helper.currentForField('python-version', snapshot)).to.equal('3.11')
-    expect(helper.choicesForField('add-tool', snapshot)).to.deep.equal(['bash', 'read', 'glob'])
+    expect(helper.choicesForField('add-tool', snapshot)).to.deep.equal([
+      'bash',
+      'read',
+      'glob',
+      'write_file',
+      'edit_file',
+      'web_fetch',
+    ])
     expect(helper.choicesForField('remove-tool', snapshot)).to.deep.equal(['bash', 'read'])
     expect(helper.choicesForField('remove-principle', snapshot)).to.deep.equal(['Be concise'])
     expect(helper.choicesForField('remove-permission', snapshot)).to.deep.equal(['bash', 'read'])

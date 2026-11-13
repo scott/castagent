@@ -179,7 +179,9 @@ on disk. `git status` shows that removal until the next commit.
 so later commits leave `memory/notes.md` out of `HEAD`. `memory/memory.db`
 and `memory/notes.md` then stay out of `git status`. The agent
 `git_commit` and `git_add` tools also refuse to stage `memory/notes.md`,
-including when an older ignore file does not list it yet. `git_push`
+including when an older ignore file does not list it yet. Those git tools
+read `CAST_AGENT_DIR` when it is set, and otherwise the agent directory in
+`CAST_AGENT_PATH` (`cast dev` and `--agent-path`). `git_push`
 defaults to `ask` unless `agent.yaml` sets `git_push: always-allow`.
 `cast deploy --provider docker` adds the Docker artifact patterns below
 to an ignore file that is already present, and creates `.gitignore`

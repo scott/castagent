@@ -43,6 +43,37 @@ class TestGetAgentPath:
             expected = str(Path.home() / ".cast" / "agents")
             assert path == expected
 
+    def test_falls_back_to_cast_agent_path(self):
+        """The runtime sets CAST_AGENT_PATH and not CAST_AGENT_DIR."""
+        with patch.dict(os.environ, {"CAST_AGENT_PATH": "/from/runtime"}, clear=True):
+            assert get_agent_path() == "/from/runtime"
+
+    def test_cast_agent_dir_wins_over_cast_agent_path(self):
+        """An explicit CAST_AGENT_DIR stays the git working directory."""
+        with patch.dict(
+            os.environ,
+            {"CAST_AGENT_DIR": "/explicit", "CAST_AGENT_PATH": "/runtime"},
+            clear=True,
+        ):
+            assert get_agent_path() == "/explicit"
+
+    def test_empty_cast_agent_dir_falls_back(self):
+        """A blank CAST_AGENT_DIR does not hide CAST_AGENT_PATH."""
+        with patch.dict(
+            os.environ,
+            {"CAST_AGENT_DIR": "", "CAST_AGENT_PATH": "/runtime"},
+            clear=True,
+        ):
+            assert get_agent_path() == "/runtime"
+
+    def test_runtime_agent_path_is_the_git_directory(self, tmp_path, monkeypatch):
+        """--agent-path is stored as CAST_AGENT_PATH and git tools read it."""
+        from cast.runtime import configure_runtime_env
+
+        monkeypatch.delenv("CAST_AGENT_DIR", raising=False)
+        configure_runtime_env(str(tmp_path))
+        assert get_agent_path() == os.path.abspath(str(tmp_path))
+
     def test_expands_home_directory(self):
         """Should expand ~ to home directory."""
         with patch.dict(os.environ, {}, clear=True):
@@ -87,6 +118,23 @@ description: "Test agent"
 
 class TestGitStatus:
     """Tests for git_status tool."""
+
+    def test_status_reads_the_cast_agent_path_repo(self, tmp_path, monkeypatch):
+        """A repo at CAST_AGENT_PATH is visible when CAST_AGENT_DIR is unset."""
+        repo_dir = tmp_path / "agent"
+        repo_dir.mkdir()
+        repo = git.Repo.init(repo_dir)
+        (repo_dir / "README.md").write_text("hello\n", encoding="utf-8")
+        repo.index.add(["README.md"])
+        actor = git.Actor("Cast Test", "cast-test@example.com")
+        repo.index.commit("init", author=actor, committer=actor)
+
+        monkeypatch.delenv("CAST_AGENT_DIR", raising=False)
+        monkeypatch.setenv("CAST_AGENT_PATH", str(repo_dir))
+        result = git_status.invoke({})
+
+        assert "Not a Git repository" not in result
+        assert "Working tree is clean" in result
 
     def test_returns_error_for_non_git_directory(self, tmp_path):
         """Should return error for non-Git directory."""

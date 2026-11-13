@@ -105,9 +105,10 @@ agent lives and joins `memory/` to that path.
 
 `cast dev` sets `CAST_AGENT_PATH` to `~/.cast/agents/<name>` before it
 starts the runtime. The runtime also sets that variable from
-`--agent-path`. The `read`, `glob`, and `bash` tools resolve relative
-paths against that directory, so `memory/notes.md` is the notes file
-in the agent directory.
+`--agent-path`. The `read`, `glob`, `bash`, `write_file`, and `edit_file`
+tools resolve relative paths against that directory, so `memory/notes.md`
+is the notes file in the agent directory. The git tools use the same
+directory when `CAST_AGENT_DIR` is unset.
 
 A user message that starts with `remember:` or `remember that` is
 saved before the model replies. The fact is appended to
@@ -117,7 +118,8 @@ keys, including a bare OpenRouter key (`sk-or-v1-...`), other `sk-`
 keys, and DigitalOcean tokens (`dop_v1_`, `doo_v1_`, `dor_v1_`).
 Bash writes to `memory/notes.md` go through the same filter, including
 a background command that writes the file after the shell returns and
-a note such as "remember this permanently".
+a note such as "remember this permanently". `write_file` and `edit_file`
+apply that filter when the target is `memory/notes.md`.
 The next session includes recent rows from that database
 in the prompt. The system prompt tells the agent this store exists.
 

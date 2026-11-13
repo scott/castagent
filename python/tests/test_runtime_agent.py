@@ -451,3 +451,14 @@ class TestBuiltinTools:
     
     def test_glob_tool_exists(self):
         assert "glob" in BUILTIN_TOOLS
+
+    def test_workspace_and_fetch_tools_exist(self):
+        from cast.tools.files import edit_file, write_file
+        from cast.tools.web_fetch import web_fetch
+
+        assert BUILTIN_TOOLS["write_file"] is write_file
+        assert BUILTIN_TOOLS["edit_file"] is edit_file
+        assert BUILTIN_TOOLS["web_fetch"] is web_fetch
+        assert write_file.name == "write_file"
+        assert edit_file.name == "edit_file"
+        assert web_fetch.name == "web_fetch"

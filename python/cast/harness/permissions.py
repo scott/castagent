@@ -2,10 +2,11 @@
 
 Levels written by `cast update --permission` are `always-allow`, `ask`, and
 `deny`. A missing entry for a built-in tool stays allowed so existing agents
-keep working, except `git_push`, which defaults to `ask`. An MCP tool, and
-any other name that is not a built-in, is `deny` until it is listed. `mcp`
-and `*` cover names an MCP server advertises at startup. An unknown level
-fails closed.
+keep working, except `git_push`, `write_file`, `edit_file`, and `web_fetch`,
+which default to `ask`. An MCP tool, and any other name that is not a
+built-in, is `deny` until it is listed. `mcp` and `*` cover names an MCP
+server advertises at
+startup. An unknown level fails closed.
 """
 
 from __future__ import annotations
@@ -29,9 +30,10 @@ WILDCARD_SCOPE = "*"
 MCP_ORIGIN = "mcp"
 _SCOPE_KEYS = frozenset({MCP_SCOPE, WILDCARD_SCOPE})
 
-# Publishing the agent repository needs a prompt unless the agent opts in.
-# An MCP tool that reuses this name does not inherit the ask default.
-DEFAULT_ASK_TOOLS = frozenset({"git_push"})
+# Publishing the agent repository, writing files, and fetching a URL need a
+# prompt unless the agent opts in. An MCP tool that reuses one of these names
+# does not inherit the ask default.
+DEFAULT_ASK_TOOLS = frozenset({"git_push", "write_file", "edit_file", "web_fetch"})
 
 # Built-in `harness.permissions` keys. A missing entry stays always-allow,
 # except the names in DEFAULT_ASK_TOOLS. MCP calls pass origin MCP_ORIGIN so
@@ -40,6 +42,9 @@ BUILTIN_TOOL_NAMES = frozenset({
     "bash",
     "read",
     "glob",
+    "write_file",
+    "edit_file",
+    "web_fetch",
     "git_status",
     "git_commit",
     "git_push",
@@ -206,8 +211,9 @@ class PermissionGate:
     def action_for(self, tool_name: str, *, origin: str | None = None) -> str | None:
         """Canonical level, or None when the configured value is unknown.
 
-        A built-in with no entry is `always-allow`, except `git_push`, which
-        defaults to `ask`. An explicit `git_push: always-allow` still runs.
+        A built-in with no entry is `always-allow`, except `git_push`,
+        `write_file`, `edit_file`, and `web_fetch`, which default to `ask`.
+        An explicit `always-allow` for one of those names still runs.
         An MCP tool with no entry is `deny`, including when its advertised
         name matches a built-in.
         """
