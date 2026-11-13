@@ -414,7 +414,7 @@ describe('update command', () => {
       const tool = await runUpdate({'add-tool': ['notatool']})
       expect(tool.errors).to.have.length(1)
       expect(tool.errors[0]).to.include("Invalid tool name 'notatool'")
-      expect(tool.errors[0]).to.include('bash, read, glob')
+      expect(tool.errors[0]).to.include('bash, read, glob, write_file, edit_file, web_fetch')
       expect(written()).to.equal(original)
     })
 

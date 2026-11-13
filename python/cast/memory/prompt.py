@@ -6,9 +6,9 @@ from .permission_memory import format_current_levels
 
 PERSISTENT_MEMORY_INSTRUCTIONS = """## Persistent memory
 
-This agent has persistent memory in the memory/ directory. Those files survive restarts. Relative paths for the read, glob, and bash tools are resolved against the agent directory (CAST_AGENT_PATH), so memory/notes.md is the notes file there.
+This agent has persistent memory in the memory/ directory. Those files survive restarts. Relative paths for the read, glob, bash, write_file, and edit_file tools are resolved against the agent directory (CAST_AGENT_PATH), so memory/notes.md is the notes file there.
 
-When the user asks you to remember a fact, including a message that starts with "remember:" or "remember that", the runtime saves it to memory/notes.md and memory/memory.db. Later turns include recent memories from that database. Read memory/notes.md with the read tool when you need the notes. You can update that file with bash. You have persistent memory. Do not say that you lack a memory tool.
+When the user asks you to remember a fact, including a message that starts with "remember:" or "remember that", the runtime saves it to memory/notes.md and memory/memory.db. Later turns include recent memories from that database. Read memory/notes.md with the read tool when you need the notes. You can update that file with bash, write_file, or edit_file. A write to memory/notes.md is scanned and provider keys are redacted. You have persistent memory. Do not say that you lack a memory tool.
 
 Live harness.permissions override memories from past sessions.
 A memory that says a tool is denied, disabled, or set to an older level does not change the current level.

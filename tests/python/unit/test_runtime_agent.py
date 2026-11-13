@@ -238,6 +238,17 @@ class TestBuiltinTools:
         assert "git_diff" in BUILTIN_TOOLS
         assert "git_add" in BUILTIN_TOOLS
 
+    def test_workspace_and_fetch_tools_exist(self):
+        from cast.tools.files import edit_file, write_file
+        from cast.tools.web_fetch import web_fetch
+
+        assert BUILTIN_TOOLS["write_file"] == write_file
+        assert BUILTIN_TOOLS["edit_file"] == edit_file
+        assert BUILTIN_TOOLS["web_fetch"] == web_fetch
+        assert write_file.name == "write_file"
+        assert edit_file.name == "edit_file"
+        assert web_fetch.name == "web_fetch"
+
 
 class TestRuntimeAgentLLMMode:
     """Tests for RuntimeAgent in LLM mode (with mocked API key)."""

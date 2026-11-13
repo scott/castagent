@@ -9,7 +9,7 @@ import {createVersion} from '../lib/versioning'
 import {inferenceModelStatus} from '../lib/deploy/deploy-utils'
 import {unknownModelMessage} from '../lib/models'
 
-const VALID_TOOLS = ['bash', 'read', 'glob']
+const VALID_TOOLS = ['bash', 'read', 'glob', 'write_file', 'edit_file', 'web_fetch']
 const VALID_PERMISSION_LEVELS = ['always-allow', 'ask', 'deny']
 const SUPPORTED_PYTHON_VERSIONS = ['3.11', '3.12']
 
@@ -44,11 +44,11 @@ export default class Update extends Command {
       description: 'Update system prompt directly from command line text',
     }),
     'add-tool': Flags.string({
-      description: 'Add built-in tool (bash, read, glob)',
+      description: 'Add built-in tool (bash, read, glob, write_file, edit_file, web_fetch)',
       multiple: true,
     }),
     'remove-tool': Flags.string({
-      description: 'Remove built-in tool (bash, read, glob)',
+      description: 'Remove built-in tool (bash, read, glob, write_file, edit_file, web_fetch)',
       multiple: true,
     }),
     'add-principle': Flags.string({

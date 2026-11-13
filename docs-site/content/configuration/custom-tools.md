@@ -77,7 +77,17 @@ The runtime agent (`python/cast/agent/runtime.py`) builds its tool list from `to
 - `bash`
 - `read`
 - `glob`
+- `write_file`, `edit_file`
+- `web_fetch`
 - `git_status`, `git_commit`, `git_push`, `git_log`, `git_diff`, `git_add`
+
+`cast update --add-tool` accepts `bash`, `read`, `glob`, `write_file`, `edit_file`, and `web_fetch`. The git tools are loaded when `tools.builtin` lists them. `cast update` does not add or remove those git names.
+
+## Workspace writes and web fetch
+
+`write_file` creates or replaces a UTF-8 text file. `edit_file` replaces one exact `old_string` with `new_string`. The old text must appear once. If it is missing, or if it appears more than once, the file is left unchanged. Both tools resolve a relative path against the agent directory (`CAST_AGENT_PATH`). An absolute path is accepted only when it is still inside that directory. A path that leaves the directory, including with `..` or a symlink, is refused. `write_file` creates missing parent directories inside the workspace. A write or edit of `memory/notes.md` is scanned and provider keys are redacted before the file is saved.
+
+`web_fetch` sends an HTTP GET to an `http` or `https` URL and returns text. An HTML body is converted to markdown. JSON, XML, and other text bodies are returned as text. The body is limited to 1 MiB and the request times out after 20 seconds. Private, loopback, link-local, and metadata addresses are refused, including after DNS resolution and on each redirect. A response that is not text is reported and its bytes are not returned.
 
 `tools.custom` is not part of that list. A `tools/*.py` file is not imported when the agent starts, and saving one does not register a tool. MCP servers are a separate list: see [MCP servers](configuration/mcp-servers).
 
@@ -98,8 +108,10 @@ harness:
 
 The runtime checks the level when the model calls a built-in tool, including
 calls that arrive over A2A. A built-in tool with no entry runs as `always-allow`,
-except `git_push`, which defaults to `ask`. Set `git_push: always-allow`
-when an agent should push without a prompt.
+except `git_push`, `write_file`, and `edit_file`, which default to `ask`.
+Set `git_push: always-allow`, `write_file: always-allow`, or
+`edit_file: always-allow` when that call should run without a prompt.
+`web_fetch` is a read. A missing `web_fetch` entry stays `always-allow`.
 An MCP tool with no entry is `deny` until its registered name, `mcp`, or `*`
 is set. See [MCP servers](configuration/mcp-servers).
 

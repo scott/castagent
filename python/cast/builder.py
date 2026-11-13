@@ -272,6 +272,7 @@ harness:
 
 - Put the model under brain.model. It must be a catalog id. recommend_model returns catalog ids.
 - Put built-in tools under tools.builtin. Do not set tools to a list.
+- write_file, edit_file, and web_fetch are also valid tools.builtin names. write_file and edit_file change files and default to ask. web_fetch reads a public page and defaults to always-allow. Add them only when the user asked for file edits or page fetches.
 - Put permissions under harness.permissions. Levels are always-allow, ask, and deny.
 - An MCP tool is deny until harness.permissions lists its advertised name. mcp and * cover every advertised name that is not listed on its own.
 - Do not set a top-level model, permissions, or memory key. Memory lives in memory/config.yaml.
